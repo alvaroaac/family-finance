@@ -63,6 +63,9 @@ importers:
       '@family-finance/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@family-finance/importers':
+        specifier: workspace:*
+        version: link:../../packages/importers
       '@supabase/supabase-js':
         specifier: ^2.108.2
         version: 2.108.2

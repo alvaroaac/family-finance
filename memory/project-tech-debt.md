@@ -116,6 +116,44 @@ workaround, not the package's own concern.
 
 **Status:** open
 
+## 2026-06-22: Import writes rows one-by-one and skips `import_rows`
+
+**Area:** apps/web (`app/(app)/imports/actions.ts`), packages/db
+
+**Impact:** `confirmImport` inserts one transaction per kept row in a loop (no bulk
+insert, no DB transaction), so a large historical import is many round-trips and can
+fail partway — the persisted `import_batch` records `imported`/`error` counts but there
+is no rollback. The `import_rows` table is also left unpopulated, so there is no per-row
+audit trail of what was imported (only the batch summary). Imported transactions are NOT
+linked to their batch via `import_batch_id` (the batch is created after the rows).
+
+**Current workaround:** Single-household MVP volumes are small; the batch summary plus
+per-row write errors surfaced in the UI are enough. `createTransaction` already supports
+an `importBatchId` option if linkage is later wanted (create the batch first).
+
+**Revisit trigger:** Large imports become slow/partial, or per-row reprocessing/audit is
+needed — move to a bulk insert or a Postgres RPC that writes the batch + rows + linked
+transactions in one transaction.
+
+**Status:** open
+
+## 2026-06-22: Only name-matched CSV adapters; no XLSX or format variants
+
+**Area:** packages/importers
+
+**Impact:** Minhas Financas and Nubank adapters match CSV headers by name (accent-folded)
+and auto-detect `;`/`,` delimiter, but there is no XLSX adapter and no distinct handling
+of Minhas Financas "CSV padrão" vs "customizado" vs "XLSX exportado" (spec §07 lists all
+three). Real exports may use other column names/encodings not yet covered.
+
+**Current workaround:** Unmapped rows + unrecognized headers return as reviewable errors
+(never a hard failure), and re-import after fixing the file is the documented recovery.
+
+**Revisit trigger:** Real export samples are available — add fixtures + adapters behind the
+existing `ImportAdapter` contract and register them in `importAdapters`.
+
+**Status:** open
+
 ## Entry Format
 
 ```md

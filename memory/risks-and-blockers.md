@@ -10,7 +10,15 @@ Use this file for active risks, unresolved questions, and external dependencies 
 
 **Mitigation:** Build import adapters with fixtures and preview errors instead of assuming a perfect file.
 
-**Status:** open
+**2026-06-22 (Task 5):** Substantially mitigated for CSV. Both adapters match headers by
+accent-folded NAME (column order independent), auto-detect `;`/`,`, and normalize BR
+(`DD/MM/YYYY`, `3.000,00`) and ISO/dot-decimal formats. Unmapped rows + unrecognized headers
+return as reviewable errors instead of failing the import, and re-import is the recovery path.
+Remaining exposure: no XLSX adapter, no Minhas Financas CSV-padrão/customizado/XLSX variant
+split, and adapters not validated against real export samples (only synthetic fixtures). See
+tech debt "Only name-matched CSV adapters; no XLSX or format variants".
+
+**Status:** watching
 
 ### Supabase local setup
 

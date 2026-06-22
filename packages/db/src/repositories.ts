@@ -26,6 +26,9 @@ import type {
   SubcategoryRow,
   CategorizationMemoryRow,
   CategorizationMemoryInsert,
+  ImportBatchRow,
+  ImportBatchInsert,
+  AccountRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -234,6 +237,55 @@ export async function getMonthlySummary(
   }
   const rows = (data ?? []) as Pick<TransactionRow, "kind" | "amount_cents">[];
   return summarizeMonth(month, rows);
+}
+
+// ---------------------------------------------------------------------------
+// Import batches (Task 5).
+//
+// We persist ONLY the batch metadata — source, status, and row counts — never
+// the original file bytes (privacy decision: raw imports are not retained). The
+// row-level `import_rows` table can carry minimal normalized fields, but the web
+// action records just the summary batch by default. RLS scopes every write to
+// the caller's household.
+// ---------------------------------------------------------------------------
+
+/**
+ * List a household's accounts (checking + investment), ordered by name. Used by
+ * the import UI to pick the target account for the batch. RLS scopes the result.
+ */
+export async function findAccountsByHousehold(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<AccountRow[]> {
+  const { data, error } = await client
+    .from("accounts")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true });
+  if (error !== null) {
+    throw new Error(`findAccountsByHousehold failed: ${error.message}`);
+  }
+  return (data ?? []) as AccountRow[];
+}
+
+/**
+ * Persist an import batch summary and return the stored row. The caller passes
+ * an explicit `household_id` (double-enforced by RLS) and the source/status plus
+ * counts. The raw file is never part of this payload.
+ */
+export async function createImportBatch(
+  client: AppSupabaseClient,
+  payload: ImportBatchInsert,
+): Promise<ImportBatchRow> {
+  const { data, error } = await client
+    .from("import_batches")
+    .insert(payload)
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createImportBatch failed: ${error.message}`);
+  }
+  return data as ImportBatchRow;
 }
 
 // ---------------------------------------------------------------------------

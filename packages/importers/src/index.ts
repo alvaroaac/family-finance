@@ -1,6 +1,56 @@
-export type ImportSource = "minhas-financas" | "nubank";
+/**
+ * @family-finance/importers
+ *
+ * Source adapters that turn a TRANSIENT import file (CSV today; XLSX/Nubank-like
+ * reports are future adapters behind the same contract) into normalized rows,
+ * reviewable errors, and a preview model with probable-duplicate detection.
+ *
+ * Boundary: this package imports `@family-finance/domain` + `zod` only — never
+ * web/bot/db clients. The original file is never persisted here; category
+ * mapping and persistence are the web action layer's job.
+ */
 
-export type ImportAdapter<TInput, TOutput> = {
-  source: ImportSource;
-  parse(input: TInput): Promise<TOutput>;
+// Core contracts.
+export type {
+  ImportSource,
+  ImportRowKind,
+  NormalizedImportRow,
+  ImportRowError,
+  AdapterResult,
+  ImportAdapter,
+  DuplicateCandidate,
+  ImportPreview,
+} from "./types.js";
+
+// Pure normalization primitives (also exported for unit tests / reuse).
+export {
+  parseCsv,
+  parseBrlToCents,
+  normalizeDate,
+  normalizeDescription,
+  moneyFromSignedCents,
+} from "./normalize.js";
+
+// Duplicate detection + preview assembly.
+export { findDuplicateCandidates, buildImportPreview } from "./dedupe.js";
+
+// Source adapters.
+export { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
+export { nubankCsvAdapter } from "./nubank-csv.js";
+
+import type { ImportAdapter, ImportSource } from "./types.js";
+import { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
+import { nubankCsvAdapter } from "./nubank-csv.js";
+
+/** Registry of available adapters, keyed by logical source. */
+export const importAdapters: Record<ImportSource, ImportAdapter> = {
+  "minhas-financas": minhasFinancasCsvAdapter,
+  nubank: nubankCsvAdapter,
 };
+
+/** Resolve an adapter by source, or `undefined` when unknown. */
+export function getImportAdapter(
+  source: ImportSource,
+): ImportAdapter | undefined {
+  return importAdapters[source];
+}

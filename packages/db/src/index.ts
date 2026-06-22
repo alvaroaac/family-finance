@@ -70,6 +70,9 @@ export {
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   getMonthlySummary,
+  // Import batches (Task 5).
+  findAccountsByHousehold,
+  createImportBatch,
   // Category cleanup + categorization memory (Task 6).
   findHouseholdIdForCurrentUser,
   listAllCategories,

@@ -117,3 +117,34 @@ catalog grows large enough that linear name resolution matters; or merges need a
 
 **Revisit if:** Reprocessing becomes frequent enough to justify encrypted temporary retention.
 
+## 2026-06-22: Import Pipeline Contracts
+
+**Decision:** `packages/importers` is a PURE adapter layer (imports `@family-finance/domain`
++ `zod` only — never web/bot/db). A source file is TRANSIENT text passed to an
+`ImportAdapter.parse(fileText)`, which returns `NormalizedImportRow[]` + reviewable
+`ImportRowError[]` (an unmapped/unparseable row NEVER fails the whole import). CSV parsing is
+hand-rolled (`parseCsv`, quoted fields, `;`/`,` auto-detect) with no new dependency.
+Normalization covers date (→ ISO `YYYY-MM-DD`, accepts `DD/MM/YYYY`), description (trimmed),
+value (BRL integer cents via domain `brl`; BR `3.000,00` and dot-decimal both supported), and
+type (sign → `expense`/`income`, with an explicit Tipo column overriding when present). Each
+`NormalizedImportRow.amount.cents` is a POSITIVE magnitude; direction is in `kind` (matches the
+schema CHECK `amount_cents > 0`). `buildImportPreview` assembles rows + errors + probable
+`DuplicateCandidate[]` (same date + amount + normalized description, conservative) + counts;
+the importer's `ImportSource` (`minhas-financas` | `nubank`) is kept independent of the DB
+`import_source` enum, mapped in the web action. The web Importação flow is two-step: a preview
+server action reads the file IN-MEMORY and discards it (only normalized rows reach the browser),
+then an explicit confirm action books one transaction per kept row against a UI-chosen target
+account and persists ONLY an `import_batch` summary (source/status/counts) — never the file.
+Category mapping is per-row in the web layer (optional/uncategorized allowed), never inside the
+importer. `packages/db` gained RLS-scoped `findAccountsByHousehold` + `createImportBatch`.
+
+**Why:** Adapters behind one contract make new sources (XLSX, other banks) additive, not
+rewrites. Keeping the importer pure preserves the package boundary and lets both the importer
+and (later) the bot reuse the same normalization/categorization. Preview-before-write +
+visible duplicates + discard-after-process satisfy the spec's "ver antes de gravar",
+"detecção de duplicatas prováveis", and "arquivo original não é persistido".
+
+**Revisit if:** XLSX or Minhas Financas CSV variants need real handling; imports get large
+enough to need bulk/transactional writes (see tech debt); or imported rows must link to their
+batch (`import_batch_id`) / populate `import_rows`.
+
