@@ -40,6 +40,46 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 **Status:** open
 
+## 2026-06-22: Web auth uses a hand-rolled SSR cookie adapter instead of `@supabase/ssr`
+
+**Area:** apps/web (`lib/supabase.ts`)
+
+**Impact:** The recommended package `@supabase/ssr` was not installable in the offline
+build environment (absent from the pnpm store/cache, no network). The server Supabase
+client is built directly on `@supabase/supabase-js` with a custom Next.js cookie
+`storage` adapter (the same mechanism `@supabase/ssr` uses internally) and a single
+JSON session cookie. Token refresh (`autoRefreshToken`) is disabled in this path, and
+the cookie write path is best-effort (silently ignored in read-only server contexts).
+This is functionally sufficient for the guard/allowlist flow but is not the maintained
+upstream integration.
+
+**Current workaround:** Custom adapter + `getUser()` validation; the pure access policy
+(`evaluateAccess`) is independent of the wiring and fully tested.
+
+**Revisit trigger:** When the npm registry is reachable, run
+`pnpm add @supabase/ssr --filter @family-finance/web` and replace `lib/supabase.ts`
+with `createServerClient` from `@supabase/ssr` (add a middleware/route handler for the
+OAuth code exchange + session refresh). Remove the manual cookie adapter.
+
+**Status:** open
+
+## 2026-06-22: `@supabase/supabase-js` symlinked manually into apps/web
+
+**Area:** apps/web/node_modules, pnpm-lock.yaml
+
+**Impact:** Because `pnpm install` could not run online, the new `@supabase/supabase-js`
+direct dependency of `apps/web` was linked by hand into `apps/web/node_modules` and the
+lockfile was updated via `pnpm install --offline --lockfile-only`. node_modules is
+gitignored, so the symlink is local-only; CI/fresh clones rely on a normal `pnpm install`
+recreating it from the (now correct) lockfile entry.
+
+**Current workaround:** Manual symlink + lockfile-only update; build and typecheck are green.
+
+**Revisit trigger:** First clean `pnpm install` with network — verify the dep resolves
+without the manual symlink and the lockfile is unchanged.
+
+**Status:** open
+
 ## Entry Format
 
 ```md

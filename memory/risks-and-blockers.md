@@ -30,6 +30,19 @@ Use this file for active risks, unresolved questions, and external dependencies 
 
 **Status:** open
 
+### Web auth wiring not exercised against real Supabase
+
+**Risk:** The web auth shell (Task 4) builds and the allowlist policy is unit-tested, but
+the Supabase session/cookie flow and Google OAuth round-trip were NOT run against a real
+Supabase project (no secrets/network in this environment). The custom cookie storage
+adapter and OAuth code exchange may need a middleware/route handler for real session
+refresh.
+
+**Mitigation:** Pure `evaluateAccess` is fully tested; build is green with placeholders.
+Tech debt logged to swap in `@supabase/ssr` and add OAuth callback handling.
+
+**Status:** open
+
 ## Blockers
 
 No active blockers recorded yet.

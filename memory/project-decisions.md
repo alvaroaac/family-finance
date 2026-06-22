@@ -58,6 +58,27 @@ Record durable decisions here. Keep entries short and revisit them when new evid
 
 **Revisit if:** A second household/shared-resource scenario appears; real invoice timing is needed (installment `due_month` derivation changes); or generated Supabase types replace the hand-written ones. Details in `docs/decisions/0002-rls-and-household-isolation.md`.
 
+## 2026-06-22: Web Auth Shell And Lazy Config
+
+**Decision:** The web shell (`apps/web`) guards the whole `(app)` route group server-side
+in `app/(app)/layout.tsx` via `requireAuthorizedUser()`. The entire auth/allowlist policy
+is a single pure function `evaluateAccess(principal, allowlist)` in `apps/web/lib/auth.ts`
+(no Next/Supabase imports), so it is unit-tested in isolation: no session → `/login`;
+authenticated email not on `AUTHORIZED_EMAILS` → access-denied (`/login?denied=1`);
+allowlisted email → authorized. `packages/config` exposes only LAZY env getters
+(`getServerEnv`, `getSupabasePublicConfig`, `getAuthorizedEmails`, `isEmailAuthorized`) and
+never validates/throws at import, so `next build` compiles without real secrets
+(placeholders are used). Google login is initiated by a server action calling Supabase
+`signInWithOAuth({ provider: "google" })`.
+
+**Why:** Every feature must land on a real protected surface from day one; keeping the
+policy pure prevents auth logic leaking into components and makes it testable. Build must
+stay green in CI without secrets.
+
+**Revisit if:** `@supabase/ssr` becomes installable (swap the hand-rolled cookie adapter,
+add OAuth code-exchange middleware); more members need access; or env validation should be
+enforced at runtime startup rather than per-request.
+
 ## 2026-06-22: Import Privacy
 
 **Decision:** Do not permanently store raw imported CSV/XLSX files.
