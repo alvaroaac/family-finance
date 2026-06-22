@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@family-finance/categorization": "workspace:*",
     "@family-finance/config": "workspace:*",
     "@family-finance/db": "workspace:*",
     "@family-finance/domain": "workspace:*",

@@ -28,7 +28,15 @@ Use this file for active risks, unresolved questions, and external dependencies 
 
 **Mitigation:** Every suggestion must include confidence and explanation metadata.
 
-**Status:** open
+**2026-06-22 (Task 6):** Substantially mitigated at the engine level. Every
+`CategorySuggestion` from `packages/categorization` carries `confidence` (0..1),
+`explanation`, and `source`; low confidence (< `CONFIDENCE.HIGH` 0.85) sets
+`requiresConfirmation`; novel categories return `pending_new_category` (never
+auto-created); memory patterns are listed/disabled/explained in the web Categorias UI.
+Remaining exposure is only the actual AI provider quality (Task 8) and that the web UI
+was not exercised against real Supabase.
+
+**Status:** watching
 
 ### Web auth wiring not exercised against real Supabase
 

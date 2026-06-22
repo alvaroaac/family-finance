@@ -70,4 +70,15 @@ export {
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   getMonthlySummary,
+  // Category cleanup + categorization memory (Task 6).
+  findHouseholdIdForCurrentUser,
+  listAllCategories,
+  listAllSubcategories,
+  archiveCategory,
+  restoreCategory,
+  mergeCategory,
+  listCategorizationMemory,
+  listActiveCategorizationMemory,
+  createCategorizationMemory,
+  setCategorizationMemoryActive,
 } from "./repositories.js";

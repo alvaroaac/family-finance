@@ -79,6 +79,36 @@ stay green in CI without secrets.
 add OAuth code-exchange middleware); more members need access; or env validation should be
 enforced at runtime startup rather than per-request.
 
+## 2026-06-22: Categorization Engine Contracts
+
+**Decision:** `packages/categorization` is a PURE, hybrid, explainable suggestion engine
+shared by the importer and the Telegram bot. `suggestCategory(context, { catalog,
+memoryStore?, rules?, ai? })` resolves in strict trust order: categorization memory
+(confirmed corrections) -> deterministic rules -> AI fallback. Every `CategorySuggestion`
+carries `macroCategoryId`/`subcategoryId` (real catalog ids only), a `confidence` in
+[0,1], an `explanation`, and a `source`. The richer `CategorizationResult` adds `status`
+(`matched` | `pending_new_category` | `uncategorized`) and `requiresConfirmation`. Rules
+and AI return category/subcategory by NAME; the engine resolves names against the
+household catalog, so an unknown macro category becomes `pending_new_category` and is
+NEVER auto-created (anti-sprawl). Confidence below `CONFIDENCE.HIGH` (0.85) sets
+`requiresConfirmation`. The memory store and the AI categorizer are INTERFACES only
+(`CategorizationMemoryStore`, `AiCategorizer`); the package imports only
+`@family-finance/domain` + `zod` — never web/bot/db clients or an AI impl (Task 8 adds
+`ai.ts`). Memory entries reference real ids and are created from confirmed corrections /
+old-name mappings; they can be listed, disabled, and explained
+(`descrição contém "X" -> Cat > Sub`). Category cleanup (archive/restore/merge) lives in
+`packages/db` repositories, household-scoped, and is driven from the web Categorias UI via
+guarded server actions.
+
+**Why:** One engine for both channels keeps categorization logic in a single pure place;
+explicit confidence + explanation + pending-new-category satisfy the spec's "categorias que
+aprendem", auditability, and "novas categorias ficam pendentes" / "confiança baixa pede
+confirmação" rules. Interfaces preserve the package boundary and let Task 8 plug in AI.
+
+**Revisit if:** Amount/date-based rules are needed (reserved context fields exist); the
+catalog grows large enough that linear name resolution matters; or merges need atomicity
+(move to a Postgres RPC — see tech debt).
+
 ## 2026-06-22: Import Privacy
 
 **Decision:** Do not permanently store raw imported CSV/XLSX files.

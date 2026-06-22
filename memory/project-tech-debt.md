@@ -80,6 +80,42 @@ without the manual symlink and the lockfile is unchanged.
 
 **Status:** open
 
+## 2026-06-22: Category merge is not atomic (no DB transaction)
+
+**Area:** packages/db (`repositories.ts` `mergeCategory`), apps/web Categorias UI
+
+**Impact:** `mergeCategory` re-points transactions, installment_groups, installments,
+subcategories, and categorization_memory, then archives the source — as a sequence of
+separate household-scoped `UPDATE`s. Supabase JS has no client-side transaction, so a
+mid-sequence failure could leave a partially-merged state.
+
+**Current workaround:** Each step is idempotent and re-runnable (filtering on the source
+category id), so re-invoking the merge converges. Acceptable for the single-household MVP.
+
+**Revisit trigger:** If merges become frequent or larger, move the logic into a Postgres
+`SECURITY DEFINER` RPC function so the whole merge runs in one transaction.
+
+**Status:** open
+
+## 2026-06-22: Web build needs `extensionAlias` for NodeNext `.js` specifiers
+
+**Area:** apps/web (`next.config.mjs`)
+
+**Impact:** Shared packages are authored as NodeNext ESM TS and expose `main: src/index.ts`,
+so intra-package relative imports carry explicit `.js` extensions. Next's webpack uses
+Bundler-style resolution and does not rewrite those, which broke the web build once a page
+imported a transitively-`.js`-importing module (`@family-finance/db` repositories,
+`@family-finance/categorization`). Fixed by adding the packages to `transpilePackages` and a
+webpack `resolve.extensionAlias` mapping `.js` -> `.ts`/`.tsx`. This is a build-config
+workaround, not the package's own concern.
+
+**Current workaround:** `extensionAlias` in `next.config.mjs`; build is green.
+
+**Revisit trigger:** If shared packages start publishing built `dist` output with proper
+`exports`/`types` maps (instead of raw `src`), the alias can be removed.
+
+**Status:** open
+
 ## Entry Format
 
 ```md

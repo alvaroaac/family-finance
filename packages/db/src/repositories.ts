@@ -24,6 +24,8 @@ import type {
   TransactionInsert,
   CategoryRow,
   SubcategoryRow,
+  CategorizationMemoryRow,
+  CategorizationMemoryInsert,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -232,4 +234,234 @@ export async function getMonthlySummary(
   }
   const rows = (data ?? []) as Pick<TransactionRow, "kind" | "amount_cents">[];
   return summarizeMonth(month, rows);
+}
+
+// ---------------------------------------------------------------------------
+// Category cleanup + categorization memory (Task 6).
+//
+// These power the web "Categorias" cleanup UI: list (including archived)
+// categories/subcategories, archive a category, merge one category into
+// another, and manage explainable categorization-memory patterns. Every call
+// is RLS-scoped by `household_id`; we also pass `household_id` explicitly so a
+// caller can never widen the blast radius beyond a single household.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the single household the authenticated caller belongs to. RLS limits
+ * `household_members` to the caller's own active memberships, so this returns
+ * the first active membership's `household_id`. The MVP has exactly one
+ * household ("Casa"); this avoids hardcoding the seed id in the app.
+ */
+export async function findHouseholdIdForCurrentUser(
+  client: AppSupabaseClient,
+): Promise<string | null> {
+  const { data, error } = await client
+    .from("household_members")
+    .select("household_id")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  if (error !== null) {
+    throw new Error(`findHouseholdIdForCurrentUser failed: ${error.message}`);
+  }
+  return data?.household_id ?? null;
+}
+
+/** List ALL macro categories for a household (active and archived), by name. */
+export async function listAllCategories(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<CategoryRow[]> {
+  const { data, error } = await client
+    .from("categories")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listAllCategories failed: ${error.message}`);
+  }
+  return (data ?? []) as CategoryRow[];
+}
+
+/** List ALL subcategories for a household (active and archived), by name. */
+export async function listAllSubcategories(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<SubcategoryRow[]> {
+  const { data, error } = await client
+    .from("subcategories")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listAllSubcategories failed: ${error.message}`);
+  }
+  return (data ?? []) as SubcategoryRow[];
+}
+
+/**
+ * Archive (soft-delete) a macro category by setting `is_active = false`. The
+ * category is kept so historical transactions retain their reference; it just
+ * disappears from active pickers. RLS scopes the update to the household.
+ */
+export async function archiveCategory(
+  client: AppSupabaseClient,
+  householdId: string,
+  categoryId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("categories")
+    .update({ is_active: false })
+    .eq("household_id", householdId)
+    .eq("id", categoryId);
+  if (error !== null) {
+    throw new Error(`archiveCategory failed: ${error.message}`);
+  }
+}
+
+/** Re-activate an archived macro category. */
+export async function restoreCategory(
+  client: AppSupabaseClient,
+  householdId: string,
+  categoryId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("categories")
+    .update({ is_active: true })
+    .eq("household_id", householdId)
+    .eq("id", categoryId);
+  if (error !== null) {
+    throw new Error(`restoreCategory failed: ${error.message}`);
+  }
+}
+
+/**
+ * Merge `sourceCategoryId` into `targetCategoryId`: re-point every transaction,
+ * installment group, installment, and subcategory from the source onto the
+ * target, then archive the now-empty source category. This consolidates an
+ * existing taxonomy instead of creating new categories — the spec's anti-sprawl
+ * goal. All updates are household-scoped.
+ *
+ * Note: this is a best-effort sequence of scoped updates (Supabase JS has no
+ * client-side transaction); each step is idempotent and re-runnable.
+ */
+export async function mergeCategory(
+  client: AppSupabaseClient,
+  householdId: string,
+  sourceCategoryId: string,
+  targetCategoryId: string,
+): Promise<void> {
+  if (sourceCategoryId === targetCategoryId) {
+    throw new Error("mergeCategory: source and target must differ");
+  }
+
+  const repoint = async (
+    table: "transactions" | "installment_groups" | "installments",
+  ): Promise<void> => {
+    const { error } = await client
+      .from(table)
+      .update({ category_id: targetCategoryId })
+      .eq("household_id", householdId)
+      .eq("category_id", sourceCategoryId);
+    if (error !== null) {
+      throw new Error(`mergeCategory(${table}) failed: ${error.message}`);
+    }
+  };
+
+  await repoint("transactions");
+  await repoint("installment_groups");
+  await repoint("installments");
+
+  // Move subcategories under the target macro category.
+  const { error: subError } = await client
+    .from("subcategories")
+    .update({ category_id: targetCategoryId })
+    .eq("household_id", householdId)
+    .eq("category_id", sourceCategoryId);
+  if (subError !== null) {
+    throw new Error(`mergeCategory(subcategories) failed: ${subError.message}`);
+  }
+
+  // Re-point active memory entries so learned patterns follow the merge.
+  const { error: memError } = await client
+    .from("categorization_memory")
+    .update({ category_id: targetCategoryId })
+    .eq("household_id", householdId)
+    .eq("category_id", sourceCategoryId);
+  if (memError !== null) {
+    throw new Error(`mergeCategory(memory) failed: ${memError.message}`);
+  }
+
+  await archiveCategory(client, householdId, sourceCategoryId);
+}
+
+/** List all categorization-memory patterns for a household (active first). */
+export async function listCategorizationMemory(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<CategorizationMemoryRow[]> {
+  const { data, error } = await client
+    .from("categorization_memory")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("is_active", { ascending: false })
+    .order("pattern", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listCategorizationMemory failed: ${error.message}`);
+  }
+  return (data ?? []) as CategorizationMemoryRow[];
+}
+
+/** Only the ACTIVE memory patterns for a household — used by the engine store. */
+export async function listActiveCategorizationMemory(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<CategorizationMemoryRow[]> {
+  const { data, error } = await client
+    .from("categorization_memory")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("is_active", true)
+    .order("pattern", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listActiveCategorizationMemory failed: ${error.message}`);
+  }
+  return (data ?? []) as CategorizationMemoryRow[];
+}
+
+/**
+ * Insert a categorization-memory pattern (e.g. mapping an old/imported category
+ * name to a current one, or recording a confirmed correction). `household_id`
+ * is required on the payload and double-enforced by RLS.
+ */
+export async function createCategorizationMemory(
+  client: AppSupabaseClient,
+  payload: CategorizationMemoryInsert,
+): Promise<CategorizationMemoryRow> {
+  const { data, error } = await client
+    .from("categorization_memory")
+    .insert(payload)
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createCategorizationMemory failed: ${error.message}`);
+  }
+  return data as CategorizationMemoryRow;
+}
+
+/** Enable/disable a memory pattern without deleting it (auditable history). */
+export async function setCategorizationMemoryActive(
+  client: AppSupabaseClient,
+  householdId: string,
+  memoryId: string,
+  isActive: boolean,
+): Promise<void> {
+  const { error } = await client
+    .from("categorization_memory")
+    .update({ is_active: isActive })
+    .eq("household_id", householdId)
+    .eq("id", memoryId);
+  if (error !== null) {
+    throw new Error(`setCategorizationMemoryActive failed: ${error.message}`);
+  }
 }
