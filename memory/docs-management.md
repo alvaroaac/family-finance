@@ -59,14 +59,14 @@ Use this file to keep documentation useful, current, and easy for agents to navi
 
 ## Required Docs Before MVP Release
 
-- [ ] `README.md` with setup, commands, and links.
-- [ ] Supabase local setup runbook.
-- [ ] Telegram bot setup runbook.
-- [ ] Vercel deployment runbook.
-- [ ] MVP verification runbook.
+- [x] `README.md` with setup, commands, and links (Task 11: env table, Supabase setup, Telegram webhook, Vercel deploy, runbook link).
+- [x] Supabase local setup — covered by `docs/runbooks/local-mvp-verification.md` (§2) + `docs/decisions/0002-rls-and-household-isolation.md`. A standalone `docs/runbooks/supabase-local-setup.md` remains optional.
+- [x] Telegram bot setup — covered by the README + `docs/runbooks/local-mvp-verification.md` (§4) + `.env.example`.
+- [x] Vercel deployment — covered by the README "Vercel deploy" section.
+- [x] MVP verification runbook (`docs/runbooks/local-mvp-verification.md`, Task 11).
 - [x] Architecture decision for package boundaries (`docs/decisions/0001-package-boundaries.md`).
-- [x] RLS / household isolation decision (`docs/decisions/0002-rls-and-household-isolation.md`), which also contains the local Supabase migration runbook. A standalone `docs/runbooks/supabase-local-setup.md` is still pending for the release gate.
-- [ ] Current implementation plan.
+- [x] RLS / household isolation decision (`docs/decisions/0002-rls-and-household-isolation.md`), which also contains the local Supabase migration runbook.
+- [x] Current implementation plan (`docs/superpowers/plans/2026-06-22-family-finance-mvp-agent-plan.md`).
 
 ## Docs Debt
 

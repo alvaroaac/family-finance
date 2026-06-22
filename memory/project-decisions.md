@@ -269,3 +269,36 @@ need invoice-accurate timing (card pressure would shift the first parcel by clos
 generic transaction review screen is added (link pending items to it); or the dashboard needs
 charts/projections (currently out of scope).
 
+## 2026-06-22: E2E Review Loop / MVP Verification (Task 11)
+
+**Decision:** The MVP story is verified at two layers. (1) A RUNNABLE OFFLINE
+service-level integration test (`apps/web/integration/mvp-flow.test.ts`, run by
+`pnpm test`) drives the WHOLE story — seed "Casa" + two users -> import synthetic
+fixtures via `@family-finance/importers` + confirm -> correct a category ->
+`categorization_memory` record created and the next `suggestCategory` flips to
+`source: "memory"` -> a Telegram text transaction through the REAL bot
+`startConversation`/`applyMessage` flow + confirm -> a parcelado purchase via the
+domain `createInstallmentPlan` -> compute the dashboard via the SAME six Task 10
+db reads `loadDashboardData` composes and ASSERT exact reconciliation (income,
+expenses incl. imports + bot tx, card pressure = direct + this-month parcel). It
+runs the REAL db repository I/O against an in-memory fake Supabase client
+(`apps/web/integration/fake-supabase.ts`); only the Postgres/network edge is
+faked, so the dashboard numbers come from production code paths. (2) A Playwright
+browser spec (`apps/web/e2e/mvp-flow.spec.ts` + `playwright.config.ts`) covers the
+same story against a real dev server + Supabase; `@playwright/test` is a web
+devDependency so it typechecks, and `apps/web/vitest.config.ts` EXCLUDES `e2e/**`
+so Playwright specs never run under vitest. Offline test is named `*.test.ts`
+(vitest) and the browser spec `*.spec.ts` (Playwright) to avoid collision. Local
+verification is documented in `docs/runbooks/local-mvp-verification.md` and the
+README (env, Supabase, Telegram webhook, Vercel).
+
+**Why:** The MVP is only useful if import, bot entry, correction, and dashboard
+agree. Proving reconciliation through the real shared packages (with only the DB
+edge faked) is a stronger guarantee than the per-helper unit tests, and keeps
+`pnpm test` green with no network/secrets while still shipping the real-infra
+browser path.
+
+**Revisit if:** A real local Supabase run replaces the fake (then the browser
+spec can fully assert numbers); new repository query shapes need fake support;
+or the bot gets an HTTP entry point that the browser/online E2E should exercise.
+

@@ -116,7 +116,19 @@ naturally by Task 11 (end-to-end review loop).
 
 **Owner:** agent (web)
 
-**Status:** open
+**2026-06-22 (Task 11):** Substantially mitigated OFFLINE. The end-to-end review-loop
+integration test (`apps/web/integration/mvp-flow.test.ts`) runs all six dashboard reads
+(`getMonthlySummary`, `getCardPressure`, `findUpcomingInstallments`,
+`findRecentTransactions`, `findPendingReviewTransactions`, `listInvestmentBuckets`) — the
+REAL repository I/O — against an in-memory fake Supabase client, after seeding + importing +
+correcting + a bot entry + a parcelado purchase, and ASSERTS the totals reconcile exactly
+(income 500000; expenses 25790 incl. imports + bot Uber; card pressure 43200 = 3200 direct +
+40000 June parcel). Remaining exposure: the reads were still NOT run against a LIVE Supabase
+(no RLS scoping verified end-to-end, no real network). The Playwright spec
+(`apps/web/e2e/mvp-flow.spec.ts`) and the runbook cover that real-infra step; it has not been
+executed here.
+
+**Status:** watching
 
 ## Blockers
 
