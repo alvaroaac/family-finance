@@ -42,6 +42,14 @@ Record durable decisions here. Keep entries short and revisit them when new evid
 
 **Revisit if:** Build/typecheck times justify TypeScript project references, or a tool stops resolving workspace package names and aliases become necessary.
 
+## 2026-06-22: Domain Core Contracts
+
+**Decision:** The pure domain (`packages/domain`) is the single source of transaction rules. Money is BRL integer cents only (`MoneyAmount`). Transactions are created via `createTransactionDraft` and parcelado card purchases via `createInstallmentPlan`, both returning a structured `DomainResult` (`ok:false` carries field/code/message errors) instead of throwing for expected user mistakes. Payment is a discriminated union (`account` | `card`); responsibility defaults to household unless `responsibleUserId` is set; `createdByUserId` is always recorded. Installments carry a month attribution (`dueMonth` = `YYYY-MM`), not invoice timing.
+
+**Why:** Web app and bot must create transactions through one contract so logic is not re-implemented per channel. Month-attributed installments let the dashboard project card pressure without a full invoice system.
+
+**Revisit if:** Multi-currency is needed, or the dashboard needs real invoice/closing-day timing (then installment due-month derivation must use `CreditCard.closingDay`).
+
 ## 2026-06-22: Import Privacy
 
 **Decision:** Do not permanently store raw imported CSV/XLSX files.

@@ -28,6 +28,18 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 **Status:** open
 
+## 2026-06-22: Installments use month attribution, not invoice timing
+
+**Area:** packages/domain (`installments.ts`), and future cards/dashboard UI
+
+**Impact:** Installments carry a `dueMonth` (`YYYY-MM`) attributed by purchase month, not a real invoice due date. `CreditCard.closingDay`/`dueDay` exist but are unused. Card pressure projections are approximate (no closing-day shift of the first installment).
+
+**Current workaround:** Dashboard projections group by `dueMonth`, which is enough for the MVP summary and keeps generation stable and invoice-free.
+
+**Revisit trigger:** When the dashboard/cards UI needs accurate invoice timing (Task 9/10), derive the first installment's month from the card closing day.
+
+**Status:** open
+
 ## Entry Format
 
 ```md
