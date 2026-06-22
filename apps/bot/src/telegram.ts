@@ -56,6 +56,11 @@ export type IncomingTextMessage = {
   text: string;
 };
 
+const telegramFileSchema = z.object({
+  file_id: z.string(),
+  mime_type: z.string().optional(),
+});
+
 const telegramUpdateSchema = z.object({
   update_id: z.number(),
   message: z
@@ -66,6 +71,8 @@ const telegramUpdateSchema = z.object({
         .object({ id: z.union([z.number(), z.string()]) })
         .optional(),
       text: z.string().optional(),
+      voice: telegramFileSchema.optional(),
+      audio: telegramFileSchema.optional(),
     })
     .optional(),
 });
@@ -95,6 +102,44 @@ export function parseTelegramUpdate(raw: unknown): IncomingTextMessage | null {
     chatId: String(message.chat.id),
     fromId: String(message.from.id),
     text: message.text,
+  };
+}
+
+/** A normalized inbound voice/audio message extracted from a Telegram update. */
+export type IncomingVoiceMessage = {
+  updateId: number;
+  chatId: string;
+  fromId: string;
+  /** Telegram file_id of the voice/audio attachment. */
+  fileId: string;
+  /** Optional MIME type (e.g. "audio/ogg"). */
+  mimeType?: string;
+};
+
+/**
+ * Parse a raw Telegram update into a normalized voice/audio message, or `null`
+ * when the update carries no usable voice/audio (e.g. text-only). Audio is then
+ * transcribed and routed through the SAME confirmation flow as text.
+ */
+export function parseTelegramVoice(raw: unknown): IncomingVoiceMessage | null {
+  const result = telegramUpdateSchema.safeParse(raw);
+  if (!result.success) {
+    return null;
+  }
+  const message = result.data.message;
+  if (message === undefined || message.from === undefined) {
+    return null;
+  }
+  const file = message.voice ?? message.audio;
+  if (file === undefined) {
+    return null;
+  }
+  return {
+    updateId: result.data.update_id,
+    chatId: String(message.chat.id),
+    fromId: String(message.from.id),
+    fileId: file.file_id,
+    mimeType: file.mime_type,
   };
 }
 

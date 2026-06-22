@@ -13,7 +13,11 @@
  * kept per chat in an in-memory store for the MVP (single small household).
  */
 
-import { getServerEnv } from "@family-finance/config";
+import {
+  getServerEnv,
+  getLlmConfig,
+  getTranscriptionConfig,
+} from "@family-finance/config";
 import {
   createDatabaseClient,
   createTransaction as dbCreateTransaction,
@@ -27,25 +31,39 @@ import {
 } from "@family-finance/db";
 import {
   suggestCategory,
+  createAiCategorizer,
   type CategoryCatalog,
   type CategorizationContext,
   type CategorizationMemoryStore,
   type CategorizationMemoryEntry,
+  type AiCategorizer,
 } from "@family-finance/categorization";
 
 import {
   createHttpTelegramClient,
   createNoopTelegramClient,
   parseTelegramUpdate,
+  parseTelegramVoice,
   verifyWebhookSecret,
   type TelegramClient,
 } from "./telegram.js";
 import {
   startConversation,
+  startConversationFromAudio,
   applyMessage,
   type ConversationDeps,
   type ConversationState,
 } from "./conversation.js";
+import {
+  createHttpAudioDownloader,
+  type AudioDownloader,
+  type TranscribeDeps,
+  type TranscriptionProvider,
+} from "./audio.js";
+import {
+  createAnthropicCompletionClient,
+  createOpenAiTranscriptionProvider,
+} from "./providers.js";
 
 /** Per-chat in-memory conversation store (MVP — one small household). */
 const conversations = new Map<string, ConversationState>();
@@ -85,6 +103,7 @@ function memoryStoreFor(
 async function buildDeps(
   client: AppSupabaseClient,
   householdId: string,
+  ai?: AiCategorizer,
 ): Promise<ConversationDeps> {
   const categories = await findCategoriesByHousehold(client, householdId);
   const subcategoryLists = await Promise.all(
@@ -116,8 +135,10 @@ async function buildDeps(
     // household-membership lookup. Without a names table we leave it to the house
     // unless a future task wires display names -> member ids.
     resolveResponsibleUserId: () => undefined,
+    // AI is the LAST resort inside the engine: it fires only when memory and
+    // deterministic rules are uncertain. Omitted when no AI key is configured.
     suggestCategory: (context: CategorizationContext) =>
-      suggestCategory(context, { catalog, memoryStore }),
+      suggestCategory(context, { catalog, memoryStore, ai }),
     createTransaction: async (draft) => {
       const persisted = await dbCreateTransaction(client, draft);
       return { id: persisted.id };
@@ -155,19 +176,50 @@ export async function handleWebhook(args: {
   client: AppSupabaseClient;
   telegram: TelegramClient;
   householdId: string;
+  /** Optional AI categorizer (categorization fallback). Omitted = none. */
+  ai?: AiCategorizer;
+  /** Optional transcription wiring for voice notes. Omitted = audio rejected. */
+  transcribe?: TranscribeDeps;
 }): Promise<WebhookResult> {
   if (!verifyWebhookSecret(args.secretHeader, args.configuredSecret)) {
     return { status: 401, body: { ok: false, error: "invalid secret" } };
   }
 
-  const message = parseTelegramUpdate(args.rawBody);
-  if (message === null) {
-    // Nothing actionable (non-text / unsupported update) — acknowledge so
-    // Telegram does not retry.
+  const deps = await buildDeps(args.client, args.householdId, args.ai);
+
+  // 1. Voice/audio: transcribe, then run the SAME confirmation flow as text.
+  const voice = parseTelegramVoice(args.rawBody);
+  if (voice !== null) {
+    if (args.transcribe === undefined) {
+      // Audio is unsupported without a transcription provider; ask for text.
+      await args.telegram.sendMessage(
+        voice.chatId,
+        "Transcrição de áudio não está configurada. Envie o lançamento por texto, por favor.",
+      );
+      return { status: 200, body: { ok: true } };
+    }
+    const outcome = await startConversationFromAudio(
+      {
+        voice: { fileId: voice.fileId, mimeType: voice.mimeType },
+        fromUserId: voice.fromId,
+      },
+      deps,
+      args.transcribe,
+      { today: todayIso() },
+    );
+    conversations.set(voice.chatId, outcome.state);
+    await args.telegram.sendMessage(voice.chatId, outcome.reply);
     return { status: 200, body: { ok: true } };
   }
 
-  const deps = await buildDeps(args.client, args.householdId);
+  // 2. Text.
+  const message = parseTelegramUpdate(args.rawBody);
+  if (message === null) {
+    // Nothing actionable (unsupported update) — acknowledge so Telegram does
+    // not retry.
+    return { status: 200, body: { ok: true } };
+  }
+
   const existing = conversations.get(message.chatId);
 
   let reply: string;
@@ -223,6 +275,38 @@ export async function startBot(): Promise<{
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
     : createNoopTelegramClient();
 
+  // AI categorization fallback — only when an Anthropic key is configured.
+  const llm = getLlmConfig();
+  const ai: AiCategorizer | undefined =
+    llm.isConfigured && llm.apiKey !== undefined
+      ? createAiCategorizer(
+          createAnthropicCompletionClient({
+            apiKey: llm.apiKey,
+            model: llm.model,
+          }),
+        )
+      : undefined;
+
+  // Voice transcription — only when both a bot token (to fetch the file) and a
+  // transcription (OpenAI) key are configured. Raw audio is never persisted:
+  // `transcribeVoiceMessage` deletes the temp file in a `finally`.
+  const transcription = getTranscriptionConfig();
+  let transcribe: TranscribeDeps | undefined;
+  if (
+    env.TELEGRAM_BOT_TOKEN &&
+    transcription.isConfigured &&
+    transcription.apiKey !== undefined
+  ) {
+    const downloader: AudioDownloader = createHttpAudioDownloader(
+      env.TELEGRAM_BOT_TOKEN,
+    );
+    const provider: TranscriptionProvider = createOpenAiTranscriptionProvider({
+      apiKey: transcription.apiKey,
+      model: transcription.model,
+    });
+    transcribe = { downloader, provider };
+  }
+
   return {
     handle: (rawBody, secretHeader) =>
       handleWebhook({
@@ -232,6 +316,8 @@ export async function startBot(): Promise<{
         client,
         telegram,
         householdId,
+        ai,
+        transcribe,
       }),
   };
 }
@@ -243,14 +329,30 @@ export {
 export {
   verifyWebhookSecret,
   parseTelegramUpdate,
+  parseTelegramVoice,
   createHttpTelegramClient,
   type TelegramClient,
   type IncomingTextMessage,
+  type IncomingVoiceMessage,
 } from "./telegram.js";
 export {
   startConversation,
+  startConversationFromAudio,
   applyMessage,
   type ConversationState,
   type ConversationDeps,
   type ConversationOutcome,
+  type BotInputKind,
 } from "./conversation.js";
+export {
+  transcribeVoiceMessage,
+  createHttpAudioDownloader,
+  type AudioDownloader,
+  type TranscriptionProvider,
+  type TranscribeDeps,
+  type VoiceMessageRef,
+} from "./audio.js";
+export {
+  createAnthropicCompletionClient,
+  createOpenAiTranscriptionProvider,
+} from "./providers.js";

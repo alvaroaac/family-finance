@@ -204,3 +204,37 @@ fallback) extend the SAME flow after transcription so audio never bypasses confi
 serverless/multi-replica (conversation state must move out of the in-memory per-chat map);
 or a real names→member-id resolver is added for responsible-person corrections.
 
+## 2026-06-22: Bot Audio + AI Fallback (Task 8)
+
+**Decision:** Audio and LLM interpretation EXTEND the same bot flow; they are not new
+write paths. A Telegram voice/audio note is downloaded to a UNIQUE OS-temp file
+(`apps/bot/src/audio.ts` `transcribeVoiceMessage`), transcribed behind an injected
+`TranscriptionProvider`, and the temp file is DELETED in a `finally` (on success, on
+transcribe error, and on download error) — RAW AUDIO IS NEVER PERSISTED (disk or DB).
+The transcription is then fed through `startConversationFromAudio` -> `startConversation`
+with `inputKind:"audio"`, so audio always yields an editable confirmation and never
+bypasses it; audio drafts set `needsAttention` and log `input_kind:"audio"` to
+`bot_interactions`. The categorization AI fallback is a concrete `AiCategorizer`
+(`packages/categorization/src/ai.ts` `createAiCategorizer`) behind an injected
+`AiCompletionClient` interface, so `@family-finance/categorization` stays PURE (zod +
+siblings, NO AI SDK). The engine already calls AI only as a LAST resort (after memory +
+deterministic rules miss); every AI suggestion carries confidence + explanation, novel
+categories stay `pending_new_category` (never auto-created), and any AI failure
+(throw/empty/non-JSON/missing fields) degrades to `null` (deterministic safe fallback).
+AI config is provider-agnostic, lazy, and build-safe (`packages/config/src/ai.ts`):
+default LLM = Anthropic Claude (`DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"`, overridable
+via `ANTHROPIC_MODEL`, key `ANTHROPIC_API_KEY`); transcription = OpenAI Whisper reusing
+`OPENAI_API_KEY`. All AI keys are OPTIONAL — absent keys disable AI fallback / reject voice
+notes politely while the deterministic bot stays fully functional. Concrete provider HTTP
+clients live at the bot edge (`apps/bot/src/providers.ts`) using the global `fetch` (no new
+runtime deps); keys come only from `@family-finance/config` (never hardcoded).
+
+**Why:** Satisfies the spec's "Transcrição de áudio e interpretação de mensagens complexas",
+"IA quando houver ambiguidade", "Confiança baixa pede confirmação", and the privacy rule
+that raw audio is not retained — while keeping the financial/categorization logic in the
+shared pure packages and preserving package boundaries (AI behind interfaces).
+
+**Revisit if:** Complex/incomplete TEXT messages should also be LLM-interpreted (currently
+LLM is wired for categorization fallback + transcription); a different AI provider is
+chosen; or provider calls need timeouts/retries/size limits (see tech debt).
+

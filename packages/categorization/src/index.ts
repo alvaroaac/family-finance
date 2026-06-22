@@ -51,6 +51,9 @@ export type { CategorizationContext } from "./context.js";
 
 // ---------------------------------------------------------------------------
 // Core suggestion contract.
+//
+// NOTE: the concrete AI categorizer (`ai.ts`) is re-exported at the BOTTOM of
+// this module, after the types it depends on are declared.
 // ---------------------------------------------------------------------------
 
 /** Where a suggestion came from — drives explainability and trust. */
@@ -318,3 +321,11 @@ export async function suggestCategory(
   // 4. Nothing matched.
   return UNCATEGORIZED;
 }
+
+// ---------------------------------------------------------------------------
+// Concrete AI fallback (kept pure: behind an injected completion client).
+// Re-exported here so consumers import everything from one entry point.
+// ---------------------------------------------------------------------------
+
+export { createAiCategorizer, buildCategorizationPrompt } from "./ai.js";
+export type { AiCompletionClient } from "./ai.js";

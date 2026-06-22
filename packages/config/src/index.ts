@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+// Provider-agnostic AI config/selection (lazy, build-safe). Re-exported so
+// `@family-finance/config` is the single entry point.
+export {
+  DEFAULT_ANTHROPIC_MODEL,
+  DEFAULT_TRANSCRIPTION_MODEL,
+  getLlmConfig,
+  getTranscriptionConfig,
+} from "./ai.js";
+export type {
+  LlmConfig,
+  LlmProvider,
+  TranscriptionConfig,
+  TranscriptionProvider,
+} from "./ai.js";
+
 /**
  * Environment schema for the Family Finance apps.
  *
@@ -13,6 +28,11 @@ export const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
+  // AI providers (all optional so builds compile without secrets):
+  // - ANTHROPIC_API_KEY powers the default LLM text-interpretation provider
+  //   (Anthropic Claude); OPENAI_API_KEY powers audio transcription (e.g. Whisper).
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_MODEL: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   AUTHORIZED_EMAILS: z.string().min(1),
   HOUSEHOLD_SLUG: z.string().min(1).default("casa")

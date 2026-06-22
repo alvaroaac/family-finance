@@ -44,6 +44,14 @@ auto-created); memory patterns are listed/disabled/explained in the web Categori
 Remaining exposure is only the actual AI provider quality (Task 8) and that the web UI
 was not exercised against real Supabase.
 
+**2026-06-22 (Task 8):** The concrete AI fallback (`createAiCategorizer`) now also
+carries confidence + explanation, fires only as a last resort (after memory + rules),
+keeps novel categories pending, and degrades to `null` on any provider failure. The
+AI completion client (Anthropic) and transcription provider (OpenAI) are injected
+interfaces; their REAL HTTP response parsing was NOT exercised against the live
+providers (no network/secrets). Remaining exposure: actual provider quality + the
+untested edge `providers.ts` parsing.
+
 **Status:** watching
 
 ### Web auth wiring not exercised against real Supabase
@@ -77,6 +85,14 @@ message becomes a confirmed transaction. Decide how the bot authenticates to Sup
 RLS scopes writes to the Casa household.
 
 **Owner:** agent (bot)
+
+**2026-06-22 (Task 8):** `handleWebhook` now also routes voice/audio (transcribe ->
+same confirmation flow) and threads the AI categorization fallback. Still NOT exercised
+against real Telegram + Supabase, and additionally the Anthropic (categorization) and
+OpenAI (transcription) provider HTTP calls were not run against the real providers. When
+verifying the webhook, also send a real voice note (confirm temp audio is deleted and the
+transcription becomes a confirmed transaction) and a message that should trigger the AI
+fallback.
 
 **Status:** open
 

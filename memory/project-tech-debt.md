@@ -235,6 +235,43 @@ ready for a real resolver.
 
 **Status:** open
 
+## 2026-06-22: AI provider HTTP clients are untested + lack timeout/size limits (Task 8)
+
+**Area:** apps/bot (`providers.ts`, `audio.ts`)
+
+**Impact:** The edge `createAnthropicCompletionClient` (categorization fallback) and
+`createOpenAiTranscriptionProvider` (Whisper) parse real provider HTTP responses but are
+not unit-tested against the live API shapes (no network/secrets) — only the interfaces they
+implement are mock-tested. There is also no timeout/retry on the provider `fetch` calls and
+no max size/duration guard before a voice note is downloaded to a temp file and transcribed.
+
+**Current workaround:** Any AI failure degrades to the deterministic path
+(`createAiCategorizer` returns `null`; transcription errors still delete the temp file).
+Family-MVP volumes and single-user usage keep risk low.
+
+**Revisit trigger:** Before real deployment — verify provider response parsing with live
+keys, add a `fetch` timeout + graceful "tente por texto" fallback, and a voice-note size
+guard in `transcribeVoiceMessage`.
+
+**Status:** open
+
+## 2026-06-22: LLM not used for complex/incomplete TEXT interpretation (Task 8)
+
+**Area:** apps/bot, packages/categorization
+
+**Impact:** The spec lists AI for "interpretação de mensagens complexas ou incompletas", but
+the LLM is currently wired only for the categorization fallback and audio transcription. A
+complex/ambiguous TEXT message still relies on the deterministic `parser.ts` and only gets
+AI help for the category, not for value/date/intent extraction.
+
+**Current workaround:** Deterministic parser flags uncertain fields and the confirmation
+flow lets the user correct them; the categorization AI fallback covers ambiguous categories.
+
+**Revisit trigger:** If deterministic text parsing proves too weak in real use — add an LLM
+text-interpretation step (reuse `AiCompletionClient`) behind the same confirmation flow.
+
+**Status:** open
+
 ## Entry Format
 
 ```md

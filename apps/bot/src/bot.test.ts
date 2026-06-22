@@ -8,10 +8,23 @@ import {
 } from "./telegram.js";
 import {
   startConversation,
+  startConversationFromAudio,
   applyMessage,
   type ConversationDeps,
   type ConversationState,
 } from "./conversation.js";
+import {
+  transcribeVoiceMessage,
+  type AudioDownloader,
+  type TranscribeDeps,
+  type TranscriptionProvider,
+} from "./audio.js";
+import {
+  suggestCategory,
+  createAiCategorizer,
+  CONFIDENCE,
+} from "@family-finance/categorization";
+import { existsSync } from "node:fs";
 
 /** Read the first argument of the first call to a vitest mock (typed). */
 function firstCallArg(mock: ReturnType<typeof vi.fn>): unknown {
@@ -317,5 +330,160 @@ describe("conversation: text -> confirmed transaction", () => {
     // Still cannot save without a value.
     expect(createTransaction).not.toHaveBeenCalled();
     expect(confirmAttempt.reply).toMatch(/valor/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// audio.ts — temp-file lifecycle (download -> transcribe -> ALWAYS delete)
+// ---------------------------------------------------------------------------
+
+describe("transcribeVoiceMessage (temp audio handling)", () => {
+  function downloaderReturning(bytes: Uint8Array): AudioDownloader {
+    return { async download() { return bytes; } };
+  }
+
+  it("deletes the temporary audio file after transcription (no raw audio retained)", async () => {
+    let tempPath = "";
+    const provider: TranscriptionProvider = {
+      async transcribe(filePath: string) {
+        tempPath = filePath;
+        expect(existsSync(filePath)).toBe(true);
+        return "Mercado 50 reais hoje";
+      },
+    };
+    const text = await transcribeVoiceMessage(
+      { fileId: "v1", mimeType: "audio/ogg" },
+      { downloader: downloaderReturning(new Uint8Array([1, 2, 3])), provider },
+    );
+    expect(text).toBe("Mercado 50 reais hoje");
+    expect(existsSync(tempPath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// conversation.ts — audio entry goes through the SAME confirmation flow.
+// ---------------------------------------------------------------------------
+
+describe("audio entry: transcription -> confirmation (never bypasses confirm)", () => {
+  let deps: ConversationDeps;
+  let createTransaction: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    ({ deps, createTransaction } = buildDeps());
+  });
+
+  function transcribeDeps(text: string): TranscribeDeps {
+    return {
+      downloader: { async download() { return new Uint8Array([7, 7]); } },
+      provider: { async transcribe() { return text; } },
+    };
+  }
+
+  it("a voice note produces an editable confirmation and does NOT auto-save", async () => {
+    const outcome = await startConversationFromAudio(
+      { voice: { fileId: "v-audio-1" }, fromUserId: "user-alvaro" },
+      deps,
+      transcribeDeps("Uber 32 reais ontem"),
+      { today: TODAY },
+    );
+
+    // Same confirmation state as text — audio never bypasses confirmation.
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.inputKind).toBe("audio");
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(outcome.reply).toMatch(/confirm/i);
+    expect(outcome.reply).toContain("32,00");
+  });
+
+  it("logs the saved audio transaction with inputKind 'audio'", async () => {
+    const logInteraction = vi.fn(async () => undefined);
+    ({ deps, createTransaction } = buildDeps({ logInteraction }));
+
+    const started = await startConversationFromAudio(
+      { voice: { fileId: "v-audio-2" }, fromUserId: "user-alvaro" },
+      deps,
+      transcribeDeps("Uber 32 reais ontem"),
+      { today: TODAY },
+    );
+    const confirmed = await applyMessage(started.state, "confirmar", deps);
+
+    expect(confirmed.state.status).toBe("saved");
+    expect(createTransaction).toHaveBeenCalledTimes(1);
+    const logged = firstCallArg(logInteraction) as { inputKind: string };
+    expect(logged.inputKind).toBe("audio");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AI fallback wired through the conversation's categorization dependency.
+// The engine + concrete categorizer are exercised together with a MOCKED AI
+// completion client (no network). Covers: high-confidence rule does NOT call AI;
+// low-confidence/novel deterministic parse triggers AI; AI result still
+// requires confirmation.
+// ---------------------------------------------------------------------------
+
+describe("AI fallback in the bot flow", () => {
+  // A small real catalog so the categorization engine resolves names to ids.
+  const aiCatalog = {
+    householdId: "house-1",
+    categories: [
+      { id: "cat-transport", name: "Transporte" },
+      { id: "cat-food", name: "Alimentação" },
+    ],
+    subcategories: [
+      { id: "sub-delivery", categoryId: "cat-food", name: "Delivery" },
+    ],
+  };
+
+  it("high-confidence deterministic rule does NOT call AI", async () => {
+    const complete = vi.fn(async () => "{}");
+    const ai = createAiCategorizer({ complete });
+    const { deps, createTransaction } = buildDeps({
+      catalog: aiCatalog,
+      suggestCategory: (context) =>
+        suggestCategory(context, { catalog: aiCatalog, ai }),
+    });
+
+    // "IFOOD" is a deterministic rule -> AI must never be reached.
+    const outcome = await startConversation(
+      { text: "IFOOD lanche 40 reais hoje", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(outcome.state.draft.categoryId).toBe("cat-food");
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("low-confidence deterministic parse triggers AI fallback, and the AI result still requires confirmation", async () => {
+    // No deterministic rule matches this description -> engine reaches AI.
+    const complete = vi.fn(async () =>
+      JSON.stringify({
+        categoryName: "Transporte",
+        subcategoryName: null,
+        confidence: CONFIDENCE.LOW, // deliberately low
+        explanation: "IA achou que é transporte, com baixa confiança.",
+      }),
+    );
+    const ai = createAiCategorizer({ complete });
+    const { deps, createTransaction } = buildDeps({
+      catalog: aiCatalog,
+      suggestCategory: (context) =>
+        suggestCategory(context, { catalog: aiCatalog, ai }),
+    });
+
+    const outcome = await startConversation(
+      { text: "transacao obscura 9981 50 reais hoje", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    // AI was consulted, the suggestion was applied, but confirmation is needed.
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(outcome.state.draft.categoryId).toBe("cat-transport");
+    expect(outcome.state.draft.needsAttention).toBe(true);
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(createTransaction).not.toHaveBeenCalled();
   });
 });

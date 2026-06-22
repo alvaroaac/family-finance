@@ -28,6 +28,11 @@ import type {
 
 import { parseExpenseText } from "./parser.js";
 import {
+  transcribeVoiceMessage,
+  type TranscribeDeps,
+  type VoiceMessageRef,
+} from "./audio.js";
+import {
   cancelledMessage,
   confirmationMessage,
   correctionAppliedMessage,
@@ -63,6 +68,8 @@ export type DraftInProgress = {
   accountId?: string;
   /** The linked Telegram identity that launched the entry (lançado por). */
   createdByUserId: string;
+  /** Whether this entry originated from a typed message or a voice note. */
+  inputKind: BotInputKind;
   /** True when something needs the user's attention (low confidence/missing). */
   needsAttention: boolean;
 };
@@ -84,10 +91,13 @@ export type ConversationOutcome = {
 // Dependencies (injected so the bot reuses shared services and tests mock I/O).
 // ---------------------------------------------------------------------------
 
+/** Whether an entry came from a typed message or a transcribed voice note. */
+export type BotInputKind = "text" | "audio";
+
 /** What we persist when logging a bot interaction for auditing. */
 export type BotInteractionLog = {
   fromUserId: string;
-  inputKind: "text";
+  inputKind: BotInputKind;
   messageText: string;
   confidence?: number;
   explanation?: string;
@@ -122,6 +132,8 @@ export type StartInput = {
   text: string;
   /** The linked Telegram identity (createdByUserId / lançado por). */
   fromUserId: string;
+  /** Origin of the message; defaults to "text". Audio passes "audio". */
+  inputKind?: BotInputKind;
 };
 
 export type StartOptions = {
@@ -206,13 +218,17 @@ export async function startConversation(
 ): Promise<ConversationOutcome> {
   const parsed = parseExpenseText(input.text, { today: options.today });
 
+  const inputKind: BotInputKind = input.inputKind ?? "text";
   const draft: DraftInProgress = {
     amountCents: parsed.amountCents,
     description: parsed.description,
     occurredOn: parsed.occurredOn ?? options.today,
     kind: "expense",
     createdByUserId: input.fromUserId,
+    inputKind,
     needsAttention:
+      // Audio always merits a closer look (transcription can be imperfect).
+      inputKind === "audio" ||
       parsed.uncertainFields.includes("amount") ||
       parsed.uncertainFields.includes("date"),
   };
@@ -248,6 +264,40 @@ export async function startConversation(
     draft,
   };
   return { state, reply: replyForDraft(draft, deps.catalog) };
+}
+
+// ---------------------------------------------------------------------------
+// Audio entry: transcribe -> SAME confirmation flow (never a separate write path).
+// ---------------------------------------------------------------------------
+
+export type StartFromAudioInput = {
+  /** The Telegram voice/audio attachment to transcribe. */
+  voice: VoiceMessageRef;
+  /** The linked Telegram identity (createdByUserId / lançado por). */
+  fromUserId: string;
+};
+
+/**
+ * Handle a voice note: download + transcribe it (raw audio is deleted in
+ * `transcribeVoiceMessage`'s `finally`), then run the transcription through the
+ * EXACT same `startConversation` flow as a typed message. Audio therefore always
+ * produces an editable confirmation summary and NEVER bypasses confirmation.
+ *
+ * Transcription dependencies are injected (downloader + provider), so the bot
+ * reuses one transcription provider and unit tests mock it with no network.
+ */
+export async function startConversationFromAudio(
+  input: StartFromAudioInput,
+  deps: ConversationDeps,
+  transcribeDeps: TranscribeDeps,
+  options: StartOptions,
+): Promise<ConversationOutcome> {
+  const text = await transcribeVoiceMessage(input.voice, transcribeDeps);
+  return startConversation(
+    { text, fromUserId: input.fromUserId, inputKind: "audio" },
+    deps,
+    options,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +425,7 @@ async function persist(
 
   await deps.logInteraction({
     fromUserId: draft.createdByUserId,
-    inputKind: "text",
+    inputKind: draft.inputKind,
     messageText,
     explanation: draft.categoryExplanation,
     transactionId: persisted.id,
