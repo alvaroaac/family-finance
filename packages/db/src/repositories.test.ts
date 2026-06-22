@@ -10,8 +10,13 @@ import {
   creditCardInsert,
   installmentGroupInsertFromPlan,
   installmentInsertsFromPlan,
+  currentMonth,
+  summarizeCardPressure,
+  mapUpcomingInstallment,
+  mapDashboardTransaction,
+  needsReview,
 } from "./repositories.js";
-import type { TransactionRow } from "./types.js";
+import type { TransactionRow, InstallmentRow } from "./types.js";
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
 const USER = "11111111-1111-1111-1111-111111111111";
@@ -293,5 +298,120 @@ describe("installment plan inserts", () => {
     expect(rows[0]?.amount_cents).toBe(240000);
     expect(rows[0]?.responsibility_scope).toBe("user");
     expect(rows[0]?.responsible_user_id).toBe(USER);
+  });
+});
+
+// --- Task 10: dashboard aggregation ----------------------------------------
+
+describe("currentMonth", () => {
+  it("formats a date as YYYY-MM in UTC with zero-padding", () => {
+    expect(currentMonth(new Date("2026-03-09T12:00:00Z"))).toBe("2026-03");
+    expect(currentMonth(new Date("2026-12-31T23:59:59Z"))).toBe("2026-12");
+  });
+});
+
+describe("summarizeCardPressure", () => {
+  it("sums card expenses and due installments, ignoring card refunds (income)", () => {
+    const pressure = summarizeCardPressure(
+      "2026-06",
+      [
+        { kind: "expense", amount_cents: 5000 },
+        { kind: "expense", amount_cents: 12000 },
+        { kind: "income", amount_cents: 3000 }, // refund on the card: ignored
+      ],
+      [{ amount_cents: 33334 }, { amount_cents: 33333 }],
+    );
+    expect(pressure).toEqual({
+      month: "2026-06",
+      directCents: 17000,
+      installmentCents: 66667,
+      totalCents: 83667,
+    });
+  });
+
+  it("returns zeros when nothing is on the card this month", () => {
+    expect(summarizeCardPressure("2026-07", [], [])).toEqual({
+      month: "2026-07",
+      directCents: 0,
+      installmentCents: 0,
+      totalCents: 0,
+    });
+  });
+});
+
+describe("mapUpcomingInstallment", () => {
+  it("maps an installment row to the dashboard upcoming-parcel shape", () => {
+    const row: Pick<
+      InstallmentRow,
+      | "id"
+      | "description"
+      | "number"
+      | "installment_count"
+      | "amount_cents"
+      | "due_month"
+      | "credit_card_id"
+    > = {
+      id: "inst-1",
+      description: "Geladeira",
+      number: 2,
+      installment_count: 3,
+      amount_cents: 33333,
+      due_month: "2026-07",
+      credit_card_id: "card-1",
+    };
+    expect(mapUpcomingInstallment(row)).toEqual({
+      id: "inst-1",
+      description: "Geladeira",
+      number: 2,
+      installmentCount: 3,
+      amountCents: 33333,
+      dueMonth: "2026-07",
+      creditCardId: "card-1",
+    });
+  });
+});
+
+describe("mapDashboardTransaction", () => {
+  it("flags category presence and card payment", () => {
+    expect(
+      mapDashboardTransaction({
+        id: "tx-1",
+        kind: "expense",
+        amount_cents: 1599,
+        occurred_on: "2026-06-22",
+        description: "Café",
+        category_id: null,
+        credit_card_id: "card-1",
+      }),
+    ).toEqual({
+      id: "tx-1",
+      kind: "expense",
+      amountCents: 1599,
+      occurredOn: "2026-06-22",
+      description: "Café",
+      hasCategory: false,
+      onCard: true,
+    });
+
+    expect(
+      mapDashboardTransaction({
+        id: "tx-2",
+        kind: "income",
+        amount_cents: 250000,
+        occurred_on: "2026-06-01",
+        description: "Salário",
+        category_id: "cat-1",
+        credit_card_id: null,
+      }),
+    ).toMatchObject({ hasCategory: true, onCard: false });
+  });
+});
+
+describe("needsReview", () => {
+  it("flags uncategorized expense/income but not transfers or categorized rows", () => {
+    expect(needsReview({ kind: "expense", category_id: null })).toBe(true);
+    expect(needsReview({ kind: "income", category_id: null })).toBe(true);
+    expect(needsReview({ kind: "expense", category_id: "cat-1" })).toBe(false);
+    expect(needsReview({ kind: "transfer", category_id: null })).toBe(false);
   });
 });

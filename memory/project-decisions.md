@@ -238,3 +238,34 @@ shared pure packages and preserving package boundaries (AI behind interfaces).
 LLM is wired for categorization fallback + transcription); a different AI provider is
 chosen; or provider calls need timeouts/retries/size limits (see tech debt).
 
+## 2026-06-22: Monthly Dashboard Prototype (Task 10)
+
+**Decision:** The dashboard (`apps/web/app/(app)/dashboard`) is a deliberately SIMPLE
+read-only monthly summary of the Casa workspace — no charts/projections/comparative
+analytics (post-MVP). A `queries.ts` data layer (`loadDashboardData`) assembles the
+current month from household-scoped `@family-finance/db` reads and NEVER throws: any
+failure (no household resolved, unreachable DB, placeholder secrets at build time)
+collapses to a zeroed/empty state with a `loadError` the page surfaces, so the page always
+renders. The page is a `requireAuthorizedUser()`-guarded server component with
+`dynamic = "force-dynamic"`. The aggregation lives in PURE, unit-tested db helpers:
+`summarizeCardPressure` (card pressure = current-month card-paid `expense` transactions +
+installment parcels with `due_month = month`; card refunds excluded), `needsReview`
+(pending review = non-transfer transaction with `category_id IS NULL`, the MVP "precisa de
+revisão" signal — there is no status column), `currentMonth`, `mapDashboardTransaction`,
+`mapUpcomingInstallment`. Money is formatted from BRL cents by `formatBrlCents` in
+`queries.ts` and passed into the three presentational components (`summary-card`,
+`recent-transactions`, `pending-review-list`), which hold no data fetching or domain logic.
+Caixinhas are shown as a count + names only (the `investment_buckets` schema has no balance
+— see tech debt), satisfying the spec's "posição simples".
+
+**Why:** Spec §08 says the dashboard must validate that recorded data is useful (quanto
+entrou, quanto sobrou, pressão dos cartões, caixinhas, o que precisa de revisão) without
+proving future insights. Keeping aggregation in pure db helpers preserves the package
+boundary and keeps it testable with no live DB; graceful degradation keeps the web build
+green without secrets.
+
+**Revisit if:** Caixinhas need real balances (new migration + dashboard wiring); installments
+need invoice-accurate timing (card pressure would shift the first parcel by closing day); a
+generic transaction review screen is added (link pending items to it); or the dashboard needs
+charts/projections (currently out of scope).
+

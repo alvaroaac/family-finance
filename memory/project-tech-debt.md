@@ -14,9 +14,14 @@ Investimentos UI is name-only; the dashboard cannot show bucket balances.
 
 **Current workaround:** Caixinhas are modeled as labeled buckets without a tracked amount.
 
+**2026-06-22 (Task 10):** The dashboard ships with this limitation: the "Caixinhas" summary
+card shows the bucket COUNT + names (spec §08 "posição simples"), not a balance, and there is
+no caixinhas-balance query. When a balance is added (below), extend `loadDashboardData` to
+surface it.
+
 **Revisit trigger:** Add a `balance_cents` (or a simple positions table) via a new
-migration when the dashboard (Task 10) needs to show caixinha balances; then extend the
-`investment_buckets` repos + Investimentos UI.
+migration when the dashboard needs to show caixinha balances; then extend the
+`investment_buckets` repos + Investimentos UI + the dashboard caixinhas card.
 
 **Status:** open
 

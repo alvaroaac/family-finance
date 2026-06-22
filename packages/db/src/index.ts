@@ -60,6 +60,9 @@ export type {
   AppSupabaseClient,
   PersistedTransaction,
   MonthlySummary,
+  CardPressure,
+  UpcomingInstallment,
+  DashboardTransaction,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -103,4 +106,14 @@ export {
   updateCreditCard,
   deleteCreditCard,
   createInstallmentPurchase,
+  // Dashboard aggregation + reads (Task 10).
+  currentMonth,
+  summarizeCardPressure,
+  mapUpcomingInstallment,
+  mapDashboardTransaction,
+  needsReview,
+  getCardPressure,
+  findUpcomingInstallments,
+  findRecentTransactions,
+  findPendingReviewTransactions,
 } from "./repositories.js";

@@ -96,6 +96,28 @@ fallback.
 
 **Status:** open
 
+### Dashboard reads not exercised against real Supabase (Task 10)
+
+**Type:** risk
+
+**Impact:** The monthly dashboard (`apps/web/app/(app)/dashboard`) typechecks, builds with
+placeholder secrets, and its pure aggregation helpers (`summarizeCardPressure`, `needsReview`,
+`mapDashboardTransaction`, `mapUpcomingInstallment`, `currentMonth`) are unit-tested. But the
+six RLS-scoped reads it composes (`getMonthlySummary`, `getCardPressure`,
+`findUpcomingInstallments`, `findRecentTransactions`, `findPendingReviewTransactions`,
+`listInvestmentBuckets`) were NOT run against a live Supabase (no secrets/network here). The
+`loadDashboardData` failure path collapses any error to a zeroed/empty state, so a
+mis-scoped query or wrong filter could silently look like "empty month" rather than erroring.
+
+**Next action:** When Supabase is reachable, confirm each dashboard read returns
+household-scoped data, that card pressure reconciles with seeded card transactions +
+installments, and that the zero state appears only when the month is genuinely empty. Covered
+naturally by Task 11 (end-to-end review loop).
+
+**Owner:** agent (web)
+
+**Status:** open
+
 ## Blockers
 
 No active blockers recorded yet.

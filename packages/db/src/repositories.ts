@@ -158,6 +158,143 @@ export function summarizeMonth(
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard aggregation (Task 10).
+//
+// The monthly dashboard is deliberately simple (no charts/projections). These
+// pure reducers turn RLS-scoped row sets into the numbers the dashboard cards
+// show, so the aggregation stays unit-testable without a database.
+// ---------------------------------------------------------------------------
+
+/** Current `YYYY-MM` month string in UTC. Pure given `now`. */
+export function currentMonth(now: Date = new Date()): string {
+  const year = now.getUTCFullYear();
+  const monthNum = now.getUTCMonth() + 1;
+  return `${year}-${String(monthNum).padStart(2, "0")}`;
+}
+
+export type CardPressure = {
+  month: string;
+  /** Sum of this month's card transactions booked directly on a card. */
+  directCents: number;
+  /** Sum of this month's installment parcels (due_month === month). */
+  installmentCents: number;
+  /** directCents + installmentCents — the month's total card pressure. */
+  totalCents: number;
+};
+
+/**
+ * Reduce this month's card-paid transactions and due installments into a single
+ * card-pressure figure. Pure: callers fetch the rows (RLS-scoped) and pass them
+ * here. Only `expense` card transactions count toward direct pressure; refunds
+ * on a card (income) are ignored to keep the "how much the cards cost" reading
+ * honest.
+ */
+export function summarizeCardPressure(
+  month: string,
+  cardTransactions: Pick<TransactionRow, "kind" | "amount_cents">[],
+  dueInstallments: Pick<InstallmentRow, "amount_cents">[],
+): CardPressure {
+  let directCents = 0;
+  for (const tx of cardTransactions) {
+    if (tx.kind === "expense") {
+      directCents += tx.amount_cents;
+    }
+  }
+  let installmentCents = 0;
+  for (const parcel of dueInstallments) {
+    installmentCents += parcel.amount_cents;
+  }
+  return {
+    month,
+    directCents,
+    installmentCents,
+    totalCents: directCents + installmentCents,
+  };
+}
+
+/** One upcoming installment parcel, surfaced for the dashboard. */
+export type UpcomingInstallment = {
+  id: string;
+  description: string;
+  number: number;
+  installmentCount: number;
+  amountCents: number;
+  dueMonth: string;
+  creditCardId: string;
+};
+
+/** Pure: map an installment row to the dashboard's upcoming-parcel shape. */
+export function mapUpcomingInstallment(
+  row: Pick<
+    InstallmentRow,
+    | "id"
+    | "description"
+    | "number"
+    | "installment_count"
+    | "amount_cents"
+    | "due_month"
+    | "credit_card_id"
+  >,
+): UpcomingInstallment {
+  return {
+    id: row.id,
+    description: row.description,
+    number: row.number,
+    installmentCount: row.installment_count,
+    amountCents: row.amount_cents,
+    dueMonth: row.due_month,
+    creditCardId: row.credit_card_id,
+  };
+}
+
+/** A transaction surfaced in the dashboard's "recent" / "pending review" lists. */
+export type DashboardTransaction = {
+  id: string;
+  kind: TransactionKind;
+  amountCents: number;
+  occurredOn: string;
+  description: string;
+  hasCategory: boolean;
+  onCard: boolean;
+};
+
+/** Pure: map a transaction row to the dashboard's list shape. */
+export function mapDashboardTransaction(
+  row: Pick<
+    TransactionRow,
+    | "id"
+    | "kind"
+    | "amount_cents"
+    | "occurred_on"
+    | "description"
+    | "category_id"
+    | "credit_card_id"
+  >,
+): DashboardTransaction {
+  return {
+    id: row.id,
+    kind: row.kind,
+    amountCents: row.amount_cents,
+    occurredOn: row.occurred_on,
+    description: row.description,
+    hasCategory: row.category_id !== null,
+    onCard: row.credit_card_id !== null,
+  };
+}
+
+/**
+ * Decide whether a transaction needs review. In the MVP an item "needs review"
+ * when it has no macro category yet (imports and quick bot entries can land
+ * uncategorized). Pure so the rule lives in one place. `transfer` rows are not
+ * surfaced for review.
+ */
+export function needsReview(
+  row: Pick<TransactionRow, "kind" | "category_id">,
+): boolean {
+  return row.kind !== "transfer" && row.category_id === null;
+}
+
+// ---------------------------------------------------------------------------
 // Repository functions (I/O — require an authenticated client).
 // ---------------------------------------------------------------------------
 
@@ -917,4 +1054,163 @@ export async function createInstallmentPurchase(
   }
 
   return { group, installments: (parcelRows ?? []) as InstallmentRow[] };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard reads (Task 10) — all RLS-scoped by household_id.
+// ---------------------------------------------------------------------------
+
+/**
+ * This month's card pressure for a household: direct card-paid transactions
+ * (occurred in the month) plus installment parcels attributed to the month.
+ * Reduced with the pure `summarizeCardPressure` helper.
+ */
+export async function getCardPressure(
+  client: AppSupabaseClient,
+  householdId: string,
+  month: string,
+): Promise<CardPressure> {
+  const { start, end } = monthDateRange(month);
+
+  const { data: txData, error: txError } = await client
+    .from("transactions")
+    .select("kind, amount_cents")
+    .eq("household_id", householdId)
+    .not("credit_card_id", "is", null)
+    .gte("occurred_on", start)
+    .lte("occurred_on", end);
+  if (txError !== null) {
+    throw new Error(`getCardPressure(transactions) failed: ${txError.message}`);
+  }
+
+  const { data: instData, error: instError } = await client
+    .from("installments")
+    .select("amount_cents")
+    .eq("household_id", householdId)
+    .eq("due_month", month);
+  if (instError !== null) {
+    throw new Error(`getCardPressure(installments) failed: ${instError.message}`);
+  }
+
+  return summarizeCardPressure(
+    month,
+    (txData ?? []) as Pick<TransactionRow, "kind" | "amount_cents">[],
+    (instData ?? []) as Pick<InstallmentRow, "amount_cents">[],
+  );
+}
+
+/**
+ * Upcoming installment parcels from this month onward, ordered by due month,
+ * limited for the dashboard. Surfaces "próximas parcelas relevantes".
+ */
+export async function findUpcomingInstallments(
+  client: AppSupabaseClient,
+  householdId: string,
+  fromMonth: string,
+  limit = 5,
+): Promise<UpcomingInstallment[]> {
+  const { data, error } = await client
+    .from("installments")
+    .select(
+      "id, description, number, installment_count, amount_cents, due_month, credit_card_id",
+    )
+    .eq("household_id", householdId)
+    .gte("due_month", fromMonth)
+    .order("due_month", { ascending: true })
+    .order("description", { ascending: true })
+    .limit(limit);
+  if (error !== null) {
+    throw new Error(`findUpcomingInstallments failed: ${error.message}`);
+  }
+  return (
+    (data ?? []) as Array<
+      Pick<
+        InstallmentRow,
+        | "id"
+        | "description"
+        | "number"
+        | "installment_count"
+        | "amount_cents"
+        | "due_month"
+        | "credit_card_id"
+      >
+    >
+  ).map(mapUpcomingInstallment);
+}
+
+/**
+ * The most recently recorded transactions for a household, newest first
+ * (by occurred date, then insert time). Used by the dashboard "recent" list.
+ */
+export async function findRecentTransactions(
+  client: AppSupabaseClient,
+  householdId: string,
+  limit = 8,
+): Promise<DashboardTransaction[]> {
+  const { data, error } = await client
+    .from("transactions")
+    .select(
+      "id, kind, amount_cents, occurred_on, description, category_id, credit_card_id",
+    )
+    .eq("household_id", householdId)
+    .order("occurred_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error !== null) {
+    throw new Error(`findRecentTransactions failed: ${error.message}`);
+  }
+  return (
+    (data ?? []) as Array<
+      Pick<
+        TransactionRow,
+        | "id"
+        | "kind"
+        | "amount_cents"
+        | "occurred_on"
+        | "description"
+        | "category_id"
+        | "credit_card_id"
+      >
+    >
+  ).map(mapDashboardTransaction);
+}
+
+/**
+ * Transactions that still need review (no macro category yet), newest first.
+ * The `category_id IS NULL` filter is the MVP "needs review" rule (see the pure
+ * `needsReview` helper); `transfer` rows are excluded.
+ */
+export async function findPendingReviewTransactions(
+  client: AppSupabaseClient,
+  householdId: string,
+  limit = 8,
+): Promise<DashboardTransaction[]> {
+  const { data, error } = await client
+    .from("transactions")
+    .select(
+      "id, kind, amount_cents, occurred_on, description, category_id, credit_card_id",
+    )
+    .eq("household_id", householdId)
+    .is("category_id", null)
+    .neq("kind", "transfer")
+    .order("occurred_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error !== null) {
+    throw new Error(`findPendingReviewTransactions failed: ${error.message}`);
+  }
+  return (
+    (data ?? []) as Array<
+      Pick<
+        TransactionRow,
+        | "id"
+        | "kind"
+        | "amount_cents"
+        | "occurred_on"
+        | "description"
+        | "category_id"
+        | "credit_card_id"
+      >
+    >
+  ).map(mapDashboardTransaction);
 }
