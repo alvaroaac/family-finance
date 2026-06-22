@@ -13,6 +13,8 @@ const NAV_ITEMS: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/transactions", label: "Transações" },
   { href: "/categories", label: "Categorias" },
   { href: "/accounts", label: "Contas" },
+  { href: "/cards", label: "Cartões" },
+  { href: "/investments", label: "Investimentos" },
   { href: "/settings", label: "Configurações" }
 ];
 

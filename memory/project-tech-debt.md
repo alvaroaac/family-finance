@@ -4,6 +4,38 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 ## Open Debt
 
+## 2026-06-22: Caixinhas have no balance / position (Task 9)
+
+**Area:** supabase schema + apps/web/app/(app)/investments
+
+**Impact:** Spec §08 says caixinhas support "saldo manual ou posição simples", but the
+committed `investment_buckets` table (migration 0001) has only `name` + `slug`. The
+Investimentos UI is name-only; the dashboard cannot show bucket balances.
+
+**Current workaround:** Caixinhas are modeled as labeled buckets without a tracked amount.
+
+**Revisit trigger:** Add a `balance_cents` (or a simple positions table) via a new
+migration when the dashboard (Task 10) needs to show caixinha balances; then extend the
+`investment_buckets` repos + Investimentos UI.
+
+**Status:** open
+
+## 2026-06-22: Parcelado purchase write is not transactional (Task 9)
+
+**Area:** packages/db `createInstallmentPurchase`
+
+**Impact:** Persisting a parcelado card purchase inserts the `installment_groups` row then
+the `installments` rows in two calls (Supabase JS has no client-side transaction). If the
+parcel insert fails, a childless group is orphaned.
+
+**Current workaround:** Errors surface to the user; the (empty) group can be retried/cleaned
+up. Acceptable at family-MVP volume. Mirrors the same note on `mergeCategory`.
+
+**Revisit trigger:** Move the group+parcels insert into a single Postgres RPC if partial
+writes become a real problem.
+
+**Status:** open
+
 ## 2026-06-22: Web lint has no eslint config
 
 **Area:** apps/web

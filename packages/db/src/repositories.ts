@@ -17,6 +17,9 @@ import {
   type MoneyAmount,
   type TransactionDraft,
   type TransactionKind,
+  type AccountKind,
+  type InvestmentBucketSlug,
+  type InstallmentPlan,
 } from "@family-finance/domain";
 import type {
   Database,
@@ -29,6 +32,10 @@ import type {
   ImportBatchRow,
   ImportBatchInsert,
   AccountRow,
+  InvestmentBucketRow,
+  CreditCardRow,
+  InstallmentGroupRow,
+  InstallmentRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -516,4 +523,398 @@ export async function setCategorizationMemoryActive(
   if (error !== null) {
     throw new Error(`setCategorizationMemoryActive failed: ${error.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Accounts, investment buckets (caixinhas), and credit cards (Task 9).
+//
+// These power the web "Contas", "Investimentos", and "Cartões" screens. Each
+// repository is household-scoped: callers pass an explicit `household_id` and RLS
+// double-enforces it. The pure `*Insert` builders carry no I/O so they are
+// unit-tested without a live database (they normalize names and shape the row).
+// ---------------------------------------------------------------------------
+
+/** Pure: build a household-scoped account insert payload (trims the name). */
+export function accountInsert(input: {
+  householdId: string;
+  kind: AccountKind;
+  name: string;
+}): Pick<AccountRow, "household_id" | "kind" | "name"> {
+  return {
+    household_id: input.householdId,
+    kind: input.kind,
+    name: input.name.trim(),
+  };
+}
+
+/** Pure: build a household-scoped investment bucket (caixinha) insert payload. */
+export function investmentBucketInsert(input: {
+  householdId: string;
+  slug: InvestmentBucketSlug;
+  name: string;
+}): Pick<InvestmentBucketRow, "household_id" | "slug" | "name"> {
+  return {
+    household_id: input.householdId,
+    slug: input.slug,
+    name: input.name.trim(),
+  };
+}
+
+/** Pure: build a household-scoped credit card insert payload. */
+export function creditCardInsert(input: {
+  householdId: string;
+  name: string;
+  closingDay?: number;
+  dueDay?: number;
+}): Pick<
+  CreditCardRow,
+  "household_id" | "name" | "closing_day" | "due_day"
+> {
+  return {
+    household_id: input.householdId,
+    name: input.name.trim(),
+    closing_day: input.closingDay ?? null,
+    due_day: input.dueDay ?? null,
+  };
+}
+
+/**
+ * Pure: map a domain `InstallmentPlan` parent group into the DB insert payload.
+ * The plan is produced by `@family-finance/domain createInstallmentPlan`, so the
+ * money split / due-month logic lives in the domain, not here.
+ */
+export function installmentGroupInsertFromPlan(
+  plan: InstallmentPlan,
+): Pick<
+  InstallmentGroupRow,
+  | "household_id"
+  | "credit_card_id"
+  | "description"
+  | "total_amount_cents"
+  | "installment_count"
+  | "purchased_on"
+  | "category_id"
+  | "subcategory_id"
+  | "responsibility_scope"
+  | "responsible_user_id"
+  | "created_by_user_id"
+> {
+  const { group } = plan;
+  const isUser = group.responsibility.scope === "user";
+  return {
+    household_id: group.householdId,
+    credit_card_id: group.creditCardId,
+    description: group.description,
+    total_amount_cents: group.totalAmount.cents,
+    installment_count: group.installmentCount,
+    purchased_on: group.purchasedOn,
+    category_id: group.category.categoryId ?? null,
+    subcategory_id: group.category.subcategoryId ?? null,
+    responsibility_scope: isUser ? "user" : "household",
+    responsible_user_id:
+      group.responsibility.scope === "user"
+        ? group.responsibility.userId
+        : null,
+    created_by_user_id: group.createdByUserId,
+  };
+}
+
+/**
+ * Pure: map a domain `InstallmentPlan`'s generated parcels into DB insert rows,
+ * linking each to the already-persisted parent group's id. The amounts and due
+ * months come straight from the domain plan (they sum back to the total).
+ */
+export function installmentInsertsFromPlan(
+  plan: InstallmentPlan,
+  installmentGroupId: string,
+): Array<
+  Pick<
+    InstallmentRow,
+    | "household_id"
+    | "installment_group_id"
+    | "credit_card_id"
+    | "number"
+    | "installment_count"
+    | "amount_cents"
+    | "due_month"
+    | "description"
+    | "category_id"
+    | "subcategory_id"
+    | "responsibility_scope"
+    | "responsible_user_id"
+    | "created_by_user_id"
+  >
+> {
+  return plan.installments.map((parcel) => {
+    const isUser = parcel.responsibility.scope === "user";
+    return {
+      household_id: parcel.householdId,
+      installment_group_id: installmentGroupId,
+      credit_card_id: parcel.creditCardId,
+      number: parcel.number,
+      installment_count: parcel.installmentCount,
+      amount_cents: parcel.amount.cents,
+      due_month: parcel.dueMonth,
+      description: parcel.description,
+      category_id: parcel.category.categoryId ?? null,
+      subcategory_id: parcel.category.subcategoryId ?? null,
+      responsibility_scope: isUser ? "user" : "household",
+      responsible_user_id:
+        parcel.responsibility.scope === "user"
+          ? parcel.responsibility.userId
+          : null,
+      created_by_user_id: parcel.createdByUserId,
+    };
+  });
+}
+
+// --- Accounts (conta corrente / conta investimento) ------------------------
+
+/** List ALL accounts for a household (checking + investment), ordered by name. */
+export async function listAccounts(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<AccountRow[]> {
+  const { data, error } = await client
+    .from("accounts")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listAccounts failed: ${error.message}`);
+  }
+  return (data ?? []) as AccountRow[];
+}
+
+/** Create an account (checking or investment). RLS scopes the insert. */
+export async function createAccount(
+  client: AppSupabaseClient,
+  input: { householdId: string; kind: AccountKind; name: string },
+): Promise<AccountRow> {
+  const { data, error } = await client
+    .from("accounts")
+    .insert(accountInsert(input))
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createAccount failed: ${error.message}`);
+  }
+  return data as AccountRow;
+}
+
+/** Rename an account. RLS scopes the update to the household. */
+export async function updateAccount(
+  client: AppSupabaseClient,
+  householdId: string,
+  accountId: string,
+  changes: { name: string },
+): Promise<void> {
+  const { error } = await client
+    .from("accounts")
+    .update({ name: changes.name.trim() })
+    .eq("household_id", householdId)
+    .eq("id", accountId);
+  if (error !== null) {
+    throw new Error(`updateAccount failed: ${error.message}`);
+  }
+}
+
+/** Delete an account. RLS scopes the delete; FK restrict blocks if in use. */
+export async function deleteAccount(
+  client: AppSupabaseClient,
+  householdId: string,
+  accountId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("accounts")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", accountId);
+  if (error !== null) {
+    throw new Error(`deleteAccount failed: ${error.message}`);
+  }
+}
+
+// --- Investment buckets (caixinhas) ----------------------------------------
+
+/** List investment buckets (caixinhas) for a household, ordered by name. */
+export async function listInvestmentBuckets(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<InvestmentBucketRow[]> {
+  const { data, error } = await client
+    .from("investment_buckets")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listInvestmentBuckets failed: ${error.message}`);
+  }
+  return (data ?? []) as InvestmentBucketRow[];
+}
+
+/**
+ * Create an investment bucket. The `(household_id, slug)` unique constraint means
+ * each caixinha kind (filhos / casa / independencia_financeira) exists once per
+ * household; RLS scopes the insert.
+ */
+export async function createInvestmentBucket(
+  client: AppSupabaseClient,
+  input: { householdId: string; slug: InvestmentBucketSlug; name: string },
+): Promise<InvestmentBucketRow> {
+  const { data, error } = await client
+    .from("investment_buckets")
+    .insert(investmentBucketInsert(input))
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createInvestmentBucket failed: ${error.message}`);
+  }
+  return data as InvestmentBucketRow;
+}
+
+/** Rename an investment bucket. RLS scopes the update to the household. */
+export async function updateInvestmentBucket(
+  client: AppSupabaseClient,
+  householdId: string,
+  bucketId: string,
+  changes: { name: string },
+): Promise<void> {
+  const { error } = await client
+    .from("investment_buckets")
+    .update({ name: changes.name.trim() })
+    .eq("household_id", householdId)
+    .eq("id", bucketId);
+  if (error !== null) {
+    throw new Error(`updateInvestmentBucket failed: ${error.message}`);
+  }
+}
+
+/** Delete an investment bucket. RLS scopes the delete to the household. */
+export async function deleteInvestmentBucket(
+  client: AppSupabaseClient,
+  householdId: string,
+  bucketId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("investment_buckets")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", bucketId);
+  if (error !== null) {
+    throw new Error(`deleteInvestmentBucket failed: ${error.message}`);
+  }
+}
+
+// --- Credit cards ----------------------------------------------------------
+
+/** List credit cards for a household, ordered by name. */
+export async function listCreditCards(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<CreditCardRow[]> {
+  const { data, error } = await client
+    .from("credit_cards")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listCreditCards failed: ${error.message}`);
+  }
+  return (data ?? []) as CreditCardRow[];
+}
+
+/** Create a credit card. RLS scopes the insert to the household. */
+export async function createCreditCard(
+  client: AppSupabaseClient,
+  input: {
+    householdId: string;
+    name: string;
+    closingDay?: number;
+    dueDay?: number;
+  },
+): Promise<CreditCardRow> {
+  const { data, error } = await client
+    .from("credit_cards")
+    .insert(creditCardInsert(input))
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createCreditCard failed: ${error.message}`);
+  }
+  return data as CreditCardRow;
+}
+
+/** Update a credit card's name and optional invoice days. */
+export async function updateCreditCard(
+  client: AppSupabaseClient,
+  householdId: string,
+  cardId: string,
+  changes: { name: string; closingDay?: number; dueDay?: number },
+): Promise<void> {
+  const { error } = await client
+    .from("credit_cards")
+    .update({
+      name: changes.name.trim(),
+      closing_day: changes.closingDay ?? null,
+      due_day: changes.dueDay ?? null,
+    })
+    .eq("household_id", householdId)
+    .eq("id", cardId);
+  if (error !== null) {
+    throw new Error(`updateCreditCard failed: ${error.message}`);
+  }
+}
+
+/** Delete a credit card. RLS scopes the delete; FK restrict blocks if in use. */
+export async function deleteCreditCard(
+  client: AppSupabaseClient,
+  householdId: string,
+  cardId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("credit_cards")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", cardId);
+  if (error !== null) {
+    throw new Error(`deleteCreditCard failed: ${error.message}`);
+  }
+}
+
+/**
+ * Persist a parcelado card purchase from a validated domain `InstallmentPlan`:
+ * insert the parent installment group, then its month-attributed parcels linked
+ * to the group's id. Returns the stored group + installment rows. RLS scopes
+ * every write to the household.
+ *
+ * Supabase JS has no client-side transaction; if the parcel insert fails after
+ * the group is written, the caller surfaces the error and the (childless) group
+ * can be retried/cleaned up. The amounts/due months come from the domain plan.
+ */
+export async function createInstallmentPurchase(
+  client: AppSupabaseClient,
+  plan: InstallmentPlan,
+): Promise<{ group: InstallmentGroupRow; installments: InstallmentRow[] }> {
+  const { data: groupRow, error: groupError } = await client
+    .from("installment_groups")
+    .insert(installmentGroupInsertFromPlan(plan))
+    .select("*")
+    .single();
+  if (groupError !== null) {
+    throw new Error(`createInstallmentPurchase(group) failed: ${groupError.message}`);
+  }
+  const group = groupRow as InstallmentGroupRow;
+
+  const { data: parcelRows, error: parcelError } = await client
+    .from("installments")
+    .insert(installmentInsertsFromPlan(plan, group.id))
+    .select("*");
+  if (parcelError !== null) {
+    throw new Error(
+      `createInstallmentPurchase(installments) failed: ${parcelError.message}`,
+    );
+  }
+
+  return { group, installments: (parcelRows ?? []) as InstallmentRow[] };
 }

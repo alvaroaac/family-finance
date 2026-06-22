@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { createTransactionDraft } from "@family-finance/domain";
+import { createTransactionDraft, createInstallmentPlan } from "@family-finance/domain";
 import {
   transactionInsertFromDraft,
   mapTransactionRow,
   monthDateRange,
   summarizeMonth,
+  accountInsert,
+  investmentBucketInsert,
+  creditCardInsert,
+  installmentGroupInsertFromPlan,
+  installmentInsertsFromPlan,
 } from "./repositories.js";
 import type { TransactionRow } from "./types.js";
 
@@ -141,5 +146,152 @@ describe("summarizeMonth", () => {
       expenseCents: 0,
       balanceCents: 0,
     });
+  });
+});
+
+// --- Task 9: accounts / investment buckets / credit cards inserts ----------
+
+describe("accountInsert", () => {
+  it("builds a household-scoped checking account insert payload", () => {
+    expect(
+      accountInsert({ householdId: HOUSEHOLD, kind: "checking", name: "  Conta Nubank  " }),
+    ).toEqual({
+      household_id: HOUSEHOLD,
+      kind: "checking",
+      name: "Conta Nubank",
+    });
+  });
+
+  it("builds an investment account insert payload", () => {
+    expect(
+      accountInsert({ householdId: HOUSEHOLD, kind: "investment", name: "Tesouro" }),
+    ).toEqual({
+      household_id: HOUSEHOLD,
+      kind: "investment",
+      name: "Tesouro",
+    });
+  });
+});
+
+describe("investmentBucketInsert", () => {
+  it("builds a caixinha insert payload keyed by slug", () => {
+    expect(
+      investmentBucketInsert({
+        householdId: HOUSEHOLD,
+        slug: "independencia_financeira",
+        name: "Aposentadoria",
+      }),
+    ).toEqual({
+      household_id: HOUSEHOLD,
+      slug: "independencia_financeira",
+      name: "Aposentadoria",
+    });
+  });
+});
+
+describe("creditCardInsert", () => {
+  it("includes optional closing/due days when provided", () => {
+    expect(
+      creditCardInsert({
+        householdId: HOUSEHOLD,
+        name: "Nubank Roxinho",
+        closingDay: 10,
+        dueDay: 17,
+      }),
+    ).toEqual({
+      household_id: HOUSEHOLD,
+      name: "Nubank Roxinho",
+      closing_day: 10,
+      due_day: 17,
+    });
+  });
+
+  it("nulls the optional day columns when omitted", () => {
+    expect(
+      creditCardInsert({ householdId: HOUSEHOLD, name: "Cartão simples" }),
+    ).toEqual({
+      household_id: HOUSEHOLD,
+      name: "Cartão simples",
+      closing_day: null,
+      due_day: null,
+    });
+  });
+});
+
+describe("installment plan inserts", () => {
+  it("maps a parcelado plan into one group insert and N installment inserts that sum to the total", () => {
+    const planResult = createInstallmentPlan({
+      householdId: HOUSEHOLD,
+      creditCardId: "card-1",
+      description: "Geladeira",
+      totalAmount: { currency: "BRL", cents: 100000 },
+      installmentCount: 3,
+      purchasedOn: "2026-06-15",
+      createdByUserId: USER,
+      category: { categoryId: "cat-casa" },
+    });
+    expect(planResult.ok).toBe(true);
+    if (!planResult.ok) return;
+
+    const group = installmentGroupInsertFromPlan(planResult.value);
+    expect(group).toMatchObject({
+      household_id: HOUSEHOLD,
+      credit_card_id: "card-1",
+      description: "Geladeira",
+      total_amount_cents: 100000,
+      installment_count: 3,
+      purchased_on: "2026-06-15",
+      category_id: "cat-casa",
+      subcategory_id: null,
+      responsibility_scope: "household",
+      responsible_user_id: null,
+      created_by_user_id: USER,
+    });
+
+    const groupId = "group-xyz";
+    const rows = installmentInsertsFromPlan(planResult.value, groupId);
+    expect(rows).toHaveLength(3);
+    // Earlier parcels absorb the remainder (100000 / 3 -> 33334, 33333, 33333).
+    expect(rows.map((r) => r.amount_cents)).toEqual([33334, 33333, 33333]);
+    expect(rows.reduce((sum, r) => sum + r.amount_cents, 0)).toBe(100000);
+    // Due months are contiguous starting at the purchase month.
+    expect(rows.map((r) => r.due_month)).toEqual(["2026-06", "2026-07", "2026-08"]);
+    expect(rows.map((r) => r.number)).toEqual([1, 2, 3]);
+    for (const row of rows) {
+      expect(row.installment_group_id).toBe(groupId);
+      expect(row.household_id).toBe(HOUSEHOLD);
+      expect(row.credit_card_id).toBe("card-1");
+      expect(row.installment_count).toBe(3);
+      expect(row.category_id).toBe("cat-casa");
+      expect(row.created_by_user_id).toBe(USER);
+      expect(row.responsibility_scope).toBe("household");
+      expect(row.responsible_user_id).toBeNull();
+    }
+  });
+
+  it("carries a responsible user through to the group and installments", () => {
+    const planResult = createInstallmentPlan({
+      householdId: HOUSEHOLD,
+      creditCardId: "card-2",
+      description: "Notebook",
+      totalAmount: { currency: "BRL", cents: 240000 },
+      installmentCount: 1,
+      purchasedOn: "2026-12-20",
+      createdByUserId: USER,
+      responsibleUserId: USER,
+    });
+    expect(planResult.ok).toBe(true);
+    if (!planResult.ok) return;
+
+    const group = installmentGroupInsertFromPlan(planResult.value);
+    expect(group.responsibility_scope).toBe("user");
+    expect(group.responsible_user_id).toBe(USER);
+
+    const rows = installmentInsertsFromPlan(planResult.value, "g1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.due_month).toBe("2026-12");
+    expect(rows[0]?.amount_cents).toBe(240000);
+    expect(rows[0]?.responsibility_scope).toBe("user");
+    expect(rows[0]?.responsible_user_id).toBe(USER);
   });
 });
