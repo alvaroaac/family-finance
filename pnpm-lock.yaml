@@ -26,6 +26,9 @@ importers:
 
   apps/bot:
     dependencies:
+      '@family-finance/categorization':
+        specifier: workspace:*
+        version: link:../../packages/categorization
       '@family-finance/config':
         specifier: workspace:*
         version: link:../../packages/config

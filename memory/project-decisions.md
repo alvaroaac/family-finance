@@ -175,3 +175,32 @@ the domain pure and the write paths household-scoped.
 `/transactions` entry screen is added; or parcelado persistence needs to be atomic
 (move group+parcels into a Postgres RPC — see tech debt).
 
+## 2026-06-22: Telegram Text Flow (Task 7)
+
+**Decision:** The Telegram bot (`apps/bot`) is a THIN consumer of the shared core, not a
+second write path. A message flows: pt-BR parse (`parser.ts`, pure: value/date/card-account
+hints + uncertain-field flags) -> `suggestCategory` (`@family-finance/categorization`, same
+engine as the importer) -> editable confirmation summary -> on explicit confirm, build via
+`createTransactionDraft` (`@family-finance/domain`) and persist via `createTransaction`
+(`@family-finance/db`). The confirmation state machine (`conversation.ts`) is PURE and
+dependency-injected (`ConversationDeps`: catalog, account/card resolvers, `suggestCategory`,
+`createTransaction`, `logInteraction`), so the bot never re-implements transaction,
+installment, or categorization logic and tests mock Telegram + db + categorization with NO
+network. Confirmation is ON by default (states: `awaiting_confirmation` | `needs_amount` |
+`saved` | `cancelled`); corrections are supported for value, date, category, and responsible
+person, and a message without a value goes to `needs_amount` and cannot be confirmed until a
+value is given. Saved transactions record `createdByUserId` = the linked Telegram identity and
+default responsibility to the house (`HOUSEHOLD_RESPONSIBILITY`) unless a responsible person is
+chosen. Each entry is logged to `bot_interactions` (channel `telegram`) for auditing. The
+webhook secret (`TELEGRAM_WEBHOOK_SECRET`) is verified FAIL-CLOSED (unset => reject all). The
+outgoing Bot API client is an injectable interface (`TelegramClient`) with HTTP + no-op impls.
+
+**Why:** The spec requires Telegram quick-entry that "pede confirmação com sugestão editável"
+and reuses the web app's domain services. Keeping the conversation pure + injected keeps
+financial rules in one place, preserves package boundaries, and lets Task 8 (audio + AI
+fallback) extend the SAME flow after transcription so audio never bypasses confirmation.
+
+**Revisit if:** Direct-save mode is enabled (spec: configurable later); the bot is deployed
+serverless/multi-replica (conversation state must move out of the in-memory per-chat map);
+or a real names→member-id resolver is added for responsible-person corrections.
+

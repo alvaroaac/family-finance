@@ -59,6 +59,27 @@ Tech debt logged to swap in `@supabase/ssr` and add OAuth callback handling.
 
 **Status:** open
 
+### Telegram webhook not exercised against real Telegram + Supabase
+
+**Type:** risk
+
+**Impact:** The bot text flow (Task 7) is fully unit-tested with mocked Telegram, db, and
+categorization (no network/secrets here). `handleWebhook` and `startBot()` assemble the
+production wiring (secret verify -> parse update -> conversation -> send reply), but the
+real webhook round trip (Telegram `setWebhook` secret header, RLS-authenticated Supabase
+client carrying the bot identity's JWT, and the Bot API `sendMessage`) was NOT run. The
+bot also currently has no HTTP entry point (Next.js route / small server) wrapping
+`handleWebhook` — that wiring is pending.
+
+**Next action:** When secrets/network are available, add a webhook route that calls
+`handleWebhook`, register it with `setWebhook?secret_token=...`, and confirm a real text
+message becomes a confirmed transaction. Decide how the bot authenticates to Supabase so
+RLS scopes writes to the Casa household.
+
+**Owner:** agent (bot)
+
+**Status:** open
+
 ## Blockers
 
 No active blockers recorded yet.

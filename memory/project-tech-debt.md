@@ -186,6 +186,55 @@ existing `ImportAdapter` contract and register them in `importAdapters`.
 
 **Status:** open
 
+## 2026-06-22: Bot conversation state is in-memory only (Task 7)
+
+**Area:** apps/bot (`index.ts` per-chat `Map`)
+
+**Impact:** The confirmation state machine keeps each chat's in-progress draft in a
+process-local `Map`. It does not survive a restart and is not safe across multiple
+replicas / serverless invocations — a confirm could land on an instance that never
+saw the original message and would be treated as a fresh entry.
+
+**Current workaround:** Single small household, single instance. `conversation.ts`
+is pure/stateless (state is passed in), so swapping the store is isolated to `index.ts`.
+
+**Revisit trigger:** Bot deployed serverless or multi-replica — persist conversation
+state (e.g. a `bot_conversations` table keyed by chat id, or Redis).
+
+**Status:** open
+
+## 2026-06-22: No `createBotInteraction` repo; bot inserts directly (Task 7)
+
+**Area:** apps/bot (`index.ts` `logInteraction`), packages/db
+
+**Impact:** `bot_interactions` rows are written by a direct `client.from("bot_interactions").insert(...)`
+inside the bot, not through a `packages/db` repository like every other write path.
+
+**Current workaround:** The insert is injected via `ConversationDeps.logInteraction`, so the
+boundary is preserved and it is mockable in tests; it is just not a named repo.
+
+**Revisit trigger:** Add a `createBotInteraction(client, payload)` repo (and a `BotInteractionInsert`
+type) when another caller needs to log interactions or for consistency.
+
+**Status:** open
+
+## 2026-06-22: Telegram "responsável <nome>" is a no-op in production wiring (Task 7)
+
+**Area:** apps/bot (`index.ts` `resolveResponsibleUserId`)
+
+**Impact:** Corrections like "responsável Karol" map a display name to a member user id, but
+the production wiring returns `undefined` (no display-name → `household_members` id map exists),
+so live responsible-person corrections silently fall back to the house. The behavior IS covered
+in tests via an injected resolver, and `createTransactionDraft` already supports it.
+
+**Current workaround:** Responsibility defaults to the house (the spec default); the plumbing is
+ready for a real resolver.
+
+**Revisit trigger:** When household members have display names — wire a name→user-id lookup into
+`resolveResponsibleUserId`.
+
+**Status:** open
+
 ## Entry Format
 
 ```md
