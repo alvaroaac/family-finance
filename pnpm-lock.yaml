@@ -120,6 +120,9 @@ importers:
       '@family-finance/config':
         specifier: workspace:*
         version: link:../config
+      '@family-finance/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@supabase/supabase-js':
         specifier: ^2.47.10
         version: 2.108.2

@@ -50,6 +50,14 @@ Record durable decisions here. Keep entries short and revisit them when new evid
 
 **Revisit if:** Multi-currency is needed, or the dashboard needs real invoice/closing-day timing (then installment due-month derivation must use `CreditCard.closingDay`).
 
+## 2026-06-22: Schema And RLS (Household Isolation)
+
+**Decision:** The MVP Postgres schema (`supabase/migrations/0001_initial_schema.sql`) enables RLS on every table from day one. Access is granted only to active members of a row's `household_id`, via a single `SECURITY DEFINER` helper `is_household_member(household_id)` keyed on `household_members` + `auth.uid()`. Money is integer cents with `> 0` CHECKs; `transaction_kind`/`account_kind` are enums; confidence is `numeric(4,3)` CHECK `[0,1]`; payment is account-XOR-card; responsibility defaults to household with a CHECK that `responsible_user_id` is set iff scope is `user`. Import batches store only source/status/counts/notes — never the raw file. `packages/db` exposes hand-written static types (`types.ts`) and domain-named, RLS-aware repositories (`repositories.ts`) reusing `@family-finance/domain` contracts.
+
+**Why:** Private finance app; retrofitting isolation later is expensive. One shared membership helper keeps policies consistent and non-recursive. Static DB types let the package typecheck with no live Supabase.
+
+**Revisit if:** A second household/shared-resource scenario appears; real invoice timing is needed (installment `due_month` derivation changes); or generated Supabase types replace the hand-written ones. Details in `docs/decisions/0002-rls-and-household-isolation.md`.
+
 ## 2026-06-22: Import Privacy
 
 **Decision:** Do not permanently store raw imported CSV/XLSX files.

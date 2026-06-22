@@ -64,7 +64,8 @@ Use this file to keep documentation useful, current, and easy for agents to navi
 - [ ] Telegram bot setup runbook.
 - [ ] Vercel deployment runbook.
 - [ ] MVP verification runbook.
-- [x] Architecture decision for package boundaries (`docs/decisions/0001-package-boundaries.md`); RLS decision still pending.
+- [x] Architecture decision for package boundaries (`docs/decisions/0001-package-boundaries.md`).
+- [x] RLS / household isolation decision (`docs/decisions/0002-rls-and-household-isolation.md`), which also contains the local Supabase migration runbook. A standalone `docs/runbooks/supabase-local-setup.md` is still pending for the release gate.
 - [ ] Current implementation plan.
 
 ## Docs Debt
