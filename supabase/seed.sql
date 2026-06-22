@@ -1,0 +1,1 @@
+-- Seed the initial household and allowed members after the schema migration exists.

@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spec MVP | Finanças da Família</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17201b;
+        --muted: #5d6962;
+        --soft: #f4f1ea;
+        --paper: #fffdf8;
+        --line: #ded8cc;
+        --green: #2f6f4e;
+        --green-soft: #dcecdf;
+        --blue: #2f5e88;
+        --blue-soft: #dbe8f5;
+        --rose: #914d5b;
+        --rose-soft: #f1dde2;
+        --amber: #8b641e;
+        --amber-soft: #f4e8c9;
+        --shadow: 0 18px 50px rgba(23, 32, 27, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.55;
+        color: var(--ink);
+        background:
+          linear-gradient(180deg, rgba(244, 241, 234, 0.88), rgba(255, 253, 248, 0.96)),
+          var(--paper);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .page {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .hero {
+        padding: 52px 0 28px;
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+        gap: 32px;
+        align-items: end;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--green);
+        background: rgba(255, 253, 248, 0.82);
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.08;
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 920px;
+        margin-top: 18px;
+        font-size: clamp(2.6rem, 7vw, 6.8rem);
+        letter-spacing: 0;
+      }
+
+      h2 {
+        font-size: clamp(1.8rem, 3.5vw, 3rem);
+        margin-bottom: 14px;
+      }
+
+      h3 {
+        font-size: 1.05rem;
+        margin-bottom: 8px;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .lead {
+        max-width: 760px;
+        margin-top: 18px;
+        font-size: clamp(1.05rem, 2vw, 1.35rem);
+        color: var(--muted);
+      }
+
+      .meta-panel {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 248, 0.78);
+        box-shadow: var(--shadow);
+      }
+
+      .meta-panel dl {
+        display: grid;
+        gap: 14px;
+        margin: 0;
+      }
+
+      .meta-panel dt {
+        color: var(--muted);
+        font-size: 0.76rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .meta-panel dd {
+        margin: 3px 0 0;
+        font-weight: 700;
+      }
+
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 253, 248, 0.92);
+        backdrop-filter: blur(16px);
+      }
+
+      .nav-inner {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding: 10px 0;
+      }
+
+      .nav a {
+        flex: 0 0 auto;
+        padding: 7px 10px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 0.86rem;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .nav a:hover {
+        border-color: var(--line);
+        color: var(--ink);
+        background: var(--soft);
+      }
+
+      main {
+        padding: 34px 0 72px;
+      }
+
+      section {
+        scroll-margin-top: 74px;
+        padding: 34px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(0, 0.72fr) minmax(320px, 1fr);
+        gap: 28px;
+        margin-bottom: 22px;
+      }
+
+      .section-kicker {
+        color: var(--green);
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .section-summary {
+        color: var(--muted);
+        font-size: 1.04rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        min-height: 100%;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 248, 0.72);
+      }
+
+      .card.emphasis {
+        background: var(--green-soft);
+        border-color: rgba(47, 111, 78, 0.24);
+      }
+
+      .card.blue {
+        background: var(--blue-soft);
+        border-color: rgba(47, 94, 136, 0.24);
+      }
+
+      .card.rose {
+        background: var(--rose-soft);
+        border-color: rgba(145, 77, 91, 0.24);
+      }
+
+      .card.amber {
+        background: var(--amber-soft);
+        border-color: rgba(139, 100, 30, 0.24);
+      }
+
+      .card p,
+      .card li {
+        color: var(--muted);
+      }
+
+      ul {
+        margin: 10px 0 0;
+        padding-left: 18px;
+      }
+
+      li + li {
+        margin-top: 6px;
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .pill {
+        padding: 6px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 253, 248, 0.72);
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
+
+      .flow {
+        display: grid;
+        gap: 10px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 248, 0.78);
+      }
+
+      .num {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--ink);
+        color: var(--paper);
+        font-weight: 800;
+      }
+
+      .schema {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .entity {
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 248, 0.76);
+      }
+
+      .entity strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .entity span {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .decision {
+        display: grid;
+        grid-template-columns: 160px minmax(0, 1fr);
+        gap: 14px;
+        padding: 14px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .decision:first-child {
+        border-top: 0;
+      }
+
+      .decision b {
+        color: var(--green);
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .callout {
+        padding: 20px;
+        border-left: 4px solid var(--green);
+        border-radius: 8px;
+        background: rgba(220, 236, 223, 0.66);
+      }
+
+      .footer {
+        color: var(--muted);
+        padding: 36px 0 48px;
+        font-size: 0.92rem;
+      }
+
+      @media (max-width: 920px) {
+        .hero,
+        .section-head,
+        .grid.two {
+          grid-template-columns: 1fr;
+        }
+
+        .grid,
+        .schema {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 620px) {
+        .page,
+        .nav-inner {
+          width: min(100% - 22px, 1180px);
+        }
+
+        .hero {
+          padding-top: 32px;
+        }
+
+        .meta-panel {
+          box-shadow: none;
+        }
+
+        .grid,
+        .schema {
+          grid-template-columns: 1fr;
+        }
+
+        .decision {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page hero">
+      <div>
+        <span class="eyebrow">MVP Spec · Finanças da Família</span>
+        <h1>Sistema financeiro familiar com lançamento rápido, histórico importado e categorias que aprendem.</h1>
+        <p class="lead">
+          Um MVP privado para Alvaro e Karol controlarem despesas, receitas básicas, cartões, caixinhas e histórico financeiro da casa, com Telegram como canal diário principal.
+        </p>
+      </div>
+      <aside class="meta-panel" aria-label="Resumo da spec">
+        <dl>
+          <div>
+            <dt>Direção aprovada</dt>
+            <dd>Híbrido: bot primeiro + importação no onboarding</dd>
+          </div>
+          <div>
+            <dt>Plataforma</dt>
+            <dd>Next.js, Vercel, Supabase/Postgres</dd>
+          </div>
+          <div>
+            <dt>Canais</dt>
+            <dd>Web responsivo + Telegram</dd>
+          </div>
+          <div>
+            <dt>Atualizado em</dt>
+            <dd>22 de junho de 2026</dd>
+          </div>
+        </dl>
+      </aside>
+    </header>
+
+    <nav class="nav" aria-label="Seções">
+      <div class="nav-inner">
+        <a href="#north-star">Norte</a>
+        <a href="#scope">Escopo</a>
+        <a href="#architecture">Arquitetura</a>
+        <a href="#data">Dados</a>
+        <a href="#flows">Fluxos</a>
+        <a href="#categorization">Categorias</a>
+        <a href="#imports">Importação</a>
+        <a href="#dashboard">Dashboard</a>
+        <a href="#security">Segurança</a>
+        <a href="#handoff">Handoff</a>
+      </div>
+    </nav>
+
+    <main class="page">
+      <section id="north-star">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">01 · Produto</p>
+            <h2>Norte do MVP</h2>
+          </div>
+          <p class="section-summary">
+            O produto deve resolver o problema diário antes de tentar ser um ERP financeiro doméstico. O centro é registrar despesas em segundos e melhorar a qualidade das categorias com uso real.
+          </p>
+        </div>
+        <div class="grid">
+          <article class="card emphasis">
+            <h3>Experiência diária</h3>
+            <p>Enviar uma mensagem ou áudio para o Telegram, confirmar a sugestão e seguir a vida.</p>
+          </article>
+          <article class="card blue">
+            <h3>Base confiável</h3>
+            <p>Importar Minhas Financas e Nubank no onboarding para começar com histórico útil.</p>
+          </article>
+          <article class="card amber">
+            <h3>Evolução real</h3>
+            <p>Categorias, regras e automações devem melhorar conforme Alvaro e Karol corrigem dados.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="scope">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">02 · Escopo</p>
+            <h2>O que entra agora</h2>
+          </div>
+          <p class="section-summary">
+            O MVP combina lançamento rápido, importação de histórico, finanças básicas da casa e um dashboard simples. Ideias futuras ficam em `project-ideas.md`.
+          </p>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <span class="status">Inclui</span>
+            <ul>
+              <li>Web app responsivo na Vercel.</li>
+              <li>Login com Google via Supabase, restrito a emails permitidos.</li>
+              <li>Workspace único da casa, com Alvaro e Karol como usuários.</li>
+              <li>Despesas, receitas básicas, conta corrente, conta investimento e cartões.</li>
+              <li>Cartão com compra-mãe e parcelas mensais geradas.</li>
+              <li>Telegram bot para texto e áudio, com confirmação configurável.</li>
+              <li>Importação de Minhas Financas e Nubank.</li>
+              <li>Macrocategorias e subcategorias, com limpeza no onboarding.</li>
+              <li>Dashboard protótipo de resumo mensal.</li>
+            </ul>
+          </article>
+          <article class="card rose">
+            <span class="status">Fora do MVP</span>
+            <ul>
+              <li>WhatsApp.</li>
+              <li>App mobile nativo.</li>
+              <li>Múltiplas famílias ou convites públicos.</li>
+              <li>Permissões avançadas.</li>
+              <li>Orçamento sofisticado por categoria.</li>
+              <li>Comparativos, gráficos e projeções avançadas.</li>
+              <li>Gestão detalhada de ativos, rentabilidade ou corretora.</li>
+              <li>Armazenamento permanente dos arquivos originais importados.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">03 · Arquitetura</p>
+            <h2>Peças do sistema</h2>
+          </div>
+          <p class="section-summary">
+            A arquitetura deve permitir novas fontes, canais e relatórios por extensão. O núcleo financeiro não deve depender de detalhes do Telegram, da UI ou de um importador específico.
+          </p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h3>Web App</h3>
+            <p>Next.js + TypeScript para dashboard, importação, revisão, categorias e cadastros.</p>
+          </article>
+          <article class="card">
+            <h3>Bot Telegram</h3>
+            <p>Webhook para texto e áudio. Usa os mesmos serviços de domínio do app web.</p>
+          </article>
+          <article class="card">
+            <h3>Supabase</h3>
+            <p>Auth Google, Postgres, RLS e storage temporário se necessário para processamento.</p>
+          </article>
+          <article class="card">
+            <h3>Import Pipeline</h3>
+            <p>Adaptadores para Minhas Financas e Nubank, com preview e deduplicação.</p>
+          </article>
+          <article class="card">
+            <h3>Categorization Engine</h3>
+            <p>Regras determinísticas, memória compreensível e IA quando houver ambiguidade.</p>
+          </article>
+          <article class="card">
+            <h3>AI Services</h3>
+            <p>Transcrição de áudio e interpretação de mensagens complexas ou incompletas.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="data">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">04 · Modelo</p>
+            <h2>Entidades principais</h2>
+          </div>
+          <p class="section-summary">
+            O modelo deve ser simples o bastante para o MVP, mas preparado para extensões: faturas melhores, investimentos reais, novos bancos e conciliação.
+          </p>
+        </div>
+        <div class="schema">
+          <div class="entity"><strong>household</strong><span>Workspace único: Casa.</span></div>
+          <div class="entity"><strong>user</strong><span>Alvaro e Karol, login Google.</span></div>
+          <div class="entity"><strong>account</strong><span>Conta corrente ou investimento.</span></div>
+          <div class="entity"><strong>investment_bucket</strong><span>Filhos, casa, independência financeira.</span></div>
+          <div class="entity"><strong>credit_card</strong><span>Cartões para despesas e parcelas.</span></div>
+          <div class="entity"><strong>category</strong><span>Macrocategoria.</span></div>
+          <div class="entity"><strong>subcategory</strong><span>Subcategoria.</span></div>
+          <div class="entity"><strong>transaction</strong><span>Despesa, receita ou ajuste futuro.</span></div>
+          <div class="entity"><strong>installment_group</strong><span>Compra-mãe parcelada.</span></div>
+          <div class="entity"><strong>installment</strong><span>Parcelas mensais derivadas.</span></div>
+          <div class="entity"><strong>import_batch</strong><span>Lote, fonte, status e estatísticas.</span></div>
+          <div class="entity"><strong>categorization_memory</strong><span>Padrões auditáveis por usuário avançado.</span></div>
+        </div>
+      </section>
+
+      <section id="flows">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">05 · Fluxos</p>
+            <h2>Caminhos essenciais</h2>
+          </div>
+          <p class="section-summary">
+            Os fluxos priorizam clareza e correção. Automação ajuda, mas não deve salvar dados duvidosos sem confirmação quando o sistema não estiver confiante.
+          </p>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Onboarding com importação</h3>
+            <div class="flow">
+              <div class="step"><span class="num">1</span><p>Entrar com Google e validar email permitido.</p></div>
+              <div class="step"><span class="num">2</span><p>Selecionar fonte: Minhas Financas ou Nubank.</p></div>
+              <div class="step"><span class="num">3</span><p>Enviar CSV/XLSX e revisar preview normalizado.</p></div>
+              <div class="step"><span class="num">4</span><p>Enxugar categorias, corrigir mapeamentos e duplicatas.</p></div>
+              <div class="step"><span class="num">5</span><p>Confirmar importação e descartar arquivo original.</p></div>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Lançamento via Telegram</h3>
+            <div class="flow">
+              <div class="step"><span class="num">1</span><p>Usuário envia texto ou áudio: "Uber 32 reais ontem".</p></div>
+              <div class="step"><span class="num">2</span><p>Sistema extrai valor, data, descrição, conta/cartão e categoria.</p></div>
+              <div class="step"><span class="num">3</span><p>Por padrão, pede confirmação com sugestão editável.</p></div>
+              <div class="step"><span class="num">4</span><p>Usuário confirma ou corrige.</p></div>
+              <div class="step"><span class="num">5</span><p>Transação é salva e a correção alimenta a memória.</p></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="categorization">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">06 · Inteligência</p>
+            <h2>Categorias que aprendem</h2>
+          </div>
+          <p class="section-summary">
+            O sistema deve aprender silenciosamente no uso diário, mas manter padrões compreensíveis para alguém avançado revisar depois.
+          </p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h3>Taxonomia</h3>
+            <p>Usar macrocategoria + subcategoria. A importação deve ajudar a consolidar categorias existentes, não criar caos novo.</p>
+          </article>
+          <article class="card">
+            <h3>Estratégia híbrida</h3>
+            <p>Primeiro tentar regra e histórico. Usar IA para áudio, ambiguidade ou descrição nova sem padrão claro.</p>
+          </article>
+          <article class="card">
+            <h3>Memória auditável</h3>
+            <p>Mostrar padrões como "descrição contém IFOOD → Alimentação > Delivery", com opção de revisar/desativar.</p>
+          </article>
+        </div>
+        <div class="pill-row">
+          <span class="pill">Novas categorias ficam pendentes</span>
+          <span class="pill">Correções viram aprendizado</span>
+          <span class="pill">Confiança baixa pede confirmação</span>
+          <span class="pill">Default da transação é Casa</span>
+        </div>
+      </section>
+
+      <section id="imports">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">07 · Importação</p>
+            <h2>Adaptadores de origem</h2>
+          </div>
+          <p class="section-summary">
+            Importação é um pipeline com adaptadores. O usuário deve conseguir ver o que será importado antes de gravar e refazer o upload se precisar reprocessar.
+          </p>
+        </div>
+        <div class="grid">
+          <article class="card blue">
+            <h3>Minhas Financas</h3>
+            <ul>
+              <li>CSV padrão do app.</li>
+              <li>CSV com modelo customizado.</li>
+              <li>XLSX exportado pelo app.</li>
+            </ul>
+          </article>
+          <article class="card amber">
+            <h3>Nubank</h3>
+            <ul>
+              <li>CSV ou relatório similar.</li>
+              <li>Normalização por data, descrição, valor e tipo.</li>
+              <li>Detecção de duplicatas prováveis.</li>
+            </ul>
+          </article>
+          <article class="card emphasis">
+            <h3>Privacidade</h3>
+            <ul>
+              <li>Arquivo original não é persistido.</li>
+              <li>Salvar lote, fonte, contagens e erros mínimos.</li>
+              <li>Se precisar corrigir parser, importar novamente.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="dashboard">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">08 · Dashboard</p>
+            <h2>Protótipo mensal</h2>
+          </div>
+          <p class="section-summary">
+            O dashboard do MVP não precisa provar todos os insights futuros. Ele precisa mostrar se o sistema está registrando a realidade da casa de forma útil.
+          </p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h3>Receitas do mês</h3>
+            <p>Receitas básicas, avulsas ou mensais, para noção de quanto entra.</p>
+          </article>
+          <article class="card">
+            <h3>Despesas do mês</h3>
+            <p>Total lançado, com estado de pendência/revisão quando aplicável.</p>
+          </article>
+          <article class="card">
+            <h3>Saldo estimado</h3>
+            <p>Entradas menos saídas, sem tentar ser conciliação bancária completa.</p>
+          </article>
+          <article class="card">
+            <h3>Cartões</h3>
+            <p>Total do mês e próximas parcelas relevantes.</p>
+          </article>
+          <article class="card">
+            <h3>Caixinhas</h3>
+            <p>Saldo manual ou posição simples para filhos, casa e independência financeira.</p>
+          </article>
+          <article class="card">
+            <h3>Pendências</h3>
+            <p>Itens para confirmar, categorizar, revisar ou corrigir.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="security">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">09 · Segurança</p>
+            <h2>Privado por padrão</h2>
+          </div>
+          <p class="section-summary">
+            Mesmo sendo um MVP familiar, os dados são sensíveis. O projeto deve nascer com isolamento, allowlist e mínimo armazenamento de dados brutos.
+          </p>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Controles</h3>
+            <ul>
+              <li>Login por Google.</li>
+              <li>Allowlist de emails.</li>
+              <li>RLS por `household_id`.</li>
+              <li>Sessão persistente.</li>
+              <li>Sem cadastro público no MVP.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Dados sensíveis</h3>
+            <ul>
+              <li>Não guardar import original.</li>
+              <li>Não guardar áudio permanentemente, salvo necessidade temporária de transcrição.</li>
+              <li>Registrar ações automáticas relevantes para auditoria.</li>
+              <li>Evitar logs com conteúdo financeiro bruto.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="handoff">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">10 · Handoff</p>
+            <h2>Decisões fechadas</h2>
+          </div>
+          <p class="section-summary">
+            Estas decisões orientam agentes desenvolvedores. Elas podem ser refinadas durante planejamento, mas não devem ser reinterpretadas sem nova validação.
+          </p>
+        </div>
+        <div class="card">
+          <div class="decision"><b>MVP</b><p>Telegram-first com importação de histórico no onboarding e dashboard simples.</p></div>
+          <div class="decision"><b>Importação</b><p>Minhas Financas CSV padrão/customizado/XLSX e Nubank CSV/similar.</p></div>
+          <div class="decision"><b>Bot</b><p>Confirmação por padrão, configurável para salvar direto quando completo e confiável.</p></div>
+          <div class="decision"><b>Contas</b><p>Conta corrente, conta investimento, cartões simples e parcelamentos corretos.</p></div>
+          <div class="decision"><b>Investimentos</b><p>Caixinhas: filhos, casa, independência financeira/aposentadoria.</p></div>
+          <div class="decision"><b>Categorias</b><p>Macrocategoria + subcategoria, com objetivo de enxugar a taxonomia existente.</p></div>
+          <div class="decision"><b>Família</b><p>Casa por padrão, `lançado por` automático, `responsável` opcional para agrupamentos.</p></div>
+          <div class="decision"><b>Receitas</b><p>Básicas, apenas para visão de entrada mensal e projeções futuras.</p></div>
+          <div class="decision"><b>Deploy</b><p>Web responsivo em Vercel, Supabase/Postgres, Google login.</p></div>
+        </div>
+        <div class="callout" style="margin-top: 18px">
+          <strong>Próximo passo recomendado:</strong>
+          usar `git-scaffolding.md` para criar o repositório e depois transformar esta spec em um plano de implementação curto, com fatias entregáveis e verificáveis.
+        </div>
+      </section>
+
+      <footer class="footer">
+        Spec criada para orientar agentes desenvolvedores sem virar um plano de implementação excessivamente granular.
+      </footer>
+    </main>
+  </body>
+</html>
