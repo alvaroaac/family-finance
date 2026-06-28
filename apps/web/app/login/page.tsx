@@ -19,7 +19,9 @@ async function signInWithGoogle(): Promise<void> {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/dashboard`
+      // Supabase redirects back here with a `?code=`; the callback route
+      // exchanges it for a session before forwarding to the dashboard.
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/auth/callback`
     }
   });
 

@@ -2,65 +2,17 @@
 // (`cookies()`), which Next.js refuses to bundle into client components. We do
 // not import the `server-only` marker package since it is not a dependency here.
 import { cookies } from "next/headers";
-import {
-  createClient,
-  type SupabaseClient,
-  type SupportedStorage
-} from "@supabase/supabase-js";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabasePublicConfig } from "@family-finance/config";
 import type { Database } from "@family-finance/db";
 
 /**
- * Server-side Supabase client for the Next.js App Router.
- *
- * NOTE: the recommended package for this is `@supabase/ssr`, which is not
- * installable in this offline environment. We replicate its behavior with the
- * mechanism it uses under the hood: a custom `storage` adapter on top of
- * `@supabase/supabase-js`, backed by Next.js request cookies. The session is
- * persisted as a single JSON cookie so RLS-scoped requests carry the user's
- * access token. Swap to `@supabase/ssr` when the registry is reachable.
+ * Server-side Supabase client for the Next.js App Router, built with the
+ * official `@supabase/ssr` `createServerClient`. The Next.js request cookie
+ * store backs the `getAll`/`setAll` adapter so RLS-scoped requests carry the
+ * user's access token and refreshed tokens are written back when allowed.
  */
-
-const SESSION_COOKIE = "ff-auth-token";
-
-/**
- * Build a cookie-backed storage adapter from a Next.js cookie store. Reads are
- * always allowed; writes are best-effort and silently ignored in contexts where
- * cookie mutation is not permitted (e.g. Server Components), matching the
- * read-only guarantees we need for `getUser()` in a layout/page.
- */
-function createCookieStorage(
-  cookieStore: Awaited<ReturnType<typeof cookies>>
-): SupportedStorage {
-  return {
-    isServer: true,
-    getItem: (key) => {
-      if (key !== SESSION_COOKIE) {
-        return cookieStore.get(key)?.value ?? null;
-      }
-      return cookieStore.get(SESSION_COOKIE)?.value ?? null;
-    },
-    setItem: (key, value) => {
-      try {
-        cookieStore.set(key, value, {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: process.env.NODE_ENV === "production",
-          path: "/"
-        });
-      } catch {
-        // Cookie writes are not allowed in some server contexts; ignore.
-      }
-    },
-    removeItem: (key) => {
-      try {
-        cookieStore.set(key, "", { path: "/", maxAge: 0 });
-      } catch {
-        // Ignore in read-only contexts.
-      }
-    }
-  };
-}
 
 /**
  * Create a request-scoped Supabase server client. Must be awaited because
@@ -77,13 +29,23 @@ export async function createServerSupabaseClient(): Promise<
   const url = supabaseUrl || "https://placeholder.supabase.co";
   const anonKey = supabaseAnonKey || "placeholder-anon-key";
 
-  return createClient<Database>(url, anonKey, {
-    auth: {
-      storageKey: SESSION_COOKIE,
-      storage: createCookieStorage(cookieStore),
-      persistSession: true,
-      autoRefreshToken: false,
-      detectSessionInUrl: false
+  return createServerClient<Database>(url, anonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        // Cookie writes are not allowed in some server contexts (e.g. Server
+        // Components); ignore them there. Session refresh is handled by the
+        // middleware, which runs in a writable context.
+        try {
+          for (const { name, value, options } of cookiesToSet) {
+            cookieStore.set(name, value, options as CookieOptions);
+          }
+        } catch {
+          // Ignore in read-only contexts.
+        }
+      }
     }
   });
 }
