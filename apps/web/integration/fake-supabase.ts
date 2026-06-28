@@ -308,17 +308,64 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
 }
 
 /**
+ * JS stand-in for the `create_installment_purchase` plpgsql function
+ * (supabase/migrations/0002_create_installment_purchase.sql). The REAL atomicity
+ * guarantee is proven separately against Docker Postgres by the verifier; here we
+ * only reproduce the happy-path DATA SHAPE so the repository's `.rpc()` call path
+ * persists and returns rows exactly as the SQL function would: insert the group,
+ * then every parcel linked to the inserted group's id, and return
+ * `{ group, installments }`. Inserts go through `store.materialize`, so later
+ * reads over the fake (getCardPressure, findUpcomingInstallments) see the rows.
+ */
+function createInstallmentPurchaseRpc(
+  store: FakeSupabaseStore,
+  args: { group_payload: Row; installments_payload: Row[] },
+): Result<{ group: Row; installments: Row[] }> {
+  const group = store.materialize({ ...args.group_payload });
+  store.table("installment_groups").push(group);
+
+  const installments = args.installments_payload.map((parcel) => {
+    const row = store.materialize({
+      ...parcel,
+      // The SQL function fills installment_group_id + household_id from the
+      // freshly inserted group; mirror that here.
+      household_id: group.household_id,
+      installment_group_id: group.id,
+    });
+    store.table("installments").push(row);
+    return row;
+  });
+
+  return { data: { group, installments }, error: null };
+}
+
+/**
  * Build a fake Supabase client. The returned object is structurally compatible
- * with the `AppSupabaseClient` surface the repositories use (`.from(table)...`).
- * We deliberately cast at the call site in the test to keep this fake free of
- * the full generated Supabase generic types.
+ * with the `AppSupabaseClient` surface the repositories use (`.from(table)...`
+ * and `.rpc(name, args)`). We deliberately cast at the call site in the test to
+ * keep this fake free of the full generated Supabase generic types.
  */
 export function createFakeSupabaseClient(store: FakeSupabaseStore): {
   from(table: string): QueryBuilder<unknown>;
+  rpc(name: string, args: Record<string, unknown>): Promise<Result<unknown>>;
 } {
   return {
     from(table: string): QueryBuilder<unknown> {
       return new QueryBuilder(store, table);
+    },
+    rpc(name: string, args: Record<string, unknown>): Promise<Result<unknown>> {
+      if (name === "create_installment_purchase") {
+        return Promise.resolve(
+          createInstallmentPurchaseRpc(
+            store,
+            args as {
+              group_payload: Row;
+              installments_payload: Row[];
+            },
+          ),
+        );
+      }
+      throw new Error(`fake-supabase: unsupported .rpc(${name})`);
     },
   };
 }

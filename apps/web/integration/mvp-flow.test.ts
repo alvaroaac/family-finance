@@ -571,6 +571,18 @@ describe("MVP review loop — parcelado card purchase", () => {
     expect(installments.map((i) => i.amount_cents)).toEqual([
       40000, 40000, 40000,
     ]);
+
+    // The atomic RPC persisted the group AND every parcel, each linked to the
+    // group id and scoped to the household (the SQL fills these server-side).
+    const persistedGroups = store.table("installment_groups");
+    expect(persistedGroups).toHaveLength(1);
+    const persisted = store.table("installments");
+    expect(persisted).toHaveLength(3);
+    for (const parcel of persisted) {
+      expect(parcel.installment_group_id).toBe(group.id);
+      expect(parcel.household_id).toBe(HOUSEHOLD);
+      expect(parcel.id).toBeDefined();
+    }
   });
 });
 

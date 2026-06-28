@@ -38,6 +38,8 @@ import type {
   CreditCardRow,
   InstallmentGroupRow,
   InstallmentRow,
+  InstallmentGroupInsertPayload,
+  InstallmentInsertPayload,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -754,20 +756,7 @@ export function creditCardInsert(input: {
  */
 export function installmentGroupInsertFromPlan(
   plan: InstallmentPlan,
-): Pick<
-  InstallmentGroupRow,
-  | "household_id"
-  | "credit_card_id"
-  | "description"
-  | "total_amount_cents"
-  | "installment_count"
-  | "purchased_on"
-  | "category_id"
-  | "subcategory_id"
-  | "responsibility_scope"
-  | "responsible_user_id"
-  | "created_by_user_id"
-> {
+): InstallmentGroupInsertPayload {
   const { group } = plan;
   const isUser = group.responsibility.scope === "user";
   return {
@@ -819,6 +808,37 @@ export function installmentInsertsFromPlan(
     return {
       household_id: parcel.householdId,
       installment_group_id: installmentGroupId,
+      credit_card_id: parcel.creditCardId,
+      number: parcel.number,
+      installment_count: parcel.installmentCount,
+      amount_cents: parcel.amount.cents,
+      due_month: parcel.dueMonth,
+      description: parcel.description,
+      category_id: parcel.category.categoryId ?? null,
+      subcategory_id: parcel.category.subcategoryId ?? null,
+      responsibility_scope: isUser ? "user" : "household",
+      responsible_user_id:
+        parcel.responsibility.scope === "user"
+          ? parcel.responsibility.userId
+          : null,
+      created_by_user_id: parcel.createdByUserId,
+    };
+  });
+}
+
+/**
+ * Pure: map a domain `InstallmentPlan`'s parcels into the RPC payload shape for
+ * `create_installment_purchase`. Unlike `installmentInsertsFromPlan`, this omits
+ * `installment_group_id`: the SQL function fills it from the group id it inserts
+ * in the same transaction, so the caller never has to know it in advance.
+ */
+export function installmentInsertPayloadsFromPlan(
+  plan: InstallmentPlan,
+): InstallmentInsertPayload[] {
+  return plan.installments.map((parcel) => {
+    const isUser = parcel.responsibility.scope === "user";
+    return {
+      household_id: parcel.householdId,
       credit_card_id: parcel.creditCardId,
       number: parcel.number,
       installment_count: parcel.installmentCount,
@@ -1053,39 +1073,37 @@ export async function deleteCreditCard(
 
 /**
  * Persist a parcelado card purchase from a validated domain `InstallmentPlan`:
- * insert the parent installment group, then its month-attributed parcels linked
- * to the group's id. Returns the stored group + installment rows. RLS scopes
- * every write to the household.
+ * insert the parent installment group and all of its month-attributed parcels in
+ * ONE transaction. Returns the stored group + installment rows.
  *
- * Supabase JS has no client-side transaction; if the parcel insert fails after
- * the group is written, the caller surfaces the error and the (childless) group
- * can be retried/cleaned up. The amounts/due months come from the domain plan.
+ * Atomicity: this calls the `create_installment_purchase` plpgsql function (see
+ * supabase/migrations/0002_create_installment_purchase.sql), whose body runs in a
+ * single transaction — so a failed parcel insert can no longer orphan a childless
+ * group. The function is SECURITY DEFINER and re-asserts household membership
+ * (via `is_household_member`) before writing, preserving the RLS/household
+ * isolation the table policies enforce. The amounts/due months come from the
+ * domain plan; the parcels' group link is set server-side from the inserted id.
  */
 export async function createInstallmentPurchase(
   client: AppSupabaseClient,
   plan: InstallmentPlan,
 ): Promise<{ group: InstallmentGroupRow; installments: InstallmentRow[] }> {
-  const { data: groupRow, error: groupError } = await client
-    .from("installment_groups")
-    .insert(installmentGroupInsertFromPlan(plan))
-    .select("*")
-    .single();
-  if (groupError !== null) {
-    throw new Error(`createInstallmentPurchase(group) failed: ${groupError.message}`);
-  }
-  const group = groupRow as InstallmentGroupRow;
-
-  const { data: parcelRows, error: parcelError } = await client
-    .from("installments")
-    .insert(installmentInsertsFromPlan(plan, group.id))
-    .select("*");
-  if (parcelError !== null) {
-    throw new Error(
-      `createInstallmentPurchase(installments) failed: ${parcelError.message}`,
-    );
+  const { data, error } = await client.rpc("create_installment_purchase", {
+    group_payload: installmentGroupInsertFromPlan(plan),
+    installments_payload: installmentInsertPayloadsFromPlan(plan),
+  });
+  if (error !== null) {
+    throw new Error(`createInstallmentPurchase failed: ${error.message}`);
   }
 
-  return { group, installments: (parcelRows ?? []) as InstallmentRow[] };
+  const result = data as {
+    group: InstallmentGroupRow;
+    installments: InstallmentRow[];
+  };
+  return {
+    group: result.group,
+    installments: result.installments ?? [],
+  };
 }
 
 // ---------------------------------------------------------------------------

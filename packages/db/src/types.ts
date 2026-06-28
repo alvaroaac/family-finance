@@ -257,6 +257,46 @@ export type BotInteractionInsert = Insertable<
   | "transaction_id"
 >;
 
+// --- Installment purchase RPC payloads -------------------------------------
+//
+// These are the exact column-keyed shapes the repository mappers build and the
+// `create_installment_purchase` plpgsql function consumes (see
+// supabase/migrations/0002_create_installment_purchase.sql). Keeping them here
+// as the single source of truth keeps the mapper return types and the RPC Args
+// in sync. `installment_group_id` is set by the function from the freshly
+// inserted group id, so it is NOT part of the parcel payload.
+
+export type InstallmentGroupInsertPayload = Pick<
+  InstallmentGroupRow,
+  | "household_id"
+  | "credit_card_id"
+  | "description"
+  | "total_amount_cents"
+  | "installment_count"
+  | "purchased_on"
+  | "category_id"
+  | "subcategory_id"
+  | "responsibility_scope"
+  | "responsible_user_id"
+  | "created_by_user_id"
+>;
+
+export type InstallmentInsertPayload = Pick<
+  InstallmentRow,
+  | "household_id"
+  | "credit_card_id"
+  | "number"
+  | "installment_count"
+  | "amount_cents"
+  | "due_month"
+  | "description"
+  | "category_id"
+  | "subcategory_id"
+  | "responsibility_scope"
+  | "responsible_user_id"
+  | "created_by_user_id"
+>;
+
 // --- Database surface (compatible with @supabase/supabase-js generics) ------
 
 type TableDef<Row, Insert> = {
@@ -301,6 +341,19 @@ export type Database = {
       is_household_member: {
         Args: { target_household_id: string };
         Returns: boolean;
+      };
+      // Atomic parcelado write (group + installments in one transaction).
+      // See supabase/migrations/0002_create_installment_purchase.sql. Returns
+      // `{ group, installments }` as JSON; the repository casts it to rows.
+      create_installment_purchase: {
+        Args: {
+          group_payload: InstallmentGroupInsertPayload;
+          installments_payload: InstallmentInsertPayload[];
+        };
+        Returns: {
+          group: InstallmentGroupRow;
+          installments: InstallmentRow[];
+        };
       };
     };
     Enums: {
