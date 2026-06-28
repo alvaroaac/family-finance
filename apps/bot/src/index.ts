@@ -57,6 +57,7 @@ import {
 } from "./conversation.js";
 import {
   createHttpAudioDownloader,
+  VoiceNoteTooLargeError,
   type AudioDownloader,
   type TranscribeDeps,
   type TranscriptionProvider,
@@ -199,15 +200,27 @@ export async function handleWebhook(args: {
       );
       return { status: 200, body: { ok: true } };
     }
-    const outcome = await startConversationFromAudio(
-      {
-        voice: { fileId: voice.fileId, mimeType: voice.mimeType },
-        fromUserId: voice.fromId,
-      },
-      deps,
-      args.transcribe,
-      { today: todayIso() },
-    );
+    let outcome;
+    try {
+      outcome = await startConversationFromAudio(
+        {
+          voice: { fileId: voice.fileId, mimeType: voice.mimeType },
+          fromUserId: voice.fromId,
+        },
+        deps,
+        args.transcribe,
+        { today: todayIso() },
+      );
+    } catch (error) {
+      // Download/transcription failed (timeout, provider error, or an oversize
+      // note). Degrade gracefully: ask for text instead of failing the webhook.
+      const reply =
+        error instanceof VoiceNoteTooLargeError
+          ? "Esse áudio é muito longo. Envie o lançamento por texto, por favor."
+          : "Não consegui transcrever o áudio agora. Tente por texto, por favor.";
+      await args.telegram.sendMessage(voice.chatId, reply);
+      return { status: 200, body: { ok: true } };
+    }
     conversations.set(voice.chatId, outcome.state);
     await args.telegram.sendMessage(voice.chatId, outcome.reply);
     return { status: 200, body: { ok: true } };
@@ -348,12 +361,17 @@ export {
 export {
   transcribeVoiceMessage,
   createHttpAudioDownloader,
+  VoiceNoteTooLargeError,
+  MAX_VOICE_NOTE_BYTES,
+  MAX_VOICE_NOTE_DURATION_SECONDS,
   type AudioDownloader,
   type TranscriptionProvider,
   type TranscribeDeps,
+  type TranscribeLimits,
   type VoiceMessageRef,
 } from "./audio.js";
 export {
   createAnthropicCompletionClient,
   createOpenAiTranscriptionProvider,
+  DEFAULT_PROVIDER_TIMEOUT_MS,
 } from "./providers.js";

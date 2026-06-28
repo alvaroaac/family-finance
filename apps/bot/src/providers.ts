@@ -22,30 +22,65 @@ import type { AiCompletionClient } from "@family-finance/categorization";
 import type { TranscriptionProvider } from "./audio.js";
 
 /**
+ * Default per-request network timeout (ms) for the provider `fetch` calls. The
+ * provider APIs are best-effort enrichments on a chat flow, so a hung request
+ * must NOT pin the webhook: on timeout the completion client degrades to the
+ * deterministic categorizer (returns `null`) and the transcription provider
+ * surfaces a clear error the caller turns into a "tente por texto" fallback.
+ * Overridable per client via the `timeoutMs` arg.
+ */
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
+
+/**
+ * Run an async fetch under an abort-on-timeout signal, always clearing the timer
+ * afterwards. The `signal` is forwarded to `fetch`, so a timeout rejects the
+ * pending request with an `AbortError` instead of leaking a hung connection.
+ */
+async function withTimeout<T>(
+  timeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Anthropic Claude completion client. Sends a single user prompt to the Messages
- * API and returns the concatenated text reply. Returns `null` on any error so
- * the categorization engine falls back to its deterministic path.
+ * API and returns the concatenated text reply. Returns `null` on any error
+ * (including a network timeout) so the categorization engine falls back to its
+ * deterministic path.
  */
 export function createAnthropicCompletionClient(args: {
   apiKey: string;
   model: string;
+  /** Per-request network timeout in ms. Defaults to {@link DEFAULT_PROVIDER_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }): AiCompletionClient {
+  const timeoutMs = args.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   return {
     async complete(prompt: string): Promise<string | null> {
       try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-api-key": args.apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model: args.model,
-            max_tokens: 512,
-            messages: [{ role: "user", content: prompt }],
+        const response = await withTimeout(timeoutMs, (signal) =>
+          fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-api-key": args.apiKey,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: args.model,
+              max_tokens: 512,
+              messages: [{ role: "user", content: prompt }],
+            }),
+            signal,
           }),
-        });
+        );
         if (!response.ok) {
           return null;
         }
@@ -68,11 +103,18 @@ export function createAnthropicCompletionClient(args: {
  * OpenAI audio transcription provider (Whisper). Reads the temp file and posts it
  * as multipart/form-data to the transcription endpoint. The caller
  * (`transcribeVoiceMessage`) deletes the temp file afterwards in its `finally`.
+ *
+ * On a network timeout the fetch is aborted and this throws a clear error so the
+ * caller degrades to a "tente por texto" fallback (the temp file is still
+ * cleaned up by `transcribeVoiceMessage`'s `finally`).
  */
 export function createOpenAiTranscriptionProvider(args: {
   apiKey: string;
   model: string;
+  /** Per-request network timeout in ms. Defaults to {@link DEFAULT_PROVIDER_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }): TranscriptionProvider {
+  const timeoutMs = args.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   return {
     async transcribe(filePath: string, mimeType?: string): Promise<string> {
       const bytes = await readFile(filePath);
@@ -82,14 +124,27 @@ export function createOpenAiTranscriptionProvider(args: {
       });
       form.append("file", blob, basename(filePath));
       form.append("model", args.model);
-      const response = await fetch(
-        "https://api.openai.com/v1/audio/transcriptions",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${args.apiKey}` },
-          body: form,
-        },
-      );
+      let response: Response;
+      try {
+        response = await withTimeout(timeoutMs, (signal) =>
+          fetch("https://api.openai.com/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { authorization: `Bearer ${args.apiKey}` },
+            body: form,
+            signal,
+          }),
+        );
+      } catch (error) {
+        // An abort surfaces as an AbortError; normalize it to a clear,
+        // caller-friendly timeout error (the deeper cause is preserved).
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error(
+            `Transcription timed out after ${timeoutMs}ms`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         throw new Error(`Transcription failed: ${response.status} ${body}`);

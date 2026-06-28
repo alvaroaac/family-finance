@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   transcribeVoiceMessage,
+  VoiceNoteTooLargeError,
   type AudioDownloader,
   type TranscriptionProvider,
 } from "./audio.js";
@@ -91,5 +92,88 @@ describe("transcribeVoiceMessage", () => {
       ),
     ).rejects.toThrow(/download failed/);
     expect(provider.transcribe).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Oversize guard: reject before transcription, never leave a temp file behind.
+// Both the post-download byte check and the pre-download Telegram hints count.
+// ---------------------------------------------------------------------------
+
+/** Count leftover temp dirs from this module to prove cleanup ran. */
+async function audioTempDirCount(): Promise<number> {
+  const { readdir } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const entries = await readdir(tmpdir());
+  return entries.filter((e) => e.startsWith("family-finance-audio-")).length;
+}
+
+describe("transcribeVoiceMessage (oversize guard)", () => {
+  it("rejects when the DOWNLOADED bytes exceed the limit and DELETES the temp file", async () => {
+    const before = await audioTempDirCount();
+    // 1 KiB payload with a 16-byte cap -> over limit.
+    const big = new Uint8Array(1024);
+    const provider: TranscriptionProvider = {
+      transcribe: vi.fn(async () => "should not be called"),
+    };
+
+    await expect(
+      transcribeVoiceMessage(
+        { fileId: "voice-big", mimeType: "audio/ogg" },
+        {
+          downloader: fakeDownloader(big),
+          provider,
+          limits: { maxBytes: 16 },
+        },
+      ),
+    ).rejects.toBeInstanceOf(VoiceNoteTooLargeError);
+
+    // The provider is never invoked for an oversize note...
+    expect(provider.transcribe).not.toHaveBeenCalled();
+    // ...and no temp dir is left behind (cleanup ran in `finally`).
+    expect(await audioTempDirCount()).toBe(before);
+  });
+
+  it("rejects BEFORE download when the duration hint exceeds the limit", async () => {
+    const before = await audioTempDirCount();
+    const downloader: AudioDownloader = {
+      download: vi.fn(async () => new Uint8Array([1])),
+    };
+    const provider: TranscriptionProvider = {
+      transcribe: vi.fn(async () => "should not be called"),
+    };
+
+    await expect(
+      transcribeVoiceMessage(
+        { fileId: "voice-long", durationSeconds: 600 },
+        { downloader, provider, limits: { maxDurationSeconds: 300 } },
+      ),
+    ).rejects.toBeInstanceOf(VoiceNoteTooLargeError);
+
+    // The download is skipped entirely for an over-limit duration hint.
+    expect(downloader.download).not.toHaveBeenCalled();
+    expect(provider.transcribe).not.toHaveBeenCalled();
+    expect(await audioTempDirCount()).toBe(before);
+  });
+
+  it("rejects BEFORE download when the declared file-size hint exceeds the limit", async () => {
+    const before = await audioTempDirCount();
+    const downloader: AudioDownloader = {
+      download: vi.fn(async () => new Uint8Array([1])),
+    };
+    const provider: TranscriptionProvider = {
+      transcribe: vi.fn(async () => "should not be called"),
+    };
+
+    await expect(
+      transcribeVoiceMessage(
+        { fileId: "voice-heavy", fileSizeBytes: 50 },
+        { downloader, provider, limits: { maxBytes: 16 } },
+      ),
+    ).rejects.toBeInstanceOf(VoiceNoteTooLargeError);
+
+    expect(downloader.download).not.toHaveBeenCalled();
+    expect(provider.transcribe).not.toHaveBeenCalled();
+    expect(await audioTempDirCount()).toBe(before);
   });
 });
