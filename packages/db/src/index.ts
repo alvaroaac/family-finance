@@ -49,6 +49,7 @@ export type {
   InstallmentRow,
   InstallmentGroupInsertPayload,
   InstallmentInsertPayload,
+  MergeCategoryResult,
   ImportBatchRow,
   ImportBatchInsert,
   ImportRowRow,

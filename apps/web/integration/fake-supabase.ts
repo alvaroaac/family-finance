@@ -340,6 +340,65 @@ function createInstallmentPurchaseRpc(
 }
 
 /**
+ * JS stand-in for the `merge_category` plpgsql function
+ * (supabase/migrations/0003_merge_category.sql). The REAL atomicity guarantee is
+ * proven separately against Docker Postgres by the verifier; here we only
+ * reproduce the happy-path DATA EFFECT so the repository's `.rpc()` call path
+ * mutates the store exactly as the SQL function would: re-point every row that
+ * referenced the source category onto the target across the five household-scoped
+ * tables, then archive the source category (is_active = false). Returns the same
+ * `{ source, moved }` summary shape so callers can assert the merge happened.
+ */
+function mergeCategoryRpc(
+  store: FakeSupabaseStore,
+  args: {
+    target_household_id: string;
+    source_category_id: string;
+    target_category_id: string;
+  },
+): Result<Row> {
+  const { target_household_id, source_category_id, target_category_id } = args;
+
+  // Re-point a household-scoped table's source rows onto the target; return the
+  // count moved, matching the SQL function's `get diagnostics ... row_count`.
+  const repoint = (table: string): number => {
+    let moved = 0;
+    for (const row of store.table(table)) {
+      if (
+        row.household_id === target_household_id &&
+        row.category_id === source_category_id
+      ) {
+        row.category_id = target_category_id;
+        moved += 1;
+      }
+    }
+    return moved;
+  };
+
+  const moved = {
+    transactions: repoint("transactions"),
+    installment_groups: repoint("installment_groups"),
+    installments: repoint("installments"),
+    subcategories: repoint("subcategories"),
+    categorization_memory: repoint("categorization_memory"),
+  };
+
+  // Archive the now-empty source category and return its updated row.
+  let source: Row | null = null;
+  for (const row of store.table("categories")) {
+    if (
+      row.household_id === target_household_id &&
+      row.id === source_category_id
+    ) {
+      row.is_active = false;
+      source = row;
+    }
+  }
+
+  return { data: { source, moved }, error: null };
+}
+
+/**
  * Build a fake Supabase client. The returned object is structurally compatible
  * with the `AppSupabaseClient` surface the repositories use (`.from(table)...`
  * and `.rpc(name, args)`). We deliberately cast at the call site in the test to
@@ -361,6 +420,18 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
             args as {
               group_payload: Row;
               installments_payload: Row[];
+            },
+          ),
+        );
+      }
+      if (name === "merge_category") {
+        return Promise.resolve(
+          mergeCategoryRpc(
+            store,
+            args as {
+              target_household_id: string;
+              source_category_id: string;
+              target_category_id: string;
             },
           ),
         );

@@ -297,6 +297,24 @@ export type InstallmentInsertPayload = Pick<
   | "created_by_user_id"
 >;
 
+// --- Merge category RPC result ---------------------------------------------
+//
+// Shape returned by the `merge_category` plpgsql function (see
+// supabase/migrations/0003_merge_category.sql): the archived source category row
+// plus per-table counts of re-pointed rows. The repository discards it (its
+// public contract is void), but the verifier and the fake client assert on it.
+
+export type MergeCategoryResult = {
+  source: CategoryRow;
+  moved: {
+    transactions: number;
+    installment_groups: number;
+    installments: number;
+    subcategories: number;
+    categorization_memory: number;
+  };
+};
+
 // --- Database surface (compatible with @supabase/supabase-js generics) ------
 
 type TableDef<Row, Insert> = {
@@ -354,6 +372,19 @@ export type Database = {
           group: InstallmentGroupRow;
           installments: InstallmentRow[];
         };
+      };
+      // Atomic category merge: re-point transactions / installment groups /
+      // installments / subcategories / categorization_memory off the source
+      // onto the target and archive the source, all in one transaction. See
+      // supabase/migrations/0003_merge_category.sql. Returns a jsonb summary
+      // (archived source row + per-table moved counts) the repository ignores.
+      merge_category: {
+        Args: {
+          target_household_id: string;
+          source_category_id: string;
+          target_category_id: string;
+        };
+        Returns: MergeCategoryResult;
       };
     };
     Enums: {

@@ -537,13 +537,17 @@ export async function restoreCategory(
 
 /**
  * Merge `sourceCategoryId` into `targetCategoryId`: re-point every transaction,
- * installment group, installment, and subcategory from the source onto the
- * target, then archive the now-empty source category. This consolidates an
- * existing taxonomy instead of creating new categories — the spec's anti-sprawl
- * goal. All updates are household-scoped.
+ * installment group, installment, subcategory, and categorization-memory row
+ * from the source onto the target, then archive the now-empty source category.
+ * This consolidates an existing taxonomy instead of creating new categories —
+ * the spec's anti-sprawl goal. All updates are household-scoped.
  *
- * Note: this is a best-effort sequence of scoped updates (Supabase JS has no
- * client-side transaction); each step is idempotent and re-runnable.
+ * Atomicity: this calls the `merge_category` plpgsql function (see
+ * supabase/migrations/0003_merge_category.sql), whose body runs in a single
+ * transaction — so a failure mid-merge can no longer leave a PARTIAL state with
+ * some rows re-pointed and the source still active. The function is SECURITY
+ * DEFINER and re-asserts household membership (via `is_household_member`) before
+ * writing, preserving the RLS/household isolation the table policies enforce.
  */
 export async function mergeCategory(
   client: AppSupabaseClient,
@@ -555,44 +559,14 @@ export async function mergeCategory(
     throw new Error("mergeCategory: source and target must differ");
   }
 
-  const repoint = async (
-    table: "transactions" | "installment_groups" | "installments",
-  ): Promise<void> => {
-    const { error } = await client
-      .from(table)
-      .update({ category_id: targetCategoryId })
-      .eq("household_id", householdId)
-      .eq("category_id", sourceCategoryId);
-    if (error !== null) {
-      throw new Error(`mergeCategory(${table}) failed: ${error.message}`);
-    }
-  };
-
-  await repoint("transactions");
-  await repoint("installment_groups");
-  await repoint("installments");
-
-  // Move subcategories under the target macro category.
-  const { error: subError } = await client
-    .from("subcategories")
-    .update({ category_id: targetCategoryId })
-    .eq("household_id", householdId)
-    .eq("category_id", sourceCategoryId);
-  if (subError !== null) {
-    throw new Error(`mergeCategory(subcategories) failed: ${subError.message}`);
+  const { error } = await client.rpc("merge_category", {
+    target_household_id: householdId,
+    source_category_id: sourceCategoryId,
+    target_category_id: targetCategoryId,
+  });
+  if (error !== null) {
+    throw new Error(`mergeCategory failed: ${error.message}`);
   }
-
-  // Re-point active memory entries so learned patterns follow the merge.
-  const { error: memError } = await client
-    .from("categorization_memory")
-    .update({ category_id: targetCategoryId })
-    .eq("household_id", householdId)
-    .eq("category_id", sourceCategoryId);
-  if (memError !== null) {
-    throw new Error(`mergeCategory(memory) failed: ${memError.message}`);
-  }
-
-  await archiveCategory(client, householdId, sourceCategoryId);
 }
 
 /** List all categorization-memory patterns for a household (active first). */
