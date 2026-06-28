@@ -247,6 +247,16 @@ export type CategorizationMemoryInsert = Insertable<
   "category_id" | "subcategory_id" | "is_active" | "created_by_user_id"
 >;
 
+export type BotInteractionInsert = Insertable<
+  BotInteractionRow,
+  | "external_chat_id"
+  | "user_id"
+  | "message_text"
+  | "confidence"
+  | "explanation"
+  | "transaction_id"
+>;
+
 // --- Database surface (compatible with @supabase/supabase-js generics) ------
 
 type TableDef<Row, Insert> = {
@@ -284,7 +294,7 @@ export type Database = {
         CategorizationMemoryRow,
         CategorizationMemoryInsert
       >;
-      bot_interactions: TableDef<BotInteractionRow, Partial<BotInteractionRow>>;
+      bot_interactions: TableDef<BotInteractionRow, BotInteractionInsert>;
     };
     Views: Record<string, never>;
     Functions: {

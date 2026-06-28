@@ -53,6 +53,7 @@ export type {
   CategorizationMemoryRow,
   CategorizationMemoryInsert,
   BotInteractionRow,
+  BotInteractionInsert,
 } from "./types.js";
 
 // Repository functions and pure mappers.
@@ -87,6 +88,8 @@ export {
   listActiveCategorizationMemory,
   createCategorizationMemory,
   setCategorizationMemoryActive,
+  // Bot interactions (auditing).
+  createBotInteraction,
   // Accounts, investment buckets (caixinhas), credit cards (Task 9).
   accountInsert,
   investmentBucketInsert,

@@ -29,6 +29,8 @@ import type {
   SubcategoryRow,
   CategorizationMemoryRow,
   CategorizationMemoryInsert,
+  BotInteractionRow,
+  BotInteractionInsert,
   ImportBatchRow,
   ImportBatchInsert,
   AccountRow,
@@ -660,6 +662,36 @@ export async function setCategorizationMemoryActive(
   if (error !== null) {
     throw new Error(`setCategorizationMemoryActive failed: ${error.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bot interactions (auditing).
+//
+// Every bot turn is recorded for auditing (channel, who, what, the suggested
+// confidence/explanation, and the resulting transaction id). The bot goes
+// through this repository instead of writing the table directly so every write
+// path stays in one place; `household_id` is required on the payload and
+// double-enforced by RLS.
+// ---------------------------------------------------------------------------
+
+/**
+ * Persist a bot interaction audit row and return the stored row. The caller
+ * passes an explicit `household_id` (double-enforced by RLS) plus the channel,
+ * input kind, and the optional suggestion/transaction details.
+ */
+export async function createBotInteraction(
+  client: AppSupabaseClient,
+  payload: BotInteractionInsert,
+): Promise<BotInteractionRow> {
+  const { data, error } = await client
+    .from("bot_interactions")
+    .insert(payload)
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createBotInteraction failed: ${error.message}`);
+  }
+  return data as BotInteractionRow;
 }
 
 // ---------------------------------------------------------------------------

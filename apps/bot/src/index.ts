@@ -21,6 +21,7 @@ import {
 import {
   createDatabaseClient,
   createTransaction as dbCreateTransaction,
+  createBotInteraction,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findHouseholdIdForCurrentUser,
@@ -144,7 +145,7 @@ async function buildDeps(
       return { id: persisted.id };
     },
     logInteraction: async (entry) => {
-      await client.from("bot_interactions").insert({
+      await createBotInteraction(client, {
         household_id: householdId,
         channel: "telegram",
         user_id: entry.fromUserId,
