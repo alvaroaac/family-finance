@@ -340,6 +340,60 @@ function createInstallmentPurchaseRpc(
 }
 
 /**
+ * JS stand-in for the `confirm_import` plpgsql function
+ * (supabase/migrations/0004_confirm_import.sql). The REAL atomicity guarantee and
+ * the import_rows audit trail are proven separately against Docker Postgres by the
+ * verifier; here we only reproduce the happy-path DATA EFFECT so the repository's
+ * `.rpc()` call path persists rows exactly as the SQL function would: insert the
+ * import_batch, then walk the rows IN ORDER — for each row that carries a
+ * `transaction`, insert it linked to the batch (import_batch_id) and count it; for
+ * every row, insert an import_rows audit record linked to the batch and to the
+ * produced transaction id (null for audit-only rows). Inserts go through
+ * `store.materialize`, so later reads over the fake (getMonthlySummary,
+ * findRecentTransactions, ...) see the imported transactions. Returns the same
+ * `{ batch, imported_rows }` summary the SQL function returns.
+ */
+function confirmImportRpc(
+  store: FakeSupabaseStore,
+  args: { batch_payload: Row; rows_payload: Row[] },
+): Result<{ batch: Row; imported_rows: number }> {
+  const batch = store.materialize({ ...args.batch_payload });
+  store.table("import_batches").push(batch);
+
+  let importedRows = 0;
+  for (const entry of args.rows_payload) {
+    const txPayload = entry.transaction as Row | null | undefined;
+    let transactionId: string | null = null;
+
+    if (txPayload != null) {
+      // The SQL function fills import_batch_id from the freshly inserted batch.
+      const tx = store.materialize({
+        ...txPayload,
+        import_batch_id: batch.id,
+      });
+      store.table("transactions").push(tx);
+      transactionId = tx.id as string;
+      importedRows += 1;
+    }
+
+    const auditRow = store.materialize({
+      household_id: batch.household_id,
+      import_batch_id: batch.id,
+      source_line: entry.source_line ?? null,
+      occurred_on: entry.occurred_on ?? null,
+      amount_cents: entry.amount_cents ?? null,
+      description: entry.description ?? null,
+      error_message: entry.error_message ?? null,
+      is_duplicate: entry.is_duplicate ?? false,
+      transaction_id: transactionId,
+    });
+    store.table("import_rows").push(auditRow);
+  }
+
+  return { data: { batch, imported_rows: importedRows }, error: null };
+}
+
+/**
  * JS stand-in for the `merge_category` plpgsql function
  * (supabase/migrations/0003_merge_category.sql). The REAL atomicity guarantee is
  * proven separately against Docker Postgres by the verifier; here we only
@@ -420,6 +474,17 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
             args as {
               group_payload: Row;
               installments_payload: Row[];
+            },
+          ),
+        );
+      }
+      if (name === "confirm_import") {
+        return Promise.resolve(
+          confirmImportRpc(
+            store,
+            args as {
+              batch_payload: Row;
+              rows_payload: Row[];
             },
           ),
         );

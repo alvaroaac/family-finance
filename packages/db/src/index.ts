@@ -52,6 +52,9 @@ export type {
   MergeCategoryResult,
   ImportBatchRow,
   ImportBatchInsert,
+  ConfirmImportBatchPayload,
+  ConfirmImportRowPayload,
+  ConfirmImportResult,
   ImportRowRow,
   CategorizationMemoryRow,
   CategorizationMemoryInsert,
@@ -80,6 +83,7 @@ export {
   // Import batches (Task 5).
   findAccountsByHousehold,
   createImportBatch,
+  confirmImport,
   // Category cleanup + categorization memory (Task 6).
   findHouseholdIdForCurrentUser,
   listAllCategories,

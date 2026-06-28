@@ -297,6 +297,59 @@ export type InstallmentInsertPayload = Pick<
   | "created_by_user_id"
 >;
 
+// --- Confirm import RPC payloads + result ----------------------------------
+//
+// Shapes the `confirm_import` plpgsql function consumes/returns (see
+// supabase/migrations/0004_confirm_import.sql). The repository validates each
+// selected normalized row into a transaction draft in TypeScript (so the domain
+// rules + per-row error reporting stay in the app), then hands the function the
+// batch summary plus one entry per audit row. An entry that produced a
+// transaction carries a `transaction` insert payload (WITHOUT import_batch_id —
+// the function fills it from the batch it inserts in the same transaction); an
+// error/duplicate/skipped entry carries only the normalized audit fields.
+
+/** The import_batches summary the confirm RPC inserts (counts only, no file). */
+export type ConfirmImportBatchPayload = Pick<
+  ImportBatchRow,
+  | "household_id"
+  | "source"
+  | "status"
+  | "total_rows"
+  | "imported_rows"
+  | "duplicate_rows"
+  | "error_rows"
+  | "notes"
+  | "created_by_user_id"
+>;
+
+/**
+ * One audit row for the confirm RPC. The normalized fields populate import_rows;
+ * `transaction`, when present, is inserted (linked to the batch) and its id is
+ * written back onto the audit row's `transaction_id`. `transaction` omits
+ * `import_batch_id` — the function sets it from the freshly inserted batch id.
+ */
+export type ConfirmImportRowPayload = Pick<
+  ImportRowRow,
+  | "household_id"
+  | "source_line"
+  | "occurred_on"
+  | "amount_cents"
+  | "description"
+  | "error_message"
+  | "is_duplicate"
+> & {
+  transaction?: Omit<TransactionInsert, "import_batch_id"> | null;
+};
+
+/**
+ * Shape returned by `confirm_import`: the stored batch row plus the count of
+ * transactions actually written (mirrors the function's jsonb result).
+ */
+export type ConfirmImportResult = {
+  batch: ImportBatchRow;
+  imported_rows: number;
+};
+
 // --- Merge category RPC result ---------------------------------------------
 //
 // Shape returned by the `merge_category` plpgsql function (see
@@ -372,6 +425,18 @@ export type Database = {
           group: InstallmentGroupRow;
           installments: InstallmentRow[];
         };
+      };
+      // Atomic import confirmation: create the import_batch, bulk-insert the
+      // kept transactions linked via import_batch_id, and write the per-row
+      // import_rows audit trail — all in one transaction. See
+      // supabase/migrations/0004_confirm_import.sql. Returns `{ batch,
+      // imported_rows }` as JSON; the repository casts it to the result shape.
+      confirm_import: {
+        Args: {
+          batch_payload: ConfirmImportBatchPayload;
+          rows_payload: ConfirmImportRowPayload[];
+        };
+        Returns: ConfirmImportResult;
       };
       // Atomic category merge: re-point transactions / installment groups /
       // installments / subcategories / categorization_memory off the source

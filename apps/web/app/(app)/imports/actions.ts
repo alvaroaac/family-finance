@@ -11,13 +11,14 @@ import {
 } from "@family-finance/importers";
 import { createTransactionDraft } from "@family-finance/domain";
 import {
-  createImportBatch,
-  createTransaction,
+  confirmImport as confirmImportBatch,
+  transactionInsertFromDraft,
   findHouseholdIdForCurrentUser,
   findAccountsByHousehold,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   type ImportSource as DbImportSource,
+  type ConfirmImportRowPayload,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -28,9 +29,10 @@ import { requireAuthorizedUser } from "../../../lib/auth";
  * PRIVACY: the uploaded file is read into memory ONLY inside `previewImport`,
  * parsed into normalized rows, and then dropped — it is never written to disk or
  * persisted. The browser holds the resulting normalized rows between preview and
- * confirm; `confirmImport` receives those rows (not the file) and writes one
- * transaction per kept row plus a single `import_batch` summary (source, counts,
- * status). No raw file bytes ever reach the database.
+ * confirm; `confirmImport` receives those rows (not the file) and persists, in
+ * ONE atomic transaction, a single `import_batch` summary (source, counts,
+ * status), the kept transactions linked to that batch, and the per-row
+ * `import_rows` audit trail. No raw file bytes ever reach the database.
  */
 
 const SOURCE_TO_DB: Record<ImportSource, DbImportSource> = {
@@ -173,8 +175,14 @@ export type ConfirmResult = {
 /**
  * Persist the reviewed import. Receives the normalized rows the user confirmed
  * (the file is already gone), the target account, and a per-row category map.
- * Writes one transaction per kept row and a single `import_batch` summary
- * (counts only — never the raw file). RLS scopes every write to the household.
+ *
+ * Each selected row is validated into a transaction draft HERE (so the domain
+ * rules and per-row error reporting stay in the app); the drafts plus a per-row
+ * audit record are then handed to the `confirm_import` RPC, which — in ONE
+ * atomic transaction — creates the `import_batch`, bulk-inserts the kept
+ * transactions linked to it via `import_batch_id`, and writes the `import_rows`
+ * audit trail (counts only — never the raw file). RLS / household isolation is
+ * re-asserted inside the SECURITY DEFINER function.
  */
 export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult> {
   try {
@@ -199,6 +207,10 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
     const selected = new Set(input.selectedIndices);
     let imported = 0;
     const writeErrors: string[] = [];
+    // One audit entry per selected row: rows that validate carry a transaction
+    // payload (without import_batch_id — the RPC fills it from the batch it
+    // inserts); rows that fail validation carry only the audit error message.
+    const rowPayloads: ConfirmImportRowPayload[] = [];
 
     for (let index = 0; index < input.rows.length; index += 1) {
       if (!selected.has(index)) {
@@ -225,33 +237,63 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       });
 
       if (!draftResult.ok) {
-        writeErrors.push(
-          `Linha ${row.sourceLine}: ${draftResult.errors
-            .map((e) => e.message)
-            .join("; ")}`,
-        );
+        const message = draftResult.errors.map((e) => e.message).join("; ");
+        writeErrors.push(`Linha ${row.sourceLine}: ${message}`);
+        // Audit-only row: no transaction is produced, but the skip is recorded.
+        rowPayloads.push({
+          household_id: householdId,
+          source_line: row.sourceLine,
+          occurred_on: row.occurredOn,
+          amount_cents:
+            row.kind === "expense" ? -row.amount.cents : row.amount.cents,
+          description: row.description,
+          error_message: message,
+          is_duplicate: false,
+        });
         continue;
       }
 
-      await createTransaction(client, draftResult.value);
+      // The transaction payload the RPC bulk-inserts. `import_batch_id` is set
+      // server-side from the batch the function creates in the same transaction.
+      const { import_batch_id: _drop, ...transaction } =
+        transactionInsertFromDraft(draftResult.value);
+      rowPayloads.push({
+        household_id: householdId,
+        source_line: row.sourceLine,
+        occurred_on: row.occurredOn,
+        // Audit magnitude carries the row's signed direction (expense negative),
+        // mirroring how the source file expressed it; import_rows forbids zero.
+        amount_cents:
+          row.kind === "expense" ? -row.amount.cents : row.amount.cents,
+        description: row.description,
+        error_message: null,
+        is_duplicate: false,
+        transaction,
+      });
       imported += 1;
     }
 
-    // Persist the batch summary — counts only, never the raw file.
-    await createImportBatch(client, {
-      household_id: householdId,
-      source: SOURCE_TO_DB[input.source],
-      status: "confirmed",
-      total_rows: input.totalRows,
-      imported_rows: imported,
-      duplicate_rows: input.duplicateRows,
-      error_rows: input.errorRows + writeErrors.length,
-      notes:
-        typeof input.notes === "string" && input.notes.trim().length > 0
-          ? input.notes.trim().slice(0, 200)
-          : null,
-      created_by_user_id: createdByUserId,
-    });
+    // Atomic write: batch + kept transactions (linked via import_batch_id) +
+    // import_rows audit trail, all in one transaction. Counts mirror the old
+    // summary (never the raw file).
+    await confirmImportBatch(
+      client,
+      {
+        household_id: householdId,
+        source: SOURCE_TO_DB[input.source],
+        status: "confirmed",
+        total_rows: input.totalRows,
+        imported_rows: imported,
+        duplicate_rows: input.duplicateRows,
+        error_rows: input.errorRows + writeErrors.length,
+        notes:
+          typeof input.notes === "string" && input.notes.trim().length > 0
+            ? input.notes.trim().slice(0, 200)
+            : null,
+        created_by_user_id: createdByUserId,
+      },
+      rowPayloads,
+    );
 
     revalidatePath("/imports");
     revalidatePath("/dashboard");

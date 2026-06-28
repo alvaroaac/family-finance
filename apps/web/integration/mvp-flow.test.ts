@@ -48,6 +48,8 @@ import {
 } from "@family-finance/domain";
 import {
   createTransaction,
+  confirmImport as confirmImportBatch,
+  transactionInsertFromDraft,
   createInstallmentPurchase,
   createCategorizationMemory,
   listActiveCategorizationMemory,
@@ -60,6 +62,7 @@ import {
   listInvestmentBuckets,
   type AppSupabaseClient,
   type CategorizationMemoryRow,
+  type ConfirmImportRowPayload,
 } from "@family-finance/db";
 
 import {
@@ -303,20 +306,26 @@ async function previewFixture(): Promise<NormalizedImportRow[]> {
 }
 
 /**
- * Confirm imported rows: run each normalized row through the categorization
- * engine (memory -> rules -> none), build a domain draft, and persist it on the
- * checking account. Returns each persisted transaction id + its row for asserts.
+ * Confirm imported rows through the PRODUCTION write path: run each normalized
+ * row through the categorization engine (memory -> rules -> none), build a domain
+ * draft, then hand the drafts + per-row audit records to the REAL db repository
+ * `confirmImport`, which calls the `confirm_import` RPC (the fake `.rpc`
+ * emulation here stands in for the plpgsql function). This mirrors what the web
+ * action `confirmImport` does, so the atomic batch + `import_batch_id` linkage +
+ * `import_rows` audit trail are exercised by the same code path production uses —
+ * not a per-row `createTransaction` loop. Returns each persisted transaction id +
+ * its row for asserts.
  */
 async function confirmImport(
   rows: NormalizedImportRow[],
 ): Promise<
   Array<{ id: string; row: NormalizedImportRow; categoryId?: string }>
 > {
-  const out: Array<{
-    id: string;
-    row: NormalizedImportRow;
-    categoryId?: string;
-  }> = [];
+  // One audit/transaction payload per row, in order — the shape the RPC consumes.
+  const suggestions: Array<{ row: NormalizedImportRow; categoryId?: string }> =
+    [];
+  const rowPayloads: ConfirmImportRowPayload[] = [];
+
   for (const row of rows) {
     const suggestion = await suggestCategory(
       {
@@ -344,10 +353,53 @@ async function confirmImport(
     expect(built.ok).toBe(true);
     if (!built.ok) throw new Error("draft build failed");
 
-    const persisted = await createTransaction(client, built.value);
-    out.push({ id: persisted.id, row, categoryId });
+    // The transaction payload the RPC bulk-inserts — without import_batch_id,
+    // which the function fills from the batch it creates in the same transaction.
+    const { import_batch_id: _drop, ...transaction } = transactionInsertFromDraft(
+      built.value,
+    );
+    rowPayloads.push({
+      household_id: HOUSEHOLD,
+      source_line: row.sourceLine,
+      occurred_on: row.occurredOn,
+      amount_cents: row.kind === "expense" ? -row.amount.cents : row.amount.cents,
+      description: row.description,
+      error_message: null,
+      is_duplicate: false,
+      transaction,
+    });
+    suggestions.push({ row, categoryId });
   }
-  return out;
+
+  // Atomic write: batch + kept transactions (linked via import_batch_id) +
+  // import_rows audit trail, through the real repository RPC wrapper.
+  const { batch, imported_rows } = await confirmImportBatch(
+    client,
+    {
+      household_id: HOUSEHOLD,
+      source: "minhas_financas_csv",
+      status: "confirmed",
+      total_rows: rows.length,
+      imported_rows: rows.length,
+      duplicate_rows: 0,
+      error_rows: 0,
+      notes: null,
+      created_by_user_id: ALVARO,
+    },
+    rowPayloads,
+  );
+  expect(imported_rows).toBe(rows.length);
+
+  // Resolve each persisted transaction id by joining the inserted batch's rows
+  // back to the suggestion list, in insertion order (the RPC preserves it).
+  const imported = store
+    .table("transactions")
+    .filter((t) => t.import_batch_id === batch.id);
+  return suggestions.map((s, index) => {
+    const tx = imported[index];
+    if (tx === undefined) throw new Error("imported transaction missing");
+    return { id: tx.id as string, row: s.row, categoryId: s.categoryId };
+  });
 }
 
 describe("MVP review loop — import + confirm", () => {
@@ -375,6 +427,26 @@ describe("MVP review loop — import + confirm", () => {
       p.row.description.includes("Mercado"),
     );
     expect(mercado?.categoryId).toBeUndefined();
+
+    // The atomic confirm RPC created exactly one batch, linked EVERY imported
+    // transaction to it via import_batch_id, and wrote one import_rows audit
+    // record per row linked to both the batch and the produced transaction —
+    // the audit trail + batch linkage the old per-row loop never populated.
+    const batches = store.table("import_batches");
+    expect(batches).toHaveLength(1);
+    const batch = batches[0];
+    expect(batch?.imported_rows).toBe(4);
+    for (const tx of txTable) {
+      expect(tx.import_batch_id).toBe(batch?.id);
+    }
+    const auditRows = store
+      .table("import_rows")
+      .filter((r) => r.import_batch_id === batch?.id);
+    expect(auditRows).toHaveLength(4);
+    // Every kept row's audit record points back at its persisted transaction.
+    expect(auditRows.map((r) => r.transaction_id).sort()).toEqual(
+      txTable.map((t) => t.id).sort(),
+    );
   });
 });
 

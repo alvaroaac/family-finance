@@ -33,6 +33,9 @@ import type {
   BotInteractionInsert,
   ImportBatchRow,
   ImportBatchInsert,
+  ConfirmImportBatchPayload,
+  ConfirmImportRowPayload,
+  ConfirmImportResult,
   AccountRow,
   InvestmentBucketRow,
   CreditCardRow,
@@ -434,6 +437,42 @@ export async function createImportBatch(
     throw new Error(`createImportBatch failed: ${error.message}`);
   }
   return data as ImportBatchRow;
+}
+
+/**
+ * Atomically confirm a reviewed import: create the import_batch, bulk-insert the
+ * kept transactions linked to that batch via `import_batch_id`, and write the
+ * per-row `import_rows` audit trail — all in ONE transaction. Returns the stored
+ * batch plus the count of transactions actually written.
+ *
+ * Atomicity: this calls the `confirm_import` plpgsql function (see
+ * supabase/migrations/0004_confirm_import.sql), whose body runs in a single
+ * transaction — so the previous per-row insert LOOP (with the batch created
+ * AFTER the rows, no import_batch_id link, and no audit trail) can no longer
+ * leave transactions unlinked or the batch counts disagreeing with what was
+ * written. The function is SECURITY DEFINER and re-asserts household membership
+ * (via `is_household_member`) before writing, preserving the RLS/household
+ * isolation the table policies enforce. The caller still validates each row into
+ * a draft in TypeScript, so the domain rules + per-row error reporting stay in
+ * the app; the parcels' batch link + audit `transaction_id` are set server-side.
+ */
+export async function confirmImport(
+  client: AppSupabaseClient,
+  batch: ConfirmImportBatchPayload,
+  rows: ConfirmImportRowPayload[],
+): Promise<ConfirmImportResult> {
+  const { data, error } = await client.rpc("confirm_import", {
+    batch_payload: batch,
+    rows_payload: rows,
+  });
+  if (error !== null) {
+    throw new Error(`confirmImport failed: ${error.message}`);
+  }
+  const result = data as ConfirmImportResult;
+  return {
+    batch: result.batch,
+    imported_rows: result.imported_rows ?? 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
