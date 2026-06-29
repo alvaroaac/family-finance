@@ -4,6 +4,32 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 ## Open Debt
 
+## 2026-06-29: Migration 0001 shipped no table GRANTs (found via live Supabase)
+
+**Area:** supabase/migrations
+
+**Impact:** `0001` created every table but issued no GRANTs to the Supabase API
+roles (`anon`/`authenticated`/`service_role`), relying on implicit default
+privileges. On a fresh Supabase those default privileges (for the migration owner
+`postgres`) grant the API roles only `Dxtm` (TRUNCATE/REFERENCES/TRIGGER/MAINTAIN)
+— NO SELECT/INSERT/UPDATE/DELETE — so PostgREST returns "permission denied for
+table …" for every table regardless of RLS. The web app + bot would be 100%
+broken on first real deploy. Invisible to the offline throwaway-Postgres checks:
+those connected as the table owner/superuser, which skips the table-privilege
+layer entirely. Only surfaced against the real Supabase API roles.
+
+**Current workaround:** n/a — fixed.
+
+**Revisit trigger:** n/a.
+
+**Status:** resolved (2026-06-29) — added `supabase/migrations/0005_api_grants.sql`
+granting tables+sequences to anon/authenticated/service_role plus ALTER DEFAULT
+PRIVILEGES for future tables; the SECURITY DEFINER RPCs keep their explicit
+0002–0004 execute grants (functions intentionally NOT re-granted). Proven on a
+real local Supabase (CLI + Docker, `supabase start` / `db reset`): a 26-check
+RLS + RPC proof flipped FAIL→PASS after the grant and re-passes from a clean
+`db reset` off the migration alone. RLS still gates which rows each caller sees.
+
 ## 2026-06-22: Caixinhas have no balance / position (Task 9)
 
 **Area:** supabase schema + apps/web/app/(app)/investments
@@ -39,7 +65,11 @@ up. Acceptable at family-MVP volume. Mirrors the same note on `mergeCategory`.
 **Revisit trigger:** Move the group+parcels insert into a single Postgres RPC if partial
 writes become a real problem.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit 376ddaf) — added `create_installment_purchase`
+SECURITY DEFINER RPC (migration `0002`) that inserts the group + all parcels in one
+transaction with explicit `is_household_member` re-assertion; `createInstallmentPurchase`
+now calls it. Atomic rollback proven on a throwaway Postgres 16 (forced NULL-parcel
+failure leaves no orphan group).
 
 ## 2026-06-22: Web lint has no eslint config
 
@@ -51,7 +81,9 @@ writes become a real problem.
 
 **Revisit trigger:** Adding the first web feature, or wiring lint into CI.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit b089652) — added `apps/web/.eslintrc.json`
+(`next/core-web-vitals`) + `eslint`/`eslint-config-next` dev deps; `pnpm --filter
+@family-finance/web lint` runs non-interactively and reports clean. Now part of the green gate.
 
 ## 2026-06-22: Packages use `--passWithNoTests`
 
@@ -63,7 +95,9 @@ writes become a real problem.
 
 **Revisit trigger:** Once a package has real tests, the flag is a harmless no-op but can be dropped for that package.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit 7a5894f) — dropped `--passWithNoTests` from every
+package/app that now has real test files; kept only where a package genuinely has zero tests.
+`pnpm test` stays green (117 tests).
 
 ## 2026-06-22: Installments use month attribution, not invoice timing
 
@@ -98,7 +132,12 @@ upstream integration.
 with `createServerClient` from `@supabase/ssr` (add a middleware/route handler for the
 OAuth code exchange + session refresh). Remove the manual cookie adapter.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit 3a42673) — `lib/supabase.ts` now uses
+`createServerClient` from `@supabase/ssr` with the App Router `getAll`/`setAll` cookie
+adapter; the hand-rolled `SupportedStorage` adapter is gone. Added `app/auth/callback/route.ts`
+(OAuth code exchange) and `middleware.ts` (session refresh); allowlist `evaluateAccess` flow
+intact. Build + auth unit tests green. NOTE: the OAuth round-trip is still NOT exercised
+against a live Supabase (no secrets) — see the risks-and-blockers web-auth entry.
 
 ## 2026-06-22: `@supabase/supabase-js` symlinked manually into apps/web
 
@@ -115,7 +154,9 @@ recreating it from the (now correct) lockfile entry.
 **Revisit trigger:** First clean `pnpm install` with network — verify the dep resolves
 without the manual symlink and the lockfile is unchanged.
 
-**Status:** open
+**Status:** resolved (2026-06-28) — not real debt. Removed the symlink and ran a clean
+`pnpm install` (network now reachable): pnpm recreated `apps/web/node_modules/@supabase/supabase-js`
+automatically (standard pnpm node_modules layout) and `pnpm-lock.yaml` was unchanged. No code change needed.
 
 ## 2026-06-22: Category merge is not atomic (no DB transaction)
 
@@ -132,7 +173,13 @@ category id), so re-invoking the merge converges. Acceptable for the single-hous
 **Revisit trigger:** If merges become frequent or larger, move the logic into a Postgres
 `SECURITY DEFINER` RPC function so the whole merge runs in one transaction.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit 046adfa) — added `merge_category` SECURITY DEFINER
+RPC (migration `0003`) that performs all re-points + the source archive in one transaction,
+household-scoped with safe `search_path`; `mergeCategory` now calls it. Migration applies
+cleanly to fresh Postgres 16; happy path covered by the db/web tests. (2026-06-29: rollback
+NOW force-proven on a real local Supabase — a bogus `target_category_id` triggers an FK
+violation mid-merge; afterward the source category stays active and the transaction stays
+pointed at the source, i.e. no partial merge.)
 
 ## 2026-06-22: Web build needs `extensionAlias` for NodeNext `.js` specifiers
 
@@ -172,7 +219,14 @@ an `importBatchId` option if linkage is later wanted (create the batch first).
 needed — move to a bulk insert or a Postgres RPC that writes the batch + rows + linked
 transactions in one transaction.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit 7733473) — added `confirm_import` SECURITY DEFINER
+RPC (migration `0004`) that, in one transaction, creates the `import_batch`, bulk-inserts the
+kept transactions linked via `import_batch_id`, AND writes the `import_rows` audit records;
+`confirmImport` now calls it (batch-summary return shape preserved). Migration applies cleanly
+to fresh Postgres 16; integration mvp-flow test reconciles the same totals. (2026-06-29: rollback
+NOW force-proven on a real local Supabase — a second row whose transaction has `amount_cents <= 0`
+violates the CHECK mid-loop; afterward no `import_batch`, no transactions, and no `import_rows`
+persist, including the first valid row.)
 
 ## 2026-06-22: Only name-matched CSV adapters; no XLSX or format variants
 
@@ -221,7 +275,10 @@ boundary is preserved and it is mockable in tests; it is just not a named repo.
 **Revisit trigger:** Add a `createBotInteraction(client, payload)` repo (and a `BotInteractionInsert`
 type) when another caller needs to log interactions or for consistency.
 
-**Status:** open
+**Status:** resolved (2026-06-28, commit e8109ae) — added `createBotInteraction(client, payload)`
+repo + `BotInteractionInsert` type in `packages/db`; the bot's `logInteraction` now calls it
+instead of the raw `client.from("bot_interactions").insert(...)`. Still injected via
+`ConversationDeps.logInteraction`, so it stays mockable. Behavior identical; bot tests green.
 
 ## 2026-06-22: Telegram "responsável <nome>" is a no-op in production wiring (Task 7)
 
@@ -258,7 +315,12 @@ Family-MVP volumes and single-user usage keep risk low.
 keys, add a `fetch` timeout + graceful "tente por texto" fallback, and a voice-note size
 guard in `transcribeVoiceMessage`.
 
-**Status:** open
+**Status:** open (partially addressed 2026-06-28, commit 85cd13e) — the resilience half is
+DONE: AbortController-based `fetch` timeout added to both providers (Anthropic completion +
+OpenAI transcription) with graceful degradation, plus a max voice-note size guard in
+`transcribeVoiceMessage` (temp file still deleted in `finally`); unit tests cover timeout→fallback
+and oversize→reject+cleanup. STILL OPEN: the provider HTTP response parsing is not verified against
+the LIVE Anthropic/OpenAI APIs (no network/secrets). Close this when verified with real keys.
 
 ## 2026-06-22: LLM not used for complex/incomplete TEXT interpretation (Task 8)
 

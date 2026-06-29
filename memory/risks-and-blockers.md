@@ -26,9 +26,22 @@ tech debt "Only name-matched CSV adapters; no XLSX or format variants".
 
 **Mitigation:** Document the exact blocker and keep SQL migrations reviewable.
 
-**Status:** watching
+**Status:** resolved (2026-06-29)
 
 **2026-06-22 (Task 3):** Supabase CLI is NOT installed in this environment and cannot be installed offline — `npx supabase` is canceled with "missing packages and no YES option" (no network); `brew install supabase/tap/supabase` / `npm i -g supabase` were not run. Docker *is* available and running. So `supabase db reset` was not executed. Mitigation applied: the migration (`supabase/migrations/0001_initial_schema.sql`) + seed (`supabase/seed.sql`) were validated against a throwaway plain-Postgres 16 Docker container with a minimal `auth.users`/`auth.uid()` stub. Result: schema + seed apply cleanly; RLS verified (non-member sees 0 rows and is blocked from inserting; member reads Casa and persists a transaction with account+category refs). Next action: when the Supabase CLI is available, run `supabase start && supabase db reset` to confirm against the real Auth stack. Runbook + details in `docs/decisions/0002-rls-and-household-isolation.md`.
+
+**2026-06-29 (live #1 verification — RESOLVED):** Supabase CLI installed via
+`brew install supabase/tap/supabase` (network now reachable; v2.108.0), `supabase init`
+created `supabase/config.toml`, and `supabase start` + `supabase db reset` applied
+`0001`→`0005` + `seed.sql` cleanly on the REAL Supabase Auth stack (Postgres + GoTrue +
+PostgREST). A 26-check RLS + RPC proof passed against the live API roles: member reads/writes
+are RLS-scoped; a non-member sees 0 rows, is blocked on INSERT ("new row violates row-level
+security policy"), and is blocked from the RPCs (`is_household_member` gate); and all three
+SECURITY DEFINER RPCs (`create_installment_purchase`, `merge_category`, `confirm_import`) were
+force-rolled-back with real constraint violations leaving no partial state. This pass also
+uncovered + fixed a real bug: 0001 shipped no table GRANTs → migration `0005_api_grants.sql`
+(see project-tech-debt 2026-06-29). REMAINING EXPOSURE: not yet run against a HOSTED Supabase
+project, and Google OAuth login round-trip still untested (see the web-auth risk below).
 
 ### AI confidence and explainability
 
@@ -64,6 +77,13 @@ refresh.
 
 **Mitigation:** Pure `evaluateAccess` is fully tested; build is green with placeholders.
 Tech debt logged to swap in `@supabase/ssr` and add OAuth callback handling.
+
+**2026-06-28 (tech-debt burndown, commit 3a42673):** The wiring is now the maintained upstream
+integration — `lib/supabase.ts` uses `@supabase/ssr`'s `createServerClient` with a `getAll`/`setAll`
+cookie adapter, and OAuth is handled by `app/auth/callback/route.ts` (code exchange) + `middleware.ts`
+(session refresh). Build + auth unit tests green. REMAINING EXPOSURE UNCHANGED: still not run against a
+live Supabase project (no secrets/network) — the Google OAuth round-trip and real session refresh are
+unverified. Verify when secrets are available.
 
 **Status:** open
 
