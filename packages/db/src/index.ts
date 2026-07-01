@@ -70,6 +70,7 @@ export type {
   CardPressure,
   UpcomingInstallment,
   DashboardTransaction,
+  CardChargeSummary,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -117,6 +118,9 @@ export {
   updateCreditCard,
   deleteCreditCard,
   createInstallmentPurchase,
+  // Import-preview dedupe (Task 5).
+  listInstallmentGroupsByHousehold,
+  findCardChargesBetween,
   // Dashboard aggregation + reads (Task 10).
   currentMonth,
   summarizeCardPressure,

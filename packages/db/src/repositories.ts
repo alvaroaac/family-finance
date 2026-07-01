@@ -1026,6 +1026,58 @@ export async function listCreditCards(
   return (data ?? []) as CreditCardRow[];
 }
 
+/**
+ * All installment groups of a household, for import-preview dedupe (spec §4).
+ * Household-wide on purpose: the preview runs before a target card is chosen,
+ * and a broader candidate set only ADDS visible, overridable "already exists"
+ * flags. RLS re-checks the household filter.
+ */
+export async function listInstallmentGroupsByHousehold(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<InstallmentGroupRow[]> {
+  const { data, error } = await client
+    .from("installment_groups")
+    .select("*")
+    .eq("household_id", householdId);
+  if (error !== null) {
+    throw new Error(`listInstallmentGroupsByHousehold failed: ${error.message}`);
+  }
+  return (data ?? []) as InstallmentGroupRow[];
+}
+
+/** Minimal card-paid transaction summary for against-DB import dedupe. */
+export type CardChargeSummary = {
+  occurred_on: string;
+  amount_cents: number;
+  kind: string;
+  description: string;
+};
+
+/**
+ * Card-paid transactions of a household inside [startDate, endDate], for the
+ * against-DB flat-charge dedupe (spec §4): a re-imported fatura must flag rows
+ * already written instead of silently duplicating them.
+ */
+export async function findCardChargesBetween(
+  client: AppSupabaseClient,
+  householdId: string,
+  startDate: string,
+  endDate: string,
+): Promise<CardChargeSummary[]> {
+  const { data, error } = await client
+    .from("transactions")
+    .select("occurred_on, amount_cents, kind, description")
+    .eq("household_id", householdId)
+    .not("credit_card_id", "is", null)
+    .gte("occurred_on", startDate)
+    .lte("occurred_on", endDate);
+  if (error !== null) {
+    throw new Error(`findCardChargesBetween failed: ${error.message}`);
+  }
+  return (data ?? []) as CardChargeSummary[];
+}
+
 /** Create a credit card. RLS scopes the insert to the household. */
 export async function createCreditCard(
   client: AppSupabaseClient,
