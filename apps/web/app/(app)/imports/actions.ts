@@ -209,6 +209,8 @@ export async function previewImport(
           first,
           last,
         );
+        // amount_cents is stored as a positive magnitude (CHECK > 0), so abs()
+        // here is defensive — both sides of this key are positive magnitudes.
         const seen = new Set(
           charges.map(
             (c) =>
@@ -356,6 +358,12 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       }
       const row = input.rows[index];
       if (row === undefined) {
+        continue;
+      }
+      // Parcela rows import via installment groups only — server-side guard,
+      // UI exclusion is not trusted (a buggy/malicious client could send the
+      // index anyway and double-count the charge).
+      if (isMp && row.installment !== undefined) {
         continue;
       }
       const map = input.mapping[index] ?? {};
