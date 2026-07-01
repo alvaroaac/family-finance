@@ -13,7 +13,7 @@ import {
   type NormalizedImportRow,
   type InferredInstallmentGroup,
 } from "@family-finance/importers";
-import { createTransactionDraft } from "@family-finance/domain";
+import { createTransactionDraft, createInstallmentPlan, brl } from "@family-finance/domain";
 import {
   confirmImport as confirmImportBatch,
   transactionInsertFromDraft,
@@ -24,6 +24,7 @@ import {
   listCreditCards,
   listInstallmentGroupsByHousehold,
   findCardChargesBetween,
+  createInstallmentPurchase,
   type ImportSource as DbImportSource,
   type ConfirmImportRowPayload,
 } from "@family-finance/db";
@@ -256,12 +257,25 @@ export async function previewImport(
   }
 }
 
+export type ConfirmGroupInput = {
+  description: string;
+  totalAmountCents: number;
+  installmentCount: number;
+  purchasedOn: string; // ISO YYYY-MM-DD (user-edited)
+  categoryId?: string;
+  subcategoryId?: string;
+};
+
 export type ConfirmInput = {
   source: ImportSource;
   /** The normalized rows from the preview (the file is already discarded). */
   rows: NormalizedImportRow[];
-  /** Target account every imported transaction is booked against. */
-  accountId: string;
+  /** Target account every imported transaction is booked against (CSV sources). */
+  accountId?: string;
+  /** Target credit card for Mercado Pago fatura charges (required when source is "mercado-pago"). */
+  creditCardId?: string;
+  /** Kept inferred installment groups from the MP preview (source is "mercado-pago" only). */
+  groups?: ConfirmGroupInput[];
   /** rowIndex -> chosen category/subcategory (optional; may be uncategorized). */
   mapping: Record<number, { categoryId?: string; subcategoryId?: string }>;
   /** Indices (into rows) the user chose to import (duplicates excluded by UI). */
@@ -298,7 +312,21 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
   try {
     const { client, householdId } = await authed();
 
-    if (typeof input.accountId !== "string" || input.accountId.length === 0) {
+    const isMp = input.source === "mercado-pago";
+    if (isMp) {
+      if (
+        typeof input.creditCardId !== "string" ||
+        input.creditCardId.length === 0
+      ) {
+        return {
+          ok: false,
+          message: "Escolha o cartão de destino antes de confirmar.",
+        };
+      }
+    } else if (
+      typeof input.accountId !== "string" ||
+      input.accountId.length === 0
+    ) {
       return {
         ok: false,
         message: "Escolha a conta de destino antes de confirmar.",
@@ -332,6 +360,11 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       }
       const map = input.mapping[index] ?? {};
 
+      const payment =
+        isMp && typeof input.creditCardId === "string"
+          ? ({ type: "card", creditCardId: input.creditCardId } as const)
+          : ({ type: "account", accountId: input.accountId as string } as const);
+
       const draftResult = createTransactionDraft({
         householdId,
         kind: row.kind,
@@ -339,7 +372,7 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         occurredOn: row.occurredOn,
         description: row.description,
         createdByUserId,
-        payment: { type: "account", accountId: input.accountId },
+        payment,
         category: {
           categoryId: map.categoryId,
           subcategoryId: map.subcategoryId,
@@ -405,15 +438,64 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       rowPayloads,
     );
 
+    // §5 step 2: create the kept inferred installment groups, one RPC per
+    // group. Not atomic with the batch above — acceptable per spec §5: a
+    // re-import flags both already-imported charges and already-created
+    // groups, so a partial failure is visible and recoverable, not duplicated.
+    let groupsCreated = 0;
+    const groupErrors: string[] = [];
+    if (isMp && Array.isArray(input.groups)) {
+      for (const g of input.groups) {
+        const planResult = createInstallmentPlan({
+          householdId,
+          creditCardId: input.creditCardId as string,
+          description: g.description,
+          totalAmount: brl(g.totalAmountCents),
+          installmentCount: g.installmentCount,
+          purchasedOn: g.purchasedOn,
+          createdByUserId,
+          category:
+            g.categoryId !== undefined
+              ? { categoryId: g.categoryId, subcategoryId: g.subcategoryId }
+              : undefined,
+        });
+        if (!planResult.ok) {
+          groupErrors.push(
+            `${g.description}: ${planResult.errors.map((e) => e.message).join("; ")}`,
+          );
+          continue;
+        }
+        try {
+          await createInstallmentPurchase(client, planResult.value);
+          groupsCreated += 1;
+        } catch (error) {
+          groupErrors.push(
+            `${g.description}: ${error instanceof Error ? error.message : "falha ao gravar parcelamento"}`,
+          );
+        }
+      }
+    }
+
     revalidatePath("/imports");
     revalidatePath("/dashboard");
 
+    const parts: string[] = [];
+    parts.push(
+      writeErrors.length === 0
+        ? `Importação confirmada: ${imported} transações gravadas.`
+        : `Importadas ${imported}; ${writeErrors.length} linha(s) com erro.`,
+    );
+    if (isMp) {
+      parts.push(`${groupsCreated} parcelamento(s) criado(s).`);
+      if (groupErrors.length > 0) {
+        parts.push(`Falhas em parcelamentos: ${groupErrors.join(" | ")}`);
+      }
+    }
+    parts.push("Arquivo original descartado.");
+
     return {
-      ok: writeErrors.length === 0,
-      message:
-        writeErrors.length === 0
-          ? `Importação confirmada: ${imported} transações gravadas. Arquivo original descartado.`
-          : `Importadas ${imported}; ${writeErrors.length} linha(s) com erro.`,
+      ok: writeErrors.length === 0 && groupErrors.length === 0,
+      message: parts.join(" "),
       importedRows: imported,
       duplicateRows: input.duplicateRows,
       errorRows: input.errorRows + writeErrors.length,
