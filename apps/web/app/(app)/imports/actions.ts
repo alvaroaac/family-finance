@@ -5,9 +5,13 @@ import { revalidatePath } from "next/cache";
 import {
   getImportAdapter,
   buildImportPreview,
+  splitFlatAndInstallmentRows,
+  matchExistingGroup,
+  normalizeDescription,
   type ImportSource,
   type ImportPreview,
   type NormalizedImportRow,
+  type InferredInstallmentGroup,
 } from "@family-finance/importers";
 import { createTransactionDraft } from "@family-finance/domain";
 import {
@@ -17,6 +21,9 @@ import {
   findAccountsByHousehold,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
+  listCreditCards,
+  listInstallmentGroupsByHousehold,
+  findCardChargesBetween,
   type ImportSource as DbImportSource,
   type ConfirmImportRowPayload,
 } from "@family-finance/db";
@@ -74,12 +81,27 @@ export type SubcategoryOption = {
   name: string;
 };
 
+export type CreditCardOption = { id: string; name: string };
+export type InferredGroupPreview = InferredInstallmentGroup & {
+  status: "new" | "exists";
+};
+export type MpPreviewExtras = {
+  referenceMonth: string;
+  groups: InferredGroupPreview[];
+  /** Row indices (into preview.rows) of parcela rows — NOT flat-importable. */
+  installmentRowIndices: number[];
+  /** Row indices already found in the DB (flag "já importada", default-skip). */
+  dbDuplicateIndices: number[];
+};
+
 export type PreviewState = {
   ok: true;
   preview: ImportPreview;
   accounts: AccountOption[];
   categories: CategoryOption[];
   subcategories: SubcategoryOption[];
+  creditCards: CreditCardOption[];
+  mp?: MpPreviewExtras;
 };
 
 export type PreviewError = { ok: false; message: string };
@@ -102,21 +124,34 @@ export async function previewImport(
       return { ok: false, message: "Selecione um arquivo CSV para importar." };
     }
 
-    // Read the transient file into memory; it is not written anywhere.
-    const fileText = await file.text();
+    // PRIVACY: for the PDF fatura the bytes are extracted to text in-memory and
+    // dropped immediately — same transient guarantee as the CSV path.
+    let fileText: string;
+    if (source === "mercado-pago") {
+      const { extractText } = await import("unpdf");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const extracted = await extractText(bytes, { mergePages: true });
+      fileText = Array.isArray(extracted.text)
+        ? extracted.text.join("\n")
+        : extracted.text;
+    } else {
+      fileText = await file.text();
+    }
 
     const adapter = getImportAdapter(source);
     if (adapter === undefined) {
       return { ok: false, message: "Fonte de importação não suportada." };
     }
 
-    const { rows, errors } = await adapter.parse(fileText);
+    const parsed = await adapter.parse(fileText);
+    const { rows, errors } = parsed;
     const preview = buildImportPreview({ source, rows, errors });
 
     // Load the household catalog so the UI can offer account + category mapping.
-    const [accounts, categories] = await Promise.all([
+    const [accounts, categories, creditCards] = await Promise.all([
       findAccountsByHousehold(client, householdId),
       findCategoriesByHousehold(client, householdId),
+      listCreditCards(client, householdId),
     ]);
     const subLists = await Promise.all(
       categories.map((c) =>
@@ -124,6 +159,78 @@ export async function previewImport(
       ),
     );
     const subcategories = subLists.flat();
+
+    let mp: MpPreviewExtras | undefined;
+    if (source === "mercado-pago") {
+      const referenceMonth = parsed.statement?.referenceMonth;
+      if (referenceMonth === undefined) {
+        return {
+          ok: false,
+          message:
+            "Não foi possível identificar o mês de emissão da fatura no PDF.",
+        };
+      }
+      const { flatRowIndices, groups } = splitFlatAndInstallmentRows(
+        rows,
+        referenceMonth,
+      );
+      const installmentRowIndices = rows
+        .map((_, i) => i)
+        .filter((i) => !flatRowIndices.includes(i));
+
+      // §4 dedupe — installment groups already in the DB.
+      const existingGroups = await listInstallmentGroupsByHousehold(
+        client,
+        householdId,
+      );
+      const summaries = existingGroups.map((g) => ({
+        description: g.description,
+        installmentCount: g.installment_count,
+        purchasedOn: g.purchased_on,
+      }));
+      const groupPreviews: InferredGroupPreview[] = groups.map((g) => ({
+        ...g,
+        status: matchExistingGroup(g, summaries) === null ? "new" : "exists",
+      }));
+
+      // §4 dedupe — flat charges already imported on a card in the period.
+      const dates = rows
+        .filter((_, i) => flatRowIndices.includes(i))
+        .map((r) => r.occurredOn)
+        .sort();
+      let dbDuplicateIndices: number[] = [];
+      const first = dates[0];
+      const last = dates[dates.length - 1];
+      if (first !== undefined && last !== undefined) {
+        const charges = await findCardChargesBetween(
+          client,
+          householdId,
+          first,
+          last,
+        );
+        const seen = new Set(
+          charges.map(
+            (c) =>
+              `${c.occurred_on}|${c.kind}|${Math.abs(c.amount_cents)}|` +
+              normalizeDescription(c.description).toLowerCase(),
+          ),
+        );
+        dbDuplicateIndices = flatRowIndices.filter((i) => {
+          const r = rows[i] as NormalizedImportRow;
+          const key =
+            `${r.occurredOn}|${r.kind}|${r.amount.cents}|` +
+            normalizeDescription(r.description).toLowerCase();
+          return seen.has(key);
+        });
+      }
+
+      mp = {
+        referenceMonth,
+        groups: groupPreviews,
+        installmentRowIndices,
+        dbDuplicateIndices,
+      };
+    }
 
     return {
       ok: true,
@@ -135,6 +242,8 @@ export async function previewImport(
         categoryId: s.category_id,
         name: s.name,
       })),
+      creditCards: creditCards.map((c) => ({ id: c.id, name: c.name })),
+      mp,
     };
   } catch (error) {
     return {
