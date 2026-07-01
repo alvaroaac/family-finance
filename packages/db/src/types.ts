@@ -18,7 +18,10 @@ export type InvestmentBucketSlug =
   | "filhos"
   | "casa"
   | "independencia_financeira";
-export type ImportSource = "minhas_financas_csv" | "nubank_csv";
+export type ImportSource =
+  | "minhas_financas_csv"
+  | "nubank_csv"
+  | "mercado_pago_pdf";
 export type ImportBatchStatus =
   | "pending"
   | "previewed"

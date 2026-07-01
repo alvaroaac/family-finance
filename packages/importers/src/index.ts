@@ -20,6 +20,7 @@ export type {
   ImportAdapter,
   DuplicateCandidate,
   ImportPreview,
+  StatementInfo,
 } from "./types.js";
 
 // Pure normalization primitives (also exported for unit tests / reuse).
@@ -37,15 +38,18 @@ export { findDuplicateCandidates, buildImportPreview } from "./dedupe.js";
 // Source adapters.
 export { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
 export { nubankCsvAdapter } from "./nubank-csv.js";
+export { mercadoPagoPdfAdapter } from "./mercado-pago-pdf.js";
 
 import type { ImportAdapter, ImportSource } from "./types.js";
 import { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
 import { nubankCsvAdapter } from "./nubank-csv.js";
+import { mercadoPagoPdfAdapter } from "./mercado-pago-pdf.js";
 
 /** Registry of available adapters, keyed by logical source. */
 export const importAdapters: Record<ImportSource, ImportAdapter> = {
   "minhas-financas": minhasFinancasCsvAdapter,
   nubank: nubankCsvAdapter,
+  "mercado-pago": mercadoPagoPdfAdapter,
 };
 
 /** Resolve an adapter by source, or `undefined` when unknown. */

@@ -38,10 +38,11 @@ import { requireAuthorizedUser } from "../../../lib/auth";
 const SOURCE_TO_DB: Record<ImportSource, DbImportSource> = {
   "minhas-financas": "minhas_financas_csv",
   nubank: "nubank_csv",
+  "mercado-pago": "mercado_pago_pdf",
 };
 
 function parseSource(value: FormDataEntryValue | null): ImportSource {
-  if (value === "minhas-financas" || value === "nubank") {
+  if (value === "minhas-financas" || value === "nubank" || value === "mercado-pago") {
     return value;
   }
   throw new Error("Fonte de importação inválida.");

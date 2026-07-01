@@ -14,7 +14,7 @@ import type { MoneyAmount } from "@family-finance/domain";
  * (`minhas_financas_csv` | `nubank_csv`); the web action maps between them so
  * this package stays free of any db coupling.
  */
-export type ImportSource = "minhas-financas" | "nubank";
+export type ImportSource = "minhas-financas" | "nubank" | "mercado-pago";
 
 /** Expense vs income, derived from the source row's sign/type column. */
 export type ImportRowKind = "expense" | "income";
@@ -41,6 +41,13 @@ export type NormalizedImportRow = {
    * web action layer to drive category mapping; it is never auto-applied here.
    */
   sourceCategory?: string;
+  /**
+   * Present when the source row is one parcel of an installment purchase
+   * ("Parcela X de Y" on a fatura). Flat/à-vista rows omit it.
+   */
+  installment?: { number: number; count: number };
+  /** Card last-4 of the fatura section this row came from, when known. */
+  cardLast4?: string;
 };
 
 /**
@@ -53,11 +60,18 @@ export type ImportRowError = {
   message: string;
 };
 
+/** Statement-level metadata a fatura-style source can provide. */
+export type StatementInfo = {
+  /** YYYY-MM the statement was emitted in — anchors year inference. */
+  referenceMonth: string;
+};
+
 /** The result of running a source adapter over a file's text. */
 export type AdapterResult = {
   source: ImportSource;
   rows: NormalizedImportRow[];
   errors: ImportRowError[];
+  statement?: StatementInfo;
 };
 
 /**
