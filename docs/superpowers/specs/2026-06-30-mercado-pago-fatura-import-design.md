@@ -1,7 +1,8 @@
 # Mercado Pago fatura import — design
 
 **Date:** 2026-06-30
-**Status:** Approved design, pending implementation plan
+**Status:** Approved design (self-reviewed 2026-07-01: added against-DB
+flat-charge dedupe + `purchased_on` date rule), pending implementation plan
 
 ## Goal
 
@@ -111,22 +112,41 @@ each parcela row (one parcel per group appears per fatura):
 - `perInstallmentCents = thisRow.amount`
 - `estimatedTotalCents = perInstallmentCents × Y`
 - `purchaseMonth = statementMonth − (X − 1)`
+- **`purchasedOn` (full date)**: `installment_groups.purchased_on` is a NOT NULL
+  `date` and the domain `createInstallmentPlan` requires an ISO `purchasedOn`, so
+  month alone is not enough. On an MP fatura the parcela row's `DD/MM` **is** the
+  original purchase date; the day comes from the row's `DD` and the year+month
+  from the `statementMonth − (X − 1)` formula (which, unlike the §2 single-year
+  inference rule, correctly reaches purchases more than 12 months back, e.g.
+  `Parcela 14 de 18`). If `DD` is invalid for the inferred month (e.g. 31 in a
+  30-day month), clamp to the month's last day. Editable in preview like the rest.
 - `description`, `cardLast4` carried through.
 
 Output is an `InferredInstallmentGroup[]` preview model with all inferred values
 **editable** downstream. The estimate is exact when parcels are equal (typical
 for MP); the user can correct the total/start/count in the preview.
 
-### 4. Dedupe vs existing installment groups (db query)
+### 4. Dedupe vs existing data (db queries)
 
-A new `packages/db` query finds existing `installment_groups` for the household +
-chosen credit card matching an inferred group by **description + count +
-purchase month**. The preview classifies inferred groups into three buckets:
+**Installment groups.** A new `packages/db` query finds existing
+`installment_groups` for the household + chosen credit card matching an inferred
+group by **description + count + purchase month**. The preview classifies
+inferred groups into three buckets:
 
 - **new** — no match, will be created (selected by default);
 - **already exists** — match found, shown to the user, default-skipped;
 - **needs input** — inference incomplete/ambiguous, user supplies total/date
   before it can be created.
+
+**Flat charges.** The existing dedupe (`packages/importers/dedupe.ts`) is
+within-batch only — it never looks at the database, so a re-import of the same
+fatura would silently duplicate every à-vista charge. Since §5's non-atomic
+confirm leans on re-import being safe, the MP preview adds an **against-DB
+duplicate check**: a `packages/db` query loads the household's transactions on
+the chosen credit card within the statement period, and flat rows matching on
+**occurredOn + amount + normalized description** are flagged "já importada"
+and default-skipped (visible + overridable, same UX as the within-batch flags).
+CSV sources keep the current within-batch-only behavior.
 
 ### 5. Persistence (sequential reuse of existing RPCs)
 
@@ -138,9 +158,10 @@ purchase month**. The preview classifies inferred groups into three buckets:
    RPC, one call per group, built from the edited values via the domain
    `createInstallmentPlan`.
 
-Not atomic across the two RPCs. Acceptable because installment groups carry no
-batch link and re-import dedupe (§4) makes a partial failure recoverable — a
-re-run detects already-created groups and already-imported charges.
+Not atomic across the two RPCs. Acceptable because re-import dedupe (§4) makes
+a partial failure recoverable — a re-run detects already-created groups (group
+query) AND already-imported charges (against-DB flat-charge check), so nothing
+is silently duplicated.
 
 ### 6. Plumbing
 
