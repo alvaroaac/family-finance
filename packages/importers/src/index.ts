@@ -35,6 +35,16 @@ export {
 // Duplicate detection + preview assembly.
 export { findDuplicateCandidates, buildImportPreview } from "./dedupe.js";
 
+// Parcela reconstruction: split flat rows from inferred installment groups.
+export {
+  splitFlatAndInstallmentRows,
+  matchExistingGroup,
+} from "./reconstruction.js";
+export type {
+  InferredInstallmentGroup,
+  ExistingGroupSummary,
+} from "./reconstruction.js";
+
 // Source adapters.
 export { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
 export { nubankCsvAdapter } from "./nubank-csv.js";
