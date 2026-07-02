@@ -7,6 +7,13 @@ import {
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  PageTitle,
+} from "../../../components/ui";
 import { createCardAction, updateCardAction, deleteCardAction } from "./actions";
 import { CardPurchaseForm } from "./purchase-form";
 
@@ -16,39 +23,6 @@ export const metadata = {
 
 // This page reads per-request, RLS-scoped data; never statically prerender it.
 export const dynamic = "force-dynamic";
-
-const card = {
-  background: "#fff",
-  border: "1px solid #e3e6ea",
-  borderRadius: 12,
-  padding: 20,
-  marginTop: 20,
-} as const;
-
-const inputStyle = {
-  padding: "8px 10px",
-  border: "1px solid #cbd2d9",
-  borderRadius: 8,
-  fontSize: 14,
-} as const;
-
-const btn = {
-  padding: "8px 14px",
-  borderRadius: 8,
-  border: "1px solid #11271f",
-  background: "#11271f",
-  color: "#fff",
-  fontSize: 14,
-  cursor: "pointer",
-} as const;
-
-const btnGhost = { ...btn, background: "#fff", color: "#11271f" } as const;
-const btnDanger = {
-  ...btn,
-  background: "#fff",
-  color: "#8a2020",
-  border: "1px solid #e0b4b4",
-} as const;
 
 type CardsData = {
   cards: CreditCardRow[];
@@ -96,158 +70,173 @@ async function loadData(): Promise<CardsData> {
   }
 }
 
+/** "fecha dia 28 · vence dia 05" — per the Cartões mockup cards. */
+function cardDaysLabel(card: CreditCardRow): string | null {
+  const parts: string[] = [];
+  if (card.closing_day !== null) {
+    parts.push(`fecha dia ${String(card.closing_day).padStart(2, "0")}`);
+  }
+  if (card.due_day !== null) {
+    parts.push(`vence dia ${String(card.due_day).padStart(2, "0")}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 export default async function CardsPage() {
   await requireAuthorizedUser();
   const { cards, categories, subcategories, loadError } = await loadData();
 
   return (
-    <section>
-      <h1 style={{ marginTop: 0 }}>Cartões</h1>
-      <p style={{ color: "#555", maxWidth: 720 }}>
-        Cadastre cartões de crédito simples (sem a complexidade bancária completa)
-        e lance compras <strong>à vista</strong> ou <strong>parceladas</strong>.
-        As parcelas mensais são geradas pelo núcleo financeiro e ficam{" "}
-        <strong>visíveis antes de salvar</strong>.
-      </p>
+    <section style={{ maxWidth: 980, margin: "0 auto" }}>
+      <PageTitle
+        kicker="Nossa casa"
+        title="Cartões"
+        lead="Faturas, fechamentos e as compras parceladas."
+        actions={
+          <a href="#compra" className="ff-btn ff-btn--primary" style={{ textDecoration: "none" }}>
+            + Compra parcelada
+          </a>
+        }
+      />
 
       {loadError ? (
-        <div
-          role="alert"
-          style={{
-            background: "#fdecec",
-            border: "1px solid #f3b4b4",
-            color: "#8a2020",
-            borderRadius: 10,
-            padding: 12,
-            marginTop: 16,
-            fontSize: 14,
-          }}
-        >
+        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
           {loadError}
         </div>
       ) : null}
 
-      {/* Create card */}
-      <div style={card}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Novo cartão</h2>
-        <form
-          action={createCardAction}
-          style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}
-        >
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-            Nome
-            <input
-              type="text"
-              name="name"
-              placeholder="Ex.: Nubank"
-              required
-              style={inputStyle}
-              aria-label="Nome do cartão"
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-            Dia de fechamento (opcional)
-            <input
-              type="number"
-              name="closingDay"
-              min={1}
-              max={31}
-              style={inputStyle}
-              aria-label="Dia de fechamento"
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-            Dia de vencimento (opcional)
-            <input
-              type="number"
-              name="dueDay"
-              min={1}
-              max={31}
-              style={inputStyle}
-              aria-label="Dia de vencimento"
-            />
-          </label>
-          <button type="submit" style={btn}>
-            Adicionar cartão
-          </button>
-        </form>
+      {/* Registered cards */}
+      <div className="ff-cards-grid" style={{ marginTop: 26 }}>
+        {cards.length === 0 ? (
+          <p className="ff-muted">Nenhum cartão cadastrado.</p>
+        ) : (
+          cards.map((c) => {
+            const days = cardDaysLabel(c);
+            return (
+              <Card key={c.id} accentEdge>
+                <div>
+                  <div className="ff-name ff-name--lg">{c.name}</div>
+                  {days ? <div className="ff-name-sub">{days}</div> : null}
+                </div>
+                <div className="ff-actions">
+                  <form
+                    action={updateCardAction}
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "flex-end",
+                      flexWrap: "wrap",
+                      flex: 1,
+                    }}
+                  >
+                    <input type="hidden" name="cardId" value={c.id} />
+                    <div style={{ flex: 1, minWidth: 130 }}>
+                      <Field label="Nome">
+                        <Input
+                          type="text"
+                          name="name"
+                          defaultValue={c.name}
+                          required
+                          className="ff-input--compact"
+                          aria-label={`Nome do cartão ${c.name}`}
+                        />
+                      </Field>
+                    </div>
+                    <div style={{ width: 82 }}>
+                      <Field label="Fecha">
+                        <Input
+                          type="number"
+                          name="closingDay"
+                          min={1}
+                          max={31}
+                          defaultValue={c.closing_day ?? ""}
+                          className="ff-input--compact"
+                          aria-label="Dia de fechamento"
+                        />
+                      </Field>
+                    </div>
+                    <div style={{ width: 82 }}>
+                      <Field label="Vence">
+                        <Input
+                          type="number"
+                          name="dueDay"
+                          min={1}
+                          max={31}
+                          defaultValue={c.due_day ?? ""}
+                          className="ff-input--compact"
+                          aria-label="Dia de vencimento"
+                        />
+                      </Field>
+                    </div>
+                    <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                      Salvar
+                    </button>
+                  </form>
+                  <form action={deleteCardAction}>
+                    <input type="hidden" name="cardId" value={c.id} />
+                    <Button variant="danger" type="submit">
+                      Excluir
+                    </Button>
+                  </form>
+                </div>
+              </Card>
+            );
+          })
+        )}
       </div>
 
-      {/* List cards */}
-      <div style={card}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Cartões cadastrados ({cards.length})</h2>
-        {cards.length === 0 ? (
-          <p style={{ color: "#6b7280", fontSize: 14, marginTop: 0 }}>
-            Nenhum cartão cadastrado.
-          </p>
-        ) : (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {cards.map((c) => (
-              <li
-                key={c.id}
-                style={{
-                  borderTop: "1px solid #f0f2f4",
-                  padding: "12px 0",
-                  display: "flex",
-                  gap: 12,
-                  flexWrap: "wrap",
-                  alignItems: "flex-end",
-                }}
-              >
-                <form
-                  action={updateCardAction}
-                  style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", flex: 1 }}
-                >
-                  <input type="hidden" name="cardId" value={c.id} />
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-                    Nome
-                    <input
-                      type="text"
-                      name="name"
-                      defaultValue={c.name}
-                      required
-                      style={{ ...inputStyle, minWidth: 160 }}
-                      aria-label={`Nome do cartão ${c.name}`}
-                    />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-                    Fechamento
-                    <input
-                      type="number"
-                      name="closingDay"
-                      min={1}
-                      max={31}
-                      defaultValue={c.closing_day ?? ""}
-                      style={{ ...inputStyle, width: 90 }}
-                      aria-label="Dia de fechamento"
-                    />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-                    Vencimento
-                    <input
-                      type="number"
-                      name="dueDay"
-                      min={1}
-                      max={31}
-                      defaultValue={c.due_day ?? ""}
-                      style={{ ...inputStyle, width: 90 }}
-                      aria-label="Dia de vencimento"
-                    />
-                  </label>
-                  <button type="submit" style={btnGhost}>
-                    Salvar
-                  </button>
-                </form>
-                <form action={deleteCardAction}>
-                  <input type="hidden" name="cardId" value={c.id} />
-                  <button type="submit" style={btnDanger}>
-                    Excluir
-                  </button>
-                </form>
-              </li>
-            ))}
-          </ul>
-        )}
+      {/* Create card */}
+      <div style={{ marginTop: 20 }}>
+        <Card>
+          <h2 className="ff-h2">Novo cartão</h2>
+          <form
+            action={createCardAction}
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "flex-end",
+              marginTop: 18,
+            }}
+          >
+            <div style={{ flex: 1.4, minWidth: 170 }}>
+              <Field label="Nome">
+                <Input
+                  type="text"
+                  name="name"
+                  placeholder="Ex.: Nubank"
+                  required
+                  aria-label="Nome do cartão"
+                />
+              </Field>
+            </div>
+            <div style={{ width: 150 }}>
+              <Field label="Fechamento (opcional)">
+                <Input
+                  type="number"
+                  name="closingDay"
+                  min={1}
+                  max={31}
+                  aria-label="Dia de fechamento"
+                />
+              </Field>
+            </div>
+            <div style={{ width: 150 }}>
+              <Field label="Vencimento (opcional)">
+                <Input
+                  type="number"
+                  name="dueDay"
+                  min={1}
+                  max={31}
+                  aria-label="Dia de vencimento"
+                />
+              </Field>
+            </div>
+            <Button variant="ghost" type="submit">
+              Adicionar cartão
+            </Button>
+          </form>
+        </Card>
       </div>
 
       {/* Card purchase entry with visible parcel preview */}

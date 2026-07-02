@@ -2043,6 +2043,354 @@ a.ff-callout:hover {
   }
 }
 
+/* ---- Mais Telas: Categorias, Contas, Cartões, Caixinhas ----------------- */
+
+/* Category color dot (mockup: 10px circle on accent/pos/neg/warn). */
+.ff-dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+/* Category list row (mockup: surface, radius 12, padding 16px 20px). */
+.ff-catrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  transition: all 0.16s;
+}
+
+.ff-catrow:hover {
+  transform: translateY(-1px);
+  border-color: var(--ff-accent);
+}
+
+.ff-catrow__main {
+  flex: 1;
+  min-width: 160px;
+}
+
+.ff-catrow__name {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--ff-ink);
+}
+
+.ff-catrow__subs {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  margin-top: 2px;
+}
+
+/* Inline pattern chip — memória de categorização. */
+.ff-code {
+  background: var(--ff-tint);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--ff-ink);
+  font-size: 12px;
+}
+
+/* Vertical list of row cards. */
+.ff-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Icon bubbles per Mais Telas (Contas 38px/r10, Caixinhas 36px/r10). */
+.ff-bubble--lg {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.ff-bubble--md {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+/* Account / card / bucket head (icon + name + kind copy). */
+.ff-head-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ff-name {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--ff-ink);
+}
+
+.ff-name--lg {
+  font-size: 16px;
+}
+
+.ff-name-sub {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  margin-top: 2px;
+}
+
+/* Caixinha balance (mockup: Playfair 600 28px tabular). */
+.ff-bucket__value {
+  font-size: 28px;
+  color: var(--ff-ink);
+  margin-top: 14px;
+}
+
+/* Header total (Caixinhas: "Guardado no total" + gold Playfair 30px). */
+.ff-total {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.ff-total__kicker {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ff-ink-soft);
+}
+
+.ff-total__value {
+  font-size: 30px;
+  color: var(--ff-accent);
+  margin-top: 4px;
+}
+
+/* Inline action forms inside cards (edit name / delete rows). */
+.ff-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Positive alert twin of .ff-alert--negative / --warn. */
+.ff-alert--positive {
+  background: var(--ff-positive-wash);
+  border: 1px solid var(--ff-positive);
+}
+
+/* ---- Configurações: theme cards, membros, bot --------------------------- */
+
+/* Card section subtitle (mockup: Inter 300 13px ink2, mt 6). */
+.ff-sub {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 300;
+  font-size: 13px;
+  color: var(--ff-ink-soft);
+  margin: 6px 0 0;
+}
+
+/* Theme preview cards — colors are theme-constant (each previews itself). */
+.ff-themecards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 20px;
+  max-width: 640px;
+}
+
+.ff-themecard {
+  text-align: left;
+  border-radius: 14px;
+  padding: 18px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ff-themecard:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ff-themecard:disabled {
+  cursor: wait;
+}
+
+.ff-themecard--esmeralda {
+  background: #16352b;
+  border: 1px solid rgba(212, 175, 106, 0.4);
+}
+
+.ff-themecard--salvia {
+  background: #e8ede3;
+  border: 1px solid #cbd6c0;
+}
+
+.ff-themecard--active {
+  box-shadow: 0 0 0 3px var(--ff-accent);
+}
+
+.ff-themecard__dots {
+  display: flex;
+  gap: 6px;
+}
+
+.ff-themecard__dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.ff-themecard__name {
+  font-family: var(--ff-font-display), "Playfair Display", Georgia, serif;
+  font-weight: 600;
+  font-size: 17px;
+  margin-top: 12px;
+}
+
+.ff-themecard--esmeralda .ff-themecard__name {
+  color: #f2ede0;
+}
+
+.ff-themecard--salvia .ff-themecard__name {
+  color: #2e3a2a;
+}
+
+.ff-themecard__desc {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.ff-themecard--esmeralda .ff-themecard__desc {
+  color: rgba(242, 237, 224, 0.66);
+}
+
+.ff-themecard--salvia .ff-themecard__desc {
+  color: #5f6b58;
+}
+
+/* Member row (mockup: soft bg, radius 12, padding 16px 18px). */
+.ff-member {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+/* "a casa" pseudo-member (dashed, transparent). */
+.ff-member--ghost {
+  background: transparent;
+  border-style: dashed;
+  padding: 14px 18px;
+}
+
+.ff-member__avatar {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ff-tint);
+  border: 1px solid var(--ff-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ff-font-display), "Playfair Display", Georgia, serif;
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--ff-accent);
+}
+
+.ff-member__avatar--dashed {
+  background: transparent;
+  border-style: dashed;
+}
+
+.ff-member__field {
+  flex: 1;
+  min-width: 150px;
+  max-width: 260px;
+}
+
+.ff-member__name {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink);
+}
+
+.ff-member__desc {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  margin-top: 2px;
+}
+
+/* Bot heartbeat row (mockup: soft bg + 🎙️ bubble). */
+.ff-botrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.ff-botrow__emoji {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ff-tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.ff-botrow__title {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ff-ink);
+}
+
+.ff-botrow__meta {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  margin-top: 3px;
+}
+
+@media (max-width: 720px) {
+  .ff-themecards {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .ff-member__field {
+    max-width: none;
+  }
+}
+
 /* ---- Motion ---------------------------------------------------------- */
 
 @keyframes ffFadeUp {

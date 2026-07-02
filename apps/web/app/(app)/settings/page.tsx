@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import { Badge, Card, IconHome, PageTitle } from "../../../components/ui";
 import {
   loadSettingsData,
   botStatusLabel,
@@ -17,13 +18,6 @@ export const metadata = {
 // Per-request, RLS-scoped data; never statically prerender.
 export const dynamic = "force-dynamic";
 
-const panel = {
-  background: "#fff",
-  border: "1px solid #e3e6ea",
-  borderRadius: 12,
-  padding: 20,
-} as const;
-
 /**
  * "/settings" — Configurações da casa: tema (Esmeralda/Sálvia via cookie),
  * perfis dos membros (nome de exibição + Telegram vinculado + papel) e o
@@ -36,78 +30,93 @@ export default async function SettingsPage() {
   const { members, lastBotInteraction, loadError } = await loadSettingsData();
 
   return (
-    <section
-      style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 16 }}
-    >
-      <header>
-        <h1 style={{ margin: 0 }}>Configurações</h1>
-        <p style={{ color: "#555", margin: "6px 0 0", fontSize: 15 }}>
-          Do jeitinho da casa: tema, quem é quem e o nosso bot.
-        </p>
-      </header>
+    <section style={{ maxWidth: 880, margin: "0 auto" }}>
+      <PageTitle
+        kicker="Nossa casa"
+        title="Configurações"
+        lead="O jeitinho da casa: tema, quem somos e o bot."
+      />
 
       {loadError ? (
-        <div
-          role="alert"
-          style={{
-            background: "#fdecec",
-            border: "1px solid #f3b4b4",
-            color: "#8a2020",
-            borderRadius: 10,
-            padding: 12,
-            fontSize: 14,
-          }}
-        >
-          Não foi possível carregar as configurações agora.{" "}
-          <span style={{ color: "#a85b5b" }}>({loadError})</span>
+        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
+          Não foi possível carregar as configurações agora. ({loadError})
         </div>
       ) : null}
 
-      {/* Tema */}
-      <div style={panel}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Tema</h2>
-        <p style={{ color: "#6b7280", fontSize: 14, marginTop: 0 }}>
-          Escolha o clima da casa — fica salvo neste navegador.
-        </p>
-        <ThemePicker activeTheme={activeTheme} />
+      {/* Estilo */}
+      <div style={{ marginTop: 32 }}>
+        <Card>
+          <h2 className="ff-h2">Estilo da casa</h2>
+          <p className="ff-sub">
+            Vale pros dois — o tema fica salvo pra próxima visita.
+          </p>
+          <ThemePicker activeTheme={activeTheme} />
+        </Card>
       </div>
 
       {/* Membros */}
-      <div style={panel}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Quem mora aqui</h2>
-        <p style={{ color: "#6b7280", fontSize: 14, marginTop: 0 }}>
-          Nome de exibição e o ID do Telegram vinculado ao bot (deixe em branco
-          para desvincular).
-        </p>
-        {members.length === 0 ? (
-          <p style={{ color: "#6b7280", fontSize: 14, margin: 0 }}>
-            Nenhum membro encontrado.
+      <div style={{ marginTop: 20 }}>
+        <Card>
+          <h2 className="ff-h2">Quem mora aqui</h2>
+          <p className="ff-sub">
+            Nome de exibição e o Telegram de cada um pro bot saber quem lançou.
           </p>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <tbody>
-              {members.map((member) => (
-                <MemberRow key={member.id} member={member} />
-              ))}
-            </tbody>
-          </table>
-        )}
+          <div className="ff-rows" style={{ marginTop: 20 }}>
+            {members.length === 0 ? (
+              <p className="ff-muted">Nenhum membro encontrado.</p>
+            ) : (
+              members.map((member) => <MemberRow key={member.id} member={member} />)
+            )}
+            <div className="ff-member ff-member--ghost">
+              <span className="ff-member__avatar ff-member__avatar--dashed">
+                <IconHome size={17} />
+              </span>
+              <div style={{ flex: 1 }}>
+                <div className="ff-member__name">a casa</div>
+                <div className="ff-member__desc">
+                  responsável padrão dos gastos de todo mundo — sempre por aqui
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Status do bot */}
-      <div style={panel}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Bot da casa</h2>
-        <p style={{ fontSize: 15, margin: 0 }}>
-          {botStatusLabel(lastBotInteraction)}
-        </p>
-        {lastBotInteraction !== null ? (
-          <p style={{ color: "#6b7280", fontSize: 13, margin: "6px 0 0" }}>
-            Tipo: {inputKindLabel(lastBotInteraction.input_kind)}
-            {lastBotInteraction.transaction_id !== null
-              ? " · virou lançamento"
-              : ""}
-          </p>
-        ) : null}
+      <div style={{ marginTop: 20 }}>
+        <Card>
+          <div className="ff-panel__head">
+            <div>
+              <h2 className="ff-h2">Bot do Telegram</h2>
+              <p className="ff-sub">
+                Manda um áudio ou texto no grupo e o lançamento cai aqui.
+              </p>
+            </div>
+            {lastBotInteraction !== null ? (
+              <Badge tone="positive" dot>
+                funcionando
+              </Badge>
+            ) : null}
+          </div>
+          <div className="ff-botrow">
+            <span className="ff-botrow__emoji" aria-hidden>
+              🎙️
+            </span>
+            <div style={{ flex: 1 }}>
+              <div className="ff-botrow__title">
+                {botStatusLabel(lastBotInteraction)}
+              </div>
+              {lastBotInteraction !== null ? (
+                <div className="ff-botrow__meta">
+                  Tipo: {inputKindLabel(lastBotInteraction.input_kind)}
+                  {lastBotInteraction.transaction_id !== null
+                    ? " · virou lançamento"
+                    : ""}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </Card>
       </div>
     </section>
   );

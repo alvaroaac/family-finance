@@ -6,25 +6,50 @@ import type { HouseholdMemberProfile } from "@family-finance/db";
 
 import { setThemeAction, updateMemberAction } from "./actions";
 import { THEMES, type ThemeId } from "./helpers";
+import { Badge, Field, Input } from "../../../components/ui";
 
 /**
- * Client widgets for "Configurações": the theme picker (two swatch buttons
- * writing the `ff-theme` cookie via a server action) and the per-member
+ * Client widgets for "Configurações": the theme picker (two theme-preview
+ * cards writing the `ff-theme` cookie via a server action) and the per-member
  * profile form (nome de exibição + Telegram vinculado). The household is
  * always re-resolved from the session inside the actions.
  */
 
 // ---------------------------------------------------------------------------
-// Theme picker
+// Theme picker — "Estilo da casa" cards (Configuracoes.dc.html)
 // ---------------------------------------------------------------------------
+
+/** Theme-constant preview colors, verbatim from the mockup cards. */
+const THEME_CARD: Record<
+  ThemeId,
+  { description: string; dots: Array<{ background: string; border?: string }> }
+> = {
+  esmeralda: {
+    description: "escuro, aconchego de noite",
+    dots: [
+      { background: "#D4AF6A" },
+      { background: "#1E4133", border: "1px solid rgba(242,237,224,0.2)" },
+      { background: "#F2EDE0" },
+    ],
+  },
+  salvia: {
+    description: "claro, manhã com café",
+    dots: [
+      { background: "#A8853C" },
+      { background: "#F7F9F3", border: "1px solid #CBD6C0" },
+      { background: "#2E3A2A" },
+    ],
+  },
+};
 
 export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
   const [isPending, startTransition] = useTransition();
 
   return (
-    <div style={{ display: "flex", gap: 12 }}>
+    <div className="ff-themecards">
       {THEMES.map((theme) => {
         const isActive = theme.id === activeTheme;
+        const preview = THEME_CARD[theme.id];
         return (
           <button
             key={theme.id}
@@ -36,32 +61,25 @@ export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
                 await setThemeAction(theme.id);
               });
             }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "10px 16px",
-              borderRadius: 12,
-              border: isActive ? "2px solid #1f5b3c" : "1px solid #cbd2d9",
-              background: "#fff",
-              cursor: isPending ? "wait" : "pointer",
-              fontSize: 14,
-              fontWeight: isActive ? 700 : 500,
-            }}
+            className={[
+              "ff-themecard",
+              `ff-themecard--${theme.id}`,
+              isActive ? "ff-themecard--active" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
-            <span
-              aria-hidden
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 999,
-                background: theme.swatch.background,
-                border: `3px solid ${theme.swatch.accent}`,
-                display: "inline-block",
-              }}
-            />
-            {theme.label}
-            {isActive ? " ✓" : ""}
+            <div className="ff-themecard__dots">
+              {preview.dots.map((dot, index) => (
+                <span
+                  key={index}
+                  className="ff-themecard__dot"
+                  style={{ background: dot.background, border: dot.border }}
+                />
+              ))}
+            </div>
+            <div className="ff-themecard__name">{theme.label}</div>
+            <div className="ff-themecard__desc">{preview.description}</div>
           </button>
         );
       })}
@@ -73,17 +91,16 @@ export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
 // Member profile form
 // ---------------------------------------------------------------------------
 
-const inputStyle = {
-  padding: "6px 8px",
-  border: "1px solid #cbd2d9",
-  borderRadius: 8,
-  fontSize: 14,
-} as const;
-
 const roleLabelPtBr: Record<string, string> = {
   owner: "responsável",
   member: "membro",
 };
+
+/** Avatar initial from the display name (fallback: house member glyph). */
+function memberInitial(member: HouseholdMemberProfile): string {
+  const name = member.displayName?.trim() ?? "";
+  return name.length > 0 ? name.charAt(0).toUpperCase() : "?";
+}
 
 export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
   const [error, setError] = useState<string | null>(null);
@@ -104,70 +121,60 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
   }
 
   return (
-    <tr>
-      <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef1f4" }}>
-        <form
-          action={submit}
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+    <div className="ff-member">
+      <span className="ff-member__avatar">{memberInitial(member)}</span>
+      <form
+        action={submit}
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          flexWrap: "wrap",
+          gap: 16,
+          flex: 1,
+        }}
+      >
+        <input type="hidden" name="memberId" value={member.id} />
+        <div className="ff-member__field">
+          <Field label="Nome de exibição">
+            <Input
+              name="displayName"
+              defaultValue={member.displayName ?? ""}
+              placeholder="Nome de exibição"
+              aria-label="Nome de exibição"
+            />
+          </Field>
+        </div>
+        <div className="ff-member__field">
+          <Field label="Telegram">
+            <Input
+              name="telegramUserId"
+              defaultValue={
+                member.telegramUserId === null
+                  ? ""
+                  : String(member.telegramUserId)
+              }
+              placeholder="ID do Telegram"
+              aria-label="ID do Telegram"
+              inputMode="numeric"
+              className="ff-num"
+            />
+          </Field>
+        </div>
+        <Badge tone="accent">{roleLabelPtBr[member.role] ?? member.role}</Badge>
+        <button
+          type="submit"
+          disabled={isPending}
+          className="ff-btn ff-btn--ghost-sm"
         >
-          <input type="hidden" name="memberId" value={member.id} />
-          <input
-            name="displayName"
-            defaultValue={member.displayName ?? ""}
-            placeholder="Nome de exibição"
-            aria-label="Nome de exibição"
-            style={{ ...inputStyle, minWidth: 160 }}
-          />
-          <input
-            name="telegramUserId"
-            defaultValue={
-              member.telegramUserId === null ? "" : String(member.telegramUserId)
-            }
-            placeholder="ID do Telegram"
-            aria-label="ID do Telegram"
-            inputMode="numeric"
-            style={{ ...inputStyle, width: 140 }}
-          />
-          <span
-            style={{
-              display: "inline-block",
-              background: "#eef2f6",
-              border: "1px solid #d5dde5",
-              color: "#3d4b5c",
-              borderRadius: 999,
-              padding: "2px 10px",
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            {roleLabelPtBr[member.role] ?? member.role}
+          {isPending ? "Salvando..." : "Salvar"}
+        </button>
+        {saved ? <span className="ff-hint-pos">Salvo ✓</span> : null}
+        {error ? (
+          <span role="alert" className="ff-note" style={{ color: "var(--ff-negative)" }}>
+            {error}
           </span>
-          <button
-            type="submit"
-            disabled={isPending}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 8,
-              border: "1px solid #1f5b3c",
-              background: "#1f5b3c",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: isPending ? "wait" : "pointer",
-            }}
-          >
-            {isPending ? "Salvando..." : "Salvar"}
-          </button>
-          {saved ? (
-            <span style={{ color: "#1f5b3c", fontSize: 13 }}>Salvo ✓</span>
-          ) : null}
-          {error ? (
-            <span role="alert" style={{ color: "#8a2020", fontSize: 13 }}>
-              {error}
-            </span>
-          ) : null}
-        </form>
-      </td>
-    </tr>
+        ) : null}
+      </form>
+    </div>
   );
 }

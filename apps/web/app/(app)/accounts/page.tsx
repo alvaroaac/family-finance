@@ -6,6 +6,16 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
+  Button,
+  Card,
+  Field,
+  IconBank,
+  IconJar,
+  Input,
+  PageTitle,
+  Select,
+} from "../../../components/ui";
+import {
   createAccountAction,
   updateAccountAction,
   deleteAccountAction,
@@ -18,47 +28,15 @@ export const metadata = {
 // This page reads per-request, RLS-scoped data; never statically prerender it.
 export const dynamic = "force-dynamic";
 
-const card = {
-  background: "#fff",
-  border: "1px solid #e3e6ea",
-  borderRadius: 12,
-  padding: 20,
-  marginTop: 20,
-} as const;
-
-const inputStyle = {
-  padding: "8px 10px",
-  border: "1px solid #cbd2d9",
-  borderRadius: 8,
-  fontSize: 14,
-} as const;
-
-const btn = {
-  padding: "8px 14px",
-  borderRadius: 8,
-  border: "1px solid #11271f",
-  background: "#11271f",
-  color: "#fff",
-  fontSize: 14,
-  cursor: "pointer",
-} as const;
-
-const btnGhost = {
-  ...btn,
-  background: "#fff",
-  color: "#11271f",
-} as const;
-
-const btnDanger = {
-  ...btn,
-  background: "#fff",
-  color: "#8a2020",
-  border: "1px solid #e0b4b4",
-} as const;
-
 const KIND_LABEL: Record<AccountRow["kind"], string> = {
   checking: "Conta corrente",
   investment: "Conta investimento",
+};
+
+/** Warm kind copy from the Contas mockup cards. */
+const KIND_COPY: Record<AccountRow["kind"], string> = {
+  checking: "movimento do dia a dia",
+  investment: "onde moram as caixinhas",
 };
 
 type AccountsData = {
@@ -96,128 +74,117 @@ export default async function AccountsPage() {
   await requireAuthorizedUser();
   const { accounts, loadError } = await loadData();
 
-  const checking = accounts.filter((a) => a.kind === "checking");
-  const investment = accounts.filter((a) => a.kind === "investment");
-
   return (
-    <section>
-      <h1 style={{ marginTop: 0 }}>Contas</h1>
-      <p style={{ color: "#555", maxWidth: 720 }}>
-        Modele as contas da casa de forma simples: <strong>conta corrente</strong>{" "}
-        para o dia a dia e <strong>conta investimento</strong> para agrupar
-        poupança e aplicações. Transações e importações escolhem uma destas
-        contas como destino.
-      </p>
+    <section style={{ maxWidth: 980, margin: "0 auto" }}>
+      <PageTitle
+        kicker="Nossa casa"
+        title="Contas"
+        lead="O dinheiro do dia a dia e o que está guardado."
+      />
 
       {loadError ? (
-        <div
-          role="alert"
-          style={{
-            background: "#fdecec",
-            border: "1px solid #f3b4b4",
-            color: "#8a2020",
-            borderRadius: 10,
-            padding: 12,
-            marginTop: 16,
-            fontSize: 14,
-          }}
-        >
+        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
           {loadError}
         </div>
       ) : null}
 
-      {/* Create */}
-      <div style={card}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Nova conta</h2>
-        <form
-          action={createAccountAction}
-          style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}
-        >
-          <input
-            type="text"
-            name="name"
-            placeholder="Nome da conta"
-            required
-            style={inputStyle}
-            aria-label="Nome da conta"
-          />
-          <select name="kind" defaultValue="checking" style={inputStyle} aria-label="Tipo">
-            <option value="checking">Conta corrente</option>
-            <option value="investment">Conta investimento</option>
-          </select>
-          <button type="submit" style={btn}>
-            Adicionar conta
-          </button>
-        </form>
-      </div>
-
-      {/* List grouped by kind */}
-      {([
-        ["Contas correntes", checking, "checking"] as const,
-        ["Contas investimento", investment, "investment"] as const,
-      ]).map(([title, list]) => (
-        <div style={card} key={title}>
-          <h2 style={{ marginTop: 0, fontSize: 18 }}>
-            {title} ({list.length})
-          </h2>
-          {list.length === 0 ? (
-            <p style={{ color: "#6b7280", fontSize: 14, marginTop: 0 }}>
-              Nenhuma conta cadastrada.
-            </p>
-          ) : (
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {list.map((account) => (
-                <li
-                  key={account.id}
+      {/* Accounts grid */}
+      <div className="ff-cards-grid" style={{ marginTop: 26 }}>
+        {accounts.length === 0 ? (
+          <p className="ff-muted">Nenhuma conta cadastrada.</p>
+        ) : (
+          accounts.map((account) => (
+            <Card key={account.id} hoverable>
+              <div className="ff-head-row">
+                <span className="ff-bubble ff-bubble--lg">
+                  {account.kind === "checking" ? (
+                    <IconBank size={18} />
+                  ) : (
+                    <IconJar size={18} />
+                  )}
+                </span>
+                <div>
+                  <div className="ff-name">
+                    {account.name} · {KIND_LABEL[account.kind].toLowerCase()}
+                  </div>
+                  <div className="ff-name-sub">{KIND_COPY[account.kind]}</div>
+                </div>
+              </div>
+              <div className="ff-actions">
+                <form
+                  action={updateAccountAction}
                   style={{
-                    borderTop: "1px solid #f0f2f4",
-                    padding: "12px 0",
                     display: "flex",
-                    gap: 12,
-                    flexWrap: "wrap",
+                    gap: 8,
                     alignItems: "center",
+                    flex: 1,
+                    minWidth: 200,
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: "#15633a",
-                      background: "#e9f7ef",
-                      borderRadius: 6,
-                      padding: "2px 8px",
-                    }}
-                  >
-                    {KIND_LABEL[account.kind]}
-                  </span>
-                  <form
-                    action={updateAccountAction}
-                    style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}
-                  >
-                    <input type="hidden" name="accountId" value={account.id} />
-                    <input
-                      type="text"
-                      name="name"
-                      defaultValue={account.name}
-                      required
-                      style={{ ...inputStyle, flex: 1, minWidth: 160 }}
-                      aria-label={`Nome da conta ${account.name}`}
-                    />
-                    <button type="submit" style={btnGhost}>
-                      Salvar
-                    </button>
-                  </form>
-                  <form action={deleteAccountAction}>
-                    <input type="hidden" name="accountId" value={account.id} />
-                    <button type="submit" style={btnDanger}>
-                      Excluir
-                    </button>
-                  </form>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
+                  <input type="hidden" name="accountId" value={account.id} />
+                  <Input
+                    type="text"
+                    name="name"
+                    defaultValue={account.name}
+                    required
+                    className="ff-input--compact"
+                    aria-label={`Nome da conta ${account.name}`}
+                  />
+                  <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                    Salvar
+                  </button>
+                </form>
+                <form action={deleteAccountAction}>
+                  <input type="hidden" name="accountId" value={account.id} />
+                  <Button variant="danger" type="submit">
+                    Excluir
+                  </Button>
+                </form>
+              </div>
+            </Card>
+          ))
+        )}
+      </div>
+
+      {/* Create */}
+      <div style={{ marginTop: 20 }}>
+        <Card>
+          <h2 className="ff-h2">Nova conta</h2>
+          <form
+            action={createAccountAction}
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "flex-end",
+              marginTop: 18,
+            }}
+          >
+            <div style={{ flex: 1.4, minWidth: 180 }}>
+              <Field label="Nome da conta">
+                <Input
+                  type="text"
+                  name="name"
+                  placeholder="Nome da conta"
+                  required
+                  aria-label="Nome da conta"
+                />
+              </Field>
+            </div>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <Field label="Tipo">
+                <Select name="kind" defaultValue="checking" aria-label="Tipo">
+                  <option value="checking">Conta corrente</option>
+                  <option value="investment">Conta investimento</option>
+                </Select>
+              </Field>
+            </div>
+            <Button variant="ghost" type="submit">
+              + Nova conta
+            </Button>
+          </form>
+        </Card>
+      </div>
     </section>
   );
 }
