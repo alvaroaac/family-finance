@@ -80,6 +80,7 @@ export type {
 export {
   transactionInsertFromDraft,
   mapTransactionRow,
+  mapTransactionListItem,
   monthDateRange,
   summarizeMonth,
   createTransaction,

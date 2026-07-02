@@ -44,6 +44,7 @@ import type {
   InstallmentGroupInsertPayload,
   InstallmentInsertPayload,
   HouseholdMemberRow,
+  ResponsibilityScope,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -1354,7 +1355,31 @@ export type TransactionFilters = {
   search?: string;
 };
 
-export type TransactionListItem = PersistedTransaction;
+/**
+ * A listing row for the Transações screen: the domain-shaped transaction plus
+ * the linkage fields the table renders/edits (payment source, parcela link,
+ * current responsibility).
+ */
+export type TransactionListItem = PersistedTransaction & {
+  accountId: string | null;
+  creditCardId: string | null;
+  /** Non-null marks a parcela row (delete is refused for these). */
+  installmentId: string | null;
+  responsibilityScope: ResponsibilityScope;
+  responsibleUserId: string | null;
+};
+
+/** Map a raw row to a `TransactionListItem`. Pure. */
+export function mapTransactionListItem(row: TransactionRow): TransactionListItem {
+  return {
+    ...mapTransactionRow(row),
+    accountId: row.account_id,
+    creditCardId: row.credit_card_id,
+    installmentId: row.installment_id,
+    responsibilityScope: row.responsibility_scope,
+    responsibleUserId: row.responsible_user_id,
+  };
+}
 
 export type TransactionPage = {
   rows: TransactionListItem[];
@@ -1427,7 +1452,7 @@ export async function findTransactionsFiltered(
   }
 
   return {
-    rows: ((data ?? []) as TransactionRow[]).map(mapTransactionRow),
+    rows: ((data ?? []) as TransactionRow[]).map(mapTransactionListItem),
     total: count ?? 0,
     page,
     pageSize,
