@@ -1217,6 +1217,52 @@ export async function getCardPressure(
 }
 
 /**
+ * Card pressure for ONE credit card in a month: direct card purchases plus
+ * parcelas due that month, both scoped to `creditCardId`. Same reduction as
+ * the household-wide `getCardPressure` (pure `summarizeCardPressure`); the
+ * /resumo screen calls this per card for the "fatura projetada" list.
+ */
+export async function getCardPressureForCard(
+  client: AppSupabaseClient,
+  householdId: string,
+  creditCardId: string,
+  month: string,
+): Promise<CardPressure> {
+  const { start, end } = monthDateRange(month);
+
+  const { data: txData, error: txError } = await client
+    .from("transactions")
+    .select("kind, amount_cents")
+    .eq("household_id", householdId)
+    .eq("credit_card_id", creditCardId)
+    .gte("occurred_on", start)
+    .lte("occurred_on", end);
+  if (txError !== null) {
+    throw new Error(
+      `getCardPressureForCard(transactions) failed: ${txError.message}`,
+    );
+  }
+
+  const { data: instData, error: instError } = await client
+    .from("installments")
+    .select("amount_cents")
+    .eq("household_id", householdId)
+    .eq("credit_card_id", creditCardId)
+    .eq("due_month", month);
+  if (instError !== null) {
+    throw new Error(
+      `getCardPressureForCard(installments) failed: ${instError.message}`,
+    );
+  }
+
+  return summarizeCardPressure(
+    month,
+    (txData ?? []) as Pick<TransactionRow, "kind" | "amount_cents">[],
+    (instData ?? []) as Pick<InstallmentRow, "amount_cents">[],
+  );
+}
+
+/**
  * Upcoming installment parcels from this month onward, ordered by due month,
  * limited for the dashboard. Surfaces "próximas parcelas relevantes".
  */

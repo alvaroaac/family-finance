@@ -134,6 +134,7 @@ export {
   mapDashboardTransaction,
   needsReview,
   getCardPressure,
+  getCardPressureForCard,
   findUpcomingInstallments,
   findRecentTransactions,
   findPendingReviewTransactions,

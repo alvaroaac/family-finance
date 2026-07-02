@@ -4,7 +4,8 @@ import { requireAuthorizedUser } from "../../../lib/auth";
 import { SummaryCard } from "../../../components/summary-card";
 import { RecentTransactions } from "../../../components/recent-transactions";
 import { PendingReviewList } from "../../../components/pending-review-list";
-import { loadDashboardData, formatBrlCents } from "./queries";
+import { formatBrlCents } from "../../../lib/format";
+import { loadDashboardData } from "./queries";
 
 export const metadata = {
   title: "Dashboard — Casa",

@@ -40,14 +40,6 @@ export type DashboardData = {
   loadError: string | null;
 };
 
-/** Format integer BRL cents into a pt-BR currency string, e.g. "R$ 12,34". */
-export function formatBrlCents(cents: number): string {
-  return (cents / 100).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-}
-
 /** The empty/zero dashboard state used when the DB is unreachable. */
 function emptyDashboard(month: string, loadError: string | null): DashboardData {
   return {

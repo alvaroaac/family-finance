@@ -8,6 +8,7 @@ import { requireAuthorizedUser } from "../../lib/auth";
  * hrefs/identifiers stay in English.
  */
 const NAV_ITEMS: ReadonlyArray<{ href: string; label: string }> = [
+  { href: "/resumo", label: "Resumo" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/imports", label: "Importação" },
   { href: "/transactions", label: "Transações" },
