@@ -1,0 +1,44 @@
+/*
+ * ui.css — ALL component classes (`.ff-*`) for the presentational layer.
+ *
+ * Values come verbatim from the approved mockups in
+ * docs/design/2026-07-02-claude-design-mockups/ ("Editorial acolhedor").
+ * Tokens (`--ff-*`) live in app/globals.css; this file only consumes them.
+ * No logic here — components under components/ui/ compose these classes.
+ */
+
+/* ---- Base utilities ------------------------------------------------- */
+
+/* Kicker · Inter 600 · 11px · uppercase, gold accent (mockup: 0.24em). */
+.ff-kicker {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ff-accent);
+}
+
+/* Serif display voice — Playfair for titles and big numbers. */
+.ff-serif {
+  font-family: var(--ff-font-display), "Playfair Display", Georgia, serif;
+  font-weight: 600;
+}
+
+/* Money/number cells: ALWAYS tabular numerals. */
+.ff-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Motion ---------------------------------------------------------- */
+
+@keyframes ffFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

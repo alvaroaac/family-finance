@@ -1,8 +1,22 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
+import { Inter, Playfair_Display } from "next/font/google";
 
 import "./globals.css";
+import "../components/ui/ui.css";
 import { parseTheme, THEME_COOKIE } from "./(app)/settings/helpers";
+
+const playfair = Playfair_Display({
+  weight: ["500", "600"],
+  subsets: ["latin"],
+  variable: "--ff-font-display"
+});
+
+const inter = Inter({
+  weight: ["300", "400", "500", "600"],
+  subsets: ["latin"],
+  variable: "--ff-font-body"
+});
 
 export const metadata = {
   title: "Family Finance — Casa",
@@ -24,18 +38,12 @@ export default async function RootLayout({
   const theme = parseTheme(cookieStore.get(THEME_COOKIE)?.value);
 
   return (
-    <html lang="pt-BR" data-theme={theme}>
-      <body
-        style={{
-          margin: 0,
-          fontFamily:
-            "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-          background: "#f6f7f9",
-          color: "#1a1a1a"
-        }}
-      >
-        {children}
-      </body>
+    <html
+      lang="pt-BR"
+      data-theme={theme}
+      className={`${playfair.variable} ${inter.variable}`}
+    >
+      <body>{children}</body>
     </html>
   );
 }
