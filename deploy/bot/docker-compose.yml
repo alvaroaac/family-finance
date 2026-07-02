@@ -1,0 +1,22 @@
+# Telegram bot webhook server on the VPS (spec §4.3).
+#
+# Run from THIS directory:
+#   docker compose build
+#   docker compose up -d
+#   docker logs -f family-finance-bot
+#
+# The build context is the repo root (pnpm monorepo — the Dockerfile copies the
+# workspace manifests and packages/), so the full repo must be checked out on
+# the VPS. Env comes from `deploy/bot/.env` (copy .env.example, chmod 600).
+services:
+  bot:
+    build:
+      context: ../..
+      dockerfile: apps/bot/Dockerfile
+    container_name: family-finance-bot
+    env_file:
+      - .env
+    ports:
+      # Loopback-only: Caddy proxies bot.alvaroekarol.com.br → localhost:8787.
+      - "127.0.0.1:8787:8787"
+    restart: unless-stopped
