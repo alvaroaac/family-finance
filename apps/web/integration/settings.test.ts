@@ -20,6 +20,7 @@ import {
   buildSettingsData,
   memberPatchFromFormData,
   botStatusLabel,
+  inputKindLabel,
   THEMES,
 } from "../app/(app)/settings/queries.js";
 import {
@@ -86,11 +87,19 @@ describe("botStatusLabel", () => {
   it("shows the last interaction's date/time when there is one", () => {
     const label = botStatusLabel({
       created_at: "2026-06-12T18:30:00Z",
-      input_kind: "voice",
+      input_kind: "audio",
       transaction_id: "tx-1",
     });
     // 18:30 UTC = 15:30 in América/São_Paulo.
     expect(label).toBe("Último lançamento pelo bot: 12/06/2026, 15:30 🎙️");
+  });
+});
+
+describe("inputKindLabel", () => {
+  it("maps the bot's persisted kinds ('text' | 'audio') to pt-BR labels", () => {
+    expect(inputKindLabel("audio")).toBe("áudio");
+    expect(inputKindLabel("text")).toBe("texto");
+    expect(inputKindLabel("desconhecido")).toBe("desconhecido");
   });
 });
 
@@ -145,7 +154,7 @@ function seedStore(withBotInteractions: boolean): FakeSupabaseStore {
             id: "bi-new",
             household_id: HOUSEHOLD,
             channel: "telegram",
-            input_kind: "voice",
+            input_kind: "audio",
             transaction_id: "tx-1",
             created_at: "2026-06-12T18:30:00Z",
             updated_at: "2026-06-12T18:30:00Z",
@@ -173,7 +182,7 @@ describe("buildSettingsData", () => {
     ]);
     expect(data.lastBotInteraction).toMatchObject({
       created_at: "2026-06-12T18:30:00Z",
-      input_kind: "voice",
+      input_kind: "audio",
     });
   });
 

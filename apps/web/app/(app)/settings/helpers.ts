@@ -111,7 +111,7 @@ export function botStatusLabel(last: LastBotInteraction | null): string {
 /** Friendly pt-BR label for the interaction kind chip. Pure. */
 export function inputKindLabel(kind: string): string {
   switch (kind) {
-    case "voice":
+    case "audio":
       return "áudio";
     case "text":
       return "texto";
