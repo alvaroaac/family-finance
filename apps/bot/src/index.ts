@@ -20,7 +20,7 @@
  */
 
 import {
-  getServerEnv,
+  getBotServerEnv,
   getLlmConfig,
   getTranscriptionConfig,
 } from "@family-finance/config";
@@ -342,18 +342,24 @@ export async function handleWebhook(args: {
 export async function startBot(): Promise<{
   handle: (rawBody: unknown, secretHeader: string | undefined) => Promise<WebhookResult>;
 }> {
-  const env = getServerEnv();
+  // Bot-scoped env parse: the container carries only the spec §3.5 vars, so
+  // web-only settings (NEXT_PUBLIC_*, AUTHORIZED_EMAILS) must not be required.
+  const env = getBotServerEnv();
   if (!env.TELEGRAM_WEBHOOK_SECRET) {
     throw new Error("TELEGRAM_WEBHOOK_SECRET is required to run the bot.");
   }
   if (!env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is required to run the bot.");
   }
+  const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!supabaseUrl) {
+    throw new Error("SUPABASE_URL is required to run the bot.");
+  }
   // Service-role client: bot_conversations and the pre-session member lookup
   // are unreachable through anon/RLS. Every repo call still passes an explicit
   // household_id, so the bot never queries unscoped.
   const client: AppSupabaseClient = createServiceRoleClient({
-    supabaseUrl: env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL,
+    supabaseUrl,
     serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
   });
 

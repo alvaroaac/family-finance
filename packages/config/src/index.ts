@@ -44,6 +44,28 @@ export const envSchema = z.object({
 export type AppEnv = z.infer<typeof envSchema>;
 
 /**
+ * Bot-container environment (spec §3.5): the webhook server ships without any
+ * web-only configuration, so the NEXT_PUBLIC_* pair and AUTHORIZED_EMAILS are
+ * optional here. `SUPABASE_URL` (or the NEXT_PUBLIC fallback) plus the
+ * service-role key are enforced by `startBot` itself.
+ */
+export const botEnvSchema = envSchema.extend({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
+  AUTHORIZED_EMAILS: z.string().min(1).optional()
+});
+
+export type BotEnv = z.infer<typeof botEnvSchema>;
+
+/**
+ * Parse + validate the bot container's environment. Same lazy-call contract as
+ * `getServerEnv` — invoke at server start, never at module scope.
+ */
+export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
+  return botEnvSchema.parse(env);
+}
+
+/**
  * Parse + validate the full environment. Call this lazily (inside a request or
  * action), never at module scope, so a missing secret never breaks the build.
  */
