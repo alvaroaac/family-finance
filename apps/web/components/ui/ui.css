@@ -611,6 +611,410 @@
   color: var(--ff-accent);
 }
 
+/* ---- AppShell: sidebar (desktop) + bottom nav (mobile) ------------------ */
+
+.ff-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Mockup (Resumo desktop): 256px, soft bg, hairline right border. */
+.ff-sidebar {
+  width: 256px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--ff-surface-soft);
+  border-right: 1px solid var(--ff-border);
+  padding: 30px 16px 22px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.ff-sidebar__brand {
+  padding: 0 12px 28px;
+}
+
+.ff-sidebar__brand-kicker {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ff-accent);
+}
+
+.ff-sidebar__brand-title {
+  font-size: 23px;
+  color: var(--ff-ink);
+  margin-top: 6px;
+}
+
+/* Gold italic ampersand — "Alvaro & Karol" (16px sidebar, 22px login). */
+.ff-amp {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--ff-accent);
+}
+
+.ff-sidebar__brand-title .ff-amp {
+  font-size: 16px;
+}
+
+.ff-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ff-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--ff-ink-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  text-decoration: none;
+  transition: all 0.16s;
+}
+
+.ff-nav-link:hover {
+  background: var(--ff-tint);
+  color: var(--ff-ink);
+}
+
+.ff-nav-link--active,
+.ff-nav-link--active:hover {
+  background: var(--ff-tint);
+  color: var(--ff-accent);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--ff-accent);
+}
+
+.ff-sidebar__user {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px;
+  border-top: 1px solid var(--ff-border);
+}
+
+.ff-sidebar__avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ff-tint);
+  border: 1px solid var(--ff-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ff-accent);
+}
+
+.ff-sidebar__id {
+  flex: 1;
+  min-width: 0;
+}
+
+.ff-sidebar__name {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink);
+}
+
+.ff-sidebar__email {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--ff-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ff-signout {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ff-ink-soft);
+  cursor: pointer;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.ff-signout:hover {
+  color: var(--ff-ink);
+}
+
+.ff-shell__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mockups (Transacoes/Dashboard desktop main). */
+.ff-main {
+  flex: 1;
+  padding: 48px 56px;
+}
+
+/* Mockup (Resumo mobile): bottom nav on soft bg, labels 10px. */
+.ff-bottomnav {
+  display: none;
+  justify-content: space-around;
+  align-items: center;
+  border-top: 1px solid var(--ff-border);
+  background: var(--ff-surface-soft);
+  padding: 10px 8px 22px;
+}
+
+.ff-bottomnav__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--ff-ink-soft);
+  text-decoration: none;
+  min-width: 60px;
+  padding: 4px 0;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 10px;
+}
+
+.ff-bottomnav__item:hover {
+  color: var(--ff-ink);
+}
+
+.ff-bottomnav__item--active,
+.ff-bottomnav__item--active:hover {
+  color: var(--ff-accent);
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .ff-sidebar {
+    display: none;
+  }
+
+  .ff-main {
+    padding: 28px 22px 110px;
+  }
+
+  .ff-bottomnav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+  }
+}
+
+/* ---- ThemePicker (floating "Estilo" pill) ------------------------------- */
+
+/* Mockup: dark glass pill fixed bottom-right, gold ring on the active dot.
+   The pill's own colors are theme-constant (it previews both themes). */
+.ff-themepicker {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(18, 26, 22, 0.92);
+  border: 1px solid rgba(212, 175, 106, 0.3);
+  border-radius: var(--ff-radius-pill);
+  padding: 9px 15px;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--ff-shadow-float);
+}
+
+.ff-themepicker__label {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(242, 237, 224, 0.6);
+}
+
+.ff-themepicker__swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.ff-themepicker__swatch:hover:not(:disabled) {
+  transform: scale(1.1);
+}
+
+.ff-themepicker__swatch--salvia {
+  background: #e8ede3;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+.ff-themepicker__swatch--esmeralda {
+  background: #16352b;
+  border: 1px solid rgba(212, 175, 106, 0.4);
+}
+
+.ff-themepicker__swatch--active {
+  box-shadow: 0 0 0 2px rgba(18, 26, 22, 0.92), 0 0 0 4px #d4af6a;
+}
+
+.ff-themepicker__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+}
+
+@media (max-width: 720px) {
+  /* Clear the fixed bottom nav. */
+  .ff-themepicker {
+    bottom: 96px;
+  }
+}
+
+/* ---- Login card (Mais Telas: "Login") ----------------------------------- */
+
+.ff-auth {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.ff-auth-card {
+  width: 100%;
+  max-width: 380px;
+  box-sizing: border-box;
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-lg);
+  padding: 44px 40px;
+  text-align: center;
+  box-shadow: var(--ff-shadow-card);
+  animation: ffFadeUp 0.4s ease-out;
+}
+
+.ff-auth-card__kicker {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ff-accent);
+}
+
+.ff-auth-card__title {
+  font-size: 34px;
+  color: var(--ff-ink);
+  margin: 14px 0 0;
+}
+
+.ff-auth-card__title .ff-amp {
+  font-size: 22px;
+}
+
+.ff-auth-card__lead {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ff-ink-soft);
+  margin: 12px 0 0;
+}
+
+.ff-auth-card__divider {
+  height: 1px;
+  background: var(--ff-border);
+  margin: 28px 0;
+}
+
+.ff-auth-card__google {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--ff-accent);
+  color: var(--ff-on-accent);
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(20, 14, 8, 0.14);
+  transition: all 0.16s;
+}
+
+.ff-auth-card__google:hover {
+  background: var(--ff-accent-hover);
+  transform: translateY(-1px);
+}
+
+.ff-auth-card__note {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  margin: 18px 0 0;
+}
+
+/* ---- Inline alerts (login denied / oauth error) -------------------------- */
+
+.ff-alert {
+  border-radius: var(--ff-radius-md);
+  padding: 14px 16px;
+  margin: 20px 0 0;
+  text-align: left;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ff-ink);
+}
+
+.ff-alert--negative {
+  background: var(--ff-negative-wash);
+  border: 1px solid var(--ff-negative);
+}
+
+.ff-alert--negative strong {
+  color: var(--ff-negative);
+}
+
+.ff-alert--warn {
+  background: var(--ff-warn-wash);
+  border: 1px solid var(--ff-warn);
+}
+
 /* ---- Motion ---------------------------------------------------------- */
 
 @keyframes ffFadeUp {

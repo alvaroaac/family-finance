@@ -62,48 +62,18 @@ export default async function LoginPage({
   const oauthError = params.error === "oauth";
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 420,
-          background: "#fff",
-          border: "1px solid #e3e6ea",
-          borderRadius: 16,
-          padding: 32,
-          boxShadow: "0 8px 30px rgba(0,0,0,0.06)"
-        }}
-      >
-        <div style={{ fontSize: 12, letterSpacing: 1, color: "#6b7280" }}>
-          WORKSPACE
-        </div>
-        <h1 style={{ margin: "4px 0 2px" }}>Casa</h1>
-        <p style={{ color: "#555", marginTop: 0 }}>
-          Workspace financeiro privado de Alvaro e Karol.
-        </p>
+    <main className="ff-auth">
+      <div className="ff-auth-card">
+        <div className="ff-auth-card__kicker">Nossa casa</div>
+        <h1 className="ff-auth-card__title ff-serif">
+          Alvaro <span className="ff-amp">&amp;</span> Karol
+        </h1>
+        <p className="ff-auth-card__lead">As contas da casa, do nosso jeitinho.</p>
 
         {denied ? (
-          <div
-            role="alert"
-            style={{
-              background: "#fdecec",
-              border: "1px solid #f5c2c2",
-              color: "#8a1f1f",
-              borderRadius: 10,
-              padding: 14,
-              margin: "16px 0"
-            }}
-          >
+          <div role="alert" className="ff-alert ff-alert--negative">
             <strong>Acesso negado.</strong>
-            <div style={{ marginTop: 4, fontSize: 14 }}>
+            <div style={{ marginTop: 4 }}>
               {deniedEmail ? (
                 <>
                   A conta <strong>{deniedEmail}</strong> não está autorizada nesta
@@ -118,44 +88,34 @@ export default async function LoginPage({
         ) : null}
 
         {oauthError ? (
-          <div
-            role="alert"
-            style={{
-              background: "#fff6e6",
-              border: "1px solid #f0d28a",
-              color: "#7a5a00",
-              borderRadius: 10,
-              padding: 14,
-              margin: "16px 0",
-              fontSize: 14
-            }}
-          >
+          <div role="alert" className="ff-alert ff-alert--warn">
             Não foi possível iniciar o login com Google. Tente novamente.
           </div>
         ) : null}
 
-        <form action={signInWithGoogle} style={{ marginTop: 16 }}>
-          <button
-            type="submit"
-            style={{
-              width: "100%",
-              padding: "12px 16px",
-              borderRadius: 10,
-              border: "1px solid #11271f",
-              background: "#11271f",
-              color: "#fff",
-              fontSize: 16,
-              fontWeight: 600,
-              cursor: "pointer"
-            }}
-          >
+        <div className="ff-auth-card__divider" />
+
+        <form action={signInWithGoogle}>
+          <button type="submit" className="ff-auth-card__google">
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
             Entrar com Google
           </button>
         </form>
 
-        <p style={{ color: "#9aa1a9", fontSize: 12, marginTop: 16 }}>
-          Apenas emails autorizados (allowlist) podem acessar a Casa. Não há
-          cadastro público.
+        <p className="ff-auth-card__note">
+          Só a gente entra por aqui — convite de dois.
         </p>
       </div>
     </main>

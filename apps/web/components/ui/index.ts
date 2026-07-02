@@ -19,6 +19,9 @@ export {
 } from "./primitives";
 export type { BadgeTone } from "./primitives";
 export { Field, Input, MonthStepper, PillToggle, Select } from "./forms";
+export { AppShell, isNavItemActive, NAV_ICONS } from "./app-shell";
+export type { NavItem } from "./app-shell";
+export { ThemePicker } from "./theme-picker";
 export { RowCardList, Table, TableRow } from "./table";
 export { PressureBars } from "./charts";
 export {

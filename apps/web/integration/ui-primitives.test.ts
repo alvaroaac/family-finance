@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  AppShell,
   Badge,
   Button,
   Card,
@@ -11,6 +12,7 @@ import {
   Field,
   IconHome,
   Input,
+  isNavItemActive,
   Kicker,
   MonthStepper,
   PageTitle,
@@ -21,6 +23,7 @@ import {
   StatCard,
   Table,
   TableRow,
+  type NavItem,
 } from "../components/ui";
 
 describe("ui primitives — core", () => {
@@ -279,5 +282,57 @@ describe("ui primitives — core", () => {
     expect(html).toContain('stroke-width="1.7"');
     expect(html).toContain('width="22"');
     expect(html).toContain('fill="none"');
+  });
+});
+
+describe("ui primitives — app shell", () => {
+  const items: NavItem[] = [
+    { href: "/resumo", label: "Resumo", icon: "home" },
+    { href: "/transactions", label: "Transações", icon: "transfer" },
+    { href: "/cards", label: "Cartões", icon: "card" },
+    { href: "/settings", label: "Configurações", icon: "sliders" },
+  ];
+
+  function renderShell(): string {
+    return renderToStaticMarkup(
+      createElement(AppShell, {
+        items,
+        brand: { kicker: "Nossa casa", title: "Alvaro & Karol" },
+        user: { initial: "K", name: "Karol", email: "karol@casa.com" },
+        signOut: createElement("button", { type: "submit" }, "sair"),
+        children: "conteúdo da página",
+      }),
+    );
+  }
+
+  it("renders the sidebar with brand, every nav item and the user footer", () => {
+    const html = renderShell();
+    expect(html).toContain("ff-sidebar");
+    expect(html).toContain("Nossa casa");
+    expect(html).toContain("Alvaro &amp; Karol");
+    for (const item of items) {
+      expect(html).toContain(`href="${item.href}"`);
+      expect(html).toContain(item.label);
+    }
+    expect(html).toContain("Karol");
+    expect(html).toContain("karol@casa.com");
+    expect(html).toContain("sair");
+    expect(html).toContain("conteúdo da página");
+  });
+
+  it("renders the mobile bottom nav — Resumo/Transações/Cartões/Mais", () => {
+    const html = renderShell();
+    expect(html).toContain("ff-bottomnav");
+    expect(html).toContain("Mais");
+    // "Mais" points at Configurações per the mockup.
+    expect(html).toMatch(/ff-bottomnav[^]*href="\/settings"/);
+  });
+
+  it("nav active state matches exact paths and nested routes only", () => {
+    expect(isNavItemActive("/transactions", "/transactions")).toBe(true);
+    expect(isNavItemActive("/transactions/123", "/transactions")).toBe(true);
+    expect(isNavItemActive("/transactions-old", "/transactions")).toBe(false);
+    expect(isNavItemActive("/resumo", "/transactions")).toBe(false);
+    expect(isNavItemActive(null, "/transactions")).toBe(false);
   });
 });
