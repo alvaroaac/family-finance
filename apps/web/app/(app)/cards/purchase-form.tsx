@@ -8,6 +8,7 @@ import {
   type ParcelPreview,
   type SaveResult,
 } from "./actions";
+import { parseReaisToCents } from "../../../lib/format";
 
 /**
  * Card purchase entry. Lets the user record an expense on a card as à vista
@@ -54,22 +55,14 @@ function formatBrl(cents: number): string {
   });
 }
 
-/** Parse a pt-BR or dot-decimal reais string into integer cents (>0). */
-function parseReaisToCents(value: string): number | null {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  // Accept "1.234,56" (BR) and "1234.56" (dot-decimal).
-  let normalized = trimmed.replace(/\s/g, "");
-  if (normalized.includes(",")) {
-    normalized = normalized.replace(/\./g, "").replace(",", ".");
-  }
-  const reais = Number.parseFloat(normalized);
-  if (!Number.isFinite(reais) || reais <= 0) {
-    return null;
-  }
-  return Math.round(reais * 100);
+/**
+ * Parse a pt-BR or dot-decimal reais string into integer cents (>0).
+ * Purchases must be strictly positive, so 0 is rejected on top of the shared
+ * parser (which allows 0 for caixinha balances).
+ */
+function parsePositiveReaisToCents(value: string): number | null {
+  const cents = parseReaisToCents(value);
+  return cents === null || cents === 0 ? null : cents;
 }
 
 function todayIso(): string {
@@ -107,7 +100,7 @@ export function CardPurchaseForm({
   );
 
   function buildInput() {
-    const totalCents = parseReaisToCents(amount);
+    const totalCents = parsePositiveReaisToCents(amount);
     return { totalCents, creditCardId, description, purchasedOn };
   }
 
@@ -168,7 +161,7 @@ export function CardPurchaseForm({
     });
   }
 
-  const totalCents = parseReaisToCents(amount);
+  const totalCents = parsePositiveReaisToCents(amount);
 
   return (
     <div style={card}>

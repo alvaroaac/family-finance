@@ -28,12 +28,21 @@ import {
   type InvestmentBucketRow,
 } from "@family-finance/db";
 
+/** Sum of the manually-tracked caixinha balances, in integer BRL cents. */
+export function bucketsTotalCents(
+  buckets: ReadonlyArray<Pick<InvestmentBucketRow, "balance_cents">>,
+): number {
+  return buckets.reduce((total, bucket) => total + bucket.balance_cents, 0);
+}
+
 export type DashboardData = {
   month: string;
   summary: MonthlySummary;
   cardPressure: CardPressure;
   upcomingInstallments: UpcomingInstallment[];
   buckets: InvestmentBucketRow[];
+  /** Total of all caixinha balances (manual positions), in cents. */
+  bucketsTotalCents: number;
   recent: DashboardTransaction[];
   pendingReview: DashboardTransaction[];
   /** Non-null when data could not be loaded; the page shows a zero state. */
@@ -48,6 +57,7 @@ function emptyDashboard(month: string, loadError: string | null): DashboardData 
     cardPressure: { month, directCents: 0, installmentCents: 0, totalCents: 0 },
     upcomingInstallments: [],
     buckets: [],
+    bucketsTotalCents: 0,
     recent: [],
     pendingReview: [],
     loadError,
@@ -88,6 +98,7 @@ export async function loadDashboardData(
       cardPressure,
       upcomingInstallments,
       buckets,
+      bucketsTotalCents: bucketsTotalCents(buckets),
       recent,
       pendingReview,
       loadError: null,

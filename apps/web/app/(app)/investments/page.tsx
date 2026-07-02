@@ -6,9 +6,11 @@ import {
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import { formatBrlCents } from "../../../lib/format";
 import {
   createBucketAction,
   updateBucketAction,
+  updateBucketBalanceAction,
   deleteBucketAction,
 } from "./actions";
 
@@ -70,6 +72,14 @@ const SLUG_LABEL: Record<InvestmentBucketSlug, string> = {
   casa: "Casa",
   independencia_financeira: "Independência financeira / aposentadoria",
 };
+
+/** Integer cents -> plain pt-BR reais input value, e.g. 123456 -> "1.234,56". */
+function centsToReaisInput(cents: number): string {
+  return (cents / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 type InvestmentsData = {
   buckets: InvestmentBucketRow[];
@@ -170,6 +180,15 @@ export default async function InvestmentsPage() {
       <div style={card}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>
           Caixinhas ({buckets.length})
+          {buckets.length > 0 ? (
+            <span style={{ fontWeight: 400, color: "#6b7280", fontSize: 14 }}>
+              {" "}
+              · total{" "}
+              {formatBrlCents(
+                buckets.reduce((sum, b) => sum + b.balance_cents, 0),
+              )}
+            </span>
+          ) : null}
         </h2>
         {buckets.length === 0 ? (
           <p style={{ color: "#6b7280", fontSize: 14, marginTop: 0 }}>
@@ -221,6 +240,36 @@ export default async function InvestmentsPage() {
                   <input type="hidden" name="bucketId" value={bucket.id} />
                   <button type="submit" style={btnDanger}>
                     Excluir
+                  </button>
+                </form>
+                <form
+                  action={updateBucketBalanceAction}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexBasis: "100%",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <input type="hidden" name="bucketId" value={bucket.id} />
+                  <span style={{ fontSize: 13, color: "#6b7280" }}>
+                    Saldo atual:{" "}
+                    <strong style={{ color: "#11271f" }}>
+                      {formatBrlCents(bucket.balance_cents)}
+                    </strong>
+                  </span>
+                  <input
+                    type="text"
+                    name="balance"
+                    inputMode="decimal"
+                    defaultValue={centsToReaisInput(bucket.balance_cents)}
+                    required
+                    style={{ ...inputStyle, width: 120 }}
+                    aria-label={`Saldo da caixinha ${bucket.name} (R$)`}
+                  />
+                  <button type="submit" style={btnGhost}>
+                    Atualizar saldo
                   </button>
                 </form>
               </li>

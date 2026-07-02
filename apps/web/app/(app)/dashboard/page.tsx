@@ -62,6 +62,7 @@ export default async function DashboardPage() {
     cardPressure,
     upcomingInstallments,
     buckets,
+    bucketsTotalCents,
     recent,
     pendingReview,
     loadError,
@@ -71,7 +72,12 @@ export default async function DashboardPage() {
   const bucketsHint =
     buckets.length === 0
       ? "Nenhuma caixinha cadastrada."
-      : buckets.map((b) => BUCKET_LABEL[b.slug]).join(" · ");
+      : buckets
+          .map(
+            (b) =>
+              `${BUCKET_LABEL[b.slug]} ${formatBrlCents(b.balance_cents)}`,
+          )
+          .join(" · ");
 
   return (
     <section>
@@ -137,7 +143,7 @@ export default async function DashboardPage() {
         />
         <SummaryCard
           label="Caixinhas"
-          value={String(buckets.length)}
+          value={formatBrlCents(bucketsTotalCents)}
           tone="neutral"
           hint={bucketsHint}
         />

@@ -6,11 +6,13 @@ import {
   findHouseholdIdForCurrentUser,
   createInvestmentBucket,
   updateInvestmentBucket,
+  updateInvestmentBucketBalance,
   deleteInvestmentBucket,
   type InvestmentBucketSlug,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import { parseReaisToCents } from "../../../lib/format";
 
 /**
  * Server actions for the "Investimentos" screen (caixinhas). MVP buckets are
@@ -72,6 +74,27 @@ export async function updateBucketAction(formData: FormData): Promise<void> {
   const name = requireField(formData, "name");
   await updateInvestmentBucket(client, householdId, bucketId, { name });
   revalidatePath("/investments");
+}
+
+/**
+ * Set a caixinha's manual balance from the inline edit form. The "balance"
+ * field is a reais string ("1.234,56" or "1234.56"); zero is allowed
+ * (caixinha esvaziada), negatives are not.
+ */
+export async function updateBucketBalanceAction(
+  formData: FormData,
+): Promise<void> {
+  const { householdId, client } = await authedHousehold();
+  const bucketId = requireField(formData, "bucketId");
+  const balanceCents = parseReaisToCents(requireField(formData, "balance"));
+  if (balanceCents === null) {
+    throw new Error(
+      "Informe um saldo válido (não negativo), como 1.234,56.",
+    );
+  }
+  await updateInvestmentBucketBalance(client, householdId, bucketId, balanceCents);
+  revalidatePath("/investments");
+  revalidatePath("/dashboard");
 }
 
 /** Delete an investment bucket. */
