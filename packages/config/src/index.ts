@@ -25,6 +25,9 @@ export type {
 export const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  // Bot-side Supabase URL (the bot container carries no NEXT_PUBLIC_* build
+  // context); consumers fall back to NEXT_PUBLIC_SUPABASE_URL when unset.
+  SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),

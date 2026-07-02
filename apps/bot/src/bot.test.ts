@@ -24,7 +24,14 @@ import {
   createAiCategorizer,
   CONFIDENCE,
 } from "@family-finance/categorization";
+import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import { existsSync } from "node:fs";
+
+import { handleWebhook } from "./index.js";
+import {
+  createInMemoryConversationStore,
+  createDbConversationStore,
+} from "./store.js";
 
 /** Read the first argument of the first call to a vitest mock (typed). */
 function firstCallArg(mock: ReturnType<typeof vi.fn>): unknown {
@@ -485,5 +492,334 @@ describe("AI fallback in the bot flow", () => {
     expect(outcome.state.draft.needsAttention).toBe(true);
     expect(outcome.state.status).toBe("awaiting_confirmation");
     expect(createTransaction).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fake Supabase client for handleWebhook tests: a tiny in-memory table store
+// supporting exactly the query chains the bot repositories use
+// (select/eq/order/limit/maybeSingle/single, insert().select().single(),
+// upsert keyed by chat_id, delete().eq()). No network, no real Supabase.
+// ---------------------------------------------------------------------------
+
+type FakeRow = Record<string, unknown>;
+
+function fakeQueryBuilder(rows: FakeRow[]) {
+  let filtered = [...rows];
+  let deleteMode = false;
+  const finish = (): { data: FakeRow[]; error: null } => {
+    if (deleteMode) {
+      for (const row of filtered) {
+        const index = rows.indexOf(row);
+        if (index >= 0) {
+          rows.splice(index, 1);
+        }
+      }
+    }
+    return { data: filtered, error: null };
+  };
+  const api = {
+    select() {
+      return api;
+    },
+    insert(payload: FakeRow) {
+      const row = { id: `row-${rows.length + 1}`, ...payload };
+      rows.push(row);
+      filtered = [row];
+      return api;
+    },
+    upsert(payload: FakeRow) {
+      const index = rows.findIndex((r) => r.chat_id === payload.chat_id);
+      if (index >= 0) {
+        rows[index] = { ...rows[index], ...payload };
+        filtered = [rows[index] as FakeRow];
+      } else {
+        rows.push(payload);
+        filtered = [payload];
+      }
+      return api;
+    },
+    delete() {
+      deleteMode = true;
+      filtered = [...rows];
+      return api;
+    },
+    eq(column: string, value: unknown) {
+      filtered = filtered.filter((r) => r[column] === value);
+      return api;
+    },
+    order() {
+      return api;
+    },
+    limit(n: number) {
+      filtered = filtered.slice(0, n);
+      return api;
+    },
+    async single() {
+      const result = finish();
+      const first = result.data[0];
+      return first !== undefined
+        ? { data: first, error: null }
+        : { data: null, error: { message: "no rows" } };
+    },
+    async maybeSingle() {
+      const result = finish();
+      return { data: result.data[0] ?? null, error: null };
+    },
+    then(
+      onFulfilled: (value: { data: FakeRow[]; error: null }) => unknown,
+      onRejected?: (reason: unknown) => unknown,
+    ) {
+      return Promise.resolve(finish()).then(onFulfilled, onRejected);
+    },
+  };
+  return api;
+}
+
+function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
+  client: AppSupabaseClient;
+  tables: Record<string, FakeRow[]>;
+} {
+  const tables: Record<string, FakeRow[]> = {
+    categories: [
+      {
+        id: "cat-transport",
+        household_id: "house-1",
+        name: "Transporte",
+        is_active: true,
+      },
+    ],
+    subcategories: [],
+    accounts: [
+      { id: "acct-1", household_id: "house-1", kind: "checking", name: "Conta" },
+    ],
+    credit_cards: [],
+    categorization_memory: [],
+    household_members: [
+      {
+        id: "member-1",
+        household_id: "house-1",
+        user_id: "user-alvaro",
+        display_name: "Alvaro",
+        telegram_user_id: 777,
+        is_active: true,
+        role: "owner",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "member-2",
+        household_id: "house-1",
+        user_id: "user-karol",
+        display_name: "Karol",
+        telegram_user_id: 888,
+        is_active: true,
+        role: "member",
+        created_at: "2026-01-02T00:00:00Z",
+      },
+    ],
+    transactions: [],
+    bot_interactions: [],
+    bot_conversations: [],
+    ...seed,
+  };
+  const client = {
+    from(table: string) {
+      return fakeQueryBuilder(tables[table] ?? []);
+    },
+  } as unknown as AppSupabaseClient;
+  return { client, tables };
+}
+
+function fakeTelegram(): {
+  telegram: TelegramClient;
+  sent: { chatId: string; text: string }[];
+} {
+  const sent: { chatId: string; text: string }[] = [];
+  return {
+    sent,
+    telegram: {
+      async sendMessage(chatId: string, text: string) {
+        sent.push({ chatId, text });
+      },
+    },
+  };
+}
+
+const IDENTITIES: Record<string, BotMemberIdentity> = {
+  "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
+  "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
+};
+
+const resolveMemberFake = async (
+  telegramUserId: string,
+): Promise<BotMemberIdentity | null> => IDENTITIES[telegramUserId] ?? null;
+
+function textUpdate(fromId: number, text: string, chatId = 555): unknown {
+  return {
+    update_id: 1,
+    message: {
+      message_id: 1,
+      chat: { id: chatId },
+      from: { id: fromId },
+      text,
+    },
+  };
+}
+
+const SECRET = "s3cr3t";
+
+// ---------------------------------------------------------------------------
+// handleWebhook — real Telegram identity + persistent conversations (Task 9).
+// ---------------------------------------------------------------------------
+
+describe("handleWebhook: telegram identity", () => {
+  it("politely refuses an unmatched telegram user and writes NOTHING", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+
+    const result = await handleWebhook({
+      rawBody: textUpdate(999, "Uber 32 reais ontem"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    });
+
+    expect(result.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toMatch(/não conheço/i);
+    // No transaction, no interaction row: there is no household to scope to.
+    expect(tables.transactions).toHaveLength(0);
+    expect(tables.bot_interactions).toHaveLength(0);
+  });
+
+  it("creates the draft with the MATCHED member's user_id (not the telegram id)", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    const pending = await store.load("555");
+    expect(pending?.status).toBe("awaiting_confirmation");
+    expect(pending?.draft.createdByUserId).toBe("user-alvaro");
+
+    // Conversation SURVIVES across two webhook calls sharing the store.
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "confirmar") });
+    expect(tables.transactions).toHaveLength(1);
+    expect(tables.transactions?.[0]?.created_by_user_id).toBe("user-alvaro");
+  });
+
+  it("resolves responsável by display_name, case- and accent-insensitively", async () => {
+    const { client } = fakeSupabase();
+    const { telegram } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+
+    // Case-insensitive: "KAROL" matches display_name "Karol".
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável KAROL") });
+    let state = await store.load("555");
+    expect(state?.draft.responsibleUserId).toBe("user-karol");
+
+    // Accent-insensitive: "Álvaro" matches display_name "Alvaro".
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável Álvaro") });
+    state = await store.load("555");
+    expect(state?.draft.responsibleUserId).toBe("user-alvaro");
+
+    // Unknown name → back to the house (undefined).
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável Zeca") });
+    state = await store.load("555");
+    expect(state?.draft.responsibleUserId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// store.ts — conversation stores (in-memory + DB-backed with 24h staleness).
+// ---------------------------------------------------------------------------
+
+function sampleState(): ConversationState {
+  return {
+    status: "awaiting_confirmation",
+    draft: {
+      amountCents: 3200,
+      description: "Uber",
+      occurredOn: TODAY,
+      kind: "expense",
+      createdByUserId: "user-alvaro",
+      inputKind: "text",
+      needsAttention: false,
+    },
+  };
+}
+
+describe("conversation stores", () => {
+  it("in-memory store round-trips state per chat", async () => {
+    const store = createInMemoryConversationStore();
+    expect(await store.load("555")).toBeUndefined();
+    await store.save("555", sampleState());
+    expect((await store.load("555"))?.draft.description).toBe("Uber");
+    expect(await store.load("556")).toBeUndefined();
+  });
+
+  it("db store round-trips state through bot_conversations", async () => {
+    const { client, tables } = fakeSupabase();
+    const store = createDbConversationStore(client);
+    await store.save("555", sampleState());
+    expect(tables.bot_conversations).toHaveLength(1);
+    const loaded = await store.load("555");
+    expect(loaded?.status).toBe("awaiting_confirmation");
+    expect(loaded?.draft.createdByUserId).toBe("user-alvaro");
+  });
+
+  it("treats a stale (>24h) row as absent and deletes it lazily", async () => {
+    const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const { client, tables } = fakeSupabase({
+      bot_conversations: [
+        { chat_id: 555, state: sampleState(), updated_at: staleAt },
+      ],
+    });
+    const store = createDbConversationStore(client);
+    expect(await store.load("555")).toBeUndefined();
+    // Lazily deleted.
+    expect(tables.bot_conversations).toHaveLength(0);
+  });
+
+  it("treats a malformed persisted state as absent", async () => {
+    const { client } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: { whatever: true },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+    const store = createDbConversationStore(client);
+    expect(await store.load("555")).toBeUndefined();
   });
 });

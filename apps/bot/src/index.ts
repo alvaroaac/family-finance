@@ -10,7 +10,13 @@
  *
  * Confirmation is ON by default: a message produces an editable summary and the
  * transaction is only saved after an explicit confirm. Conversation state is
- * kept per chat in an in-memory store for the MVP (single small household).
+ * persisted per chat through an injected ConversationStore (DB-backed in
+ * production so conversations survive restarts; in-memory in tests).
+ *
+ * Identity: each update's Telegram user id is resolved against
+ * `household_members.telegram_user_id` (via the injected resolveMember). An
+ * unmatched sender gets one polite refusal and NOTHING is written — there is
+ * no household to scope a row to.
  */
 
 import {
@@ -19,16 +25,18 @@ import {
   getTranscriptionConfig,
 } from "@family-finance/config";
 import {
-  createDatabaseClient,
+  createServiceRoleClient,
   createTransaction as dbCreateTransaction,
   createBotInteraction,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
-  findHouseholdIdForCurrentUser,
   findAccountsByHousehold,
+  findMemberByTelegramUserId,
   listCreditCards,
+  listHouseholdMembers,
   listActiveCategorizationMemory,
   type AppSupabaseClient,
+  type BotMemberIdentity,
 } from "@family-finance/db";
 import {
   suggestCategory,
@@ -66,12 +74,26 @@ import {
   createAnthropicCompletionClient,
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
+import {
+  createDbConversationStore,
+  type ConversationStore,
+} from "./store.js";
 
-/** Per-chat in-memory conversation store (MVP — one small household). */
-const conversations = new Map<string, ConversationState>();
+/** pt-BR refusal for a Telegram user no household member is linked to. */
+const UNKNOWN_USER_REPLY =
+  "Oi! Eu ainda não conheço você por aqui — peça pro Alvaro vincular seu Telegram nas Configurações.";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Case- and accent-insensitive normalization for display-name matching. */
+function normalizeName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .trim()
+    .toLowerCase();
 }
 
 /** Build a categorization memory store backed by the db, for one household. */
@@ -125,6 +147,7 @@ async function buildDeps(
   const checking =
     accounts.find((a) => a.kind === "checking") ?? accounts[0];
   const cards = await listCreditCards(client, householdId);
+  const members = await listHouseholdMembers(client, householdId);
   const memoryStore = memoryStoreFor(client);
 
   return {
@@ -133,10 +156,22 @@ async function buildDeps(
     defaultAccountId: checking?.id ?? "",
     resolveCardId: () => cards[0]?.id,
     resolveAccountId: () => checking?.id,
-    // The MVP has two known users; mapping a free-text name to a user id is a
-    // household-membership lookup. Without a names table we leave it to the house
-    // unless a future task wires display names -> member ids.
-    resolveResponsibleUserId: () => undefined,
+    // Map a spoken name ("responsável Karol") to an active member by
+    // display_name, case- and accent-insensitively. No match — or an ambiguous
+    // one — keeps the responsibility with the house (undefined).
+    resolveResponsibleUserId: (name: string) => {
+      const wanted = normalizeName(name);
+      if (wanted.length === 0) {
+        return undefined;
+      }
+      const matches = members.filter(
+        (member) =>
+          member.isActive &&
+          member.displayName !== null &&
+          normalizeName(member.displayName) === wanted,
+      );
+      return matches.length === 1 ? matches[0]?.userId : undefined;
+    },
     // AI is the LAST resort inside the engine: it fires only when memory and
     // deterministic rules are uncertain. Omitted when no AI key is configured.
     suggestCategory: (context: CategorizationContext) =>
@@ -167,9 +202,10 @@ export type WebhookResult = {
 
 /**
  * Handle one Telegram webhook request. Verifies the secret, parses the update,
- * advances the per-chat conversation, and sends the reply via the injected
- * Telegram client. Returns an HTTP-style result so a Next.js route or a small
- * server can wrap it.
+ * resolves the sender to a household member (unmatched senders get one polite
+ * refusal and nothing is written), advances the per-chat conversation through
+ * the injected store, and sends the reply via the injected Telegram client.
+ * Returns an HTTP-style result so a small server can wrap it.
  */
 export async function handleWebhook(args: {
   rawBody: unknown;
@@ -177,7 +213,10 @@ export async function handleWebhook(args: {
   configuredSecret: string | undefined;
   client: AppSupabaseClient;
   telegram: TelegramClient;
-  householdId: string;
+  /** Map a Telegram user id to a linked household member (null = unknown). */
+  resolveMember: (telegramUserId: string) => Promise<BotMemberIdentity | null>;
+  /** Per-chat conversation persistence (DB-backed in production). */
+  store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
   ai?: AiCategorizer;
   /** Optional transcription wiring for voice notes. Omitted = audio rejected. */
@@ -187,10 +226,30 @@ export async function handleWebhook(args: {
     return { status: 401, body: { ok: false, error: "invalid secret" } };
   }
 
-  const deps = await buildDeps(args.client, args.householdId, args.ai);
+  const voice = parseTelegramVoice(args.rawBody);
+  const message = voice === null ? parseTelegramUpdate(args.rawBody) : null;
+  const incoming = voice ?? message;
+  if (incoming === null) {
+    // Nothing actionable (unsupported update) — acknowledge so Telegram does
+    // not retry.
+    return { status: 200, body: { ok: true } };
+  }
+
+  // Identity first: the sender's Telegram id must map to a household member.
+  // Unmatched → one polite refusal; NOTHING is written (there is no household
+  // to scope a bot_interactions row to), so we only log to the console.
+  const identity = await args.resolveMember(incoming.fromId);
+  if (identity === null) {
+    console.warn(
+      `[bot] unmatched telegram user ${incoming.fromId} (chat ${incoming.chatId}) — refused.`,
+    );
+    await args.telegram.sendMessage(incoming.chatId, UNKNOWN_USER_REPLY);
+    return { status: 200, body: { ok: true } };
+  }
+
+  const deps = await buildDeps(args.client, identity.householdId, args.ai);
 
   // 1. Voice/audio: transcribe, then run the SAME confirmation flow as text.
-  const voice = parseTelegramVoice(args.rawBody);
   if (voice !== null) {
     if (args.transcribe === undefined) {
       // Audio is unsupported without a transcription provider; ask for text.
@@ -205,7 +264,7 @@ export async function handleWebhook(args: {
       outcome = await startConversationFromAudio(
         {
           voice: { fileId: voice.fileId, mimeType: voice.mimeType },
-          fromUserId: voice.fromId,
+          fromUserId: identity.userId,
         },
         deps,
         args.transcribe,
@@ -221,20 +280,17 @@ export async function handleWebhook(args: {
       await args.telegram.sendMessage(voice.chatId, reply);
       return { status: 200, body: { ok: true } };
     }
-    conversations.set(voice.chatId, outcome.state);
+    await args.store.save(voice.chatId, outcome.state);
     await args.telegram.sendMessage(voice.chatId, outcome.reply);
     return { status: 200, body: { ok: true } };
   }
 
-  // 2. Text.
-  const message = parseTelegramUpdate(args.rawBody);
+  // 2. Text (incoming is the parsed text message here).
   if (message === null) {
-    // Nothing actionable (unsupported update) — acknowledge so Telegram does
-    // not retry.
     return { status: 200, body: { ok: true } };
   }
 
-  const existing = conversations.get(message.chatId);
+  const existing = await args.store.load(message.chatId);
 
   let reply: string;
   let nextState: ConversationState;
@@ -244,7 +300,7 @@ export async function handleWebhook(args: {
     existing.status === "cancelled"
   ) {
     const outcome = await startConversation(
-      { text: message.text, fromUserId: message.fromId },
+      { text: message.text, fromUserId: identity.userId },
       deps,
       { today: todayIso() },
     );
@@ -257,7 +313,7 @@ export async function handleWebhook(args: {
     nextState = outcome.state;
     reply = outcome.reply;
   }
-  conversations.set(message.chatId, nextState);
+  await args.store.save(message.chatId, nextState);
 
   await args.telegram.sendMessage(message.chatId, reply);
   return { status: 200, body: { ok: true } };
@@ -275,15 +331,20 @@ export async function startBot(): Promise<{
   if (!env.TELEGRAM_WEBHOOK_SECRET) {
     throw new Error("TELEGRAM_WEBHOOK_SECRET is required to run the bot.");
   }
-  const client = createDatabaseClient({
-    supabaseUrl: env.NEXT_PUBLIC_SUPABASE_URL,
-    supabaseAnonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  }) as AppSupabaseClient;
-
-  const householdId = await findHouseholdIdForCurrentUser(client);
-  if (householdId === null) {
-    throw new Error("No household is available for the bot identity.");
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required to run the bot.");
   }
+  // Service-role client: bot_conversations and the pre-session member lookup
+  // are unreachable through anon/RLS. Every repo call still passes an explicit
+  // household_id, so the bot never queries unscoped.
+  const client: AppSupabaseClient = createServiceRoleClient({
+    supabaseUrl: env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL,
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+
+  const store = createDbConversationStore(client);
+  const resolveMember = (telegramUserId: string) =>
+    findMemberByTelegramUserId(client, Number(telegramUserId));
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
@@ -329,7 +390,8 @@ export async function startBot(): Promise<{
         configuredSecret: env.TELEGRAM_WEBHOOK_SECRET,
         client,
         telegram,
-        householdId,
+        resolveMember,
+        store,
         ai,
         transcribe,
       }),
@@ -375,3 +437,9 @@ export {
   createOpenAiTranscriptionProvider,
   DEFAULT_PROVIDER_TIMEOUT_MS,
 } from "./providers.js";
+export {
+  createInMemoryConversationStore,
+  createDbConversationStore,
+  CONVERSATION_TTL_MS,
+  type ConversationStore,
+} from "./store.js";
