@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { formatBrlCents } from "../../../lib/format";
 import { RecentTransactions } from "../../../components/recent-transactions";
+import { Card, Delta, IconCard, IconTag, Kicker } from "../../../components/ui";
 import {
   loadResumoData,
   monthLabelPtBr,
@@ -17,134 +18,135 @@ export const metadata = {
 // Per-request, RLS-scoped data; never statically prerender.
 export const dynamic = "force-dynamic";
 
-const panel = {
-  background: "#fff",
-  border: "1px solid #e3e6ea",
-  borderRadius: 12,
-  padding: 20,
-} as const;
+/** "karol@casa.com" → "Karol" — friendly fallback until profiles carry names. */
+function nameFromEmail(email: string): string {
+  const local = email.split("@")[0] ?? email;
+  return local.length > 0 ? local.charAt(0).toUpperCase() + local.slice(1) : email;
+}
+
+/** Split "R$ 4.812,90" into ["R$ 4.812", ",90"] for the hero's smaller cents. */
+function splitCents(value: string): [string, string] {
+  const idx = value.lastIndexOf(",");
+  return idx === -1 ? [value, ""] : [value.slice(0, idx), value.slice(idx)];
+}
 
 /**
  * "/resumo" — read-only daily summary, optimized for a 10-second phone check:
  * gasto do mês + comparison, fatura projetada per card, pendentes chip and
- * the last 5 lançamentos. Single mobile-friendly column, no filters.
+ * the last 5 lançamentos. Skinned per Resumo.dc.html ("Editorial acolhedor").
  */
 export default async function ResumoPage() {
-  await requireAuthorizedUser();
+  const { email } = await requireAuthorizedUser();
   const data = await loadResumoData();
   const { month, spentCents, deltaVsPreviousCents, cards, pendingCount, recent, loadError } =
     data;
   const previousMonth = shiftMonth(month, -1);
+  const name = nameFromEmail(email);
+  const [spentMain, spentCentsPart] = splitCents(formatBrlCents(spentCents));
+  const comparison = spendingComparisonLabel(deltaVsPreviousCents, previousMonth);
 
   return (
-    <section style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 16 }}>
-      <header>
-        <h1 style={{ margin: 0 }}>Como estão as contas da casa?</h1>
-        <p style={{ color: "#555", margin: "6px 0 0", fontSize: 15 }}>
-          {monthLabelPtBr(month)}
-        </p>
-      </header>
+    <section style={{ maxWidth: 980, margin: "0 auto" }}>
+      <Kicker>Nossa casa · {monthLabelPtBr(month)}</Kicker>
+      <h1 className="ff-hello">Oi, {name}</h1>
+      <p className="ff-hello-lead">Como estão as contas da casa?</p>
 
       {loadError ? (
-        <div
-          role="alert"
-          style={{
-            background: "#fdecec",
-            border: "1px solid #f3b4b4",
-            color: "#8a2020",
-            borderRadius: 10,
-            padding: 12,
-            fontSize: 14,
-          }}
-        >
+        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
           Não foi possível carregar o resumo agora; mostrando tudo zerado.{" "}
-          <span style={{ color: "#a85b5b" }}>({loadError})</span>
+          ({loadError})
         </div>
       ) : null}
 
-      {/* Gasto do mês */}
-      <div style={panel}>
-        <div style={{ fontSize: 13, color: "#6b7280", letterSpacing: 0.4 }}>
-          GASTO DO MÊS
-        </div>
-        <div style={{ fontSize: 36, fontWeight: 700, marginTop: 4 }}>
-          {formatBrlCents(spentCents)}
-        </div>
-        <div style={{ fontSize: 14, color: "#374151", marginTop: 4 }}>
-          {spendingComparisonLabel(deltaVsPreviousCents, previousMonth)}
-        </div>
-      </div>
-
-      {/* Fatura projetada por cartão */}
-      <div style={panel}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Fatura projetada</h2>
-        {cards.length === 0 ? (
-          <p style={{ color: "#6b7280", fontSize: 14, margin: 0 }}>
-            Nenhum cartão cadastrado.
-          </p>
-        ) : (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {cards.map((card) => (
-              <li
-                key={card.id}
-                style={{
-                  borderTop: "1px solid #f0f2f4",
-                  padding: "10px 0",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "baseline",
-                  gap: 12,
-                }}
-              >
-                <span style={{ fontSize: 14 }}>{card.name}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap" }}>
-                  {formatBrlCents(card.projectedCents)}
+      <div className="ff-grid-resumo">
+        {/* Left column */}
+        <div className="ff-stack">
+          {/* Gasto do mês */}
+          <Card>
+            <div className="ff-hero__kicker">Gasto do mês</div>
+            <div className="ff-hero__value ff-serif ff-num">
+              {spentMain}
+              {spentCentsPart ? (
+                <span className="ff-hero__cents">{spentCentsPart}</span>
+              ) : null}
+            </div>
+            <div className="ff-hero__delta">
+              {deltaVsPreviousCents === 0 ? (
+                <span className="ff-delta ff-delta--positive ff-num">
+                  {comparison}
                 </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+              ) : (
+                <Delta
+                  direction={deltaVsPreviousCents > 0 ? "down" : "up"}
+                  tone={deltaVsPreviousCents > 0 ? "positive" : "negative"}
+                >
+                  {comparison}
+                </Delta>
+              )}
+            </div>
+          </Card>
 
-      {/* Pendentes de revisão */}
-      {pendingCount > 0 ? (
-        <Link
-          href="/transactions?pending=1"
-          style={{
-            display: "block",
-            background: "#fff7e6",
-            border: "1px solid #f0d9a8",
-            color: "#7a5b13",
-            borderRadius: 12,
-            padding: "14px 20px",
-            fontSize: 14,
-            textDecoration: "none",
-            fontWeight: 600,
-          }}
-        >
-          {pendingCount === 1
-            ? "1 lançamento pendente de revisão →"
-            : `${pendingCount} lançamentos pendentes de revisão →`}
-        </Link>
-      ) : (
-        <div
-          style={{
-            background: "#eef7f1",
-            border: "1px solid #cbe5d5",
-            color: "#1f5b3c",
-            borderRadius: 12,
-            padding: "14px 20px",
-            fontSize: 14,
-          }}
-        >
-          Tudo revisado por aqui ✨
+          {/* Pendentes de revisão */}
+          {pendingCount > 0 ? (
+            <Link href="/transactions?pending=1" className="ff-callout ff-callout--warn">
+              <span className="ff-callout__bubble">
+                <IconTag size={17} />
+              </span>
+              <span className="ff-callout__text">
+                Falta categorizar{" "}
+                <strong>
+                  {pendingCount === 1
+                    ? "1 lançamento"
+                    : `${pendingCount} lançamentos`}
+                </strong>
+              </span>
+              <span className="ff-callout__arrow">→</span>
+            </Link>
+          ) : (
+            <div className="ff-callout ff-callout--positive">
+              <span className="ff-callout__text">Tudo revisado por aqui ✨</span>
+            </div>
+          )}
+
+          {/* Faturas dos cartões */}
+          <div>
+            <h2 className="ff-h2" style={{ margin: "8px 0 12px" }}>
+              Faturas dos cartões
+            </h2>
+            {cards.length === 0 ? (
+              <p className="ff-muted">Nenhum cartão cadastrado.</p>
+            ) : (
+              <div className="ff-cards-grid">
+                {cards.map((card) => (
+                  <Card key={card.id} hoverable className="ff-icard">
+                    <div className="ff-icard__head">
+                      <span className="ff-bubble">
+                        <IconCard size={17} />
+                      </span>
+                      <div className="ff-icard__name">{card.name}</div>
+                    </div>
+                    <div className="ff-icard__value ff-serif ff-num">
+                      {formatBrlCents(card.projectedCents)}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      )}
 
-      {/* Últimos lançamentos */}
-      <div style={panel}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Últimos lançamentos</h2>
-        <RecentTransactions transactions={recent} formatCents={formatBrlCents} />
+        {/* Right column: últimos lançamentos */}
+        <div className="ff-listcard">
+          <div className="ff-listcard__head">
+            <h2 className="ff-h2">Últimos lançamentos</h2>
+            <Link href="/transactions" className="ff-link">
+              ver tudo →
+            </Link>
+          </div>
+          <div className="ff-listcard__body">
+            <RecentTransactions transactions={recent} formatCents={formatBrlCents} />
+          </div>
+        </div>
       </div>
     </section>
   );

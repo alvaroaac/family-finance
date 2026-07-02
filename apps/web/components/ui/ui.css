@@ -1015,6 +1015,491 @@
   border: 1px solid var(--ff-warn);
 }
 
+/* ---- Page composition: Resumo & Dashboard -------------------------------- */
+
+/* Section heading inside cards/panels (mockups: Playfair 600 22px). */
+.ff-h2 {
+  font-family: var(--ff-font-display), "Playfair Display", Georgia, serif;
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--ff-ink);
+  margin: 0;
+}
+
+/* Gold inline link — "ver tudo →" (Inter 600 12px). */
+.ff-link {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--ff-accent);
+  text-decoration: none;
+}
+
+.ff-link:hover {
+  color: var(--ff-accent-hover);
+}
+
+/* Small soft side note (mockup: "parcelas já assumidas, mês a mês"). */
+.ff-note {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+}
+
+/* Muted empty-state line inside panels. */
+.ff-muted {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--ff-ink-soft);
+  margin: 0;
+}
+
+/* Generic amount tones (tx rows, review mini-cards). */
+.ff-amount--pos {
+  color: var(--ff-positive);
+}
+
+.ff-amount--neg {
+  color: var(--ff-negative);
+}
+
+/* Resumo greeting — "Oi, Karol" (desktop 40px, mobile 30px). */
+.ff-hello {
+  font-family: var(--ff-font-display), "Playfair Display", Georgia, serif;
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1.12;
+  color: var(--ff-ink);
+  margin: 12px 0 6px;
+}
+
+.ff-hello-lead {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 300;
+  font-size: 16px;
+  color: var(--ff-ink-soft);
+  margin: 0;
+}
+
+/* Resumo hero — "Gasto do mês" big Playfair number with smaller cents. */
+.ff-hero__kicker {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ff-ink-soft);
+}
+
+.ff-hero__value {
+  font-size: 62px;
+  line-height: 1.05;
+  color: var(--ff-ink);
+  margin-top: 10px;
+}
+
+.ff-hero__cents {
+  font-size: 34px;
+}
+
+.ff-hero__delta {
+  margin-top: 14px;
+}
+
+/* Callout chip — pendentes (warn link) / "Tudo revisado por aqui ✨". */
+.ff-callout {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-radius: var(--ff-radius-md);
+  text-decoration: none;
+}
+
+a.ff-callout {
+  transition: transform 0.16s;
+}
+
+a.ff-callout:hover {
+  transform: translateY(-1px);
+}
+
+.ff-callout--warn {
+  background: var(--ff-warn-wash);
+  border: 1px solid var(--ff-warn);
+}
+
+.ff-callout--positive {
+  background: var(--ff-positive-wash);
+  border: 1px solid var(--ff-positive);
+}
+
+.ff-callout__bubble {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ff-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ff-warn);
+}
+
+.ff-callout__text {
+  flex: 1;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--ff-ink);
+}
+
+.ff-callout__text strong {
+  font-weight: 600;
+  color: var(--ff-warn);
+}
+
+.ff-callout--positive .ff-callout__text {
+  color: var(--ff-positive);
+}
+
+.ff-callout__arrow {
+  color: var(--ff-warn);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 17px;
+}
+
+/* Small square icon bubble on gold tint (fatura cards, caixinhas). */
+.ff-bubble {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--ff-tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ff-accent);
+}
+
+/* Fatura-per-card icon card (Resumo desktop: padding 20, Playfair 26px). */
+.ff-icard {
+  padding: 20px;
+}
+
+.ff-icard__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ff-icard__name {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ff-ink);
+}
+
+.ff-icard__value {
+  font-size: 26px;
+  color: var(--ff-ink);
+  margin-top: 14px;
+}
+
+/* List card — "Últimos lançamentos" panel with header + row list. */
+.ff-listcard {
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-lg);
+  overflow: hidden;
+}
+
+.ff-listcard__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 20px 22px 4px;
+}
+
+.ff-listcard__body {
+  padding: 8px 18px 12px;
+}
+
+/* Transaction row (Resumo list / Dashboard mobile row cards). */
+.ff-txlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ff-txrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--ff-border);
+}
+
+.ff-txrow:first-child {
+  border-top: none;
+}
+
+.ff-txrow__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ff-txrow__desc {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ff-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ff-txrow__meta {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  margin-top: 2px;
+}
+
+.ff-txrow__amount {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ff-ink);
+  white-space: nowrap;
+}
+
+/* Layout grids (mockups: Resumo 1.1fr/0.9fr, Dashboard 4-up + 2fr/1fr). */
+.ff-grid-resumo {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 24px;
+  margin-top: 36px;
+  align-items: start;
+}
+
+.ff-grid-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-top: 32px;
+}
+
+.ff-grid-2-1 {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+  align-items: start;
+}
+
+.ff-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ff-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* Panel header row inside Cards (title + note/badge/link). */
+.ff-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ff-panel__foot {
+  border-top: 1px solid var(--ff-border);
+  margin-top: 22px;
+  padding-top: 14px;
+}
+
+/* "Pra revisar" mini cards (Dashboard). */
+.ff-minicards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ff-minicard {
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: 12px;
+  padding: 13px 14px;
+}
+
+.ff-minicard__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ff-minicard__row--meta {
+  align-items: center;
+  margin-top: 8px;
+}
+
+.ff-minicard__title {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ff-minicard__amount {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ff-ink);
+  white-space: nowrap;
+}
+
+.ff-minicard__meta {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--ff-ink-soft);
+}
+
+/* Ghost pill link — "categorizar" (Dashboard "Pra revisar"). */
+.ff-chip-link {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-pill);
+  padding: 4px 12px;
+  color: var(--ff-accent);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.ff-chip-link:hover {
+  background: var(--ff-tint);
+}
+
+/* Caixinhas rows + total footer. */
+.ff-caixinhas {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.ff-caixinha {
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.16s;
+}
+
+.ff-caixinha:hover {
+  transform: translateY(-1px);
+  border-color: var(--ff-accent);
+}
+
+.ff-caixinha__name {
+  flex: 1;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink);
+}
+
+.ff-caixinha__value {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ff-ink);
+}
+
+.ff-caixinhas__total {
+  border-top: 1px solid var(--ff-border);
+  margin-top: 16px;
+  padding-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.ff-caixinhas__total-value {
+  font-size: 22px;
+  color: var(--ff-accent);
+}
+
+/* Mobile row card (Dashboard "Últimos lançamentos" collapse). */
+.ff-rowcard {
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .ff-grid-resumo,
+  .ff-grid-2-1 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .ff-hello {
+    font-size: 30px;
+    margin: 10px 0 4px;
+  }
+
+  .ff-hello-lead {
+    font-size: 14px;
+  }
+
+  .ff-hero__value {
+    font-size: 54px;
+    margin-top: 8px;
+  }
+
+  .ff-hero__cents {
+    font-size: 30px;
+  }
+
+  .ff-grid-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .ff-cards-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
 /* ---- Motion ---------------------------------------------------------- */
 
 @keyframes ffFadeUp {

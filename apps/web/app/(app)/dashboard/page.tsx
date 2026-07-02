@@ -1,10 +1,19 @@
+import Link from "next/link";
 import type { InvestmentBucketSlug } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
-import { SummaryCard } from "../../../components/summary-card";
-import { RecentTransactions } from "../../../components/recent-transactions";
-import { PendingReviewList } from "../../../components/pending-review-list";
 import { formatBrlCents } from "../../../lib/format";
+import {
+  Badge,
+  Card,
+  IconJar,
+  PageTitle,
+  PressureBars,
+  RowCardList,
+  StatCard,
+  Table,
+  TableRow,
+} from "../../../components/ui";
 import { loadDashboardData } from "./queries";
 
 export const metadata = {
@@ -13,13 +22,6 @@ export const metadata = {
 
 // This page reads per-request, RLS-scoped data; never statically prerender it.
 export const dynamic = "force-dynamic";
-
-const panel = {
-  background: "#fff",
-  border: "1px solid #e3e6ea",
-  borderRadius: 12,
-  padding: 20,
-} as const;
 
 const MONTH_NAMES_PT = [
   "janeiro",
@@ -36,14 +38,31 @@ const MONTH_NAMES_PT = [
   "dezembro",
 ];
 
+/** "2026-06" -> "junho". */
+function monthNamePt(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (match === null) return month;
+  const idx = Number.parseInt(match[2] as string, 10) - 1;
+  return MONTH_NAMES_PT[idx] ?? month;
+}
+
 /** "2026-06" -> "junho de 2026". */
 function formatMonthLabel(month: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(month);
   if (match === null) return month;
-  const year = match[1];
-  const idx = Number.parseInt(match[2] as string, 10) - 1;
-  const name = MONTH_NAMES_PT[idx] ?? month;
-  return `${name} de ${year}`;
+  return `${monthNamePt(month)} de ${match[1]}`;
+}
+
+/** "2026-07" -> "jul" (uppercased by the bar-label CSS). */
+function monthAbbr(month: string): string {
+  return monthNamePt(month).slice(0, 3);
+}
+
+/** "YYYY-MM-DD" -> "DD/MM" without constructing a Date (timezone-safe). */
+function formatDateBr(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (match === null) return iso;
+  return `${match[3]}/${match[2]}`;
 }
 
 const BUCKET_LABEL: Record<InvestmentBucketSlug, string> = {
@@ -51,6 +70,12 @@ const BUCKET_LABEL: Record<InvestmentBucketSlug, string> = {
   casa: "Casa",
   independencia_financeira: "Independência financeira",
 };
+
+const RECENT_COLUMNS = [
+  { key: "dia", label: "Dia" },
+  { key: "descricao", label: "Descrição" },
+  { key: "valor", label: "Valor", align: "right" as const },
+];
 
 export default async function DashboardPage() {
   await requireAuthorizedUser();
@@ -68,168 +93,241 @@ export default async function DashboardPage() {
     loadError,
   } = data;
 
-  const balanceTone = summary.balanceCents >= 0 ? "positive" : "negative";
-  const bucketsHint =
-    buckets.length === 0
-      ? "Nenhuma caixinha cadastrada."
-      : buckets
-          .map(
-            (b) =>
-              `${BUCKET_LABEL[b.slug]} ${formatBrlCents(b.balance_cents)}`,
-          )
-          .join(" · ");
+  // "Pressão dos cartões": existing upcoming-installments data grouped by month.
+  const pressureByMonth = new Map<string, number>();
+  for (const parcel of upcomingInstallments) {
+    pressureByMonth.set(
+      parcel.dueMonth,
+      (pressureByMonth.get(parcel.dueMonth) ?? 0) + parcel.amountCents,
+    );
+  }
+  const pressureBars = [...pressureByMonth.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([barMonth, cents]) => ({
+      label: monthAbbr(barMonth),
+      value: cents,
+      display: Math.round(cents / 100).toLocaleString("pt-BR"),
+      active: barMonth === month,
+    }));
 
   return (
     <section>
-      <h1 style={{ marginTop: 0 }}>Dashboard · Casa</h1>
-      <p style={{ color: "#555", maxWidth: 720 }}>
-        Resumo mensal da família no workspace <strong>Casa</strong>:{" "}
-        {formatMonthLabel(month)}. Quanto entrou, quanto sobrou, a pressão dos
-        cartões, as caixinhas e o que ainda precisa de revisão.
-      </p>
+      <PageTitle
+        kicker={`Nossa casa · ${formatMonthLabel(month)}`}
+        title="O mês inteiro, de uma vez"
+        lead="Quanto entrou, quanto sobrou, a pressão dos cartões e as caixinhas."
+      />
 
       {loadError ? (
-        <div
-          role="alert"
-          style={{
-            background: "#fdecec",
-            border: "1px solid #f3b4b4",
-            color: "#8a2020",
-            borderRadius: 10,
-            padding: 12,
-            marginTop: 16,
-            fontSize: 14,
-          }}
-        >
+        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 16 }}>
           Não foi possível carregar os dados agora; mostrando o resumo zerado.{" "}
-          <span style={{ color: "#a85b5b" }}>({loadError})</span>
+          ({loadError})
         </div>
       ) : null}
 
-      {/* Summary cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 16,
-          marginTop: 24,
-        }}
-      >
-        <SummaryCard
-          label="Receitas do mês"
+      {/* Stat cards */}
+      <div className="ff-grid-stats">
+        <StatCard
+          kicker="Entrou"
           value={formatBrlCents(summary.incomeCents)}
           tone="positive"
-          hint="Quanto entrou no mês."
+          hint="salários e outras entradas"
         />
-        <SummaryCard
-          label="Despesas do mês"
+        <StatCard
+          kicker="Saiu"
           value={formatBrlCents(summary.expenseCents)}
-          tone="negative"
           hint="Total lançado no mês."
         />
-        <SummaryCard
-          label="Saldo estimado"
+        <StatCard
+          kicker="Sobrou"
           value={formatBrlCents(summary.balanceCents)}
-          tone={balanceTone}
-          hint="Entradas menos saídas."
+          hint="entradas menos saídas"
         />
-        <SummaryCard
-          label="Cartões"
+        <StatCard
+          kicker={`Cartões em ${monthNamePt(month)}`}
           value={formatBrlCents(cardPressure.totalCents)}
-          tone="warning"
-          hint={`Compras ${formatBrlCents(
+          hint={`compras ${formatBrlCents(
             cardPressure.directCents,
           )} + parcelas ${formatBrlCents(cardPressure.installmentCents)}`}
         />
-        <SummaryCard
-          label="Caixinhas"
-          value={formatBrlCents(bucketsTotalCents)}
-          tone="neutral"
-          hint={bucketsHint}
-        />
-        <SummaryCard
-          label="Pendentes de revisão"
-          value={String(pendingReview.length)}
-          tone={pendingReview.length > 0 ? "warning" : "neutral"}
-          hint={
-            pendingReview.length > 0
-              ? "Itens sem categoria."
-              : "Tudo categorizado."
-          }
-        />
       </div>
 
-      {/* Two-column detail panels */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 16,
-          marginTop: 24,
-        }}
-      >
-        <div style={panel}>
-          <h2 style={{ marginTop: 0, fontSize: 18 }}>Lançamentos recentes</h2>
-          <RecentTransactions transactions={recent} formatCents={formatBrlCents} />
-        </div>
-
-        <div style={panel}>
-          <h2 style={{ marginTop: 0, fontSize: 18 }}>Precisa de revisão</h2>
-          <PendingReviewList items={pendingReview} formatCents={formatBrlCents} />
-        </div>
-
-        <div style={panel}>
-          <h2 style={{ marginTop: 0, fontSize: 18 }}>Próximas parcelas</h2>
-          {upcomingInstallments.length === 0 ? (
-            <p style={{ color: "#6b7280", fontSize: 14, marginTop: 0 }}>
+      {/* Row 2: pressão + pra revisar */}
+      <div className="ff-grid-2-1">
+        <Card>
+          <div className="ff-panel__head">
+            <h2 className="ff-h2">Pressão dos cartões</h2>
+            <span className="ff-note">parcelas já assumidas, mês a mês</span>
+          </div>
+          {pressureBars.length === 0 ? (
+            <p className="ff-muted" style={{ marginTop: 18 }}>
               Nenhuma parcela futura.
             </p>
           ) : (
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {upcomingInstallments.map((parcel) => (
-                <li
-                  key={parcel.id}
-                  style={{
-                    borderTop: "1px solid #f0f2f4",
-                    padding: "10px 0",
-                    display: "flex",
-                    gap: 12,
-                    alignItems: "baseline",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {parcel.description || "(sem descrição)"}
-                    </div>
-                    <div
-                      style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}
-                    >
-                      {formatMonthLabel(parcel.dueMonth)} · parcela{" "}
-                      {parcel.number}/{parcel.installmentCount}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {formatBrlCents(parcel.amountCents)}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <PressureBars bars={pressureBars} />
           )}
-        </div>
+        </Card>
+
+        <Card>
+          <div className="ff-panel__head">
+            <h2 className="ff-h2">Pra revisar</h2>
+            <Badge tone={pendingReview.length > 0 ? "warn" : "positive"}>
+              {pendingReview.length}
+            </Badge>
+          </div>
+          {pendingReview.length === 0 ? (
+            <p className="ff-muted" style={{ marginTop: 18 }}>
+              Nada para revisar. Tudo categorizado por aqui.
+            </p>
+          ) : (
+            <div className="ff-minicards">
+              {pendingReview.map((tx) => {
+                const isIncome = tx.kind === "income";
+                const sign = isIncome ? "+ " : tx.kind === "expense" ? "− " : "";
+                const tone = isIncome
+                  ? " ff-amount--pos"
+                  : tx.kind === "expense"
+                    ? " ff-amount--neg"
+                    : "";
+                return (
+                  <div key={tx.id} className="ff-minicard">
+                    <div className="ff-minicard__row">
+                      <span className="ff-minicard__title">
+                        {tx.description || "(sem descrição)"}
+                      </span>
+                      <span className={`ff-minicard__amount ff-num${tone}`}>
+                        {sign}
+                        {formatBrlCents(tx.amountCents)}
+                      </span>
+                    </div>
+                    <div className="ff-minicard__row ff-minicard__row--meta">
+                      <span className="ff-minicard__meta">
+                        {formatDateBr(tx.occurredOn)}
+                      </span>
+                      <Link href="/transactions?pending=1" className="ff-chip-link">
+                        categorizar
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="ff-panel__foot">
+            <Link href="/transactions?pending=1" className="ff-link">
+              revisar tudo →
+            </Link>
+          </div>
+        </Card>
+      </div>
+
+      {/* Row 3: lançamentos + caixinhas */}
+      <div className="ff-grid-2-1">
+        <Card>
+          <div className="ff-panel__head" style={{ marginBottom: 12 }}>
+            <h2 className="ff-h2">Últimos lançamentos</h2>
+            <Link href="/transactions" className="ff-link">
+              ver tudo →
+            </Link>
+          </div>
+          {recent.length === 0 ? (
+            <p className="ff-muted">Nenhum lançamento ainda.</p>
+          ) : (
+            <>
+              <Table columns={RECENT_COLUMNS} gridTemplate="60px 1fr 120px">
+                {recent.map((tx) => {
+                  const isIncome = tx.kind === "income";
+                  const sign = isIncome ? "+ " : tx.kind === "expense" ? "− " : "";
+                  const tone = isIncome
+                    ? " ff-amount--pos"
+                    : tx.kind === "expense"
+                      ? " ff-amount--neg"
+                      : "";
+                  return (
+                    <TableRow key={tx.id}>
+                      <span className="ff-note ff-num">
+                        {formatDateBr(tx.occurredOn)}
+                      </span>
+                      <span className="ff-txrow__desc">
+                        {tx.description || "(sem descrição)"}
+                      </span>
+                      <span
+                        className={`ff-txrow__amount ff-num${tone}`}
+                        style={{ textAlign: "right" }}
+                      >
+                        {sign}
+                        {formatBrlCents(tx.amountCents)}
+                      </span>
+                    </TableRow>
+                  );
+                })}
+              </Table>
+              <RowCardList>
+                {recent.map((tx) => {
+                  const isIncome = tx.kind === "income";
+                  const sign = isIncome ? "+ " : tx.kind === "expense" ? "− " : "";
+                  const tone = isIncome
+                    ? " ff-amount--pos"
+                    : tx.kind === "expense"
+                      ? " ff-amount--neg"
+                      : "";
+                  return (
+                    <Card key={tx.id} soft className="ff-rowcard">
+                      <div className="ff-txrow__main">
+                        <div className="ff-txrow__desc">
+                          {tx.description || "(sem descrição)"}
+                        </div>
+                        <div className="ff-txrow__meta">
+                          {formatDateBr(tx.occurredOn)}
+                        </div>
+                      </div>
+                      <div className={`ff-txrow__amount ff-num${tone}`}>
+                        {sign}
+                        {formatBrlCents(tx.amountCents)}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </RowCardList>
+            </>
+          )}
+        </Card>
+
+        <Card>
+          <div className="ff-panel__head">
+            <h2 className="ff-h2">Caixinhas</h2>
+            <Link href="/investments" className="ff-link">
+              ver →
+            </Link>
+          </div>
+          {buckets.length === 0 ? (
+            <p className="ff-muted" style={{ marginTop: 16 }}>
+              Nenhuma caixinha cadastrada.
+            </p>
+          ) : (
+            <div className="ff-caixinhas">
+              {buckets.map((bucket) => (
+                <div key={bucket.id} className="ff-caixinha">
+                  <span className="ff-bubble">
+                    <IconJar size={16} />
+                  </span>
+                  <span className="ff-caixinha__name">
+                    {BUCKET_LABEL[bucket.slug]}
+                  </span>
+                  <span className="ff-caixinha__value ff-num">
+                    {formatBrlCents(bucket.balance_cents)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="ff-caixinhas__total">
+            <span className="ff-note">guardado no total</span>
+            <span className="ff-caixinhas__total-value ff-serif ff-num">
+              {formatBrlCents(bucketsTotalCents)}
+            </span>
+          </div>
+        </Card>
       </div>
     </section>
   );
