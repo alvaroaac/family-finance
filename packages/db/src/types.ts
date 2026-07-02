@@ -45,6 +45,8 @@ export type HouseholdMemberRow = {
   user_id: string;
   role: string;
   is_active: boolean;
+  display_name: string | null;
+  telegram_user_id: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -63,6 +65,7 @@ export type InvestmentBucketRow = {
   household_id: string;
   slug: InvestmentBucketSlug;
   name: string;
+  balance_cents: number;
   created_at: string;
   updated_at: string;
 };
