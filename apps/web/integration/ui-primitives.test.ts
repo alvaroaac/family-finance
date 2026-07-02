@@ -8,10 +8,19 @@ import {
   Card,
   Delta,
   EmptyState,
+  Field,
   IconHome,
+  Input,
   Kicker,
+  MonthStepper,
   PageTitle,
+  PillToggle,
+  PressureBars,
+  RowCardList,
+  Select,
   StatCard,
+  Table,
+  TableRow,
 } from "../components/ui";
 
 describe("ui primitives — core", () => {
@@ -126,6 +135,141 @@ describe("ui primitives — core", () => {
     expect(html).toContain("Nenhum lançamento por aqui ainda");
     expect(html).toContain("aparece aqui");
     expect(html).toContain("Importar fatura");
+  });
+
+  it("Field renders the uppercase mini-label and its control", () => {
+    const html = renderToStaticMarkup(
+      createElement(Field, {
+        label: "Descrição",
+        children: createElement(Input, { defaultValue: "Mercado Guanabara" }),
+      }),
+    );
+    expect(html).toMatch(/<label[^>]*class="[^"]*ff-field__label[^"]*"[^>]*>Descrição<\/label>/);
+    expect(html).toContain("ff-input");
+  });
+
+  it("Input renders the .ff-input class and forwards native props", () => {
+    const html = renderToStaticMarkup(
+      createElement(Input, { name: "description", placeholder: "PIX João da horta" }),
+    );
+    expect(html).toMatch(/<input[^>]*class="[^"]*ff-input[^"]*"/);
+    expect(html).toContain('name="description"');
+    expect(html).toContain('placeholder="PIX João da horta"');
+  });
+
+  it("Select renders a native select inside the styled shell with caret", () => {
+    const html = renderToStaticMarkup(
+      createElement(Select, {
+        name: "category",
+        defaultValue: "mercado",
+        children: createElement("option", { value: "mercado" }, "Mercado"),
+      }),
+    );
+    expect(html).toMatch(/<select[^>]*class="[^"]*ff-select__control[^"]*"/);
+    expect(html).toContain('name="category"');
+    expect(html).toContain("ff-select__caret");
+    expect(html).toContain("Mercado");
+  });
+
+  it("MonthStepper renders both hrefs around the month label", () => {
+    const html = renderToStaticMarkup(
+      createElement(MonthStepper, {
+        label: "julho de 2026",
+        prevHref: "/transactions?month=2026-06",
+        nextHref: "/transactions?month=2026-08",
+      }),
+    );
+    expect(html).toContain('href="/transactions?month=2026-06"');
+    expect(html).toContain('href="/transactions?month=2026-08"');
+    expect(html).toContain("julho de 2026");
+    expect(html).toContain("‹");
+    expect(html).toContain("›");
+  });
+
+  it("PillToggle marks the active state and links its href", () => {
+    const active = renderToStaticMarkup(
+      createElement(PillToggle, {
+        active: true,
+        href: "/transactions",
+        children: "Só pendentes · 3",
+      }),
+    );
+    expect(active).toContain("ff-pill--active");
+    expect(active).toContain('href="/transactions"');
+    expect(active).toContain("Só pendentes · 3");
+
+    const inactive = renderToStaticMarkup(
+      createElement(PillToggle, {
+        active: false,
+        href: "/transactions?pending=1",
+        children: "Só pendentes · 3",
+      }),
+    );
+    expect(inactive).not.toContain("ff-pill--active");
+  });
+
+  it("Table renders header labels on the grid template and TableRow pending adds the warn stripe", () => {
+    const html = renderToStaticMarkup(
+      createElement(Table, {
+        columns: [
+          { key: "day", label: "Dia" },
+          { key: "description", label: "Descrição" },
+          { key: "amount", label: "Valor", align: "right" as const },
+        ],
+        gridTemplate: "62px 1fr 110px",
+        children: [
+          createElement(TableRow, { key: "a", children: "linha normal" }),
+          createElement(TableRow, {
+            key: "b",
+            pending: true,
+            children: "linha pendente",
+          }),
+        ],
+      }),
+    );
+    expect(html).toContain("ff-table");
+    expect(html).toContain("Dia");
+    expect(html).toContain("Descrição");
+    expect(html).toContain("62px 1fr 110px");
+    expect(html).toMatch(/ff-table__th--right[^>]*>Valor/);
+    expect(html).toContain("ff-row--pending");
+    expect(html).toContain("linha pendente");
+  });
+
+  it("RowCardList renders the mobile card stack container", () => {
+    const html = renderToStaticMarkup(
+      createElement(RowCardList, {
+        children: createElement(Card, { children: "Mercado Guanabara" }),
+      }),
+    );
+    expect(html).toContain("ff-rowcards");
+    expect(html).toContain("Mercado Guanabara");
+  });
+
+  it("PressureBars gives the max bar 100% height and marks the active bar", () => {
+    const html = renderToStaticMarkup(
+      createElement(PressureBars, {
+        bars: [
+          { label: "JUL", value: 2483, display: "2.483", active: true },
+          { label: "AGO", value: 2118, display: "2.118" },
+          { label: "DEZ", value: 290, display: "290" },
+        ],
+      }),
+    );
+    expect(html).toContain("ff-bars");
+    expect(html).toContain("ff-bar--active");
+    expect(html).toMatch(/height:100%/);
+    expect(html).toContain("2.483");
+    expect(html).toContain("AGO");
+  });
+
+  it("PressureBars survives an all-zero month set (no division by zero)", () => {
+    const html = renderToStaticMarkup(
+      createElement(PressureBars, {
+        bars: [{ label: "JUL", value: 0, display: "0" }],
+      }),
+    );
+    expect(html).toContain("height:0%");
   });
 
   it("icons render as line-art SVG (currentColor, stroke 1.7) sized by prop", () => {

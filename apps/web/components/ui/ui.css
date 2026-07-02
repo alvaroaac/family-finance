@@ -323,6 +323,294 @@
   margin-top: 4px;
 }
 
+/* ---- Field / Input / Select --------------------------------------------- */
+
+/* Mockup (Design System "Inputs & selects"): label Inter 500 11px 0.14em
+   uppercase ink2, input on soft surface, focus = gold border + 3px tint. */
+.ff-field__label {
+  display: block;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ff-ink-soft);
+  margin-bottom: 6px;
+}
+
+.ff-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-sm);
+  padding: 11px 13px;
+  color: var(--ff-ink);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  outline: none;
+}
+
+.ff-input:focus {
+  border-color: var(--ff-accent);
+  box-shadow: 0 0 0 3px var(--ff-tint);
+}
+
+.ff-select {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.ff-select__control {
+  width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-sm);
+  padding: 11px 30px 11px 13px;
+  color: var(--ff-ink);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ff-select__control:hover {
+  border-color: var(--ff-accent);
+}
+
+.ff-select__control:focus {
+  border-color: var(--ff-accent);
+  box-shadow: 0 0 0 3px var(--ff-tint);
+}
+
+.ff-select__caret {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--ff-accent);
+  font-size: 11px;
+}
+
+/* ---- MonthStepper ------------------------------------------------------ */
+
+/* Mockup (Transacoes filter bar): pill ‹ julho de 2026 ›. */
+.ff-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-pill);
+  padding: 4px 6px;
+}
+
+.ff-stepper__arrow {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--ff-accent);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  text-decoration: none;
+}
+
+.ff-stepper__arrow:hover {
+  background: var(--ff-tint);
+}
+
+.ff-stepper__label {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink);
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* ---- PillToggle -------------------------------------------------------- */
+
+/* Mockup: "Só pendentes · 3" — warn wash when active, soft shell when not. */
+.ff-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 15px;
+  border-radius: var(--ff-radius-pill);
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  color: var(--ff-ink-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ff-pill:hover {
+  border-color: var(--ff-accent);
+}
+
+.ff-pill--active {
+  background: var(--ff-warn-wash);
+  border-color: var(--ff-warn);
+  color: var(--ff-warn);
+  font-weight: 600;
+}
+
+/* ---- Table (desktop grid) ---------------------------------------------- */
+
+.ff-table {
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-lg);
+  overflow: hidden;
+}
+
+.ff-table__head {
+  display: grid;
+  grid-template-columns: var(--ff-table-grid);
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--ff-surface-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ff-ink-soft);
+}
+
+.ff-table__th--right {
+  text-align: right;
+}
+
+.ff-row {
+  display: grid;
+  grid-template-columns: var(--ff-table-grid);
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--ff-border);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--ff-ink);
+  align-items: center;
+}
+
+.ff-row:hover {
+  background: var(--ff-tint);
+}
+
+/* Pendente: faint warn wash + 3px inset stripe (mockup). */
+.ff-row--pending {
+  background: rgba(224, 182, 98, 0.05);
+  box-shadow: inset 3px 0 0 var(--ff-warn);
+}
+
+.ff-row--pending:hover {
+  background: rgba(224, 182, 98, 0.05);
+}
+
+/* ---- RowCardList (mobile collapse) -------------------------------------- */
+
+.ff-rowcards {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .ff-table {
+    display: none;
+  }
+
+  .ff-rowcards {
+    display: flex;
+  }
+}
+
+/* ---- PressureBars ------------------------------------------------------- */
+
+/* Mockup (Dashboard "Pressão dos cartões"): 190px chart area, value on top,
+   64px-max bars, uppercase month labels, gold bar = active month. */
+.ff-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  margin-top: 26px;
+  height: 190px;
+  padding: 0 6px;
+}
+
+.ff-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.ff-bar__value {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-bar--active .ff-bar__value {
+  font-weight: 600;
+  color: var(--ff-ink);
+}
+
+.ff-bar__track {
+  flex: 1;
+  width: 100%;
+  max-width: 64px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.ff-bar__fill {
+  width: 100%;
+  border-radius: 8px 8px 4px 4px;
+  background: var(--ff-tint);
+  border: 1px solid var(--ff-border);
+  box-sizing: border-box;
+}
+
+.ff-bar--active .ff-bar__fill {
+  background: var(--ff-accent);
+  border: none;
+}
+
+.ff-bar__label {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ff-ink-soft);
+}
+
+.ff-bar--active .ff-bar__label {
+  font-weight: 600;
+  color: var(--ff-accent);
+}
+
 /* ---- Motion ---------------------------------------------------------- */
 
 @keyframes ffFadeUp {
