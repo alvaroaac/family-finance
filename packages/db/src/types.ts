@@ -214,6 +214,24 @@ export type BotInteractionRow = {
   updated_at: string;
 };
 
+/**
+ * Persisted bot conversation state, keyed by the Telegram chat id. NOT
+ * household-scoped: rows exist before the sender is resolved to a member, and
+ * the table has RLS enabled with zero policies, so only the bot's
+ * service_role client (which bypasses RLS) can read or write it.
+ */
+export type BotConversationRow = {
+  chat_id: number;
+  state: unknown;
+  updated_at: string;
+};
+
+export type BotConversationInsert = {
+  chat_id: number;
+  state: unknown;
+  updated_at?: string;
+};
+
 // --- Insert shapes ---------------------------------------------------------
 //
 // Insert types omit DB-managed columns (id, timestamps) which carry defaults,
@@ -412,6 +430,7 @@ export type Database = {
         CategorizationMemoryInsert
       >;
       bot_interactions: TableDef<BotInteractionRow, BotInteractionInsert>;
+      bot_conversations: TableDef<BotConversationRow, BotConversationInsert>;
     };
     Views: Record<string, never>;
     Functions: {

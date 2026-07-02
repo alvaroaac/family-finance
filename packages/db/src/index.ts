@@ -26,6 +26,26 @@ export function createDatabaseClient(
   return createClient<Database>(config.supabaseUrl, config.supabaseAnonKey);
 }
 
+export type ServiceRoleClientConfig = {
+  supabaseUrl: string;
+  serviceRoleKey: string;
+};
+
+/**
+ * Create a typed Supabase client that authenticates with the SERVICE ROLE key,
+ * bypassing RLS entirely. For the bot process ONLY — never the web app: the
+ * web's data access stays behind user sessions + RLS. Session persistence and
+ * token refresh are disabled because this is a headless server client with a
+ * static key, not a user session.
+ */
+export function createServiceRoleClient(
+  config: ServiceRoleClientConfig,
+): SupabaseClient<Database> {
+  return createClient<Database>(config.supabaseUrl, config.serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 // Database types (hand-written, static — no live connection required).
 export type {
   Database,
@@ -60,6 +80,8 @@ export type {
   CategorizationMemoryInsert,
   BotInteractionRow,
   BotInteractionInsert,
+  BotConversationRow,
+  BotConversationInsert,
 } from "./types.js";
 
 // Repository functions and pure mappers.
@@ -76,6 +98,7 @@ export type {
   TransactionPage,
   TransactionPatch,
   HouseholdMemberProfile,
+  BotMemberIdentity,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -148,4 +171,9 @@ export {
   updateHouseholdMember,
   updateInvestmentBucketBalance,
   findLastBotInteraction,
+  // Bot identity + persistent conversations (v1.0 Task 8).
+  findMemberByTelegramUserId,
+  loadBotConversation,
+  saveBotConversation,
+  deleteBotConversation,
 } from "./repositories.js";

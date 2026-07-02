@@ -17,8 +17,13 @@ import {
   needsReview,
   transactionUpdateFromPatch,
   updateInvestmentBucketBalance,
+  findMemberByTelegramUserId,
+  loadBotConversation,
+  saveBotConversation,
+  deleteBotConversation,
   type AppSupabaseClient,
 } from "./repositories.js";
+import { createServiceRoleClient } from "./index.js";
 import type { TransactionRow, InstallmentRow } from "./types.js";
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
@@ -515,5 +520,164 @@ describe("updateInvestmentBucketBalance validation", () => {
         Number.NaN,
       ),
     ).rejects.toThrow(/saldo/i);
+  });
+});
+
+// --- Task 8 (v1.0): service-role client + telegram lookup + conversations ---
+
+describe("createServiceRoleClient", () => {
+  it("constructs a client with session persistence and token refresh disabled", () => {
+    const client = createServiceRoleClient({
+      supabaseUrl: "http://127.0.0.1:54321",
+      serviceRoleKey: "service-role-test-key",
+    });
+    // No network happens on construction. The auth client keeps the options it
+    // was constructed with, so we assert the bot-safe posture directly.
+    const auth = client.auth as unknown as {
+      persistSession: boolean;
+      autoRefreshToken: boolean;
+    };
+    expect(auth.persistSession).toBe(false);
+    expect(auth.autoRefreshToken).toBe(false);
+  });
+});
+
+/**
+ * Minimal fake Supabase client for the Task 8 repositories: records the table,
+ * filters, and payloads it saw and returns a canned response. Chainable like
+ * the real PostgREST builder for the few methods these repositories use.
+ */
+function createRecordingClient(response: {
+  data?: unknown;
+  error?: { message: string } | null;
+}) {
+  const calls: {
+    table?: string;
+    select?: string;
+    eq: Array<[string, unknown]>;
+    upsert?: unknown;
+    deleted?: boolean;
+  } = { eq: [] };
+  const result = { data: response.data ?? null, error: response.error ?? null };
+  const builder = {
+    select(columns: string) {
+      calls.select = columns;
+      return builder;
+    },
+    eq(column: string, value: unknown) {
+      calls.eq.push([column, value]);
+      return builder;
+    },
+    upsert(payload: unknown) {
+      calls.upsert = payload;
+      return Promise.resolve(result);
+    },
+    delete() {
+      calls.deleted = true;
+      return builder;
+    },
+    maybeSingle() {
+      return Promise.resolve(result);
+    },
+    then(resolve: (value: typeof result) => unknown) {
+      return Promise.resolve(result).then(resolve);
+    },
+  };
+  const client = {
+    from(table: string) {
+      calls.table = table;
+      return builder;
+    },
+  } as unknown as AppSupabaseClient;
+  return { client, calls };
+}
+
+describe("findMemberByTelegramUserId", () => {
+  it("maps an active member row to the bot identity shape", async () => {
+    const { client, calls } = createRecordingClient({
+      data: {
+        household_id: HOUSEHOLD,
+        user_id: USER,
+        display_name: "Karol",
+      },
+    });
+    const identity = await findMemberByTelegramUserId(client, 987654321);
+    expect(identity).toEqual({
+      householdId: HOUSEHOLD,
+      userId: USER,
+      displayName: "Karol",
+    });
+    expect(calls.table).toBe("household_members");
+    expect(calls.eq).toContainEqual(["telegram_user_id", 987654321]);
+    expect(calls.eq).toContainEqual(["is_active", true]);
+  });
+
+  it("returns null when no member is linked to the telegram id", async () => {
+    const { client } = createRecordingClient({ data: null });
+    await expect(findMemberByTelegramUserId(client, 42)).resolves.toBeNull();
+  });
+
+  it("throws on a database error", async () => {
+    const { client } = createRecordingClient({ error: { message: "boom" } });
+    await expect(findMemberByTelegramUserId(client, 42)).rejects.toThrow(
+      /findMemberByTelegramUserId failed: boom/,
+    );
+  });
+});
+
+describe("bot conversation store repositories", () => {
+  it("loadBotConversation returns the stored state and timestamp", async () => {
+    const { client, calls } = createRecordingClient({
+      data: {
+        chat_id: 555,
+        state: { status: "awaiting_confirmation" },
+        updated_at: "2026-07-01T12:00:00.000Z",
+      },
+    });
+    await expect(loadBotConversation(client, 555)).resolves.toEqual({
+      state: { status: "awaiting_confirmation" },
+      updatedAt: "2026-07-01T12:00:00.000Z",
+    });
+    expect(calls.table).toBe("bot_conversations");
+    expect(calls.eq).toContainEqual(["chat_id", 555]);
+  });
+
+  it("loadBotConversation returns null when there is no row", async () => {
+    const { client } = createRecordingClient({ data: null });
+    await expect(loadBotConversation(client, 555)).resolves.toBeNull();
+  });
+
+  it("saveBotConversation upserts the state keyed by chat id with a fresh updated_at", async () => {
+    const { client, calls } = createRecordingClient({});
+    const before = Date.now();
+    await saveBotConversation(client, 555, { status: "drafting" });
+    expect(calls.table).toBe("bot_conversations");
+    const payload = calls.upsert as {
+      chat_id: number;
+      state: unknown;
+      updated_at: string;
+    };
+    expect(payload.chat_id).toBe(555);
+    expect(payload.state).toEqual({ status: "drafting" });
+    expect(Date.parse(payload.updated_at)).toBeGreaterThanOrEqual(before);
+  });
+
+  it("deleteBotConversation deletes by chat id", async () => {
+    const { client, calls } = createRecordingClient({});
+    await deleteBotConversation(client, 555);
+    expect(calls.table).toBe("bot_conversations");
+    expect(calls.deleted).toBe(true);
+    expect(calls.eq).toContainEqual(["chat_id", 555]);
+  });
+
+  it("save and delete surface database errors", async () => {
+    const failing = createRecordingClient({ error: { message: "nope" } });
+    await expect(saveBotConversation(failing.client, 1, {})).rejects.toThrow(
+      /saveBotConversation failed: nope/,
+    );
+    const failingDelete = createRecordingClient({ error: { message: "nope" } });
+    await expect(deleteBotConversation(failingDelete.client, 1)).rejects.toThrow(
+      /deleteBotConversation failed: nope/,
+    );
   });
 });

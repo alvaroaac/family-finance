@@ -45,6 +45,7 @@ import type {
   InstallmentInsertPayload,
   HouseholdMemberRow,
   ResponsibilityScope,
+  BotConversationRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -1754,4 +1755,107 @@ export async function findLastBotInteraction(
       "created_at" | "input_kind" | "transaction_id"
     > | null) ?? null
   );
+}
+
+// ---------------------------------------------------------------------------
+// Bot identity + persistent conversations (v1.0 Task 8).
+//
+// These run ONLY with the bot's service-role client (see
+// `createServiceRoleClient` in index.ts): `bot_conversations` has RLS enabled
+// with zero policies, so anon/authenticated callers are denied every row, and
+// the member lookup by Telegram id happens before there is any authenticated
+// user session to scope RLS with.
+// ---------------------------------------------------------------------------
+
+/** The household member behind a Telegram user id, as the bot needs it. */
+export type BotMemberIdentity = {
+  householdId: string;
+  userId: string;
+  displayName: string | null;
+};
+
+/**
+ * Resolve a Telegram user id to an active household member. Returns null when
+ * no active member is linked to that Telegram id — the bot then politely
+ * refuses instead of writing anything.
+ */
+export async function findMemberByTelegramUserId(
+  client: AppSupabaseClient,
+  telegramUserId: number,
+): Promise<BotMemberIdentity | null> {
+  const { data, error } = await client
+    .from("household_members")
+    .select("household_id, user_id, display_name")
+    .eq("telegram_user_id", telegramUserId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error !== null) {
+    throw new Error(`findMemberByTelegramUserId failed: ${error.message}`);
+  }
+  if (data === null) {
+    return null;
+  }
+  const row = data as Pick<
+    HouseholdMemberRow,
+    "household_id" | "user_id" | "display_name"
+  >;
+  return {
+    householdId: row.household_id,
+    userId: row.user_id,
+    displayName: row.display_name,
+  };
+}
+
+/**
+ * Load a chat's persisted conversation state, or null when none exists. The
+ * state is stored as opaque jsonb; the bot validates its shape on load (a
+ * malformed or stale row is treated as absent there, not here).
+ */
+export async function loadBotConversation(
+  client: AppSupabaseClient,
+  chatId: number,
+): Promise<{ state: unknown; updatedAt: string } | null> {
+  const { data, error } = await client
+    .from("bot_conversations")
+    .select("state, updated_at")
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  if (error !== null) {
+    throw new Error(`loadBotConversation failed: ${error.message}`);
+  }
+  if (data === null) {
+    return null;
+  }
+  const row = data as Pick<BotConversationRow, "state" | "updated_at">;
+  return { state: row.state, updatedAt: row.updated_at };
+}
+
+/** Upsert a chat's conversation state, refreshing `updated_at` to now. */
+export async function saveBotConversation(
+  client: AppSupabaseClient,
+  chatId: number,
+  state: unknown,
+): Promise<void> {
+  const { error } = await client.from("bot_conversations").upsert({
+    chat_id: chatId,
+    state,
+    updated_at: new Date().toISOString(),
+  });
+  if (error !== null) {
+    throw new Error(`saveBotConversation failed: ${error.message}`);
+  }
+}
+
+/** Delete a chat's conversation state (finished or stale conversations). */
+export async function deleteBotConversation(
+  client: AppSupabaseClient,
+  chatId: number,
+): Promise<void> {
+  const { error } = await client
+    .from("bot_conversations")
+    .delete()
+    .eq("chat_id", chatId);
+  if (error !== null) {
+    throw new Error(`deleteBotConversation failed: ${error.message}`);
+  }
 }
