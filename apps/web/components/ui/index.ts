@@ -7,4 +7,31 @@
  *
  * Primitives land here task-by-task in Phase 1.
  */
-export {};
+export {
+  Badge,
+  Button,
+  Card,
+  Delta,
+  EmptyState,
+  Kicker,
+  PageTitle,
+  StatCard,
+} from "./primitives";
+export type { BadgeTone } from "./primitives";
+export {
+  IconBank,
+  IconCard,
+  IconDoc,
+  IconDots,
+  IconGrid,
+  IconHome,
+  IconJar,
+  IconPencil,
+  IconPlusCircle,
+  IconSliders,
+  IconTag,
+  IconTransfer,
+  IconTrash,
+  IconUpload,
+} from "./icons";
+export type { IconProps } from "./icons";
