@@ -49,7 +49,10 @@ surface it.
 migration when the dashboard needs to show caixinha balances; then extend the
 `investment_buckets` repos + Investimentos UI + the dashboard caixinhas card.
 
-**Status:** open
+**Status:** resolved (2026-07-01, v1.0 phases run) — migration `0007` added
+`investment_buckets.balance_cents` (check >= 0); `updateInvestmentBucketBalance` repo;
+Investimentos UI inline "Atualizar saldo" (pt-BR reais parsing, zero allowed); dashboard
+Caixinhas card shows combined total + per-bucket values (`bucketsTotalCents`).
 
 ## 2026-06-22: Parcelado purchase write is not transactional (Task 9)
 
@@ -109,7 +112,10 @@ package/app that now has real test files; kept only where a package genuinely ha
 
 **Revisit trigger:** When the dashboard/cards UI needs accurate invoice timing (Task 9/10), derive the first installment's month from the card closing day.
 
-**Status:** open
+**Status:** resolved (2026-07-01, v1.0 phases run, commit 7dd3735) — `createInstallmentPlan`
+gained optional `closingDay` (1–28): purchase day > closing day shifts all dueMonths +1.
+Callers (cards purchase actions, fatura import confirm) pass the card's `closing_day`.
+Existing groups intentionally NOT regenerated (spec §2.6).
 
 ## 2026-06-22: Web auth uses a hand-rolled SSR cookie adapter instead of `@supabase/ssr`
 
@@ -260,7 +266,11 @@ is pure/stateless (state is passed in), so swapping the store is isolated to `in
 **Revisit trigger:** Bot deployed serverless or multi-replica — persist conversation
 state (e.g. a `bot_conversations` table keyed by chat id, or Redis).
 
-**Status:** open
+**Status:** resolved (2026-07-01, v1.0 phases run, commits 19ecb3d + a464627) —
+migration `0008` added `bot_conversations` (chat_id pk, jsonb state, RLS on / no
+policies = service-role only); `apps/bot/src/store.ts` `ConversationStore` (DB-backed +
+in-memory for tests), >24h-stale states ignored + lazily deleted; the module-scope Map
+is gone.
 
 ## 2026-06-22: No `createBotInteraction` repo; bot inserts directly (Task 7)
 
@@ -295,7 +305,9 @@ ready for a real resolver.
 **Revisit trigger:** When household members have display names — wire a name→user-id lookup into
 `resolveResponsibleUserId`.
 
-**Status:** open
+**Status:** resolved (2026-07-01, v1.0 phases run, commit a464627) — members now carry
+`display_name` (migration `0007`, editable in /settings); `resolveResponsibleUserId`
+does a case/accent-insensitive match against active members' display names.
 
 ## 2026-06-22: AI provider HTTP clients are untested + lack timeout/size limits (Task 8)
 
@@ -337,7 +349,27 @@ flow lets the user correct them; the categorization AI fallback covers ambiguous
 **Revisit trigger:** If deterministic text parsing proves too weak in real use — add an LLM
 text-interpretation step (reuse `AiCompletionClient`) behind the same confirmation flow.
 
-**Status:** open
+**Status:** resolved (2026-07-01, v1.0 phases run, commit 4c18afb) —
+`apps/bot/src/interpret.ts` `createTextInterpreter(AiCompletionClient)`: fires only when
+the deterministic parser yields no amount; strict-JSON zod-validated extraction; result
+feeds the SAME confirmation flow (never saves directly); any failure degrades to the
+old rephrase reply. Live-API parsing still unverified (see the providers entry).
+
+## 2026-07-01: allowed_emails.household_slug is written but never read
+
+**Area:** supabase/migrations/0009_member_provisioning.sql
+
+**Impact:** The provisioning trigger inserts allowlisted signups into the FIRST
+household (`select h.id from households h limit 1`) and ignores
+`allowed_emails.household_slug`. Correct for the single-household v1.0, but silently
+wrong if a second household ever exists.
+
+**Current workaround:** Single household ("Casa") — first row is the only row.
+
+**Revisit trigger:** Multi-household support — join `households` on the slug (needs a
+slug column on households) or drop the `household_slug` column.
+
+**Status:** open (flagged MINOR by the v1.0 final whole-branch review)
 
 ## Entry Format
 
