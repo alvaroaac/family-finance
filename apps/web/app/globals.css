@@ -1,0 +1,37 @@
+/*
+ * Design tokens — v1.0 spec §1.1 ("Editorial acolhedor").
+ *
+ * ONLY the two theme token sets live here for now: the full re-skin is
+ * Phase 1 (gated on the user-approved mockups). This file makes the theme
+ * toggle real: the root layout sets `data-theme` on <html> from the
+ * `ff-theme` cookie (Esmeralda is the default), and Phase 1 components will
+ * consume these custom properties.
+ */
+
+/* Esmeralda (dark) — default */
+:root[data-theme="esmeralda"] {
+  --ff-bg: #16352b;
+  --ff-surface: #1e4133;
+  --ff-surface-soft: #1a3a2e;
+  --ff-tint: rgba(212, 175, 106, 0.14);
+  --ff-ink: #f2ede0;
+  --ff-ink-soft: rgba(242, 237, 224, 0.66);
+  --ff-accent: #d4af6a;
+  --ff-accent-hover: #e4c488;
+  --ff-border: rgba(212, 175, 106, 0.24);
+  --ff-on-accent: #16352b;
+}
+
+/* Sálvia (light) */
+:root[data-theme="salvia"] {
+  --ff-bg: #e8ede3;
+  --ff-surface: #f7f9f3;
+  --ff-surface-soft: #eff3ea;
+  --ff-tint: rgba(168, 133, 60, 0.12);
+  --ff-ink: #2e3a2a;
+  --ff-ink-soft: #5f6b58;
+  --ff-accent: #a8853c;
+  --ff-accent-hover: #c2a258;
+  --ff-border: #cbd6c0;
+  --ff-on-accent: #ffffff;
+}
