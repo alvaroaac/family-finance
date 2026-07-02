@@ -1104,6 +1104,25 @@
   font-size: 34px;
 }
 
+/* Breakdown line under the hero: "R$ X em conta · R$ Y no cartão". */
+.ff-hero__split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  font: 300 14px var(--ff-font-body), Inter, sans-serif;
+  color: var(--ff-ink-soft);
+}
+
+.ff-hero__split strong {
+  font-weight: 600;
+  color: var(--ff-ink);
+}
+
+.ff-hero__split-sep {
+  color: var(--ff-accent);
+}
+
 .ff-hero__delta {
   margin-top: 14px;
 }

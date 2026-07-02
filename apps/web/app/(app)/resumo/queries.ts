@@ -14,6 +14,7 @@
 import {
   findHouseholdIdForCurrentUser,
   getMonthlySummary,
+  getCardPressure,
   getCardPressureForCard,
   findRecentTransactions,
   findPendingReviewTransactions,
@@ -28,9 +29,16 @@ import { shiftMonth } from "../transactions/filters";
 
 export type ResumoData = {
   month: string;
-  /** Current month's expenseCents. */
-  spentCents: number;
-  /** previous.expenseCents - current.expenseCents; positive = spending less. */
+  /**
+   * Gasto total do mês = conta + cartão. "Gasto é gasto": parcelas due this
+   * month count as spending even though they are not `transactions` rows.
+   */
+  totalSpentCents: number;
+  /** Expenses NOT on a credit card (débito/conta). */
+  accountSpentCents: number;
+  /** Card side: direct card purchases + parcelas due this month. */
+  cardSpentCents: number;
+  /** previous composite - current composite; positive = spending less. */
   deltaVsPreviousCents: number;
   /** Projected invoice per card this month (direct + parcelas due). */
   cards: Array<{ id: string; name: string; projectedCents: number }>;
@@ -106,10 +114,12 @@ export async function buildResumoData(
   const month = currentMonth(now);
   const previousMonth = shiftMonth(month, -1);
 
-  const [summary, previousSummary, creditCards, pending, recent] =
+  const [summary, previousSummary, pressure, previousPressure, creditCards, pending, recent] =
     await Promise.all([
       getMonthlySummary(client, householdId, month),
       getMonthlySummary(client, householdId, previousMonth),
+      getCardPressure(client, householdId, month),
+      getCardPressure(client, householdId, previousMonth),
       listCreditCards(client, householdId),
       findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
       findRecentTransactions(client, householdId, 5),
@@ -127,10 +137,22 @@ export async function buildResumoData(
     }),
   );
 
+  // Split without double counting: direct card purchases are already inside
+  // expenseCents, so the conta side subtracts them and the cartão side owns
+  // them (plus the parcelas due this month, which are not transactions).
+  const accountSpentCents = Math.max(0, summary.expenseCents - pressure.directCents);
+  const cardSpentCents = pressure.totalCents;
+  const totalSpentCents = accountSpentCents + cardSpentCents;
+  const previousTotalCents =
+    Math.max(0, previousSummary.expenseCents - previousPressure.directCents) +
+    previousPressure.totalCents;
+
   return {
     month,
-    spentCents: summary.expenseCents,
-    deltaVsPreviousCents: previousSummary.expenseCents - summary.expenseCents,
+    totalSpentCents,
+    accountSpentCents,
+    cardSpentCents,
+    deltaVsPreviousCents: previousTotalCents - totalSpentCents,
     cards,
     pendingCount: pending.length,
     recent,
@@ -142,7 +164,9 @@ export async function buildResumoData(
 function emptyResumo(month: string, loadError: string | null): ResumoData {
   return {
     month,
-    spentCents: 0,
+    totalSpentCents: 0,
+    accountSpentCents: 0,
+    cardSpentCents: 0,
     deltaVsPreviousCents: 0,
     cards: [],
     pendingCount: 0,

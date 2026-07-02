@@ -371,6 +371,24 @@ slug column on households) or drop the `household_slug` column.
 
 **Status:** open (flagged MINOR by the v1.0 final whole-branch review)
 
+## 2026-07-02: Resumo lacks a spending-by-category chart
+
+**Area:** apps/web/app/(app)/resumo (+ a new db aggregate query)
+
+**Impact:** User asked for a "gasto por categoria" visual on /resumo; deferred by request
+("pro futuro"). Today the resumo shows the composite total (conta + cartão) and the
+per-card invoices, but no category breakdown anywhere in the app.
+
+**Current workaround:** /transactions with the category filter answers the question
+manually.
+
+**Revisit trigger:** User asks again after living with v1.0 — add a household-scoped
+`getMonthlyCategoryTotals(client, householdId, month)` repo (group expense transactions
+by category, join names) + a simple bar/donut on /resumo using the design-system tokens
+(no chart library; PressureBars-style CSS is enough).
+
+**Status:** open (deferred by user, 2026-07-02)
+
 ## Entry Format
 
 ```md

@@ -248,12 +248,19 @@ beforeEach(() => {
 });
 
 describe("buildResumoData", () => {
-  it("computes the month, spent total and a POSITIVE delta when spending less", async () => {
+  it("computes the composite gasto total: conta + cartão (compras diretas e parcelas)", async () => {
     const data = await buildResumoData(client, HOUSEHOLD, NOW);
     expect(data.month).toBe("2026-07");
-    // 30000 + 15000 + 5000 (card) = 50000; June = 82000 => delta +32000.
-    expect(data.spentCents).toBe(50000);
-    expect(data.deltaVsPreviousCents).toBe(32000);
+    // Conta = expenses off-card: 30000 + 15000 = 45000 (the 5000 card charge
+    // moves to the card side so nothing is double-counted).
+    expect(data.accountSpentCents).toBe(45000);
+    // Cartão = direct card purchases 5000 (refund ignored) + parcelas due in
+    // July 3334 + 10000 = 18334.
+    expect(data.cardSpentCents).toBe(18334);
+    // Hero total = conta + cartão.
+    expect(data.totalSpentCents).toBe(45000 + 18334);
+    // June composite = 82000 expenses + 0 parcelas => delta 82000 - 63334.
+    expect(data.deltaVsPreviousCents).toBe(82000 - 63334);
     expect(data.loadError).toBeNull();
   });
 

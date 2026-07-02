@@ -38,11 +38,20 @@ function splitCents(value: string): [string, string] {
 export default async function ResumoPage() {
   const { email } = await requireAuthorizedUser();
   const data = await loadResumoData();
-  const { month, spentCents, deltaVsPreviousCents, cards, pendingCount, recent, loadError } =
-    data;
+  const {
+    month,
+    totalSpentCents,
+    accountSpentCents,
+    cardSpentCents,
+    deltaVsPreviousCents,
+    cards,
+    pendingCount,
+    recent,
+    loadError,
+  } = data;
   const previousMonth = shiftMonth(month, -1);
   const name = nameFromEmail(email);
-  const [spentMain, spentCentsPart] = splitCents(formatBrlCents(spentCents));
+  const [spentMain, spentCentsPart] = splitCents(formatBrlCents(totalSpentCents));
   const comparison = spendingComparisonLabel(deltaVsPreviousCents, previousMonth);
 
   return (
@@ -69,6 +78,15 @@ export default async function ResumoPage() {
               {spentCentsPart ? (
                 <span className="ff-hero__cents">{spentCentsPart}</span>
               ) : null}
+            </div>
+            <div className="ff-hero__split ff-num">
+              <span>
+                <strong>{formatBrlCents(accountSpentCents)}</strong> em conta
+              </span>
+              <span className="ff-hero__split-sep">·</span>
+              <span>
+                <strong>{formatBrlCents(cardSpentCents)}</strong> no cartão
+              </span>
             </div>
             <div className="ff-hero__delta">
               {deltaVsPreviousCents === 0 ? (
