@@ -27,6 +27,7 @@ import type {
 } from "@family-finance/categorization";
 
 import { parseExpenseText } from "./parser.js";
+import type { InterpretedExpense, TextInterpreter } from "./interpret.js";
 import {
   transcribeVoiceMessage,
   type TranscribeDeps,
@@ -126,6 +127,12 @@ export type ConversationDeps = {
   createTransaction: (draft: TransactionDraft) => Promise<{ id: string }>;
   /** Record the interaction for auditing (wired to bot_interactions). */
   logInteraction: (entry: BotInteractionLog) => Promise<void>;
+  /**
+   * OPTIONAL LLM fallback (spec §3.4): consulted in `startConversation` ONLY
+   * when the deterministic parser finds no amount. Corrections stay
+   * deterministic. The result still lands behind the confirmation step.
+   */
+  interpretText?: TextInterpreter;
 };
 
 export type StartInput = {
@@ -218,20 +225,44 @@ export async function startConversation(
 ): Promise<ConversationOutcome> {
   const parsed = parseExpenseText(input.text, { today: options.today });
 
+  // LLM fallback (spec §3.4): ONLY when the deterministic parser found no
+  // amount and an interpreter is configured. It sees the ORIGINAL text; any
+  // failure (null/throw) keeps today's "rephrase" behavior unchanged. The
+  // result feeds the SAME draft + confirmation path — never a direct save.
+  let interpreted: InterpretedExpense | null = null;
+  if (parsed.amountCents === undefined && deps.interpretText !== undefined) {
+    interpreted = await deps
+      .interpretText(input.text, { today: options.today })
+      .catch(() => null);
+  }
+
   const inputKind: BotInputKind = input.inputKind ?? "text";
+  const description =
+    interpreted !== null ? interpreted.description : parsed.description;
   const draft: DraftInProgress = {
-    amountCents: parsed.amountCents,
-    description: parsed.description,
-    occurredOn: parsed.occurredOn ?? options.today,
+    amountCents: interpreted?.amountCents ?? parsed.amountCents,
+    description,
+    occurredOn:
+      interpreted?.occurredOn ?? parsed.occurredOn ?? options.today,
     kind: "expense",
     createdByUserId: input.fromUserId,
     inputKind,
     needsAttention:
-      // Audio always merits a closer look (transcription can be imperfect).
+      // Audio always merits a closer look (transcription can be imperfect),
+      // and so does anything the LLM interpreted instead of the parser.
       inputKind === "audio" ||
+      interpreted !== null ||
       parsed.uncertainFields.includes("amount") ||
       parsed.uncertainFields.includes("date"),
   };
+
+  // A responsible-person hint is a free-text NAME: it goes through the same
+  // resolver corrections use (no match/ambiguous -> stays with the house).
+  if (interpreted?.responsibleHint !== undefined) {
+    draft.responsibleUserId = deps.resolveResponsibleUserId(
+      interpreted.responsibleHint,
+    );
+  }
 
   // Resolve payment instrument from hints (default account otherwise).
   if (parsed.cardHint) {
@@ -243,11 +274,16 @@ export async function startConversation(
       deps.defaultAccountId;
   }
 
-  // Ask the categorization engine for a suggestion (shared engine, both channels).
+  // Ask the categorization engine for a suggestion (shared engine, both
+  // channels). A category hint from the interpreter is free TEXT appended to
+  // the context description — never trusted as a category id.
   const result = await deps.suggestCategory({
     householdId: deps.householdId,
-    description: parsed.description,
-    amountCents: parsed.amountCents,
+    description:
+      interpreted?.categoryHint !== undefined
+        ? `${description} (${interpreted.categoryHint})`
+        : description,
+    amountCents: draft.amountCents,
     occurredOn: draft.occurredOn,
   });
   if (result.suggestion?.macroCategoryId !== undefined) {

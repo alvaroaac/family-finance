@@ -75,6 +75,10 @@ import {
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
 import {
+  createTextInterpreter,
+  type TextInterpreter,
+} from "./interpret.js";
+import {
   createDbConversationStore,
   type ConversationStore,
 } from "./store.js";
@@ -128,6 +132,7 @@ async function buildDeps(
   client: AppSupabaseClient,
   householdId: string,
   ai?: AiCategorizer,
+  interpretText?: TextInterpreter,
 ): Promise<ConversationDeps> {
   const categories = await findCategoriesByHousehold(client, householdId);
   const subcategoryLists = await Promise.all(
@@ -192,6 +197,9 @@ async function buildDeps(
         transaction_id: entry.transactionId ?? null,
       });
     },
+    // LLM text interpretation fallback (spec §3.4) — only consulted when the
+    // deterministic parser finds no amount; result stays behind confirmation.
+    interpretText,
   };
 }
 
@@ -219,6 +227,8 @@ export async function handleWebhook(args: {
   store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
   ai?: AiCategorizer;
+  /** Optional LLM text interpretation fallback (spec §3.4). Omitted = none. */
+  interpretText?: TextInterpreter;
   /** Optional transcription wiring for voice notes. Omitted = audio rejected. */
   transcribe?: TranscribeDeps;
 }): Promise<WebhookResult> {
@@ -247,7 +257,12 @@ export async function handleWebhook(args: {
     return { status: 200, body: { ok: true } };
   }
 
-  const deps = await buildDeps(args.client, identity.householdId, args.ai);
+  const deps = await buildDeps(
+    args.client,
+    identity.householdId,
+    args.ai,
+    args.interpretText,
+  );
 
   // 1. Voice/audio: transcribe, then run the SAME confirmation flow as text.
   if (voice !== null) {
@@ -350,16 +365,24 @@ export async function startBot(): Promise<{
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
     : createNoopTelegramClient();
 
-  // AI categorization fallback — only when an Anthropic key is configured.
+  // AI features — only when an Anthropic key is configured. ONE completion
+  // client backs both the categorization fallback and the text interpretation
+  // fallback (spec §3.4); no key = both features simply absent.
   const llm = getLlmConfig();
-  const ai: AiCategorizer | undefined =
+  const completionClient =
     llm.isConfigured && llm.apiKey !== undefined
-      ? createAiCategorizer(
-          createAnthropicCompletionClient({
-            apiKey: llm.apiKey,
-            model: llm.model,
-          }),
-        )
+      ? createAnthropicCompletionClient({
+          apiKey: llm.apiKey,
+          model: llm.model,
+        })
+      : undefined;
+  const ai: AiCategorizer | undefined =
+    completionClient !== undefined
+      ? createAiCategorizer(completionClient)
+      : undefined;
+  const interpretText: TextInterpreter | undefined =
+    completionClient !== undefined
+      ? createTextInterpreter(completionClient)
       : undefined;
 
   // Voice transcription — only when both a bot token (to fetch the file) and a
@@ -393,6 +416,7 @@ export async function startBot(): Promise<{
         resolveMember,
         store,
         ai,
+        interpretText,
         transcribe,
       }),
   };
@@ -443,3 +467,9 @@ export {
   CONVERSATION_TTL_MS,
   type ConversationStore,
 } from "./store.js";
+export {
+  createTextInterpreter,
+  buildInterpretationPrompt,
+  type InterpretedExpense,
+  type TextInterpreter,
+} from "./interpret.js";

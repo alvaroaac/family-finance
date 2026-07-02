@@ -28,6 +28,7 @@ import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import { existsSync } from "node:fs";
 
 import { handleWebhook } from "./index.js";
+import type { TextInterpreter } from "./interpret.js";
 import {
   createInMemoryConversationStore,
   createDbConversationStore,
@@ -492,6 +493,130 @@ describe("AI fallback in the bot flow", () => {
     expect(outcome.state.draft.needsAttention).toBe(true);
     expect(outcome.state.status).toBe("awaiting_confirmation");
     expect(createTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("LLM text interpretation fallback (parser miss -> interpretText)", () => {
+  it("NEVER calls the interpreter when the deterministic parser found an amount", async () => {
+    const interpretText = vi.fn<TextInterpreter>(
+      async () => null,
+    );
+    const { deps } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(interpretText).not.toHaveBeenCalled();
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.amountCents).toBe(3200);
+  });
+
+  it("parser miss + interpreter success -> awaiting_confirmation with the interpreted fields (still no save)", async () => {
+    const interpretText = vi.fn<TextInterpreter>(
+      async () => ({
+        amountCents: 4590,
+        description: "Mercadinho da esquina",
+        occurredOn: "2026-06-21",
+        categoryHint: "Alimentação",
+        responsibleHint: "Karol",
+      }),
+    );
+    const suggestCategorySpy = vi.fn(async () => ({
+      status: "uncategorized" as const,
+      suggestion: null,
+      requiresConfirmation: true,
+    }));
+    const { deps, createTransaction } = buildDeps({
+      interpretText,
+      suggestCategory: suggestCategorySpy,
+      resolveResponsibleUserId: (name: string) =>
+        name.toLowerCase() === "karol" ? "user-karol" : undefined,
+    });
+
+    // No digits anywhere -> the deterministic parser cannot extract an amount.
+    const outcome = await startConversation(
+      { text: "gastei uma nota no mercadinho da esquina ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    // The interpreter saw the ORIGINAL text.
+    expect(interpretText).toHaveBeenCalledTimes(1);
+    expect(interpretText).toHaveBeenCalledWith(
+      "gastei uma nota no mercadinho da esquina ontem",
+      { today: TODAY },
+    );
+
+    // The interpreted fields land in the same confirmation draft path.
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.amountCents).toBe(4590);
+    expect(outcome.state.draft.description).toBe("Mercadinho da esquina");
+    expect(outcome.state.draft.occurredOn).toBe("2026-06-21");
+    // responsibleHint went through resolveResponsibleUserId (not trusted raw).
+    expect(outcome.state.draft.responsibleUserId).toBe("user-karol");
+    // LLM-derived drafts always merit a closer look.
+    expect(outcome.state.draft.needsAttention).toBe(true);
+
+    // categoryHint reaches the categorization engine as context description
+    // text — NEVER as a category id.
+    const context = firstCallArg(suggestCategorySpy) as { description: string };
+    expect(context.description).toContain("Mercadinho da esquina");
+    expect(context.description).toContain("Alimentação");
+    expect(outcome.state.draft.categoryId).toBeUndefined();
+
+    // The AI never saves anything directly — the user must confirm.
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(outcome.reply).toMatch(/confirm/i);
+    expect(outcome.reply).toContain("45,90");
+  });
+
+  it("interpreter returns null -> today's rephrase behavior (needs_amount)", async () => {
+    const interpretText = vi.fn<TextInterpreter>(
+      async () => null,
+    );
+    const { deps, createTransaction } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      { text: "gastei um dinheirinho no mercado", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(interpretText).toHaveBeenCalledTimes(1);
+    expect(outcome.state.status).toBe("needs_amount");
+    expect(outcome.reply).toMatch(/Não identifiquei o valor/);
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("no interpreter configured -> behavior unchanged (needs_amount)", async () => {
+    const { deps } = buildDeps();
+
+    const outcome = await startConversation(
+      { text: "gastei um dinheirinho no mercado", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("needs_amount");
+    expect(outcome.reply).toMatch(/Não identifiquei o valor/);
+  });
+
+  it("interpreter throwing is treated as null (rephrase, webhook never breaks)", async () => {
+    const interpretText: TextInterpreter = async () => {
+      throw new Error("provider exploded");
+    };
+    const { deps } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      { text: "gastei um dinheirinho no mercado", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("needs_amount");
   });
 });
 
