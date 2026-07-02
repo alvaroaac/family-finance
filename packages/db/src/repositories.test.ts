@@ -15,6 +15,9 @@ import {
   mapUpcomingInstallment,
   mapDashboardTransaction,
   needsReview,
+  transactionUpdateFromPatch,
+  updateInvestmentBucketBalance,
+  type AppSupabaseClient,
 } from "./repositories.js";
 import type { TransactionRow, InstallmentRow } from "./types.js";
 
@@ -413,5 +416,104 @@ describe("needsReview", () => {
     expect(needsReview({ kind: "income", category_id: null })).toBe(true);
     expect(needsReview({ kind: "expense", category_id: "cat-1" })).toBe(false);
     expect(needsReview({ kind: "transfer", category_id: null })).toBe(false);
+  });
+});
+
+// --- Task 2 (v1.0): transaction patch mapping + bucket balance validation ---
+
+/** A client that explodes on ANY use — proves validation runs before I/O. */
+const explodingClient = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error("unexpected database access");
+    },
+  },
+) as AppSupabaseClient;
+
+describe("transactionUpdateFromPatch", () => {
+  it("maps a full patch to the column-keyed update object", () => {
+    expect(
+      transactionUpdateFromPatch({
+        categoryId: "cat-1",
+        subcategoryId: "sub-1",
+        description: "  Mercado do mês  ",
+        responsibility: { scope: "user", userId: USER },
+        occurredOn: "2026-06-22",
+      }),
+    ).toEqual({
+      category_id: "cat-1",
+      subcategory_id: "sub-1",
+      description: "Mercado do mês",
+      responsibility_scope: "user",
+      responsible_user_id: USER,
+      occurred_on: "2026-06-22",
+    });
+  });
+
+  it("maps household responsibility to scope household + null user", () => {
+    expect(
+      transactionUpdateFromPatch({ responsibility: { scope: "household" } }),
+    ).toEqual({
+      responsibility_scope: "household",
+      responsible_user_id: null,
+    });
+  });
+
+  it("keeps explicit nulls for category/subcategory (un-categorize)", () => {
+    expect(
+      transactionUpdateFromPatch({ categoryId: null, subcategoryId: null }),
+    ).toEqual({ category_id: null, subcategory_id: null });
+  });
+
+  it("omits fields that are not present in the patch", () => {
+    expect(transactionUpdateFromPatch({})).toEqual({});
+    expect(transactionUpdateFromPatch({ description: "Café" })).toEqual({
+      description: "Café",
+    });
+  });
+
+  it("rejects an occurredOn that is not an ISO date", () => {
+    for (const bad of ["22/06/2026", "2026-6-2", "2026-06-22T10:00:00Z", ""]) {
+      expect(() => transactionUpdateFromPatch({ occurredOn: bad })).toThrow(
+        /data/i,
+      );
+    }
+  });
+
+  it("rejects an empty description when present", () => {
+    expect(() => transactionUpdateFromPatch({ description: "   " })).toThrow(
+      /descrição/i,
+    );
+  });
+});
+
+describe("updateInvestmentBucketBalance validation", () => {
+  it("rejects a negative balance before touching the database", async () => {
+    await expect(
+      updateInvestmentBucketBalance(explodingClient, HOUSEHOLD, "bucket-1", -1),
+    ).rejects.toThrow(/saldo/i);
+  });
+
+  it("rejects a non-integer balance before touching the database", async () => {
+    await expect(
+      updateInvestmentBucketBalance(
+        explodingClient,
+        HOUSEHOLD,
+        "bucket-1",
+        100.5,
+      ),
+    ).rejects.toThrow(/saldo/i);
+  });
+
+  it("rejects a non-finite balance before touching the database", async () => {
+    await expect(
+      updateInvestmentBucketBalance(
+        explodingClient,
+        HOUSEHOLD,
+        "bucket-1",
+        Number.NaN,
+      ),
+    ).rejects.toThrow(/saldo/i);
   });
 });

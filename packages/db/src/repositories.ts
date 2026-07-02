@@ -43,6 +43,7 @@ import type {
   InstallmentRow,
   InstallmentGroupInsertPayload,
   InstallmentInsertPayload,
+  HouseholdMemberRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -1328,4 +1329,358 @@ export async function findPendingReviewTransactions(
       >
     >
   ).map(mapDashboardTransaction);
+}
+
+// ---------------------------------------------------------------------------
+// Transações view (v1.0 Task 2) — filtered listing, inline edit, delete.
+//
+// These power the web "/transactions" screen: a paginated, filterable listing
+// plus per-row category/responsibility/description/date edits and deletion.
+// Every query is household-scoped (`.eq("household_id", ...)`) on top of RLS.
+// ---------------------------------------------------------------------------
+
+/** Filters accepted by `findTransactionsFiltered`. All optional / combinable. */
+export type TransactionFilters = {
+  /** `YYYY-MM` — restricts `occurred_on` to the month via `monthDateRange`. */
+  month?: string;
+  accountId?: string;
+  creditCardId?: string;
+  categoryId?: string;
+  /** A member's user id, or the literal `"household"` for scope = household. */
+  responsible?: string | "household";
+  /** Only rows needing review: kind != 'transfer' AND category_id IS NULL. */
+  pendingOnly?: boolean;
+  /** Case-insensitive substring match on the description. */
+  search?: string;
+};
+
+export type TransactionListItem = PersistedTransaction;
+
+export type TransactionPage = {
+  rows: TransactionListItem[];
+  /** Total rows matching the filters (across all pages). */
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+/** Escape `%`/`_`/`\` so a user search term is matched literally by ilike. */
+function escapeIlikePattern(term: string): string {
+  return term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * Paginated, filtered transaction listing for the Transações screen. Newest
+ * first (occurred date, then insert time); `total` comes from the query's
+ * exact count so the UI can render "anterior/próxima" pagination.
+ */
+export async function findTransactionsFiltered(
+  client: AppSupabaseClient,
+  householdId: string,
+  filters: TransactionFilters,
+  page = 1,
+  pageSize = 50,
+): Promise<TransactionPage> {
+  let query = client
+    .from("transactions")
+    .select("*", { count: "exact" })
+    .eq("household_id", householdId);
+
+  if (filters.month !== undefined) {
+    const { start, end } = monthDateRange(filters.month);
+    query = query.gte("occurred_on", start).lte("occurred_on", end);
+  }
+  if (filters.accountId !== undefined) {
+    query = query.eq("account_id", filters.accountId);
+  }
+  if (filters.creditCardId !== undefined) {
+    query = query.eq("credit_card_id", filters.creditCardId);
+  }
+  if (filters.categoryId !== undefined) {
+    query = query.eq("category_id", filters.categoryId);
+  }
+  if (filters.responsible !== undefined) {
+    if (filters.responsible === "household") {
+      query = query.eq("responsibility_scope", "household");
+    } else {
+      query = query.eq("responsible_user_id", filters.responsible);
+    }
+  }
+  if (filters.pendingOnly === true) {
+    // Same rule as the pure `needsReview` helper.
+    query = query.neq("kind", "transfer").is("category_id", null);
+  }
+  if (filters.search !== undefined && filters.search.trim() !== "") {
+    query = query.ilike(
+      "description",
+      `%${escapeIlikePattern(filters.search.trim())}%`,
+    );
+  }
+
+  const from = (page - 1) * pageSize;
+  const { data, error, count } = await query
+    .order("occurred_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(from, from + pageSize - 1);
+  if (error !== null) {
+    throw new Error(`findTransactionsFiltered failed: ${error.message}`);
+  }
+
+  return {
+    rows: ((data ?? []) as TransactionRow[]).map(mapTransactionRow),
+    total: count ?? 0,
+    page,
+    pageSize,
+  };
+}
+
+/** Editable fields of a transaction row. Absent keys are left untouched. */
+export type TransactionPatch = {
+  categoryId?: string | null;
+  subcategoryId?: string | null;
+  description?: string;
+  responsibility?: { scope: "household" } | { scope: "user"; userId: string };
+  occurredOn?: string; // ISO date (YYYY-MM-DD)
+};
+
+/**
+ * Pure: map a `TransactionPatch` onto the column-keyed partial update object.
+ * Validates `occurredOn` (strict `YYYY-MM-DD`) and rejects an empty
+ * description; error messages are pt-BR because the web actions surface them
+ * to the household directly.
+ */
+export function transactionUpdateFromPatch(
+  patch: TransactionPatch,
+): Partial<TransactionInsert> {
+  const update: Partial<TransactionInsert> = {};
+
+  if (patch.categoryId !== undefined) {
+    update.category_id = patch.categoryId;
+  }
+  if (patch.subcategoryId !== undefined) {
+    update.subcategory_id = patch.subcategoryId;
+  }
+  if (patch.description !== undefined) {
+    const description = patch.description.trim();
+    if (description === "") {
+      throw new Error("A descrição não pode ficar vazia.");
+    }
+    update.description = description;
+  }
+  if (patch.responsibility !== undefined) {
+    if (patch.responsibility.scope === "user") {
+      update.responsibility_scope = "user";
+      update.responsible_user_id = patch.responsibility.userId;
+    } else {
+      update.responsibility_scope = "household";
+      update.responsible_user_id = null;
+    }
+  }
+  if (patch.occurredOn !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(patch.occurredOn)) {
+      throw new Error(
+        `Data inválida "${patch.occurredOn}" — use o formato AAAA-MM-DD.`,
+      );
+    }
+    update.occurred_on = patch.occurredOn;
+  }
+
+  return update;
+}
+
+/**
+ * Apply a partial edit to one transaction. Validation happens in the pure
+ * `transactionUpdateFromPatch`; an empty patch is a no-op (no query issued).
+ */
+export async function updateTransaction(
+  client: AppSupabaseClient,
+  householdId: string,
+  transactionId: string,
+  patch: TransactionPatch,
+): Promise<void> {
+  const update = transactionUpdateFromPatch(patch);
+  if (Object.keys(update).length === 0) {
+    return;
+  }
+  const { error } = await client
+    .from("transactions")
+    .update(update)
+    .eq("household_id", householdId)
+    .eq("id", transactionId);
+  if (error !== null) {
+    throw new Error(`updateTransaction failed: ${error.message}`);
+  }
+}
+
+/**
+ * Delete one transaction. Parcela rows (linked to an installment) are refused:
+ * installments are managed through their group, so deleting a lone parcela
+ * would silently unbalance the plan. The error message is pt-BR because the
+ * web action surfaces it to the household directly.
+ */
+export async function deleteTransaction(
+  client: AppSupabaseClient,
+  householdId: string,
+  transactionId: string,
+): Promise<void> {
+  const { data, error: lookupError } = await client
+    .from("transactions")
+    .select("installment_id")
+    .eq("household_id", householdId)
+    .eq("id", transactionId)
+    .maybeSingle();
+  if (lookupError !== null) {
+    throw new Error(`deleteTransaction lookup failed: ${lookupError.message}`);
+  }
+  if (data === null) {
+    return; // Nothing to delete (already gone or not this household's).
+  }
+  if (data.installment_id !== null) {
+    throw new Error(
+      "Parcelas são gerenciadas pelo grupo do parcelamento — não dá para excluir uma parcela avulsa.",
+    );
+  }
+
+  const { error } = await client
+    .from("transactions")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", transactionId);
+  if (error !== null) {
+    throw new Error(`deleteTransaction failed: ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Household member profiles (v1.0 Task 2) — display names + Telegram link.
+// ---------------------------------------------------------------------------
+
+/** A household member as the settings screen shows it. */
+export type HouseholdMemberProfile = {
+  id: string;
+  userId: string;
+  role: string;
+  isActive: boolean;
+  displayName: string | null;
+  telegramUserId: number | null;
+};
+
+/** List a household's members (active first, then by creation time). */
+export async function listHouseholdMembers(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<HouseholdMemberProfile[]> {
+  const { data, error } = await client
+    .from("household_members")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("created_at", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listHouseholdMembers failed: ${error.message}`);
+  }
+  return ((data ?? []) as HouseholdMemberRow[]).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    role: row.role,
+    isActive: row.is_active,
+    displayName: row.display_name,
+    telegramUserId: row.telegram_user_id,
+  }));
+}
+
+/**
+ * Update a member's profile fields (display name and/or Telegram user id).
+ * A blank display name is stored as null; the Telegram id must be an integer
+ * (or null to unlink). Absent keys are left untouched.
+ */
+export async function updateHouseholdMember(
+  client: AppSupabaseClient,
+  householdId: string,
+  memberId: string,
+  changes: { displayName?: string | null; telegramUserId?: number | null },
+): Promise<void> {
+  const update: Partial<HouseholdMemberRow> = {};
+  if (changes.displayName !== undefined) {
+    const name = changes.displayName?.trim() ?? "";
+    update.display_name = name === "" ? null : name;
+  }
+  if (changes.telegramUserId !== undefined) {
+    if (
+      changes.telegramUserId !== null &&
+      !Number.isSafeInteger(changes.telegramUserId)
+    ) {
+      throw new Error("O ID do Telegram precisa ser um número inteiro.");
+    }
+    update.telegram_user_id = changes.telegramUserId;
+  }
+  if (Object.keys(update).length === 0) {
+    return;
+  }
+  const { error } = await client
+    .from("household_members")
+    .update(update)
+    .eq("household_id", householdId)
+    .eq("id", memberId);
+  if (error !== null) {
+    throw new Error(`updateHouseholdMember failed: ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Investment bucket balances (v1.0 Task 2) — manual caixinha balance updates.
+// ---------------------------------------------------------------------------
+
+/**
+ * Set a caixinha's manually-tracked balance (integer cents, never negative).
+ * Validation runs BEFORE any I/O; the message is pt-BR because the web action
+ * surfaces it to the household directly.
+ */
+export async function updateInvestmentBucketBalance(
+  client: AppSupabaseClient,
+  householdId: string,
+  bucketId: string,
+  balanceCents: number,
+): Promise<void> {
+  if (!Number.isInteger(balanceCents) || balanceCents < 0) {
+    throw new Error(
+      "O saldo precisa ser um valor não negativo, em centavos inteiros.",
+    );
+  }
+  const { error } = await client
+    .from("investment_buckets")
+    .update({ balance_cents: balanceCents })
+    .eq("household_id", householdId)
+    .eq("id", bucketId);
+  if (error !== null) {
+    throw new Error(`updateInvestmentBucketBalance failed: ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bot heartbeat (v1.0 Task 2) — when did the bot last talk to us?
+// ---------------------------------------------------------------------------
+
+/** The most recent bot interaction of a household, or null if none yet. */
+export async function findLastBotInteraction(
+  client: AppSupabaseClient,
+  householdId: string,
+): Promise<
+  Pick<BotInteractionRow, "created_at" | "input_kind" | "transaction_id"> | null
+> {
+  const { data, error } = await client
+    .from("bot_interactions")
+    .select("created_at, input_kind, transaction_id")
+    .eq("household_id", householdId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error !== null) {
+    throw new Error(`findLastBotInteraction failed: ${error.message}`);
+  }
+  return (
+    (data as Pick<
+      BotInteractionRow,
+      "created_at" | "input_kind" | "transaction_id"
+    > | null) ?? null
+  );
 }

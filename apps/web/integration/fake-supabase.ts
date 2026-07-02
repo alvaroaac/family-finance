@@ -10,9 +10,10 @@
  *
  * Scope (intentionally minimal — only what the repositories call):
  *   from(table)
- *     .select(cols) | .insert(payload) | .update(changes) | .delete()
- *     .eq / .neq / .gte / .lte / .is / .not(col, "is", null)
- *     .order(col, { ascending }) | .limit(n)
+ *     .select(cols, { count: "exact" }?) | .insert(payload) | .update(changes)
+ *     .delete()
+ *     .eq / .neq / .gte / .lte / .is / .not(col, "is", null) / .ilike
+ *     .order(col, { ascending }) | .limit(n) | .range(from, to)
  *     .single() | .maybeSingle()
  * A query builder is a PromiseLike resolving to `{ data, error }`, matching the
  * Supabase contract the repositories destructure.
@@ -24,7 +25,12 @@
 
 type Row = Record<string, unknown>;
 
-type Result<T> = { data: T; error: { message: string } | null };
+type Result<T> = {
+  data: T;
+  error: { message: string } | null;
+  /** Present when the query asked for `{ count: "exact" }` (else null). */
+  count?: number | null;
+};
 
 type Filter =
   | { op: "eq"; column: string; value: unknown }
@@ -32,7 +38,35 @@ type Filter =
   | { op: "gte"; column: string; value: unknown }
   | { op: "lte"; column: string; value: unknown }
   | { op: "is"; column: string; value: null }
-  | { op: "not-is-null"; column: string };
+  | { op: "not-is-null"; column: string }
+  | { op: "ilike"; column: string; pattern: string };
+
+/**
+ * Compile a SQL LIKE/ILIKE pattern (with `\` escapes) into a case-insensitive
+ * anchored RegExp, mirroring Postgres semantics: `%` = any run, `_` = any one
+ * character, `\%`/`\_`/`\\` = the literal character.
+ */
+function ilikePatternToRegExp(pattern: string): RegExp {
+  let regex = "";
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i] as string;
+    if (ch === "\\" && i + 1 < pattern.length) {
+      regex += (pattern[i + 1] as string).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      i += 2;
+      continue;
+    }
+    if (ch === "%") {
+      regex += "[\\s\\S]*";
+    } else if (ch === "_") {
+      regex += "[\\s\\S]";
+    } else {
+      regex += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    i += 1;
+  }
+  return new RegExp(`^${regex}$`, "i");
+}
 
 type Order = { column: string; ascending: boolean };
 
@@ -98,6 +132,9 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
   private filters: Filter[] = [];
   private orders: Order[] = [];
   private limitCount: number | null = null;
+  private rangeBounds: { from: number; to: number } | null = null;
+  private countMode: "exact" | null = null;
+  private filteredCount: number | null = null;
   private mutation: Mutation = { kind: "select" };
   private returnsRows = false;
   private shape: "many" | "single" | "maybe" = "many";
@@ -107,9 +144,10 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
     private readonly tableName: string,
   ) {}
 
-  select(_columns?: string): this {
+  select(_columns?: string, options?: { count?: "exact" }): this {
     // After insert/update the caller chains .select() to get the rows back.
     this.returnsRows = true;
+    this.countMode = options?.count ?? null;
     return this;
   }
 
@@ -154,6 +192,11 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
     return this;
   }
 
+  ilike(column: string, pattern: string): this {
+    this.filters.push({ op: "ilike", column, pattern });
+    return this;
+  }
+
   not(column: string, operator: string, value: unknown): this {
     // The repositories only use `.not("credit_card_id", "is", null)`.
     if (operator === "is" && value === null) {
@@ -170,6 +213,11 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
 
   limit(count: number): this {
     this.limitCount = count;
+    return this;
+  }
+
+  range(from: number, to: number): this {
+    this.rangeBounds = { from, to };
     return this;
   }
 
@@ -199,6 +247,10 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
           return cell === null || cell === undefined;
         case "not-is-null":
           return cell !== null && cell !== undefined;
+        case "ilike":
+          return (
+            typeof cell === "string" && ilikePatternToRegExp(f.pattern).test(cell)
+          );
         default:
           return true;
       }
@@ -268,6 +320,11 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
     // select
     let result = rows.filter((r) => this.matches(r));
     result = this.applyOrder(result);
+    // Exact count = filtered rows BEFORE pagination, matching PostgREST.
+    this.filteredCount = result.length;
+    if (this.rangeBounds !== null) {
+      result = result.slice(this.rangeBounds.from, this.rangeBounds.to + 1);
+    }
     if (this.limitCount !== null) {
       result = result.slice(0, this.limitCount);
     }
@@ -275,21 +332,22 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
   }
 
   private shapeResult(rows: Row[]): Result<unknown> {
+    const count = this.countMode === "exact" ? this.filteredCount : null;
     if (this.shape === "single") {
       const first = rows[0];
       if (first === undefined) {
-        return { data: null, error: { message: "no rows returned" } };
+        return { data: null, error: { message: "no rows returned" }, count };
       }
-      return { data: first, error: null };
+      return { data: first, error: null, count };
     }
     if (this.shape === "maybe") {
-      return { data: rows[0] ?? null, error: null };
+      return { data: rows[0] ?? null, error: null, count };
     }
     if (!this.returnsRows && this.mutation.kind !== "select") {
       // A mutation without .select() returns no data (e.g. update/delete).
-      return { data: null, error: null };
+      return { data: null, error: null, count };
     }
-    return { data: rows, error: null };
+    return { data: rows, error: null, count };
   }
 
   then<TResult1 = Result<T>, TResult2 = never>(

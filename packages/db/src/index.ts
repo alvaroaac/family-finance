@@ -71,6 +71,11 @@ export type {
   UpcomingInstallment,
   DashboardTransaction,
   CardChargeSummary,
+  TransactionFilters,
+  TransactionListItem,
+  TransactionPage,
+  TransactionPatch,
+  HouseholdMemberProfile,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -131,4 +136,14 @@ export {
   findUpcomingInstallments,
   findRecentTransactions,
   findPendingReviewTransactions,
+  // Transações view + member profiles + caixinha balance + bot heartbeat
+  // (v1.0 Task 2).
+  transactionUpdateFromPatch,
+  findTransactionsFiltered,
+  updateTransaction,
+  deleteTransaction,
+  listHouseholdMembers,
+  updateHouseholdMember,
+  updateInvestmentBucketBalance,
+  findLastBotInteraction,
 } from "./repositories.js";
