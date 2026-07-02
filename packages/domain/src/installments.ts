@@ -58,6 +58,12 @@ export type CreateInstallmentPlanInput = {
   createdByUserId: string;
   responsibleUserId?: string;
   category?: CategoryRef;
+  /**
+   * Card statement closing day (1–28). When set, a purchase made AFTER this
+   * day lands on the next month's invoice, so the first `dueMonth` shifts by
+   * one month (spec §2.6). Omitted → first dueMonth is the purchase month.
+   */
+  closingDay?: number;
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -77,6 +83,7 @@ const createInstallmentPlanInputSchema = z.object({
       subcategoryId: z.string().min(1).optional(),
     })
     .optional(),
+  closingDay: z.number().int().min(1).max(28).optional(),
 });
 
 function parseIsoDateParts(
@@ -218,6 +225,12 @@ export function createInstallmentPlan(
     data.installmentCount,
   );
 
+  // Invoice timing (spec §2.6): buying after the card's closing day pushes the
+  // purchase onto the NEXT invoice, so every dueMonth shifts by one month.
+  // Day == closingDay still belongs to the current invoice.
+  const offsetBase =
+    data.closingDay !== undefined && dateParts.day > data.closingDay ? 1 : 0;
+
   const installments: InstallmentDraft[] = perInstallmentCents.map(
     (cents, index) => ({
       householdId: data.householdId,
@@ -225,7 +238,7 @@ export function createInstallmentPlan(
       number: index + 1,
       installmentCount: data.installmentCount,
       amount: brl(cents),
-      dueMonth: addMonths(dateParts.year, dateParts.month, index),
+      dueMonth: addMonths(dateParts.year, dateParts.month, offsetBase + index),
       description,
       category,
       responsibility,

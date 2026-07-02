@@ -125,6 +125,82 @@ describe("createInstallmentPlan", () => {
     ).toBe(true);
   });
 
+  describe("closingDay (invoice timing)", () => {
+    it("pushes the first dueMonth to the next month when purchased after closing", () => {
+      const result = createInstallmentPlan(
+        baseInput({
+          purchasedOn: "2026-07-10",
+          closingDay: 5,
+          totalAmount: brl(30000),
+          installmentCount: 3,
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.installments.map((i) => i.dueMonth)).toEqual([
+        "2026-08",
+        "2026-09",
+        "2026-10",
+      ]);
+    });
+
+    it("keeps the purchase month when purchased ON the closing day (not after)", () => {
+      const result = createInstallmentPlan(
+        baseInput({
+          purchasedOn: "2026-07-05",
+          closingDay: 5,
+          installmentCount: 1,
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.installments[0]?.dueMonth).toBe("2026-07");
+    });
+
+    it("rolls over the year when a post-closing December purchase lands in January", () => {
+      const result = createInstallmentPlan(
+        baseInput({
+          purchasedOn: "2026-12-20",
+          closingDay: 15,
+          installmentCount: 1,
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.installments[0]?.dueMonth).toBe("2027-01");
+    });
+
+    it.each([0, 29, 1.5])(
+      "rejects invalid closingDay %s with a validation error on the field",
+      (closingDay) => {
+        const result = createInstallmentPlan(baseInput({ closingDay }));
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.errors).toContainEqual(
+          expect.objectContaining({ field: "closingDay" }),
+        );
+      },
+    );
+
+    it("leaves behavior unchanged when closingDay is omitted (regression)", () => {
+      const withOmitted = createInstallmentPlan(
+        baseInput({ purchasedOn: "2026-07-10", installmentCount: 3 }),
+      );
+
+      expect(withOmitted.ok).toBe(true);
+      if (!withOmitted.ok) return;
+      expect(withOmitted.value.installments.map((i) => i.dueMonth)).toEqual([
+        "2026-07",
+        "2026-08",
+        "2026-09",
+      ]);
+    });
+  });
+
   it("returns structured validation errors for an invalid installment count", () => {
     const result = createInstallmentPlan(baseInput({ installmentCount: 0 }));
 

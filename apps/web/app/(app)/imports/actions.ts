@@ -452,7 +452,19 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
     // groups, so a partial failure is visible and recoverable, not duplicated.
     let groupsCreated = 0;
     const groupErrors: string[] = [];
-    if (isMp && Array.isArray(input.groups)) {
+    if (isMp && Array.isArray(input.groups) && input.groups.length > 0) {
+      // Invoice timing (spec §2.6): the chosen card's closing day decides
+      // whether a post-closing purchase starts on the NEXT month's invoice.
+      // Re-read the card server-side — the client's card list is not trusted.
+      const cards = await listCreditCards(client, householdId);
+      const cardClosingDay =
+        cards.find((c) => c.id === input.creditCardId)?.closing_day ?? undefined;
+      // Domain accepts 1–28 (DB allows up to 31 for display); out-of-range
+      // falls back to the legacy purchase-month behavior instead of erroring.
+      const closingDay =
+        cardClosingDay !== undefined && cardClosingDay <= 28
+          ? cardClosingDay
+          : undefined;
       for (const g of input.groups) {
         const planResult = createInstallmentPlan({
           householdId,
@@ -462,6 +474,7 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
           installmentCount: g.installmentCount,
           purchasedOn: g.purchasedOn,
           createdByUserId,
+          closingDay,
           category:
             g.categoryId !== undefined
               ? { categoryId: g.categoryId, subcategoryId: g.subcategoryId }

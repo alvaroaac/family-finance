@@ -10,6 +10,7 @@ import {
   deleteCreditCard,
   createInstallmentPurchase,
   createTransaction,
+  listCreditCards,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -48,6 +49,20 @@ function requireField(formData: FormData, name: string): string {
     throw new Error(`Missing required field: ${name}`);
   }
   return value.trim();
+}
+
+/**
+ * Closing day usable for invoice timing (domain accepts 1–28; the DB allows up
+ * to 31 for display). Out-of-range or unset days fall back to `undefined`,
+ * which keeps the legacy "first parcel in the purchase month" behavior.
+ */
+function invoiceClosingDay(
+  card: { closing_day: number | null } | undefined,
+): number | undefined {
+  const day = card?.closing_day;
+  return day !== null && day !== undefined && day >= 1 && day <= 28
+    ? day
+    : undefined;
 }
 
 function optionalDay(formData: FormData, name: string): number | undefined {
@@ -130,7 +145,13 @@ export async function previewCardPurchase(
   input: PurchaseInput,
 ): Promise<PreviewResult> {
   try {
-    await requireAuthorizedUser();
+    // The card's closing day changes which invoice (dueMonth) the parcels land
+    // on, so the preview must read it server-side to match what save persists.
+    const { householdId, client } = await authedHousehold();
+    const cards = await listCreditCards(client, householdId);
+    const closingDay = invoiceClosingDay(
+      cards.find((c) => c.id === input.creditCardId),
+    );
 
     const planResult = createInstallmentPlan({
       // householdId/createdByUserId are not needed to compute the breakdown;
@@ -143,6 +164,7 @@ export async function previewCardPurchase(
       installmentCount: input.installmentCount,
       purchasedOn: input.purchasedOn,
       createdByUserId: "preview",
+      closingDay,
       category:
         input.categoryId || input.subcategoryId
           ? { categoryId: input.categoryId, subcategoryId: input.subcategoryId }
@@ -236,7 +258,13 @@ export async function saveCardPurchase(
       };
     }
 
-    // Parcelado: installment group + monthly parcels.
+    // Parcelado: installment group + monthly parcels. The card's closing day
+    // (when set) decides whether a post-closing purchase starts on the NEXT
+    // month's invoice (spec §2.6) — read it server-side, never from the form.
+    const cards = await listCreditCards(client, householdId);
+    const closingDay = invoiceClosingDay(
+      cards.find((c) => c.id === input.creditCardId),
+    );
     const planResult = createInstallmentPlan({
       householdId,
       creditCardId: input.creditCardId,
@@ -246,6 +274,7 @@ export async function saveCardPurchase(
       purchasedOn: input.purchasedOn,
       createdByUserId,
       category,
+      closingDay,
     });
     if (!planResult.ok) {
       return {
