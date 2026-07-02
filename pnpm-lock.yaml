@@ -38,13 +38,13 @@ importers:
       '@family-finance/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
       zod:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
