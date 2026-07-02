@@ -1500,6 +1500,549 @@ a.ff-callout:hover {
   }
 }
 
+/* ---- Transações: filter bar, table cells, inline edit, delete confirm --- */
+
+/* Filter bar shell (Transacoes desktop: surface, radius 14, padding 14/16). */
+.ff-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 28px;
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md);
+  padding: 14px 16px;
+}
+
+.ff-filterbar__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  flex: 1;
+}
+
+.ff-filterbar__field {
+  min-width: 140px;
+}
+
+.ff-filterbar__push {
+  margin-left: auto;
+}
+
+/* Dim table cell text (mockup rows: ink2 for dia/conta/categoria/quem). */
+.ff-dim {
+  color: var(--ff-ink-soft);
+}
+
+/* Compact input for in-table editing (mockup inline edit: accent + tint ring). */
+.ff-input--compact {
+  padding: 6px 9px;
+  font-size: 13px;
+  border-radius: 9px;
+}
+
+.ff-input--editing {
+  background: var(--ff-bg);
+  border-color: var(--ff-accent);
+  box-shadow: 0 0 0 3px var(--ff-tint);
+}
+
+/* Compact select shell for table cells / import preview rows. */
+.ff-select--compact .ff-select__control {
+  padding: 6px 24px 6px 9px;
+  font-size: 12px;
+  border-radius: 9px;
+}
+
+.ff-select--compact .ff-select__caret {
+  right: 9px;
+  font-size: 10px;
+}
+
+/* "sem categoria" voice (mockup: warn italic). */
+.ff-select--warn .ff-select__control {
+  border-color: var(--ff-warn);
+  color: var(--ff-warn);
+  font-style: italic;
+}
+
+.ff-select--warn .ff-select__caret {
+  color: var(--ff-warn);
+}
+
+/* 28px borderless icon button (row actions: editar/excluir). */
+.ff-iconbtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ff-ink-soft);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.ff-iconbtn:hover {
+  background: var(--ff-tint);
+  color: var(--ff-accent);
+}
+
+.ff-iconbtn--danger:hover {
+  background: var(--ff-negative-wash);
+  color: var(--ff-negative);
+}
+
+/* Delete confirm row (mockup: neg wash + 3px neg inset stripe). */
+.ff-row-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--ff-border);
+  background: var(--ff-negative-wash);
+  box-shadow: inset 3px 0 0 var(--ff-negative);
+}
+
+.ff-row-confirm__text {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--ff-ink);
+  flex: 1;
+  min-width: 200px;
+}
+
+.ff-row-confirm__text strong {
+  font-weight: 600;
+}
+
+/* Solid negative button — "Excluir" inside the confirm row. */
+.ff-btn--danger-solid {
+  background: var(--ff-negative);
+  color: #fff7f0;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 18px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Small ghost — "Deixa pra lá". */
+.ff-btn--ghost-sm {
+  background: transparent;
+  color: var(--ff-ink);
+  border: 1px solid var(--ff-border);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.ff-btn--ghost-sm:hover:not(:disabled) {
+  background: var(--ff-tint);
+}
+
+/* Warn outline pill — "revisar" on pending rows. */
+.ff-warnpill {
+  background: transparent;
+  border: 1px solid var(--ff-warn);
+  border-radius: var(--ff-radius-pill);
+  padding: 5px 12px;
+  color: var(--ff-warn);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ff-warnpill:hover {
+  background: var(--ff-warn-wash);
+}
+
+/* Table footer (mockup: "42 lançamentos em julho · 3 pendentes" + pagination). */
+.ff-table__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--ff-border);
+  background: var(--ff-surface-soft);
+}
+
+.ff-table__foot-note {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+}
+
+/* Pagination ghost — "‹ anterior" / "próxima ›". */
+.ff-pagebtn {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--ff-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--ff-ink-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.ff-pagebtn:hover {
+  color: var(--ff-ink);
+  border-color: var(--ff-accent);
+}
+
+/* Mobile-only footer twin (the desktop one lives inside the hidden table). */
+.ff-mobile-foot {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .ff-mobile-foot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+  }
+}
+
+/* Pending mobile row card (mockup: warn border) + action row. */
+.ff-rowcard--pending {
+  border-color: var(--ff-warn);
+}
+
+.ff-rowcard__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ff-rowcard__actions .ff-btn--primary {
+  flex: 1;
+  padding: 10px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+/* Expanded edit panel inside a mobile row card. */
+.ff-rowcard__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  border-top: 1px solid var(--ff-border);
+  padding-top: 12px;
+}
+
+/* ---- Importação: stepper, dropzone, checks, group cards ----------------- */
+
+/* 3-dot stepper (Importacao desktop: gold done/current, hairline lines). */
+.ff-steps {
+  display: flex;
+  align-items: center;
+  margin-top: 30px;
+  max-width: 640px;
+}
+
+.ff-steps__line {
+  flex: 1;
+  height: 1px;
+  background: var(--ff-border);
+  margin: 0 14px;
+}
+
+.ff-steps__line--done {
+  background: var(--ff-accent);
+}
+
+.ff-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ff-step__dot {
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  border: 1px solid var(--ff-border);
+  color: var(--ff-ink-soft);
+}
+
+.ff-step--done .ff-step__dot {
+  background: var(--ff-accent);
+  color: var(--ff-on-accent);
+  border: none;
+}
+
+.ff-step--current .ff-step__dot {
+  background: var(--ff-tint);
+  border: 2px solid var(--ff-accent);
+  color: var(--ff-accent);
+}
+
+.ff-step__label {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink-soft);
+  white-space: nowrap;
+}
+
+.ff-step--current .ff-step__label {
+  font-weight: 600;
+  color: var(--ff-accent);
+}
+
+/* Dashed dropzone — "Solta o arquivo aqui". */
+.ff-dropzone {
+  margin-top: 16px;
+  border: 1.5px dashed var(--ff-border);
+  border-radius: var(--ff-radius-md);
+  padding: 40px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ff-dropzone:hover {
+  border-color: var(--ff-accent);
+  background: var(--ff-tint);
+}
+
+.ff-dropzone__icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--ff-tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ff-accent);
+}
+
+.ff-dropzone__title {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ff-ink);
+}
+
+.ff-dropzone__hint {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-dropzone__hint strong {
+  color: var(--ff-accent);
+  font-weight: 600;
+}
+
+.ff-dropzone__input {
+  display: none;
+}
+
+/* Square gold checkbox (import preview / "pular"). */
+.ff-check {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 5px;
+  border: 1px solid var(--ff-border);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ff-check:checked {
+  background: var(--ff-accent);
+  border-color: var(--ff-accent);
+}
+
+.ff-check:checked::after {
+  content: "✓";
+  color: var(--ff-on-accent);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.ff-check:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Faded row/card — excluded or skipped entries (mockup: opacity 0.55). */
+.ff-off {
+  opacity: 0.55;
+}
+
+/* Detected installment group card. */
+.ff-groups-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.ff-group {
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md);
+  padding: 20px;
+}
+
+.ff-group--new {
+  border-color: var(--ff-accent);
+}
+
+.ff-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ff-group__name {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ff-ink);
+}
+
+.ff-group__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.ff-group__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ff-group__hint {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-group__skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Positive mini-hint — "sugerida pela memória ✨" voice. */
+.ff-hint-pos {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--ff-positive);
+}
+
+/* Import success (passo 3): centered card with pos circle. */
+.ff-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 28px 0 8px;
+}
+
+.ff-success__badge {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--ff-positive-wash);
+  border: 1px solid var(--ff-positive);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ff-positive);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 26px;
+}
+
+.ff-success__title {
+  font-size: 28px;
+  color: var(--ff-ink);
+  margin: 18px 0 6px;
+}
+
+.ff-success__lead {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ff-ink-soft);
+  margin: 0;
+  max-width: 380px;
+}
+
+.ff-success__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+@media (max-width: 960px) {
+  .ff-groups-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ff-group__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Motion ---------------------------------------------------------- */
 
 @keyframes ffFadeUp {

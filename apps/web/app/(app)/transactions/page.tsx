@@ -13,6 +13,15 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
+  Button,
+  Field,
+  MonthStepper,
+  PillToggle,
+  Select,
+  Input,
+  PageTitle,
+} from "../../../components/ui";
+import {
   parseTransactionsSearchParams,
   transactionsHref,
   shiftMonth,
@@ -33,59 +42,6 @@ export const metadata = {
 // This page reads per-request, RLS-scoped data; never statically prerender it.
 export const dynamic = "force-dynamic";
 
-const card = {
-  background: "#fff",
-  border: "1px solid #e3e6ea",
-  borderRadius: 12,
-  padding: 20,
-  marginTop: 20,
-} as const;
-
-const inputStyle = {
-  padding: "8px 10px",
-  border: "1px solid #cbd2d9",
-  borderRadius: 8,
-  fontSize: 14,
-} as const;
-
-const btn = {
-  padding: "8px 14px",
-  borderRadius: 8,
-  border: "1px solid #11271f",
-  background: "#11271f",
-  color: "#fff",
-  fontSize: 14,
-  cursor: "pointer",
-} as const;
-
-const stepLink = {
-  ...btn,
-  background: "#fff",
-  color: "#11271f",
-  textDecoration: "none",
-  padding: "6px 12px",
-  display: "inline-block",
-} as const;
-
-const pill = {
-  display: "inline-block",
-  borderRadius: 999,
-  padding: "6px 14px",
-  fontSize: 13,
-  fontWeight: 600,
-  textDecoration: "none",
-  border: "1px solid #cbd2d9",
-  color: "#334",
-  background: "#fff",
-} as const;
-
-const pillActive = {
-  ...pill,
-  background: "#fdf3e3",
-  border: "1px solid #eccf9a",
-  color: "#8a5b12",
-} as const;
-
 const MONTH_NAMES_PT = [
   "janeiro",
   "fevereiro",
@@ -101,12 +57,19 @@ const MONTH_NAMES_PT = [
   "dezembro",
 ];
 
+/** "2026-06" -> "junho". */
+function monthNamePt(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (match === null) return month;
+  const idx = Number.parseInt(match[2] as string, 10) - 1;
+  return MONTH_NAMES_PT[idx] ?? month;
+}
+
 /** "2026-06" -> "junho de 2026". */
 function formatMonthLabel(month: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(month);
   if (match === null) return month;
-  const idx = Number.parseInt(match[2] as string, 10) - 1;
-  return `${MONTH_NAMES_PT[idx] ?? month} de ${match[1]}`;
+  return `${monthNamePt(month)} de ${match[1]}`;
 }
 
 const EMPTY_PAGE: TransactionPage = {
@@ -188,217 +151,169 @@ export default async function TransactionsPage({
   const totalPages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
 
+  const footNote =
+    data.total === 1
+      ? `1 lançamento em ${monthNamePt(month)}`
+      : `${data.total} lançamentos em ${monthNamePt(month)}`;
+
+  const pagination =
+    totalPages > 1 ? (
+      <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {currentPage > 1 ? (
+          <Link
+            href={transactionsHref({ ...current, page: currentPage - 1 })}
+            className="ff-pagebtn"
+          >
+            ‹ anterior
+          </Link>
+        ) : null}
+        <span className="ff-note ff-num">
+          página {currentPage} de {totalPages}
+        </span>
+        {currentPage < totalPages ? (
+          <Link
+            href={transactionsHref({ ...current, page: currentPage + 1 })}
+            className="ff-pagebtn"
+          >
+            próxima ›
+          </Link>
+        ) : null}
+      </span>
+    ) : null;
+
   return (
     <section>
-      <h1 style={{ marginTop: 0 }}>Transações · Casa</h1>
-      <p style={{ color: "#555", maxWidth: 720 }}>
-        Todos os lançamentos da casa em {formatMonthLabel(month)}. Ajuste
-        categoria, responsável ou descrição direto na tabela — os valores e a
-        forma de pagamento ficam como foram registrados.
-      </p>
+      <PageTitle
+        kicker={`Nossa casa · ${formatMonthLabel(month)}`}
+        title="Transações"
+        lead="Tudo que entrou e saiu — dá pra ajustar categoria, descrição e responsável direto na lista."
+      />
 
       {loadError !== null ? (
         <div
           role="alert"
-          style={{
-            background: "#fdecec",
-            border: "1px solid #f3b4b4",
-            color: "#8a2020",
-            borderRadius: 10,
-            padding: 12,
-            marginTop: 16,
-            fontSize: 14,
-          }}
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 16 }}
         >
-          Não foi possível carregar os lançamentos agora.{" "}
-          <span style={{ color: "#a85b5b" }}>({loadError})</span>
+          Não foi possível carregar os lançamentos agora. ({loadError})
         </div>
       ) : null}
 
       {/* Filter bar */}
-      <div style={card}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          {/* Month stepper */}
-          <Link
-            href={transactionsHref({ ...current, month: shiftMonth(month, -1) })}
-            style={stepLink}
-            aria-label="Mês anterior"
-          >
-            ‹
-          </Link>
-          <strong style={{ minWidth: 140, textAlign: "center" }}>
-            {formatMonthLabel(month)}
-          </strong>
-          <Link
-            href={transactionsHref({ ...current, month: shiftMonth(month, 1) })}
-            style={stepLink}
-            aria-label="Próximo mês"
-          >
-            ›
-          </Link>
+      <div className="ff-filterbar">
+        <MonthStepper
+          label={formatMonthLabel(month)}
+          prevHref={transactionsHref({ ...current, month: shiftMonth(month, -1) })}
+          nextHref={transactionsHref({ ...current, month: shiftMonth(month, 1) })}
+        />
 
-          {/* Pendentes pill toggle */}
-          <Link
-            href={transactionsHref({ ...current, pending: !current.pending })}
-            style={current.pending ? pillActive : pill}
-          >
-            {current.pending ? "✓ pendentes" : "pendentes"}
-          </Link>
-        </div>
-
-        <form
-          method="get"
-          action="/transactions"
-          style={{
-            display: "flex",
-            alignItems: "flex-end",
-            gap: 12,
-            flexWrap: "wrap",
-            marginTop: 16,
-          }}
-        >
+        <form method="get" action="/transactions" className="ff-filterbar__form">
           <input type="hidden" name="month" value={month} />
           {current.pending ? (
             <input type="hidden" name="pending" value="1" />
           ) : null}
 
-          <label style={{ fontSize: 13, color: "#334" }}>
-            Conta
-            <br />
-            <select name="account" defaultValue={current.account ?? ""} style={inputStyle}>
-              <option value="">Todas</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ fontSize: 13, color: "#334" }}>
-            Cartão
-            <br />
-            <select name="card" defaultValue={current.card ?? ""} style={inputStyle}>
-              <option value="">Todos</option>
-              {cards.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ fontSize: 13, color: "#334" }}>
-            Categoria
-            <br />
-            <select name="category" defaultValue={current.category ?? ""} style={inputStyle}>
-              <option value="">Todas</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ fontSize: 13, color: "#334" }}>
-            Responsável
-            <br />
-            <select name="resp" defaultValue={current.resp ?? ""} style={inputStyle}>
-              <option value="">Todos</option>
-              {responsibles.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ fontSize: 13, color: "#334" }}>
-            Buscar na descrição
-            <br />
-            <input
-              type="search"
-              name="q"
-              defaultValue={current.q ?? ""}
-              placeholder="ex.: mercado"
-              style={{ ...inputStyle, minWidth: 200 }}
-            />
-          </label>
-
-          <button type="submit" style={btn}>
-            Filtrar
-          </button>
-        </form>
-      </div>
-
-      {/* Listing */}
-      <div style={card}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: 18 }}>Lançamentos</h2>
-          <span style={{ color: "#556", fontSize: 13 }}>
-            {data.total === 1
-              ? "1 lançamento encontrado"
-              : `${data.total} lançamentos encontrados`}
-          </span>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <TransactionsTable
-            rows={data.rows}
-            categories={categories}
-            subcategories={subcategories}
-            responsibles={responsibles}
-          />
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginTop: 16,
-            }}
-          >
-            {currentPage > 1 ? (
-              <Link
-                href={transactionsHref({ ...current, page: currentPage - 1 })}
-                style={stepLink}
-              >
-                ‹ Anterior
-              </Link>
-            ) : null}
-            <span style={{ color: "#556", fontSize: 13 }}>
-              Página {currentPage} de {totalPages}
-            </span>
-            {currentPage < totalPages ? (
-              <Link
-                href={transactionsHref({ ...current, page: currentPage + 1 })}
-                style={stepLink}
-              >
-                Próxima ›
-              </Link>
-            ) : null}
+          <div className="ff-filterbar__field">
+            <Field label="Conta">
+              <Select name="account" defaultValue={current.account ?? ""}>
+                <option value="">Todas</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
-        ) : null}
+
+          <div className="ff-filterbar__field">
+            <Field label="Cartão">
+              <Select name="card" defaultValue={current.card ?? ""}>
+                <option value="">Todos</option>
+                {cards.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <div className="ff-filterbar__field">
+            <Field label="Categoria">
+              <Select name="category" defaultValue={current.category ?? ""}>
+                <option value="">Todas</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <div className="ff-filterbar__field">
+            <Field label="Quem">
+              <Select name="resp" defaultValue={current.resp ?? ""}>
+                <option value="">todo mundo</option>
+                {responsibles.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <div className="ff-filterbar__field" style={{ minWidth: 200 }}>
+            <Field label="Buscar na descrição">
+              <Input
+                type="search"
+                name="q"
+                defaultValue={current.q ?? ""}
+                placeholder="ex.: mercado"
+              />
+            </Field>
+          </div>
+
+          <Button variant="ghost" type="submit">
+            Filtrar
+          </Button>
+        </form>
+
+        <span className="ff-filterbar__push">
+          <PillToggle
+            active={current.pending}
+            href={transactionsHref({ ...current, pending: !current.pending })}
+          >
+            {current.pending ? `Só pendentes · ${data.total}` : "Só pendentes"}
+          </PillToggle>
+        </span>
       </div>
+
+      {/* Listing (desktop grid + mobile row cards, CSS picks) */}
+      <TransactionsTable
+        rows={data.rows}
+        categories={categories}
+        subcategories={subcategories}
+        responsibles={responsibles}
+        accounts={accounts}
+        cards={cards}
+        footer={
+          <div className="ff-table__foot">
+            <span className="ff-table__foot-note ff-num">{footNote}</span>
+            {pagination}
+          </div>
+        }
+      />
+
+      {/* Mobile twin of the table footer (the table is hidden under 720px). */}
+      {data.rows.length > 0 ? (
+        <div className="ff-mobile-foot">
+          <span className="ff-table__foot-note ff-num">{footNote}</span>
+          {pagination}
+        </div>
+      ) : null}
     </section>
   );
 }
