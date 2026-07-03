@@ -2422,3 +2422,106 @@ a.ff-callout:hover {
     transform: translateY(0);
   }
 }
+
+/* ---- Toasts ------------------------------------------------------------ */
+
+/* Desktop default (mockup convention: default styles target desktop, the
+   720px breakpoint below overrides for mobile — see .ff-bottomnav/.ff-main).
+   Top-right, fixed width. */
+.ff-toast-stack {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  bottom: auto;
+  left: auto;
+  width: 360px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.ff-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: var(--ff-shadow-float);
+  animation: ffFadeUp 0.25s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-toast {
+    animation: none;
+  }
+}
+
+.ff-toast__message {
+  flex: 1;
+  min-width: 0;
+}
+
+.ff-toast__close {
+  flex: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0;
+}
+
+.ff-toast__close:hover {
+  opacity: 1;
+}
+
+.ff-toast--negative {
+  background: var(--ff-negative-wash);
+  border: 1px solid var(--ff-negative);
+  border-radius: var(--ff-radius-md);
+  padding: 14px 16px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ff-ink);
+}
+
+.ff-toast--warn {
+  background: var(--ff-warn-wash);
+  border: 1px solid var(--ff-warn);
+  border-radius: var(--ff-radius-md);
+  padding: 14px 16px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ff-ink);
+}
+
+.ff-toast--positive {
+  background: var(--ff-positive-wash);
+  border: 1px solid var(--ff-positive);
+  border-radius: var(--ff-radius-md);
+  padding: 14px 16px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ff-ink);
+}
+
+@media (max-width: 720px) {
+  /* Pinned to the bottom, above the fixed bottom nav (.ff-bottomnav sits at
+     z-index 40 inside this same breakpoint), full-ish width with gutters. */
+  .ff-toast-stack {
+    top: auto;
+    right: 16px;
+    bottom: 96px;
+    left: 16px;
+    width: auto;
+  }
+}

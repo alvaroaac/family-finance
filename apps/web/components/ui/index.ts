@@ -41,3 +41,5 @@ export {
   IconUpload,
 } from "./icons";
 export type { IconProps } from "./icons";
+export { ToastProvider, useToast } from "./toast";
+export type { ToastApi, ToastInput, ToastRecord, ToastTone } from "./toast";

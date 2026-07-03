@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { AppShell, ThemePicker, type NavItem } from "../../components/ui";
+import { AppShell, ThemePicker, ToastProvider, type NavItem } from "../../components/ui";
 import { requireAuthorizedUser } from "../../lib/auth";
 import { currentMemberName } from "../../lib/member";
 import { setThemeAction } from "./settings/actions";
@@ -48,27 +48,29 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const name = await currentMemberName(email);
 
   return (
-    <AppShell
-      items={NAV_ITEMS}
-      brand={{
-        kicker: "Nossa casa",
-        title: (
-          <>
-            Alvaro <span className="ff-amp">&amp;</span> Karol
-          </>
-        )
-      }}
-      user={{ initial: name.charAt(0).toUpperCase(), name, email }}
-      signOut={
-        <form action={signOutAction}>
-          <button type="submit" className="ff-signout">
-            sair
-          </button>
-        </form>
-      }
-      themePicker={<ThemePicker current={theme} onSelect={setThemeAction} />}
-    >
-      {children}
-    </AppShell>
+    <ToastProvider>
+      <AppShell
+        items={NAV_ITEMS}
+        brand={{
+          kicker: "Nossa casa",
+          title: (
+            <>
+              Alvaro <span className="ff-amp">&amp;</span> Karol
+            </>
+          )
+        }}
+        user={{ initial: name.charAt(0).toUpperCase(), name, email }}
+        signOut={
+          <form action={signOutAction}>
+            <button type="submit" className="ff-signout">
+              sair
+            </button>
+          </form>
+        }
+        themePicker={<ThemePicker current={theme} onSelect={setThemeAction} />}
+      >
+        {children}
+      </AppShell>
+    </ToastProvider>
   );
 }
