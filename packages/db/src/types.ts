@@ -47,6 +47,7 @@ export type HouseholdMemberRow = {
   is_active: boolean;
   display_name: string | null;
   telegram_user_id: number | null;
+  telegram_username: string | null;
   created_at: string;
   updated_at: string;
 };

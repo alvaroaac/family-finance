@@ -31,7 +31,7 @@ import {
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findAccountsByHousehold,
-  findMemberByTelegramUserId,
+  resolveTelegramMember,
   listCreditCards,
   listHouseholdMembers,
   listActiveCategorizationMemory,
@@ -221,8 +221,11 @@ export async function handleWebhook(args: {
   configuredSecret: string | undefined;
   client: AppSupabaseClient;
   telegram: TelegramClient;
-  /** Map a Telegram user id to a linked household member (null = unknown). */
-  resolveMember: (telegramUserId: string) => Promise<BotMemberIdentity | null>;
+  /** Map a Telegram sender (id + optional @username) to a linked member. */
+  resolveMember: (sender: {
+    telegramUserId: string;
+    telegramUsername?: string;
+  }) => Promise<BotMemberIdentity | null>;
   /** Per-chat conversation persistence (DB-backed in production). */
   store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
@@ -248,7 +251,10 @@ export async function handleWebhook(args: {
   // Identity first: the sender's Telegram id must map to a household member.
   // Unmatched → one polite refusal; NOTHING is written (there is no household
   // to scope a bot_interactions row to), so we only log to the console.
-  const identity = await args.resolveMember(incoming.fromId);
+  const identity = await args.resolveMember({
+    telegramUserId: incoming.fromId,
+    telegramUsername: incoming.fromUsername,
+  });
   if (identity === null) {
     console.warn(
       `[bot] unmatched telegram user ${incoming.fromId} (chat ${incoming.chatId}) — refused.`,
@@ -364,8 +370,14 @@ export async function startBot(): Promise<{
   });
 
   const store = createDbConversationStore(client);
-  const resolveMember = (telegramUserId: string) =>
-    findMemberByTelegramUserId(client, Number(telegramUserId));
+  const resolveMember = (sender: {
+    telegramUserId: string;
+    telegramUsername?: string;
+  }) =>
+    resolveTelegramMember(client, {
+      telegramUserId: Number(sender.telegramUserId),
+      telegramUsername: sender.telegramUsername ?? null,
+    });
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)

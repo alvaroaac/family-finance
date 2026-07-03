@@ -52,6 +52,8 @@ export type IncomingTextMessage = {
   chatId: string;
   /** Telegram user id of the sender, as a string. */
   fromId: string;
+  /** Telegram @username of the sender (without "@"), when they have one. */
+  fromUsername?: string;
   /** The message text. */
   text: string;
 };
@@ -68,7 +70,10 @@ const telegramUpdateSchema = z.object({
       message_id: z.number().optional(),
       chat: z.object({ id: z.union([z.number(), z.string()]) }),
       from: z
-        .object({ id: z.union([z.number(), z.string()]) })
+        .object({
+          id: z.union([z.number(), z.string()]),
+          username: z.string().optional(),
+        })
         .optional(),
       text: z.string().optional(),
       voice: telegramFileSchema.optional(),
@@ -101,6 +106,7 @@ export function parseTelegramUpdate(raw: unknown): IncomingTextMessage | null {
     updateId: update.update_id,
     chatId: String(message.chat.id),
     fromId: String(message.from.id),
+    fromUsername: message.from.username,
     text: message.text,
   };
 }
@@ -110,6 +116,8 @@ export type IncomingVoiceMessage = {
   updateId: number;
   chatId: string;
   fromId: string;
+  /** Telegram @username of the sender (without "@"), when they have one. */
+  fromUsername?: string;
   /** Telegram file_id of the voice/audio attachment. */
   fileId: string;
   /** Optional MIME type (e.g. "audio/ogg"). */
@@ -138,6 +146,7 @@ export function parseTelegramVoice(raw: unknown): IncomingVoiceMessage | null {
     updateId: result.data.update_id,
     chatId: String(message.chat.id),
     fromId: String(message.from.id),
+    fromUsername: message.from.username,
     fileId: file.file_id,
     mimeType: file.mime_type,
   };

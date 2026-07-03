@@ -1635,6 +1635,7 @@ export type HouseholdMemberProfile = {
   isActive: boolean;
   displayName: string | null;
   telegramUserId: number | null;
+  telegramUsername: string | null;
 };
 
 /** List a household's members (active first, then by creation time). */
@@ -1657,7 +1658,18 @@ export async function listHouseholdMembers(
     isActive: row.is_active,
     displayName: row.display_name,
     telegramUserId: row.telegram_user_id,
+    telegramUsername: row.telegram_username,
   }));
+}
+
+/**
+ * Normalize a user-typed Telegram @username: strips the "@", trims and
+ * lowercases (Telegram usernames are case-insensitive). Returns null for
+ * blank input. Pure.
+ */
+export function normalizeTelegramUsername(value: string | null): string | null {
+  const cleaned = (value ?? "").trim().replace(/^@/, "").toLowerCase();
+  return cleaned === "" ? null : cleaned;
 }
 
 /**
@@ -1669,7 +1681,11 @@ export async function updateHouseholdMember(
   client: AppSupabaseClient,
   householdId: string,
   memberId: string,
-  changes: { displayName?: string | null; telegramUserId?: number | null },
+  changes: {
+    displayName?: string | null;
+    telegramUserId?: number | null;
+    telegramUsername?: string | null;
+  },
 ): Promise<void> {
   const update: Partial<HouseholdMemberRow> = {};
   if (changes.displayName !== undefined) {
@@ -1685,16 +1701,29 @@ export async function updateHouseholdMember(
     }
     update.telegram_user_id = changes.telegramUserId;
   }
+  if (changes.telegramUsername !== undefined) {
+    update.telegram_username = normalizeTelegramUsername(
+      changes.telegramUsername,
+    );
+  }
   if (Object.keys(update).length === 0) {
     return;
   }
-  const { error } = await client
+  const { data, error } = await client
     .from("household_members")
     .update(update)
     .eq("household_id", householdId)
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .select("id");
   if (error !== null) {
     throw new Error(`updateHouseholdMember failed: ${error.message}`);
+  }
+  // Under RLS a denied/missing row is NOT an error — it just updates nothing.
+  // Surface that loudly instead of pretending the save worked.
+  if ((data ?? []).length === 0) {
+    throw new Error(
+      "Não consegui salvar — nenhuma linha foi atualizada (permissão ou membro inexistente).",
+    );
   }
 }
 
@@ -1799,6 +1828,57 @@ export async function findMemberByTelegramUserId(
     HouseholdMemberRow,
     "household_id" | "user_id" | "display_name"
   >;
+  return {
+    householdId: row.household_id,
+    userId: row.user_id,
+    displayName: row.display_name,
+  };
+}
+
+/**
+ * Resolve a Telegram sender to an active member: by the stable numeric id
+ * first, then by @username (Telegram sends both in every update; usernames
+ * are optional and changeable, ids are forever). On a username match the
+ * numeric id is back-filled so future updates take the stable path even if
+ * the username later changes. Service-role client only.
+ */
+export async function resolveTelegramMember(
+  client: AppSupabaseClient,
+  sender: { telegramUserId: number; telegramUsername?: string | null },
+): Promise<BotMemberIdentity | null> {
+  const byId = await findMemberByTelegramUserId(client, sender.telegramUserId);
+  if (byId !== null) {
+    return byId;
+  }
+  const username = normalizeTelegramUsername(sender.telegramUsername ?? null);
+  if (username === null) {
+    return null;
+  }
+  const { data, error } = await client
+    .from("household_members")
+    .select("id, household_id, user_id, display_name")
+    .eq("telegram_username", username)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error !== null) {
+    throw new Error(`resolveTelegramMember failed: ${error.message}`);
+  }
+  if (data === null) {
+    return null;
+  }
+  const row = data as Pick<
+    HouseholdMemberRow,
+    "id" | "household_id" | "user_id" | "display_name"
+  >;
+  // Best-effort back-fill; a failure here must not block the lançamento.
+  try {
+    await client
+      .from("household_members")
+      .update({ telegram_user_id: sender.telegramUserId })
+      .eq("id", row.id);
+  } catch {
+    // ignored — resolution by username keeps working
+  }
   return {
     householdId: row.household_id,
     userId: row.user_id,

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import { currentMemberName } from "../../../lib/member";
 import { formatBrlCents } from "../../../lib/format";
 import { RecentTransactions } from "../../../components/recent-transactions";
 import { Card, Delta, IconCard, IconTag, Kicker } from "../../../components/ui";
@@ -18,11 +19,6 @@ export const metadata = {
 // Per-request, RLS-scoped data; never statically prerender.
 export const dynamic = "force-dynamic";
 
-/** "karol@casa.com" → "Karol" — friendly fallback until profiles carry names. */
-function nameFromEmail(email: string): string {
-  const local = email.split("@")[0] ?? email;
-  return local.length > 0 ? local.charAt(0).toUpperCase() + local.slice(1) : email;
-}
 
 /** Split "R$ 4.812,90" into ["R$ 4.812", ",90"] for the hero's smaller cents. */
 function splitCents(value: string): [string, string] {
@@ -50,7 +46,7 @@ export default async function ResumoPage() {
     loadError,
   } = data;
   const previousMonth = shiftMonth(month, -1);
-  const name = nameFromEmail(email);
+  const name = await currentMemberName(email);
   const [spentMain, spentCentsPart] = splitCents(formatBrlCents(totalSpentCents));
   const comparison = spendingComparisonLabel(deltaVsPreviousCents, previousMonth);
 

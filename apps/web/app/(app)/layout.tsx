@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell, ThemePicker, type NavItem } from "../../components/ui";
 import { requireAuthorizedUser } from "../../lib/auth";
+import { currentMemberName } from "../../lib/member";
 import { setThemeAction } from "./settings/actions";
 import { parseTheme, THEME_COOKIE } from "./settings/helpers";
 
@@ -33,11 +34,6 @@ async function signOutAction(): Promise<void> {
   redirect("/login");
 }
 
-/** "karol@casa.com" → "Karol" — friendly fallback until profiles carry names. */
-function nameFromEmail(email: string): string {
-  const local = email.split("@")[0] ?? email;
-  return local.length > 0 ? local.charAt(0).toUpperCase() + local.slice(1) : email;
-}
 
 /**
  * Protected app shell. This layout guards the entire `(app)` route group
@@ -49,7 +45,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const { email } = await requireAuthorizedUser();
   const cookieStore = await cookies();
   const theme = parseTheme(cookieStore.get(THEME_COOKIE)?.value);
-  const name = nameFromEmail(email);
+  const name = await currentMemberName(email);
 
   return (
     <AppShell

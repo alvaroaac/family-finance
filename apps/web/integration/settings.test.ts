@@ -19,6 +19,7 @@ import {
 import {
   buildSettingsData,
   memberPatchFromFormData,
+  telegramDisplayValue,
   botStatusLabel,
   inputKindLabel,
   THEMES,
@@ -46,34 +47,53 @@ function form(entries: Record<string, string>): FormData {
 }
 
 describe("memberPatchFromFormData", () => {
-  it("trims the display name and parses the telegram id as a number", () => {
+  it("trims the display name and parses a numeric telegram id", () => {
     expect(
       memberPatchFromFormData(
-        form({ displayName: "  Karol  ", telegramUserId: " 654321 " }),
+        form({ displayName: "  Karol  ", telegram: " 654321 " }),
       ),
-    ).toEqual({ displayName: "Karol", telegramUserId: 654321 });
+    ).toEqual({ displayName: "Karol", telegramUserId: 654321, telegramUsername: null });
+  });
+
+  it("accepts an @username, stripping the @ and lowercasing", () => {
+    expect(
+      memberPatchFromFormData(form({ displayName: "K", telegram: "@KarolZinha" })),
+    ).toEqual({ displayName: "K", telegramUserId: null, telegramUsername: "karolzinha" });
+    expect(
+      memberPatchFromFormData(form({ displayName: "K", telegram: "karolzinha" })),
+    ).toEqual({ displayName: "K", telegramUserId: null, telegramUsername: "karolzinha" });
   });
 
   it("maps blank fields to null (unset name / unlink telegram)", () => {
     expect(
-      memberPatchFromFormData(form({ displayName: "   ", telegramUserId: "" })),
-    ).toEqual({ displayName: null, telegramUserId: null });
+      memberPatchFromFormData(form({ displayName: "   ", telegram: "" })),
+    ).toEqual({ displayName: null, telegramUserId: null, telegramUsername: null });
   });
 
-  it("rejects a non-numeric telegram id with a pt-BR message", () => {
+  it("rejects an invalid username with a pt-BR message", () => {
+    for (const bad of ["@ab", "nome com espaço", "acentuação"]) {
+      expect(() =>
+        memberPatchFromFormData(form({ displayName: "K", telegram: bad })),
+      ).toThrow(/Telegram inválido/);
+    }
+  });
+
+  it("rejects a zero telegram id", () => {
     expect(() =>
-      memberPatchFromFormData(form({ displayName: "K", telegramUserId: "abc" })),
+      memberPatchFromFormData(form({ displayName: "K", telegram: "0" })),
     ).toThrow(/ID do Telegram/);
   });
 
-  it("rejects zero, negative and fractional telegram ids", () => {
-    for (const bad of ["0", "-5", "1.5"]) {
-      expect(() =>
-        memberPatchFromFormData(
-          form({ displayName: "K", telegramUserId: bad }),
-        ),
-      ).toThrow(/ID do Telegram/);
-    }
+  it("telegramDisplayValue prefers the @username over the id", () => {
+    expect(
+      telegramDisplayValue({ telegramUserId: 1, telegramUsername: "karol" }),
+    ).toBe("@karol");
+    expect(
+      telegramDisplayValue({ telegramUserId: 654321, telegramUsername: null }),
+    ).toBe("654321");
+    expect(
+      telegramDisplayValue({ telegramUserId: null, telegramUsername: null }),
+    ).toBe("");
   });
 });
 
@@ -124,6 +144,7 @@ function seedStore(withBotInteractions: boolean): FakeSupabaseStore {
         is_active: true,
         display_name: "Álvaro",
         telegram_user_id: 123456,
+        telegram_username: null,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
       },
@@ -135,6 +156,7 @@ function seedStore(withBotInteractions: boolean): FakeSupabaseStore {
         is_active: true,
         display_name: null,
         telegram_user_id: null,
+        telegram_username: null,
         created_at: "2026-01-02T00:00:00Z",
         updated_at: "2026-01-02T00:00:00Z",
       },
@@ -201,7 +223,7 @@ describe("buildSettingsData", () => {
 describe("member update round-trip (form → patch → repo → store)", () => {
   it("persists a parsed form patch through updateHouseholdMember", async () => {
     const patch = memberPatchFromFormData(
-      form({ displayName: "  Karol  ", telegramUserId: "654321" }),
+      form({ displayName: "  Karol  ", telegram: "654321" }),
     );
     await updateHouseholdMember(client, HOUSEHOLD, "member-karol", patch);
     expect(
@@ -218,7 +240,7 @@ describe("member update round-trip (form → patch → repo → store)", () => {
 
   it("unlinks telegram + clears the name when the form comes blank", async () => {
     const patch = memberPatchFromFormData(
-      form({ displayName: "", telegramUserId: "" }),
+      form({ displayName: "", telegram: "" }),
     );
     await updateHouseholdMember(client, HOUSEHOLD, "member-alvaro", patch);
     expect(
@@ -228,8 +250,8 @@ describe("member update round-trip (form → patch → repo → store)", () => {
 
   it("an invalid telegram id fails at parse time — nothing touches the store", () => {
     expect(() =>
-      memberPatchFromFormData(form({ displayName: "X", telegramUserId: "12x" })),
-    ).toThrow(/ID do Telegram/);
+      memberPatchFromFormData(form({ displayName: "X", telegram: "12x!" })),
+    ).toThrow(/Telegram inválido/);
     expect(
       store.table("household_members").find((r) => r.id === "member-alvaro"),
     ).toMatchObject({ telegram_user_id: 123456 });

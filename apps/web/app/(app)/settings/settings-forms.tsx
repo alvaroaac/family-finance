@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import type { HouseholdMemberProfile } from "@family-finance/db";
 
 import { setThemeAction, updateMemberAction } from "./actions";
-import { THEMES, type ThemeId } from "./helpers";
+import { THEMES, telegramDisplayValue, type ThemeId } from "./helpers";
 import { Badge, Field, Input } from "../../../components/ui";
 
 /**
@@ -145,18 +145,12 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
           </Field>
         </div>
         <div className="ff-member__field">
-          <Field label="Telegram">
+          <Field label="Telegram (@username ou ID)">
             <Input
-              name="telegramUserId"
-              defaultValue={
-                member.telegramUserId === null
-                  ? ""
-                  : String(member.telegramUserId)
-              }
-              placeholder="ID do Telegram"
-              aria-label="ID do Telegram"
-              inputMode="numeric"
-              className="ff-num"
+              name="telegram"
+              defaultValue={telegramDisplayValue(member)}
+              placeholder="@username"
+              aria-label="Telegram (@username ou ID)"
             />
           </Field>
         </div>

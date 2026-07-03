@@ -171,8 +171,10 @@ export {
   updateHouseholdMember,
   updateInvestmentBucketBalance,
   findLastBotInteraction,
+  normalizeTelegramUsername,
   // Bot identity + persistent conversations (v1.0 Task 8).
   findMemberByTelegramUserId,
+  resolveTelegramMember,
   loadBotConversation,
   saveBotConversation,
   deleteBotConversation,

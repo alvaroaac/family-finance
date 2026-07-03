@@ -773,19 +773,34 @@ function fakeTelegram(): {
 const IDENTITIES: Record<string, BotMemberIdentity> = {
   "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
+  "@karolzinha": {
+    householdId: "house-1",
+    userId: "user-karol",
+    displayName: "Karol",
+  },
 };
 
-const resolveMemberFake = async (
-  telegramUserId: string,
-): Promise<BotMemberIdentity | null> => IDENTITIES[telegramUserId] ?? null;
+const resolveMemberFake = async (sender: {
+  telegramUserId: string;
+  telegramUsername?: string;
+}): Promise<BotMemberIdentity | null> =>
+  IDENTITIES[sender.telegramUserId] ??
+  (sender.telegramUsername !== undefined
+    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
+    : null);
 
-function textUpdate(fromId: number, text: string, chatId = 555): unknown {
+function textUpdate(
+  fromId: number,
+  text: string,
+  chatId = 555,
+  fromUsername?: string,
+): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
       chat: { id: chatId },
-      from: { id: fromId },
+      from: { id: fromId, username: fromUsername },
       text,
     },
   };
@@ -817,6 +832,28 @@ describe("handleWebhook: telegram identity", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.text).toMatch(/não conheço/i);
     // No transaction, no interaction row: there is no household to scope to.
+    expect(tables.transactions).toHaveLength(0);
+  });
+
+  it("resolves the sender by @username when the numeric id is not linked yet", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+
+    const result = await handleWebhook({
+      rawBody: textUpdate(999, "mercado 54,30", 555, "KarolZinha"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    });
+
+    expect(result.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    // Known member via username → the normal confirmation flow, not a refusal.
+    expect(sent[0]?.text).not.toMatch(/não conheço/i);
     expect(tables.transactions).toHaveLength(0);
     expect(tables.bot_interactions).toHaveLength(0);
   });

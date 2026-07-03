@@ -44,40 +44,64 @@ export function parseTheme(value: string | undefined): ThemeId {
 export type MemberPatch = {
   displayName: string | null;
   telegramUserId: number | null;
+  telegramUsername: string | null;
 };
 
 /**
  * Parse the member profile form into a repo patch. Blank fields become null
- * (clear the name / unlink Telegram); the Telegram id must be a positive
- * integer. Throws a pt-BR message the action surfaces to the household as-is.
+ * (clear the name / unlink Telegram). The single Telegram field accepts a
+ * numeric user id OR an @username ("@karol" / "karol"): digits go to
+ * `telegramUserId`, anything else to `telegramUsername` (lowercased, "@"
+ * stripped). Throws a pt-BR message the action surfaces as-is.
  */
 export function memberPatchFromFormData(formData: FormData): MemberPatch {
   const rawName = formData.get("displayName");
   const name = typeof rawName === "string" ? rawName.trim() : "";
 
-  const rawTelegram = formData.get("telegramUserId");
+  const rawTelegram = formData.get("telegram");
   const telegramText = typeof rawTelegram === "string" ? rawTelegram.trim() : "";
 
   let telegramUserId: number | null = null;
+  let telegramUsername: string | null = null;
   if (telegramText !== "") {
-    if (!/^\d+$/.test(telegramText)) {
-      throw new Error(
-        "O ID do Telegram precisa ser um número inteiro positivo.",
-      );
+    if (/^\d+$/.test(telegramText)) {
+      const parsed = Number.parseInt(telegramText, 10);
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        throw new Error(
+          "O ID do Telegram precisa ser um número inteiro positivo.",
+        );
+      }
+      telegramUserId = parsed;
+    } else {
+      const username = telegramText.replace(/^@/, "").toLowerCase();
+      if (!/^[a-z0-9_]{5,32}$/.test(username)) {
+        throw new Error(
+          "Telegram inválido — use o @username (5-32 letras/números/_) ou o ID numérico.",
+        );
+      }
+      telegramUsername = username;
     }
-    const parsed = Number.parseInt(telegramText, 10);
-    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-      throw new Error(
-        "O ID do Telegram precisa ser um número inteiro positivo.",
-      );
-    }
-    telegramUserId = parsed;
   }
 
   return {
     displayName: name === "" ? null : name,
     telegramUserId,
+    telegramUsername,
   };
+}
+
+/** How the settings form displays a member's linked Telegram. Pure. */
+export function telegramDisplayValue(member: {
+  telegramUserId: number | null;
+  telegramUsername: string | null;
+}): string {
+  if (member.telegramUsername !== null) {
+    return `@${member.telegramUsername}`;
+  }
+  if (member.telegramUserId !== null) {
+    return String(member.telegramUserId);
+  }
+  return "";
 }
 
 // ---------------------------------------------------------------------------
