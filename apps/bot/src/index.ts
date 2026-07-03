@@ -28,6 +28,7 @@ import {
   createServiceRoleClient,
   createTransaction as dbCreateTransaction,
   createBotInteraction,
+  createObligation as dbCreateObligation,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findAccountsByHousehold,
@@ -35,6 +36,8 @@ import {
   listCreditCards,
   listHouseholdMembers,
   listActiveCategorizationMemory,
+  listObligations,
+  materializeObligationPayment as dbMaterializeObligationPayment,
   type AppSupabaseClient,
   type BotMemberIdentity,
 } from "@family-finance/db";
@@ -75,7 +78,9 @@ import {
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
 import {
+  createMessageClassifier,
   createTextInterpreter,
+  type MessageClassifier,
   type TextInterpreter,
 } from "./interpret.js";
 import {
@@ -133,6 +138,7 @@ async function buildDeps(
   householdId: string,
   ai?: AiCategorizer,
   interpretText?: TextInterpreter,
+  classifyMessage?: MessageClassifier,
 ): Promise<ConversationDeps> {
   const categories = await findCategoriesByHousehold(client, householdId);
   const subcategoryLists = await Promise.all(
@@ -200,6 +206,41 @@ async function buildDeps(
     // LLM text interpretation fallback (spec §3.4) — only consulted when the
     // deterministic parser finds no amount; result stays behind confirmation.
     interpretText,
+    // Unified intent classifier (recurring obligations) — sees every NEW
+    // message when configured; null falls back to the parser path above.
+    classifyMessage,
+    // Obligations (PR-1): create + mark-paid flows.
+    listActiveObligations: async () =>
+      (await listObligations(client, householdId)).map((row) => ({
+        id: row.id,
+        description: row.description,
+        amountCents: row.amount_cents,
+      })),
+    createObligation: async (draft) => {
+      const row = await dbCreateObligation(client, draft);
+      return { id: row.id };
+    },
+    materializeObligationPayment: async ({ obligationId, month, paidOn }) => {
+      const result = await dbMaterializeObligationPayment(client, {
+        obligationId,
+        month,
+        paidOn,
+      });
+      return { alreadyPaid: result.already_paid };
+    },
+    // "conta Nubank" corrections + the confirmation's payment-source label.
+    resolveAccountIdByName: (name: string) => {
+      const wanted = normalizeName(name);
+      if (wanted.length === 0) {
+        return undefined;
+      }
+      const matches = accounts.filter(
+        (account) => normalizeName(account.name) === wanted,
+      );
+      return matches.length === 1 ? matches[0]?.id : undefined;
+    },
+    accountNameById: (accountId: string) =>
+      accounts.find((account) => account.id === accountId)?.name,
   };
 }
 
@@ -229,6 +270,8 @@ export async function handleWebhook(args: {
   ai?: AiCategorizer;
   /** Optional LLM text interpretation fallback (spec §3.4). Omitted = none. */
   interpretText?: TextInterpreter;
+  /** Optional unified intent classifier (obligations). Omitted = none. */
+  classifyMessage?: MessageClassifier;
   /** Optional transcription wiring for voice notes. Omitted = audio rejected. */
   transcribe?: TranscribeDeps;
 }): Promise<WebhookResult> {
@@ -262,6 +305,7 @@ export async function handleWebhook(args: {
     identity.householdId,
     args.ai,
     args.interpretText,
+    args.classifyMessage,
   );
 
   // 1. Voice/audio: transcribe, then run the SAME confirmation flow as text.
@@ -390,6 +434,10 @@ export async function startBot(): Promise<{
     completionClient !== undefined
       ? createTextInterpreter(completionClient)
       : undefined;
+  const classifyMessage: MessageClassifier | undefined =
+    completionClient !== undefined
+      ? createMessageClassifier(completionClient)
+      : undefined;
 
   // Voice transcription — only when both a bot token (to fetch the file) and a
   // transcription (OpenAI) key are configured. Raw audio is never persisted:
@@ -423,6 +471,7 @@ export async function startBot(): Promise<{
         store,
         ai,
         interpretText,
+        classifyMessage,
         transcribe,
       }),
   };
@@ -476,6 +525,11 @@ export {
 export {
   createTextInterpreter,
   buildInterpretationPrompt,
+  createMessageClassifier,
+  buildClassifierPrompt,
   type InterpretedExpense,
   type TextInterpreter,
+  type InterpretedIntent,
+  type InterpretedObligation,
+  type MessageClassifier,
 } from "./interpret.js";
