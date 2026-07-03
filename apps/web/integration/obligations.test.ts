@@ -1,0 +1,163 @@
+/**
+ * Integration tests for the "/obligations" surface (recurring obligations).
+ *
+ * `buildObligationsData` — the same composition `loadObligationsData` performs
+ * — runs the REAL `@family-finance/db` repositories against the in-memory fake
+ * store (./fake-supabase.ts): active-obligation listing with remaining-term
+ * math, the current month's unpaid/paid split, the 12-month projection
+ * timeline, and mark-paid materialization (idempotent, anti-double-count).
+ */
+
+import { describe, it, expect } from "vitest";
+
+import type { AppSupabaseClient } from "@family-finance/db";
+import { materializeObligationPayment } from "@family-finance/db";
+
+import { buildObligationsData } from "../app/(app)/obligations/queries.js";
+import {
+  FakeSupabaseStore,
+  createFakeSupabaseClient,
+} from "./fake-supabase.js";
+
+const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
+const ALVARO = "11111111-1111-1111-1111-111111111111";
+const ACCOUNT = "acc-corrente";
+
+// Inside July 2026.
+const NOW = new Date("2026-07-15T12:00:00Z");
+
+function seededClient(): { client: AppSupabaseClient; store: FakeSupabaseStore } {
+  const store = new FakeSupabaseStore({
+    obligations: [
+      {
+        id: "ob-solar",
+        household_id: HOUSEHOLD,
+        description: "Parcela solar",
+        amount_cents: 71044,
+        start_month: "2026-05",
+        term_months: 72,
+        due_day: 5,
+        category_id: null,
+        subcategory_id: null,
+        responsibility_scope: "household",
+        responsible_user_id: null,
+        account_id: ACCOUNT,
+        status: "active",
+        created_by_user_id: ALVARO,
+      },
+      {
+        id: "ob-rent",
+        household_id: HOUSEHOLD,
+        description: "Aluguel",
+        amount_cents: 120000,
+        start_month: "2026-01",
+        term_months: null,
+        due_day: 10,
+        category_id: null,
+        subcategory_id: null,
+        responsibility_scope: "household",
+        responsible_user_id: null,
+        account_id: ACCOUNT,
+        status: "active",
+        created_by_user_id: ALVARO,
+      },
+      {
+        id: "ob-old",
+        household_id: HOUSEHOLD,
+        description: "Financiamento antigo",
+        amount_cents: 5000,
+        start_month: "2020-01",
+        term_months: 12,
+        due_day: 1,
+        category_id: null,
+        subcategory_id: null,
+        responsibility_scope: "household",
+        responsible_user_id: null,
+        account_id: ACCOUNT,
+        status: "canceled",
+        created_by_user_id: ALVARO,
+      },
+    ],
+  });
+  const client = createFakeSupabaseClient(store) as unknown as AppSupabaseClient;
+  return { client, store };
+}
+
+describe("buildObligationsData", () => {
+  it("lists active obligations with remaining-term math", async () => {
+    const { client } = seededClient();
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+
+    expect(data.month).toBe("2026-07");
+    expect(data.obligations.map((o) => o.description)).toEqual([
+      "Aluguel",
+      "Parcela solar",
+    ]);
+
+    const solar = data.obligations.find((o) => o.id === "ob-solar");
+    expect(solar?.endMonth).toBe("2032-04");
+    // Jul/2026 .. Apr/2032 inclusive = 70 months still to pay.
+    expect(solar?.remainingMonths).toBe(70);
+
+    const rent = data.obligations.find((o) => o.id === "ob-rent");
+    expect(rent?.endMonth).toBeNull();
+    expect(rent?.remainingMonths).toBeNull();
+  });
+
+  it("splits the current month into unpaid projections and paid actuals", async () => {
+    const { client } = seededClient();
+
+    // Pay the rent for July via the real repository + fake RPC.
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.thisMonth.unpaid.map((e) => e.obligationId)).toEqual([
+      "ob-solar",
+    ]);
+    expect(data.thisMonth.paid.map((p) => p.obligationId)).toEqual(["ob-rent"]);
+    expect(data.thisMonth.paid[0]?.amountCents).toBe(120000);
+  });
+
+  it("builds a 12-month timeline with paid months suppressed", async () => {
+    const { client } = seededClient();
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-08",
+    });
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.timeline).toHaveLength(12);
+    expect(data.timeline[0]?.month).toBe("2026-07");
+    expect(data.timeline[11]?.month).toBe("2027-06");
+
+    // July: solar + rent projected. August: rent paid -> its projection is
+    // suppressed (entries) but the month's commitment total stays constant.
+    expect(data.timeline[0]?.totalCents).toBe(71044 + 120000);
+    expect(data.timeline[1]?.entries.map((e) => e.obligationId)).toEqual([
+      "ob-solar",
+    ]);
+    expect(data.timeline[1]?.paidCents).toBe(120000);
+    expect(data.timeline[1]?.totalCents).toBe(71044 + 120000);
+  });
+
+  it("repeated mark-paid is an idempotent no-op (no double count)", async () => {
+    const { client } = seededClient();
+    const first = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+    const second = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+    expect(first.already_paid).toBe(false);
+    expect(second.already_paid).toBe(true);
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.thisMonth.paid).toHaveLength(1);
+    expect(data.timeline[0]?.totalCents).toBe(71044 + 120000);
+  });
+});

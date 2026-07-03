@@ -20,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/categories", label: "Categorias", icon: "tag" },
   { href: "/accounts", label: "Contas", icon: "bank" },
   { href: "/cards", label: "Cartões", icon: "card" },
+  { href: "/obligations", label: "Obrigações", icon: "bank" },
   { href: "/investments", label: "Investimentos", icon: "jar" },
   { href: "/settings", label: "Configurações", icon: "sliders" }
 ];
