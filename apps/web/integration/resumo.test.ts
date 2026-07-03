@@ -291,3 +291,37 @@ describe("buildResumoData", () => {
     ]);
   });
 });
+
+describe("buildResumoData — obrigações fixas", () => {
+  it("surfaces the month's fixed-obligation total (projected-unpaid + paid)", async () => {
+    const store = seedStore();
+    store.table("obligations").push({
+      id: "ob-solar",
+      household_id: HOUSEHOLD,
+      description: "Parcela solar",
+      amount_cents: 71044,
+      start_month: "2026-05",
+      term_months: 72,
+      due_day: 5,
+      category_id: null,
+      subcategory_id: null,
+      responsibility_scope: "household",
+      responsible_user_id: null,
+      account_id: "acc-corrente",
+      status: "active",
+      created_by_user_id: ALVARO,
+      created_at: "2026-05-01T00:00:00Z",
+      updated_at: "2026-05-01T00:00:00Z",
+    });
+    const obligationsClient = createFakeSupabaseClient(
+      store,
+    ) as unknown as AppSupabaseClient;
+    const data = await buildResumoData(obligationsClient, HOUSEHOLD, NOW);
+    expect(data.obligationsCents).toBe(71044);
+  });
+
+  it("is zero when the household has no obligations", async () => {
+    const data = await buildResumoData(client, HOUSEHOLD, NOW);
+    expect(data.obligationsCents).toBe(0);
+  });
+});
