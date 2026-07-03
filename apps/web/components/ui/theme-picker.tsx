@@ -12,6 +12,8 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { useToast } from "./toast";
+
 type ThemeId = "esmeralda" | "salvia";
 
 /** Swatch colors are theme-constant identity colors, verbatim from mockups. */
@@ -26,6 +28,7 @@ export function ThemePicker(props: {
 }) {
   const { current, onSelect } = props;
   const router = useRouter();
+  const toast = useToast();
   const [isPending, startTransition] = useTransition();
 
   function pick(theme: ThemeId): void {
@@ -33,8 +36,13 @@ export function ThemePicker(props: {
       return;
     }
     startTransition(async () => {
-      await onSelect(theme);
-      router.refresh();
+      try {
+        await onSelect(theme);
+        toast.success("Tema atualizado.");
+        router.refresh();
+      } catch {
+        toast.error("Não foi possível trocar o tema.");
+      }
     });
   }
 
