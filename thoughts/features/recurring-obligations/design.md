@@ -1,6 +1,6 @@
 # Recurring obligations + projections — design
 
-**Status:** design approved, awaiting spec review
+**Status:** review round 1 addressed (timeline + bot mark-paid pulled into scope)
 **Branch base:** `feat/family-finance-v1` (PR #2)
 **Date:** 2026-07-03
 
@@ -41,11 +41,8 @@ model for a boleto financing.
 
 ## Non-goals (this design)
 
-- Full projection-timeline UI (multi-month forward view). PR-1 ships only the
-  current-month view + the obligation list with remaining term. The timeline is
-  the "projections as a feature in itself" follow-up.
-- Marking a month paid **from the bot**. PR-1 does mark-paid in the dashboard
-  only.
+- Variable-amount obligations (bills whose amount changes month to month). MVP is
+  a fixed monthly amount.
 - Editing/paying **card** installments from the bot beyond what PR-2 adds.
 
 ## Core model (the keystone decision)
@@ -66,9 +63,20 @@ An **obligation is a template**, not a set of rows:
 ## PR plan
 
 Two PRs, both stacked on PR #2. The bot NLU is **one shared intent classifier**
-(`plain` | `card_installment` | `obligation`) that lands whole in PR-1 — it
-cannot detect obligations reliably without also recognizing card parcelas (to
-avoid mis-filing them).
+that lands whole in PR-1 — it cannot detect obligations reliably without also
+recognizing card parcelas (to avoid mis-filing them). Intents:
+
+- `plain` — a one-off expense (existing behavior).
+- `obligation` — create a recurring obligation.
+- `card_installment` — a card parcelado purchase.
+- `mark_paid` — settle something already recorded, with a `target`:
+  - `obligation` (e.g. `"placa solar pago"`) — match an obligation by keyword,
+    materialize this month's payment.
+  - `card` (e.g. `"nubank pago"`) — settle a credit-card bill.
+
+PR-1 wires `plain`, `obligation` (create), and `mark_paid{obligation}`. It
+**recognizes** `card_installment` and `mark_paid{card}` but replies "em breve";
+PR-2 wires both card paths.
 
 ### PR-1 — Obligations + unified interpreter
 
@@ -118,11 +126,12 @@ mapping stays thin.
 
 - `createObligation(draft)` — insert.
 - `listObligations(householdId)` — active obligations.
-- `materializeObligationPayment({ obligationId, month })` — atomic RPC (mirroring
-  `0002_create_installment_purchase.sql`) inserting one `transactions` row
-  (kind=expense, `occurred_on = month + dueDay`, `account_id`, category,
-  responsibility, `obligation_id`, `obligation_month`); idempotent per
-  `(obligation_id, month)` via the unique index.
+- `materializeObligationPayment({ obligationId, month, paidOn? })` — atomic RPC
+  (mirroring `0002_create_installment_purchase.sql`) inserting one `transactions`
+  row (kind=expense, `account_id`, category, responsibility, `obligation_id`,
+  `obligation_month`); idempotent per `(obligation_id, month)` via the unique
+  index. `occurred_on` = `paidOn` when supplied (bot: the message send date),
+  else `month + dueDay` (dashboard default).
 - Dashboard loader gains an `obligationsCents` line (this month's projected-unpaid
   + actual), folded into the existing reducer pattern
   ([repositories.ts](../../../packages/db/src/repositories.ts) ~188–221).
@@ -135,31 +144,54 @@ mapping stays thin.
 - Current-month view: each projected obligation has a **"marcar como pago"**
   button → `materializeObligationPayment` → becomes an actual, suppressing the
   projection.
+- **Projection timeline (in scope):** a rolling forward view (default next 12
+  months) of projected obligations per month, driven by `projectObligations`.
+  This is the first consumer of the reusable engine; keep the view thin so future
+  projection sources (income, recurring charges) can feed the same timeline.
 - Resumo shows the month's fixed-obligation total next to card pressure.
 
 **Bot — `apps/bot/src/`**
 
-- Interpreter becomes a **single intent classifier**: `plain` |
-  `card_installment` | `obligation`, emitting the right structured fields per
-  intent. For obligations it emits `{ monthlyAmountCents, termMonths|null,
-  startMonth, dueDay, category hint, responsible hint }`, disambiguating
-  per-month vs total by wording ("72x de X" / "X 72x" = per-month; "X em 72x" =
-  total → divide).
-- Confirmation is a **summary, not 72 lines**:
+- Interpreter becomes the **single intent classifier** described above, emitting
+  the right structured fields per intent. For `obligation` it emits
+  `{ monthlyAmountCents, termMonths|null, startMonth, dueDay, category hint,
+  responsible hint }`, disambiguating per-month vs total by wording ("72x de X" /
+  "X 72x" = per-month; "X em 72x" = total → divide). For `mark_paid` it emits
+  `{ target: "obligation" | "card", keyword }` (e.g. `"solar"`, `"nubank"`).
+- **Obligation create** — confirmation is a **summary, not 72 lines**:
   `Financiamento: Solar — R$710,44/mês × 72 (out/2026 → set/2032). Pago via:
   [conta]. Confirmar?` → on confirm, `createObligation`. Payment source defaults
   to household checking, editable. No card resolution (not card-bound).
-- `card_installment` intent is **recognized but not yet persisted** in PR-1 — the
-  bot replies honestly: `Compra parcelada no cartão ainda não dá pra registrar
-  por aqui — em breve. Por ora, cadastre em Cartões no painel.`
+- **`mark_paid{obligation}`** (`"placa solar pago"`) — match an active obligation
+  by keyword against its description. On a single match, `materializeObligationPayment`
+  for the current month with `paidOn` = the **message send date**. On 2+ matches,
+  the bot asks which (`"Solar ou Financiamento carro?"`); on none, replies not
+  found. Idempotent — a repeat "pago" for an already-settled month is a no-op.
+- **Deferred to PR-2 (recognized, replies "em breve"):**
+  - `card_installment` — `Compra parcelada no cartão ainda não dá pra registrar
+    por aqui — em breve. Por ora, cadastre em Cartões no painel.`
+  - `mark_paid{card}` — `Baixa de fatura do cartão ainda não está disponível por
+    aqui — em breve.`
 
-### PR-2 — Card-installment persistence
+### PR-2 — Card installments + card-bill payment
 
-- Route the already-classified `card_installment` intent →
-  `createInstallmentPlan` + card resolution ("Qual cartão?" when the household
-  has 2+ cards; auto when exactly one, reusing the existing `resolveCardId`
-  hook) + summary confirmation. Replaces the "em breve" reply. No re-parsing —
-  the interpreter already produced the intent in PR-1.
+- **Card installment persistence** — route the classified `card_installment`
+  intent → `createInstallmentPlan` + card resolution ("Qual cartão?" when the
+  household has 2+ cards; auto when exactly one, reusing the existing
+  `resolveCardId` hook) + summary confirmation. Replaces the "em breve" reply. No
+  re-parsing — the interpreter already produced the intent in PR-1.
+- **Card-bill payment** (`"nubank pago"`) — settle a card's monthly invoice by
+  creating a **payment transaction from the checking account to the card**, dated
+  to the message send date, for the amount of that month's invoice (sum of the
+  month's due installments + direct charges on that card).
+  - ⚠️ **Schema wrinkle to resolve in PR-2's own design:** `transactions` today
+    requires *exactly one* of `account_id`/`credit_card_id` (a single instrument),
+    but a card-bill payment is a **transfer** between two instruments (account →
+    card). This doesn't fit the current single-instrument row. PR-2 must decide:
+    a new `card_bill_payment` kind/table, a transfer representation, or a
+    `payment` transaction kind that relaxes the check. Do **not** assume the
+    obligation materialization shape carries over — it's a different movement.
+  - Match the card by keyword ("nubank") against card names; ask on ambiguity.
 
 ## Anti-double-count
 
@@ -172,14 +204,19 @@ no-op rather than a second charge.
 
 - **Domain:** `projectObligations` boundary tests — term end, indefinite, month
   math across year boundaries (reuse the `addMonths` approach); per-month vs
-  total amount resolution.
+  total amount resolution; rolling forward-window generation for the timeline.
 - **Repo/RLS:** household isolation; idempotent materialization (no double-pay);
-  correct `obligation_id`/`obligation_month` linkage.
-- **Bot:** interpreter classification tests for the three intents, including the
-  solar phrasing variants; obligation confirmation copy; `card_installment`
-  "em breve" reply; `createObligation` wiring (mocked client).
+  correct `obligation_id`/`obligation_month` linkage; `paidOn` override lands in
+  `occurred_on`.
+- **Bot:** interpreter classification across all four intents, including the solar
+  phrasing variants and `mark_paid` targets; obligation confirmation copy;
+  `mark_paid{obligation}` keyword match (single/ambiguous/none) with send-date
+  paidOn and idempotent repeat; deferred `card_installment` and `mark_paid{card}`
+  "em breve" replies; `createObligation` / `materializeObligationPayment` wiring
+  (mocked client).
 - **Web:** server-action tests for create + mark-paid; anti-double-count
-  (projection suppressed once a month is paid).
+  (projection suppressed once a month is paid); timeline renders the forward
+  window with paid months reconciled.
 
 ## Defaults (chosen; flag to change)
 
@@ -189,7 +226,8 @@ no-op rather than a second charge.
 
 ## Out of scope / future
 
-- Projection-timeline UI (the reusable engine is built for it; the UI is later).
-- Bot mark-paid.
 - Variable-amount obligations (e.g. bills that change monthly) — MVP is a fixed
   monthly amount.
+- Additional projection sources feeding the timeline (scheduled income, recurring
+  card charges) — the engine and timeline view are built to accept them, but only
+  obligations feed them in PR-1.
