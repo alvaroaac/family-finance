@@ -1,0 +1,11 @@
+# Route bot.alvaroekarol.com.br through the VPS's existing Traefik
+# (Hostinger Docker Manager: host-mode, docker provider, Let's Encrypt).
+# Lives in the repo so rsync-based deploys keep it.
+services:
+  bot:
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.ffbot.rule: Host(`bot.alvaroekarol.com.br`)
+      traefik.http.routers.ffbot.entrypoints: websecure
+      traefik.http.routers.ffbot.tls.certresolver: letsencrypt
+      traefik.http.services.ffbot.loadbalancer.server.port: "8787"
