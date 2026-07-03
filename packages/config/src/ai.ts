@@ -18,8 +18,12 @@
 /**
  * Current default Anthropic Claude model id for text interpretation. Override
  * per environment via `ANTHROPIC_MODEL` without touching code.
+ *
+ * Haiku is deliberate: the workload is closed-choice categorization and small
+ * structured extraction with a deterministic fallback, so the cheapest tier
+ * is sufficient (~$1/mo at ~20 tx/day vs ~$6 on Opus).
  */
-export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8";
+export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5";
 
 /** Default OpenAI transcription model (Whisper). */
 export const DEFAULT_TRANSCRIPTION_MODEL = "whisper-1";
