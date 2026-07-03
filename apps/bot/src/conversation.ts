@@ -11,8 +11,9 @@
  * (`ConversationDeps`) so the bot NEVER re-implements transaction/categorization
  * logic and so unit tests can mock the database, categorization, and Telegram
  * without any network. On confirm it builds the draft via `createTransactionDraft`
- * (default responsibility = the house), persists it, records `createdByUserId`
- * from the linked Telegram identity, and logs the interaction for auditing.
+ * (default responsibility = the SENDER; "responsável casa" moves it back to the
+ * house), persists it, records `createdByUserId` from the linked Telegram
+ * identity, and logs the interaction for auditing.
  */
 
 import { createTransactionDraft } from "@family-finance/domain";
@@ -27,7 +28,7 @@ import type {
   CategoryCatalog,
 } from "@family-finance/categorization";
 
-import { parseExpenseText } from "./parser.js";
+import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
 import type { InterpretedExpense, TextInterpreter } from "./interpret.js";
 import {
   transcribeVoiceMessage,
@@ -121,6 +122,8 @@ export type ConversationDeps = {
   resolveAccountId: () => string | undefined;
   /** Map a free-text name to a responsible user id (or undefined = the house). */
   resolveResponsibleUserId: (name: string) => string | undefined;
+  /** Map a member user id to their display name (for the summary). */
+  memberDisplayName?: (userId: string) => string | undefined;
   /** Categorization engine call (wired to @family-finance/categorization). */
   suggestCategory: (
     context: CategorizationContext,
@@ -133,9 +136,11 @@ export type ConversationDeps = {
   /** Record the interaction for auditing (wired to bot_interactions). */
   logInteraction: (entry: BotInteractionLog) => Promise<void>;
   /**
-   * OPTIONAL LLM fallback (spec §3.4): consulted in `startConversation` ONLY
-   * when the deterministic parser finds no amount. Corrections stay
-   * deterministic. The result still lands behind the confirmation step.
+   * OPTIONAL LLM interpretation (spec §3.4): consulted on EVERY new entry in
+   * `startConversation` for a clean description + category hint; the
+   * deterministic parser stays the source of truth for amount/date (the LLM
+   * only fills what the parser missed). Corrections stay deterministic. The
+   * result still lands behind the confirmation step.
    */
   interpretText?: TextInterpreter;
 };
@@ -183,21 +188,31 @@ function paymentLabel(draft: DraftInProgress): string {
   return "Conta";
 }
 
-function responsibleLabel(draft: DraftInProgress): string {
-  return draft.responsibleUserId !== undefined ? "Pessoa específica" : "Casa";
+function responsibleLabel(
+  draft: DraftInProgress,
+  deps: ConversationDeps,
+): string {
+  if (draft.responsibleUserId === undefined) {
+    return "Casa";
+  }
+  return deps.memberDisplayName?.(draft.responsibleUserId) ?? "Pessoa específica";
 }
 
 function summaryView(
   draft: DraftInProgress,
-  catalog: CategoryCatalog,
+  deps: ConversationDeps,
 ): SummaryView {
   return {
     amountCents: draft.amountCents,
     description: draft.description,
     occurredOn: draft.occurredOn,
-    categoryLabel: categoryLabel(catalog, draft.categoryId, draft.subcategoryId),
+    categoryLabel: categoryLabel(
+      deps.catalog,
+      draft.categoryId,
+      draft.subcategoryId,
+    ),
     paymentLabel: paymentLabel(draft),
-    responsibleLabel: responsibleLabel(draft),
+    responsibleLabel: responsibleLabel(draft, deps),
     categoryExplanation: draft.categoryExplanation,
     needsAttention: draft.needsAttention,
   };
@@ -211,12 +226,12 @@ function statusForDraft(draft: DraftInProgress): ConversationStatus {
 
 function replyForDraft(
   draft: DraftInProgress,
-  catalog: CategoryCatalog,
+  deps: ConversationDeps,
 ): string {
   if (draft.amountCents === undefined) {
     return needsAmountMessage(draft.description);
   }
-  return confirmationMessage(summaryView(draft, catalog));
+  return confirmationMessage(summaryView(draft, deps));
 }
 
 // ---------------------------------------------------------------------------
@@ -230,35 +245,44 @@ export async function startConversation(
 ): Promise<ConversationOutcome> {
   const parsed = parseExpenseText(input.text, { today: options.today });
 
-  // LLM fallback (spec §3.4): ONLY when the deterministic parser found no
-  // amount and an interpreter is configured. It sees the ORIGINAL text; any
-  // failure (null/throw) keeps today's "rephrase" behavior unchanged. The
-  // result feeds the SAME draft + confirmation path — never a direct save.
+  // LLM interpretation (spec §3.4): ALWAYS consulted when configured — its
+  // clean description + category hint beat the parser's crude leftovers. It
+  // sees the ORIGINAL text; any failure (null/throw) keeps the parser-only
+  // behavior. The result feeds the SAME draft + confirmation path — never a
+  // direct save.
   let interpreted: InterpretedExpense | null = null;
-  if (parsed.amountCents === undefined && deps.interpretText !== undefined) {
+  if (deps.interpretText !== undefined) {
     interpreted = await deps
       .interpretText(input.text, { today: options.today })
       .catch(() => null);
   }
 
   const inputKind: BotInputKind = input.inputKind ?? "text";
-  const description =
-    interpreted !== null ? interpreted.description : parsed.description;
+  const description = stripEdgePunctuation(
+    interpreted?.description ?? parsed.description,
+  );
+  const dateUncertain = parsed.uncertainFields.includes("date");
   const draft: DraftInProgress = {
-    amountCents: interpreted?.amountCents ?? parsed.amountCents,
+    // The deterministic parser owns amount and date; the LLM only fills what
+    // the parser missed.
+    amountCents: parsed.amountCents ?? interpreted?.amountCents,
     description,
-    occurredOn:
-      interpreted?.occurredOn ?? parsed.occurredOn ?? options.today,
+    occurredOn: dateUncertain
+      ? (interpreted?.occurredOn ?? parsed.occurredOn ?? options.today)
+      : (parsed.occurredOn ?? options.today),
     kind: "expense",
     createdByUserId: input.fromUserId,
+    // Responsibility defaults to the SENDER; "responsável casa" (or an
+    // interpreted hint) moves it back to the house.
+    responsibleUserId: input.fromUserId || undefined,
     inputKind,
     needsAttention:
       // Audio always merits a closer look (transcription can be imperfect),
-      // and so does anything the LLM interpreted instead of the parser.
+      // and so do an uncertain amount or date. The interpreter running is
+      // NOT a signal by itself — it runs on every message.
       inputKind === "audio" ||
-      interpreted !== null ||
       parsed.uncertainFields.includes("amount") ||
-      parsed.uncertainFields.includes("date"),
+      dateUncertain,
   };
 
   // A responsible-person hint is a free-text NAME: it goes through the same
@@ -304,7 +328,7 @@ export async function startConversation(
     status: statusForDraft(draft),
     draft,
   };
-  return { state, reply: replyForDraft(draft, deps.catalog) };
+  return { state, reply: replyForDraft(draft, deps) };
 }
 
 // ---------------------------------------------------------------------------
@@ -605,6 +629,6 @@ export async function applyMessage(
         : correction.field === "category"
           ? "a categoria"
           : "o responsável";
-  const reply = `${correctionAppliedMessage(fieldLabel)}\n\n${replyForDraft(draft, deps.catalog)}`;
+  const reply = `${correctionAppliedMessage(fieldLabel)}\n\n${replyForDraft(draft, deps)}`;
   return { state: next, reply };
 }

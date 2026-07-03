@@ -53,6 +53,9 @@ describe("createTextInterpreter", () => {
     expect(prompt).toContain("amount_cents");
     // pt-BR instructions (warm household bot speaks Portuguese to the model too).
     expect(prompt).toMatch(/JSON/);
+    // description must be JUST the merchant/service, not "Gasto X valor".
+    expect(prompt).toMatch(/estabelecimento|serviço/i);
+    expect(prompt).toMatch(/"gasto"/i);
   });
 
   it("accepts optional fields as absent or null", async () => {

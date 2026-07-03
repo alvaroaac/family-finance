@@ -1,15 +1,17 @@
 /**
- * LLM text interpretation fallback for the Telegram bot (spec §3.4).
+ * LLM text interpretation for the Telegram bot (spec §3.4).
  *
- * When the deterministic parser (`parseExpenseText`) cannot extract an amount
- * from a message, the conversation layer may pass the ORIGINAL text through
- * this interpreter: a single pt-BR prompt asks the model for a STRICT JSON
- * object with the expense fields, validated here with zod.
+ * The conversation layer passes EVERY new entry's ORIGINAL text through this
+ * interpreter (when configured) for a clean merchant description + category
+ * hint: a single pt-BR prompt asks the model for a STRICT JSON object with
+ * the expense fields, validated here with zod. The deterministic parser
+ * remains the source of truth for amount/date — the LLM only fills what the
+ * parser missed.
  *
- * Fallback, NOT replacement: the result feeds the exact same draft +
+ * Assistant, NOT decision-maker: the result feeds the exact same draft +
  * confirmation flow — the model never saves anything and the user always sees
  * the editable summary and must "confirmar". Any API/parse/validation failure
- * returns `null`, so callers keep today's "rephrase" behavior unchanged.
+ * returns `null`, so callers keep the parser-only behavior unchanged.
  *
  * Reuses the provider-agnostic `AiCompletionClient` interface the
  * categorization engine already injects (Anthropic in production), so the bot
@@ -69,7 +71,7 @@ export function buildInterpretationPrompt(text: string, today: string): string {
     "",
     "Regras:",
     "- amount_cents é o valor em CENTAVOS de real (R$ 32,50 -> 3250); null se a mensagem não indicar valor.",
-    "- description é um resumo curto do que foi comprado/pago, em português.",
+    '- description é APENAS o nome do estabelecimento ou serviço (ex.: "OpenAI", "Uber", "Padaria"), sem palavras como "gasto", "compra" ou "valor".',
     '- occurred_on resolve datas relativas ("ontem", "sábado") usando a data de hoje; null se não houver data.',
     '- category_hint é uma sugestão livre de categoria (ex.: "Alimentação"); null se não estiver claro.',
     '- responsible_hint é o nome da pessoa responsável, SOMENTE se a mensagem citar uma (ex.: "foi a Karol quem pagou"); null caso contrário.',

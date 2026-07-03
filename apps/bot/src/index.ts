@@ -4,7 +4,7 @@
  * Telegram entry point. The bot is a THIN consumer of the shared core: it parses
  * a Portuguese message into a draft, asks the categorization engine
  * (@family-finance/categorization) for a suggestion, builds the transaction via
- * @family-finance/domain (default responsibility = the house, createdByUserId =
+ * @family-finance/domain (default responsibility = the sender, createdByUserId =
  * the linked Telegram identity), and persists it via @family-finance/db — exactly
  * like the web app. It never re-implements transaction or categorization logic.
  *
@@ -180,6 +180,10 @@ async function buildDeps(
       );
       return matches.length === 1 ? matches[0]?.userId : undefined;
     },
+    // Show the responsible member's display name in the confirmation summary.
+    memberDisplayName: (userId: string) =>
+      members.find((member) => member.isActive && member.userId === userId)
+        ?.displayName ?? undefined,
     // AI is the LAST resort inside the engine: it fires only when memory and
     // deterministic rules are uncertain. Omitted when no AI key is configured.
     suggestCategory: (context: CategorizationContext) =>
@@ -200,8 +204,9 @@ async function buildDeps(
         transaction_id: entry.transactionId ?? null,
       });
     },
-    // LLM text interpretation fallback (spec §3.4) — only consulted when the
-    // deterministic parser finds no amount; result stays behind confirmation.
+    // LLM text interpretation (spec §3.4) — consulted on every new entry for a
+    // clean description + category hint; the deterministic parser stays the
+    // amount/date source. Result stays behind confirmation.
     interpretText,
   };
 }

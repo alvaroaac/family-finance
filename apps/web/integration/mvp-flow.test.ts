@@ -600,8 +600,10 @@ describe("MVP review loop — Telegram text entry", () => {
     expect(tx?.credit_card_id).toBe(CARD);
     expect(tx?.occurred_on).toBe(TODAY);
     expect(tx?.created_by_user_id).toBe(ALVARO);
-    // Default responsibility is the house unless a person was chosen.
-    expect(tx?.responsibility_scope).toBe("household");
+    // Default responsibility is the SENDER (2026-07-03 bot fix); "responsável
+    // casa" moves it back to the house.
+    expect(tx?.responsibility_scope).toBe("user");
+    expect(tx?.responsible_user_id).toBe(ALVARO);
 
     // The interaction was logged for auditing.
     expect(store.table("bot_interactions")).toHaveLength(1);

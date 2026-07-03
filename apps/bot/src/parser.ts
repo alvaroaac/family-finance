@@ -150,6 +150,18 @@ function extractDate(
 const CARD_WORDS = /\b(cartao|cartão|credito|crédito|fatura)\b/i;
 const ACCOUNT_WORDS = /\b(debito|débito|conta|pix|dinheiro|corrente)\b/i;
 
+const EDGE_PUNCTUATION_RE =
+  /^[\s.,;:!?…"'`´“”‘’()[\]{}\-–—]+|[\s.,;:!?…"'`´“”‘’()[\]{}\-–—]+$/g;
+
+/**
+ * Strip leading/trailing punctuation from a description ("Tabacaria," ->
+ * "Tabacaria"). Shared final normalization for BOTH description sources:
+ * the deterministic parser below and the LLM interpreter (conversation.ts).
+ */
+export function stripEdgePunctuation(value: string): string {
+  return value.replace(EDGE_PUNCTUATION_RE, "");
+}
+
 /**
  * Parse a Portuguese expense message into a rough draft.
  *
@@ -190,14 +202,16 @@ export function parseExpenseText(
   const accountHint = !cardHint && ACCOUNT_WORDS.test(text);
 
   // Description: strip payment-hint words and collapse whitespace.
-  const description = remaining
-    .replace(/\b(no|na|de|do|da|em|com|pelo|pela)\b/gi, " ")
-    .replace(CARD_WORDS, " ")
-    .replace(ACCOUNT_WORDS, " ")
-    .replace(/r\$/gi, " ")
-    .replace(/\b(reais|real)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const description = stripEdgePunctuation(
+    remaining
+      .replace(/\b(no|na|de|do|da|em|com|pelo|pela)\b/gi, " ")
+      .replace(CARD_WORDS, " ")
+      .replace(ACCOUNT_WORDS, " ")
+      .replace(/r\$/gi, " ")
+      .replace(/\b(reais|real)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
 
   // We never auto-assign a category here; the categorization engine does that.
   uncertainFields.push("category");

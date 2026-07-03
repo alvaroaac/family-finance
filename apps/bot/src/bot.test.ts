@@ -100,6 +100,13 @@ describe("parseExpenseText", () => {
     expect(parsed.occurredOn).toBe(TODAY);
     expect(parsed.uncertainFields).toContain("date");
   });
+
+  it("strips leading/trailing punctuation from the description", () => {
+    const parsed = parseExpenseText("Tabacaria, 25 reais", { today: TODAY });
+    expect(parsed.description).toBe("Tabacaria");
+    const trailing = parseExpenseText("25 reais na Padaria.", { today: TODAY });
+    expect(trailing.description).toBe("Padaria");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -262,15 +269,16 @@ describe("conversation: text -> confirmed transaction", () => {
 
     const savedDraft = firstCallArg(createTransaction) as {
       createdByUserId: string;
-      responsibility: { scope: string };
+      responsibility: { scope: string; userId?: string };
       amount: { cents: number };
       category: { categoryId?: string };
       payment: { type: string };
     };
     // createdByUserId is the linked Telegram identity.
     expect(savedDraft.createdByUserId).toBe("user-alvaro");
-    // Responsibility defaults to the house.
-    expect(savedDraft.responsibility.scope).toBe("household");
+    // Responsibility defaults to the SENDER (2026-07-03 bugfix).
+    expect(savedDraft.responsibility.scope).toBe("user");
+    expect(savedDraft.responsibility.userId).toBe("user-alvaro");
     expect(savedDraft.amount.cents).toBe(3200);
     expect(savedDraft.category.categoryId).toBe("cat-transport");
     // Success reply confirms the save.
@@ -350,6 +358,45 @@ describe("conversation: text -> confirmed transaction", () => {
       deps,
     );
     expect(corrected.state.draft.categoryId).toBe("cat-food");
+  });
+
+  it("defaults responsibility to the Telegram sender", async () => {
+    const started = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(started.state.draft.responsibleUserId).toBe("user-alvaro");
+  });
+
+  it('"responsável casa" moves responsibility back to the house', async () => {
+    // Default resolver knows no member named "casa" -> undefined = the house.
+    const started = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const corrected = await applyMessage(started.state, "responsável casa", deps);
+    expect(corrected.state.draft.responsibleUserId).toBeUndefined();
+
+    await applyMessage(corrected.state, "confirmar", deps);
+    const savedDraft = firstCallArg(createTransaction) as {
+      responsibility: { scope: string };
+    };
+    expect(savedDraft.responsibility.scope).toBe("household");
+  });
+
+  it("shows the sender's display name as responsável in the summary", async () => {
+    ({ deps } = buildDeps({
+      memberDisplayName: (userId: string) =>
+        userId === "user-alvaro" ? "Alvaro" : undefined,
+    }));
+    const { reply } = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(reply).toContain("Responsável: Alvaro");
   });
 
   it("cancels without persisting", async () => {
@@ -536,11 +583,55 @@ describe("AI fallback in the bot flow", () => {
   });
 });
 
-describe("LLM text interpretation fallback (parser miss -> interpretText)", () => {
-  it("NEVER calls the interpreter when the deterministic parser found an amount", async () => {
-    const interpretText = vi.fn<TextInterpreter>(
-      async () => null,
+describe("LLM text interpretation (always runs; parser owns amount/date)", () => {
+  it("calls the interpreter even when the parser found an amount; parser amount/date win, LLM description wins", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      amountCents: 9999, // must NOT beat the parser's amount
+      description: "OpenAI",
+      occurredOn: "2026-01-01", // must NOT beat the parser's explicit date
+      categoryHint: "Assinaturas",
+    }));
+    const { deps } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      {
+        text: "Gasto em OpenAI no valor de 56,13 reais ontem",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
     );
+
+    expect(interpretText).toHaveBeenCalledTimes(1);
+    expect(interpretText).toHaveBeenCalledWith(
+      "Gasto em OpenAI no valor de 56,13 reais ontem",
+      { today: TODAY },
+    );
+    expect(outcome.state.draft.amountCents).toBe(5613);
+    expect(outcome.state.draft.occurredOn).toBe("2026-06-21");
+    expect(outcome.state.draft.description).toBe("OpenAI");
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+  });
+
+  it("does not flag needsAttention just because the interpreter ran", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      description: "Uber",
+    }));
+    const { deps } = buildDeps({ interpretText });
+
+    // Amount AND date are deterministic -> nothing merits extra attention.
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(interpretText).toHaveBeenCalledTimes(1);
+    expect(outcome.state.draft.needsAttention).toBe(false);
+  });
+
+  it("keeps the parser description when the interpreter fails", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => null);
     const { deps } = buildDeps({ interpretText });
 
     const outcome = await startConversation(
@@ -549,9 +640,25 @@ describe("LLM text interpretation fallback (parser miss -> interpretText)", () =
       { today: TODAY },
     );
 
-    expect(interpretText).not.toHaveBeenCalled();
+    expect(interpretText).toHaveBeenCalledTimes(1);
     expect(outcome.state.status).toBe("awaiting_confirmation");
     expect(outcome.state.draft.amountCents).toBe(3200);
+    expect(outcome.state.draft.description.toLowerCase()).toContain("uber");
+  });
+
+  it("strips leading/trailing punctuation from an LLM description", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      description: "OpenAI,",
+    }));
+    const { deps } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      { text: "Gasto em OpenAI 56,13 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.draft.description).toBe("OpenAI");
   });
 
   it("parser miss + interpreter success -> awaiting_confirmation with the interpreted fields (still no save)", async () => {
