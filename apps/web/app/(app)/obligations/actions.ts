@@ -8,6 +8,7 @@ import {
   createObligation,
   findHouseholdIdForCurrentUser,
   materializeObligationPayment,
+  updateObligation,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -103,6 +104,27 @@ export async function createObligationAction(
   }
 
   await createObligation(client, result.value);
+  revalidateObligationPaths();
+}
+
+/** Edit an obligation's amount, due day, and description. */
+export async function updateObligationAction(
+  formData: FormData,
+): Promise<void> {
+  const { householdId, client } = await authedHousehold();
+  const obligationId = requireField(formData, "obligationId");
+
+  const amountCents = parseReaisToCents(requireField(formData, "amount"));
+  if (amountCents === null || amountCents <= 0) {
+    throw new Error("Valor mensal inválido — use por exemplo 710,44.");
+  }
+  const dueDay = Number.parseInt(requireField(formData, "dueDay"), 10);
+
+  await updateObligation(client, householdId, obligationId, {
+    description: requireField(formData, "description"),
+    amountCents,
+    dueDay,
+  });
   revalidateObligationPaths();
 }
 

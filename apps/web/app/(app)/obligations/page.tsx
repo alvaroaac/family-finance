@@ -22,6 +22,7 @@ import {
   cancelObligationAction,
   createObligationAction,
   markObligationPaidAction,
+  updateObligationAction,
 } from "./actions";
 
 export const metadata = {
@@ -187,6 +188,52 @@ export default async function ObligationsPage() {
                 </div>
               </div>
               <div className="ff-actions">
+                <form
+                  action={updateObligationAction}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    flex: 1,
+                    minWidth: 220,
+                  }}
+                >
+                  <input type="hidden" name="obligationId" value={item.id} />
+                  <Input
+                    type="text"
+                    name="description"
+                    defaultValue={item.description}
+                    required
+                    className="ff-input--compact"
+                    aria-label={`Descrição de ${item.description}`}
+                  />
+                  <Input
+                    type="text"
+                    name="amount"
+                    defaultValue={(item.amountCents / 100)
+                      .toFixed(2)
+                      .replace(".", ",")}
+                    required
+                    className="ff-input--compact"
+                    aria-label={`Valor mensal de ${item.description}`}
+                    style={{ maxWidth: 110 }}
+                  />
+                  <Input
+                    type="number"
+                    name="dueDay"
+                    min={1}
+                    max={28}
+                    defaultValue={item.dueDay}
+                    required
+                    className="ff-input--compact"
+                    aria-label={`Dia de vencimento de ${item.description}`}
+                    style={{ maxWidth: 80 }}
+                  />
+                  <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                    Salvar
+                  </button>
+                </form>
                 <form action={cancelObligationAction}>
                   <input type="hidden" name="obligationId" value={item.id} />
                   <Button variant="danger" type="submit">

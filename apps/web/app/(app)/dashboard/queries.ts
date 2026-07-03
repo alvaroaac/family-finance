@@ -16,6 +16,7 @@ import {
   findHouseholdIdForCurrentUser,
   getMonthlySummary,
   getCardPressure,
+  getObligationsPressure,
   findUpcomingInstallments,
   findRecentTransactions,
   findPendingReviewTransactions,
@@ -39,6 +40,8 @@ export type DashboardData = {
   month: string;
   summary: MonthlySummary;
   cardPressure: CardPressure;
+  /** This month's fixed obligations (projected-unpaid + paid actuals). */
+  obligationsCents: number;
   upcomingInstallments: UpcomingInstallment[];
   buckets: InvestmentBucketRow[];
   /** Total of all caixinha balances (manual positions), in cents. */
@@ -55,6 +58,7 @@ function emptyDashboard(month: string, loadError: string | null): DashboardData 
     month,
     summary: { month, incomeCents: 0, expenseCents: 0, balanceCents: 0 },
     cardPressure: { month, directCents: 0, installmentCents: 0, totalCents: 0 },
+    obligationsCents: 0,
     upcomingInstallments: [],
     buckets: [],
     bucketsTotalCents: 0,
@@ -82,20 +86,29 @@ export async function loadDashboardData(
       return emptyDashboard(month, null);
     }
 
-    const [summary, cardPressure, upcomingInstallments, buckets, recent, pendingReview] =
-      await Promise.all([
-        getMonthlySummary(client, householdId, month),
-        getCardPressure(client, householdId, month),
-        findUpcomingInstallments(client, householdId, month),
-        listInvestmentBuckets(client, householdId),
-        findRecentTransactions(client, householdId),
-        findPendingReviewTransactions(client, householdId),
-      ]);
+    const [
+      summary,
+      cardPressure,
+      obligationsPressure,
+      upcomingInstallments,
+      buckets,
+      recent,
+      pendingReview,
+    ] = await Promise.all([
+      getMonthlySummary(client, householdId, month),
+      getCardPressure(client, householdId, month),
+      getObligationsPressure(client, householdId, month),
+      findUpcomingInstallments(client, householdId, month),
+      listInvestmentBuckets(client, householdId),
+      findRecentTransactions(client, householdId),
+      findPendingReviewTransactions(client, householdId),
+    ]);
 
     return {
       month,
       summary,
       cardPressure,
+      obligationsCents: obligationsPressure.totalCents,
       upcomingInstallments,
       buckets,
       bucketsTotalCents: bucketsTotalCents(buckets),
