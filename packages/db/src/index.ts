@@ -82,6 +82,10 @@ export type {
   BotInteractionInsert,
   BotConversationRow,
   BotConversationInsert,
+  ObligationStatus,
+  ObligationRow,
+  ObligationInsert,
+  MaterializeObligationPaymentResult,
 } from "./types.js";
 
 // Repository functions and pure mappers.
@@ -99,6 +103,10 @@ export type {
   TransactionPatch,
   HouseholdMemberProfile,
   BotMemberIdentity,
+  PersistedObligation,
+  ObligationChanges,
+  ObligationPaymentKey,
+  ObligationsPressure,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -176,4 +184,17 @@ export {
   loadBotConversation,
   saveBotConversation,
   deleteBotConversation,
+  // Obligations (recurring fixed obligations — migration 0011).
+  obligationInsertFromDraft,
+  mapObligationRow,
+  obligationUpdateFromChanges,
+  obligationMonthYm,
+  summarizeObligationsPressure,
+  createObligation,
+  listObligations,
+  cancelObligation,
+  updateObligation,
+  materializeObligationPayment,
+  listObligationPayments,
+  getObligationsPressure,
 } from "./repositories.js";

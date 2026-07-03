@@ -29,6 +29,7 @@ export type ImportBatchStatus =
   | "discarded";
 export type ResponsibilityScope = "household" | "user";
 export type BotChannel = "telegram";
+export type ObligationStatus = "active" | "ended" | "canceled";
 
 // --- Row shapes ------------------------------------------------------------
 
@@ -115,6 +116,37 @@ export type TransactionRow = {
   responsible_user_id: string | null;
   created_by_user_id: string;
   import_batch_id: string | null;
+  /** Set when this row materializes an obligation month (migration 0011). */
+  obligation_id: string | null;
+  /** First day of the satisfied month (date), when obligation_id is set. */
+  obligation_month: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * A recurring fixed obligation TEMPLATE (migration 0011). Months are projected
+ * from it; marking a month paid materializes one transactions row linked via
+ * obligation_id/obligation_month.
+ */
+export type ObligationRow = {
+  id: string;
+  household_id: string;
+  description: string;
+  amount_cents: number;
+  /** `YYYY-MM` first month due. */
+  start_month: string;
+  /** Fixed term in months, or null = indefinite. */
+  term_months: number | null;
+  /** 1–28. */
+  due_day: number;
+  category_id: string | null;
+  subcategory_id: string | null;
+  responsibility_scope: ResponsibilityScope;
+  responsible_user_id: string | null;
+  account_id: string;
+  status: ObligationStatus;
+  created_by_user_id: string;
   created_at: string;
   updated_at: string;
 };
@@ -254,7 +286,29 @@ export type TransactionInsert = Insertable<
   | "responsibility_scope"
   | "responsible_user_id"
   | "import_batch_id"
+  | "obligation_id"
+  | "obligation_month"
 >;
+
+export type ObligationInsert = Insertable<
+  ObligationRow,
+  | "category_id"
+  | "subcategory_id"
+  | "responsibility_scope"
+  | "responsible_user_id"
+  | "term_months"
+  | "status"
+>;
+
+/**
+ * Shape returned by `materialize_obligation_payment` (migration 0011): the
+ * materialized (or pre-existing) transactions row plus whether the month had
+ * already been paid (idempotent no-op).
+ */
+export type MaterializeObligationPaymentResult = {
+  transaction: TransactionRow;
+  already_paid: boolean;
+};
 
 export type ImportBatchInsert = Insertable<
   ImportBatchRow,
@@ -418,6 +472,7 @@ export type Database = {
       categories: TableDef<CategoryRow, Partial<CategoryRow>>;
       subcategories: TableDef<SubcategoryRow, Partial<SubcategoryRow>>;
       transactions: TableDef<TransactionRow, TransactionInsert>;
+      obligations: TableDef<ObligationRow, ObligationInsert>;
       installment_groups: TableDef<
         InstallmentGroupRow,
         Partial<InstallmentGroupRow>
@@ -468,6 +523,18 @@ export type Database = {
       // onto the target and archive the source, all in one transaction. See
       // supabase/migrations/0003_merge_category.sql. Returns a jsonb summary
       // (archived source row + per-table moved counts) the repository ignores.
+      // Atomic, idempotent obligation-month materialization: insert ONE
+      // expense transaction linked via obligation_id/obligation_month, or
+      // return the existing one (already_paid = true). See
+      // supabase/migrations/0011_create_obligations.sql.
+      materialize_obligation_payment: {
+        Args: {
+          target_obligation_id: string;
+          target_month: string;
+          paid_on?: string | null;
+        };
+        Returns: MaterializeObligationPaymentResult;
+      };
       merge_category: {
         Args: {
           target_household_id: string;
