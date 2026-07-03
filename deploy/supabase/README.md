@@ -9,7 +9,7 @@ is cloned from the upstream repo at a tagged release and configured with our
 
 ```bash
 # On the VPS. Pin to a tagged release — never track master for a live stack.
-git clone --depth 1 --branch v1.25.05 https://github.com/supabase/supabase.git /opt/supabase-src
+git clone --depth 1 --branch v1.24.09 https://github.com/supabase/supabase.git /opt/supabase-src
 mkdir -p /opt/supabase
 cp -r /opt/supabase-src/docker/* /opt/supabase/
 cd /opt/supabase
@@ -70,3 +70,10 @@ against a scratch database).
 Upgrade by bumping the pinned tag, re-copying `docker/`, diffing `.env` against
 the new template, then `docker compose pull && docker compose up -d`. Take a
 manual `pg_dump` immediately before any upgrade.
+
+## Deployed
+
+- **2026-07-02**: tag `v1.24.09` on the Hostinger VPS (mine-ops, 2.24.71.244),
+  routed by the VPS's existing Traefik (host-mode, docker provider, Let's
+  Encrypt) via `docker-compose.override.yml` labels on Kong — the Caddy file in
+  this tree was NOT used. Bot routed the same way. Nightly pg_dump cron active.
