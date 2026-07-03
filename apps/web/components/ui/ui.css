@@ -2410,6 +2410,37 @@ a.ff-callout:hover {
   }
 }
 
+/* ---- Skeleton (route-level loading.tsx) --------------------------------- */
+
+/* Calm shimmer block for loading states; respects reduced motion. */
+.ff-skeleton {
+  border-radius: var(--ff-radius-sm);
+  background: linear-gradient(
+    100deg,
+    var(--ff-surface-soft) 30%,
+    var(--ff-tint) 50%,
+    var(--ff-surface-soft) 70%
+  );
+  background-size: 200% 100%;
+  animation: ffShimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-skeleton {
+    animation: none;
+    background: var(--ff-surface-soft);
+  }
+}
+
+@keyframes ffShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 /* ---- Motion ---------------------------------------------------------- */
 
 @keyframes ffFadeUp {
