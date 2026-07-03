@@ -158,7 +158,10 @@ async function buildDeps(
   return {
     householdId,
     catalog,
-    defaultAccountId: checking?.id ?? "",
+    // undefined (not "") when the household has no account — `persist` then
+    // refuses a non-card lançamento with a clear message instead of building
+    // an invalid empty accountId.
+    defaultAccountId: checking?.id,
     resolveCardId: () => cards[0]?.id,
     resolveAccountId: () => checking?.id,
     // Map a spoken name ("responsável Karol") to an active member by

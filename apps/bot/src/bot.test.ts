@@ -185,6 +185,46 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
   return { deps, createTransaction, logInteraction };
 }
 
+describe("conversation: save-time validation errors", () => {
+  it("no account and no card -> friendly pt-BR message, does not persist", async () => {
+    const { deps, createTransaction } = buildDeps({
+      // Household with no account at all (production `defaultAccountId` is "").
+      defaultAccountId: "",
+      resolveCardId: () => undefined,
+      resolveAccountId: () => undefined,
+    });
+
+    const started = await startConversation(
+      { text: "Tabacaria 25 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const confirmed = await applyMessage(started.state, "confirmar", deps);
+
+    expect(createTransaction).not.toHaveBeenCalled();
+    // Intuitive reason — never the raw Zod "String must contain at least 1 character".
+    expect(confirmed.reply).not.toMatch(/at least 1 character/i);
+    expect(confirmed.reply).toMatch(/conta/i);
+    expect(confirmed.reply).toMatch(/cadastr/i);
+  });
+
+  it("surfaces the offending field in pt-BR, not the raw Zod message", async () => {
+    // Empty createdByUserId makes the domain reject createdByUserId (min 1),
+    // exercising the generic field -> pt-BR mapping (the account is valid here).
+    const { deps, createTransaction } = buildDeps();
+    const started = await startConversation(
+      { text: "Tabacaria 25 reais", fromUserId: "" },
+      deps,
+      { today: TODAY },
+    );
+    const confirmed = await applyMessage(started.state, "confirmar", deps);
+
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(confirmed.reply).not.toMatch(/at least 1 character/i);
+    expect(confirmed.reply).toMatch(/identificar/i);
+  });
+});
+
 describe("conversation: text -> confirmed transaction", () => {
   let deps: ConversationDeps;
   let createTransaction: ReturnType<typeof vi.fn>;

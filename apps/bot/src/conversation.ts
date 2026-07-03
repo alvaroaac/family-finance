@@ -19,6 +19,7 @@ import { createTransactionDraft } from "@family-finance/domain";
 import type {
   TransactionDraft,
   TransactionKind,
+  ValidationError,
 } from "@family-finance/domain";
 import type {
   CategorizationContext,
@@ -108,8 +109,12 @@ export type BotInteractionLog = {
 export type ConversationDeps = {
   householdId: string;
   catalog: CategoryCatalog;
-  /** Account used when the user did not specify card/account. */
-  defaultAccountId: string;
+  /**
+   * Account used when the user did not specify card/account. `undefined` when
+   * the household has no account at all — `persist` then refuses a non-card
+   * lançamento with a clear message instead of an empty accountId.
+   */
+  defaultAccountId: string | undefined;
   /** Resolve a card id from a card hint (e.g. the household's single card). */
   resolveCardId: () => string | undefined;
   /** Resolve an account id from an account hint. */
@@ -404,6 +409,36 @@ function parseCorrection(
   return { field: "unknown" };
 }
 
+/**
+ * Turn a domain validation error into an intuitive pt-BR reason. The raw Zod
+ * message (e.g. "String must contain at least 1 character") is meaningless to
+ * the household, so name the offending FIELD in plain Portuguese instead.
+ */
+function describeValidationError(error: ValidationError | undefined): string {
+  if (error === undefined) {
+    return "dados inválidos";
+  }
+  switch (error.field) {
+    case "payment":
+    case "payment.accountId":
+      return "conta não informada";
+    case "payment.creditCardId":
+      return "cartão não informado";
+    case "amount.cents":
+      return "valor inválido";
+    case "occurredOn":
+      return "data inválida";
+    case "description":
+      return "descrição vazia";
+    case "createdByUserId":
+      return "não consegui te identificar (fala com o Álvaro)";
+    case "householdId":
+      return "casa não encontrada";
+    default:
+      return `campo inválido (${error.field})`;
+  }
+}
+
 /** Map an in-progress draft to a domain transaction draft and persist it. */
 async function persist(
   state: ConversationState,
@@ -418,13 +453,30 @@ async function persist(
     return { state: next, reply: needsAmountMessage(draft.description) };
   }
 
-  const payment =
-    draft.cardId !== undefined
-      ? ({ type: "card", creditCardId: draft.cardId } as const)
-      : ({
-          type: "account",
-          accountId: draft.accountId ?? deps.defaultAccountId,
-        } as const);
+  // Resolve the payment instrument. A non-card lançamento needs a usable
+  // account id; when the household has no account at all `defaultAccountId` is
+  // undefined, so we stop here with a clear message instead of building a draft
+  // with an empty accountId (which the domain would reject with an opaque
+  // "String must contain at least 1 character").
+  let payment:
+    | { type: "card"; creditCardId: string }
+    | { type: "account"; accountId: string };
+  if (draft.cardId !== undefined) {
+    payment = { type: "card", creditCardId: draft.cardId };
+  } else {
+    const accountId = draft.accountId ?? deps.defaultAccountId;
+    if (accountId === undefined || accountId.length === 0) {
+      const next: ConversationState = { status: statusForDraft(draft), draft };
+      return {
+        state: next,
+        reply:
+          "Não consegui salvar: você ainda não tem uma conta cadastrada pra " +
+          "lançar por aqui. Cadastre uma conta no app, ou me diga o cartão " +
+          '(ex.: "cartão Nubank").',
+      };
+    }
+    payment = { type: "account", accountId };
+  }
 
   const built = createTransactionDraft({
     householdId: deps.householdId,
@@ -445,15 +497,15 @@ async function persist(
   });
 
   if (!built.ok) {
-    // Surface the first validation error; keep the conversation open.
-    const first = built.errors[0];
+    // Surface the offending field in plain pt-BR — the raw Zod message is
+    // opaque to the household. Keep the conversation open so they can correct.
     const next: ConversationState = {
       status: statusForDraft(draft),
       draft,
     };
     return {
       state: next,
-      reply: `Não consegui salvar: ${first?.message ?? "dados inválidos"}.`,
+      reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
     };
   }
 
