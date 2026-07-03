@@ -327,19 +327,67 @@ decoupled from functionality**. Plan `101268f`
 
 ---
 
+## 2026-07-03 — UI polish (toasts/loading), Haiku switch, LIVE deploy, bot fixes; 3 bot bugs planned
+
+### Tried that worked
+- UI polish shipped (toast system + route loading/error + wiring) via subagent-driven dev → commits `74d8c39..5b35104`, merged into PR #2, all reviews clean. Final review found the floating theme-picker swallowed failures → fixed in `5b35104`.
+- Default Anthropic model → Haiku 4.5 (`fff013d`). `claude-haiku-4-5` is a valid API alias (verified via claude-api skill). Bot `.env` on VPS ALSO pins `ANTHROPIC_MODEL=claude-haiku-4-5` explicitly.
+- **Live production deploy**: web → Vercel prod (`vercel --prod`), aliased `https://casa.alvaroekarol.com.br`. Bot → VPS via rsync + `docker compose build/up` (deploy/bot). Health `{"ok":true}`, Telegram webhook clean.
+- Bot save-error fix (`1bb5281`): household with no account made `defaultAccountId=""` → domain rejected `accountId:""` with opaque English Zod msg. Now `defaultAccountId: string|undefined`; `persist` refuses no-account+no-card with pt-BR msg; validation errors mapped field→pt-BR. TDD, bot suite 68/68.
+- Audio confirmed working end-to-end after redeploy (OPENAI_API_KEY present in VPS `.env` → transcribe wired at startup).
+
+### Tried that didn't work / gotchas
+- VPS `/opt/family-finance` is **NOT a git repo** — deploys are **rsync** from local, then `docker compose build`. Exclude `.env`/`.env.*` in rsync or you clobber the service-role + API keys.
+- The bot `.env` is the ONLY place the Supabase service-role key lives outside the stack. Never rsync over it.
+- SSH: host alias `minesupply` (ssh_config) = `ondemandly.cloud` = `2.24.71.244` = mine-ops = the family-finance VPS (Hostinger, Traefik-routed). Repo at `/opt/family-finance`.
+
+### Decisions
+- Redeploy target = **production** (user chose, not preview).
+- 3 next bot bugs approved for a follow-up session (see handoff). Responsible default → **the Telegram sender**; description/category → **always use the Haiku interpreter** (not just when amount missing); strip trailing punctuation.
+
+---
+
+## 2026-07-03 (later) — 3 approved bot bugfixes BUILT (TDD, inline)
+
+Implemented the 3 bugfixes from `thoughts/notes/2026-07-03-handoff.md`, inline with strict TDD
+(RED verified: 9 failing tests before any production code). Commit `19a7dd4`, pushed to PR #2.
+
+### What changed
+- **Responsável = sender by default** (`conversation.ts`): `draft.responsibleUserId = input.fromUserId || undefined`
+  (empty-string guard keeps the identity-error test path intact). "responsável casa"/unknown name → house via the
+  existing resolver. New optional `ConversationDeps.memberDisplayName` shows the member's NAME in the summary
+  ("Responsável: Alvaro", not "Pessoa específica"); wired in `index.ts` from the loaded members.
+- **Interpreter always runs** (`conversation.ts` + `interpret.ts`): `interpretText` consulted on every new entry
+  when configured; parser owns amount/date (`parsed.x ?? interpreted?.x`; interpreted date only when the parser's
+  was uncertain); LLM description + categoryHint win. `needsAttention` no longer trips on `interpreted !== null`
+  (kept: audio + uncertain amount/date). Prompt rule now demands JUST the merchant/serviço name, banning
+  "gasto"/"compra"/"valor" words.
+- **Punctuation strip** (`parser.ts`): exported `stripEdgePunctuation`, applied both in the parser's cleaner and
+  on the final description in `startConversation` (covers the LLM path).
+
+### Gotcha
+- The change legitimately broke `apps/web/integration/mvp-flow.test.ts` (asserted the old house default) —
+  expectation updated to sender (`responsibility_scope="user"`, column is `responsible_user_id`, NOT
+  `responsibility_user_id`).
+
+### Gate
+Bot 75/75 tests + typecheck; whole repo: 12/12 test tasks, builds green, web lint clean (one PRE-EXISTING
+toast-timers warning, untouched).
+
+---
+
 ## Current state
 
-**ALL FOUR v1.0 PHASES DONE + reviewed. Gate: typecheck 12/12, 276 tests, web+bot builds, lint clean.**
-Web is feature-complete AND re-skinned ("Editorial acolhedor": Esmeralda/Sálvia tokens, plug-and-play
-`components/ui/` layer behind a firewall test). Bot is production-shaped (webhook server, real telegram
-identity, persistent conversations, LLM fallback, Dockerfile). `deploy/` artifacts + runbook ready.
-Branch ahead of origin by **39 commits, unpushed — permission required**.
+**v1.0 is LIVE.** Web on Vercel prod (`https://casa.alvaroekarol.com.br`), bot container running on the VPS (mine-ops), Supabase self-hosted, Telegram webhook healthy, audio (Whisper) working. Model = Haiku 4.5. Everything pushed to `feat/family-finance-mvp` (PR #2), working tree clean (thoughts/ local-only).
 
-**Remaining user gates:** (1) eyeball the new UI in the browser (localhost:3000, both themes via the
-floating "Estilo" picker); (2) live deploy (VPS Supabase + Vercel + bot) per `deploy/README.md` — needs
-user secrets/infra; fill both members' Telegram IDs in /settings for the bot. (3) push permission.
-Local stack: 12 supabase containers (+migrations 0007–0009 applied) + web dev :3000 (restarted
-2026-07-02, log `/tmp/ff-web-dev.log`).
+**3 approved bot bugfixes: DONE + pushed (`19a7dd4`) but NOT yet deployed.** The bot container on the VPS still runs the old code. **Next move: rsync-redeploy the bot** (user must confirm first — their standing instruction):
+```
+rsync -az --exclude='.git' --exclude='node_modules' --exclude='.turbo' --exclude='.vercel' --exclude='.env' --exclude='.env.*' --exclude='*.tsbuildinfo' --exclude='.DS_Store' <repo>/ minesupply:/opt/family-finance/
+ssh minesupply 'cd /opt/family-finance/deploy/bot && docker compose build && docker compose up -d'
+ssh minesupply 'curl -s localhost:8787/health && docker logs --since 60s family-finance-bot'
+```
+NEVER rsync over `deploy/bot/.env` (service-role + API keys; excluded above). Note: interpreter now fires on
+every message → slightly higher Haiku usage + latency per lançamento (accepted in the approved plan).
 Prior work unchanged below ↓
 
 ---
