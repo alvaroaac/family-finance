@@ -90,7 +90,12 @@ obligations pressure, web `/obligations` (list/create/edit/cancel, mark-paid,
 classifier with obligation-create + mark-paid flows (card intents reply
 "em breve" until PR-2).
 
-**Next moves:** (1) push + open the PR-1 pull request stacked on PR #2;
-(2) apply migration 0011 to the real Supabase project when merging;
-(3) PR-2 (card installment persistence + card-bill payment — remember the
-`nubank pago` schema wrinkle needs its own design).
+Branch pushed; **PR #3 open**
+(https://github.com/alvaroaac/family-finance/pull/3, base
+`feat/family-finance-v1` — note PR #2 is already merged into
+`feat/family-finance-mvp`, so a retarget to mvp is harmless).
+
+**Next moves:** (1) get PR #3 reviewed/merged; (2) apply migration 0011 to the
+real Supabase project when merging; (3) PR-2 (card installment persistence +
+card-bill payment — remember the `nubank pago` schema wrinkle needs its own
+design).
