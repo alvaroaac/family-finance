@@ -18,6 +18,7 @@ import {
   Select,
   Table,
   TableRow,
+  useToast,
 } from "../../../components/ui";
 
 /**
@@ -74,6 +75,7 @@ export function CardPurchaseForm({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const [isPending, startTransition] = useTransition();
+  const toast = useToast();
 
   const effectiveCount = mode === "avista" ? 1 : installmentCount;
 
@@ -140,6 +142,9 @@ export function CardPurchaseForm({
         setParcels(null);
         setDescription("");
         setAmount("");
+        toast.success("Compra salva.");
+      } else {
+        toast.error(result.message);
       }
     });
   }

@@ -14,6 +14,7 @@ import {
   Select,
   Table,
   TableRow,
+  useToast,
 } from "../../../components/ui";
 import { updateTransactionAction, deleteTransactionAction } from "./actions";
 
@@ -114,6 +115,7 @@ export function TransactionsTable({
   cards = [],
   footer,
 }: Props) {
+  const toast = useToast();
   const [isSaving, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   // Row id being description-edited + its draft text.
@@ -134,7 +136,11 @@ export function TransactionsTable({
       }
       const result = await updateTransactionAction(formData);
       if (!result.ok) {
-        setError(result.error ?? "Não foi possível salvar a alteração.");
+        const message = result.error ?? "Não foi possível salvar a alteração.";
+        setError(message);
+        toast.error(message);
+      } else {
+        toast.success("Alteração salva.");
       }
     });
   }
@@ -157,7 +163,11 @@ export function TransactionsTable({
       formData.set("transactionId", row.id);
       const result = await deleteTransactionAction(formData);
       if (!result.ok) {
-        setError(result.error ?? "Não foi possível excluir o lançamento.");
+        const message = result.error ?? "Não foi possível excluir o lançamento.";
+        setError(message);
+        toast.error(message);
+      } else {
+        toast.success("Lançamento excluído.");
       }
     });
   }

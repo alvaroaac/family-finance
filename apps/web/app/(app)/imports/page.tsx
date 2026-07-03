@@ -20,6 +20,7 @@ import {
   Select,
   Table,
   TableRow,
+  useToast,
 } from "../../../components/ui";
 import {
   previewImport,
@@ -130,6 +131,7 @@ export default function ImportsPage() {
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [confirmResult, setConfirmResult] = useState<ConfirmResult | null>(null);
   const [isPending, startTransition] = useTransition();
+  const toast = useToast();
 
   // Rows flagged as probable duplicates start excluded from the write.
   const duplicateIndices = useMemo(
@@ -262,6 +264,9 @@ export default function ImportsPage() {
       if (result.ok) {
         // The import is done; clear the in-memory preview (file already gone).
         setBundle(null);
+        toast.success("Importação concluída.");
+      } else {
+        toast.error(result.message);
       }
     });
   }
