@@ -318,6 +318,42 @@ export function needsReview(
 // ---------------------------------------------------------------------------
 
 /**
+ * PostgREST caps every response at `max_rows` (1000 in the Supabase stack), so
+ * a single `.select()` silently truncates once a query matches more rows than
+ * that. For money TOTALS summed client-side (a month's transactions, a card's
+ * charges) that truncation would under-report without any error. This helper
+ * pages through with `.range()` until a short page proves the set is
+ * exhausted, so the sums stay correct at any scale.
+ *
+ * `pageQuery(from, to)` must return the SAME filtered query with `.range`
+ * applied — an awaitable `{ data, error }`. The fake stores used in tests
+ * implement `.range()`, so this is exercised offline too.
+ */
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  label: string,
+  pageQuery: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await pageQuery(from, from + PAGE_SIZE - 1);
+    if (error !== null) {
+      throw new Error(`${label} failed: ${error.message}`);
+    }
+    const rows = data ?? [];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) {
+      break;
+    }
+  }
+  return all;
+}
+
+/**
  * Persist a transaction from a validated domain draft and return the stored
  * row mapped back to a domain shape. RLS guarantees the insert is rejected if
  * the caller is not a member of `draft.householdId`.
@@ -389,16 +425,17 @@ export async function getMonthlySummary(
   month: string,
 ): Promise<MonthlySummary> {
   const { start, end } = monthDateRange(month);
-  const { data, error } = await client
-    .from("transactions")
-    .select("kind, amount_cents")
-    .eq("household_id", householdId)
-    .gte("occurred_on", start)
-    .lte("occurred_on", end);
-  if (error !== null) {
-    throw new Error(`getMonthlySummary failed: ${error.message}`);
-  }
-  const rows = (data ?? []) as Pick<TransactionRow, "kind" | "amount_cents">[];
+  const rows = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
+    "getMonthlySummary",
+    (from, to) =>
+      client
+        .from("transactions")
+        .select("kind, amount_cents")
+        .eq("household_id", householdId)
+        .gte("occurred_on", start)
+        .lte("occurred_on", end)
+        .range(from, to),
+  );
   return summarizeMonth(month, rows);
 }
 
@@ -1077,17 +1114,18 @@ export async function findCardChargesBetween(
   startDate: string,
   endDate: string,
 ): Promise<CardChargeSummary[]> {
-  const { data, error } = await client
-    .from("transactions")
-    .select("occurred_on, amount_cents, kind, description")
-    .eq("household_id", householdId)
-    .not("credit_card_id", "is", null)
-    .gte("occurred_on", startDate)
-    .lte("occurred_on", endDate);
-  if (error !== null) {
-    throw new Error(`findCardChargesBetween failed: ${error.message}`);
-  }
-  return (data ?? []) as CardChargeSummary[];
+  // Paginated: a re-imported multi-month fatura can exceed the 1000-row cap,
+  // and a truncated candidate set would flag real duplicates as new charges.
+  return fetchAllRows<CardChargeSummary>("findCardChargesBetween", (from, to) =>
+    client
+      .from("transactions")
+      .select("occurred_on, amount_cents, kind, description")
+      .eq("household_id", householdId)
+      .not("credit_card_id", "is", null)
+      .gte("occurred_on", startDate)
+      .lte("occurred_on", endDate)
+      .range(from, to),
+  );
 }
 
 /** Create a credit card. RLS scopes the insert to the household. */
@@ -1199,31 +1237,31 @@ export async function getCardPressure(
 ): Promise<CardPressure> {
   const { start, end } = monthDateRange(month);
 
-  const { data: txData, error: txError } = await client
-    .from("transactions")
-    .select("kind, amount_cents")
-    .eq("household_id", householdId)
-    .not("credit_card_id", "is", null)
-    .gte("occurred_on", start)
-    .lte("occurred_on", end);
-  if (txError !== null) {
-    throw new Error(`getCardPressure(transactions) failed: ${txError.message}`);
-  }
-
-  const { data: instData, error: instError } = await client
-    .from("installments")
-    .select("amount_cents")
-    .eq("household_id", householdId)
-    .eq("due_month", month);
-  if (instError !== null) {
-    throw new Error(`getCardPressure(installments) failed: ${instError.message}`);
-  }
-
-  return summarizeCardPressure(
-    month,
-    (txData ?? []) as Pick<TransactionRow, "kind" | "amount_cents">[],
-    (instData ?? []) as Pick<InstallmentRow, "amount_cents">[],
+  const txData = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
+    "getCardPressure(transactions)",
+    (from, to) =>
+      client
+        .from("transactions")
+        .select("kind, amount_cents")
+        .eq("household_id", householdId)
+        .not("credit_card_id", "is", null)
+        .gte("occurred_on", start)
+        .lte("occurred_on", end)
+        .range(from, to),
   );
+
+  const instData = await fetchAllRows<Pick<InstallmentRow, "amount_cents">>(
+    "getCardPressure(installments)",
+    (from, to) =>
+      client
+        .from("installments")
+        .select("amount_cents")
+        .eq("household_id", householdId)
+        .eq("due_month", month)
+        .range(from, to),
+  );
+
+  return summarizeCardPressure(month, txData, instData);
 }
 
 /**
@@ -1240,30 +1278,30 @@ export async function getCardPressureForCard(
 ): Promise<CardPressure> {
   const { start, end } = monthDateRange(month);
 
-  const { data: txData, error: txError } = await client
-    .from("transactions")
-    .select("kind, amount_cents")
-    .eq("household_id", householdId)
-    .eq("credit_card_id", creditCardId)
-    .gte("occurred_on", start)
-    .lte("occurred_on", end);
-  if (txError !== null) {
-    throw new Error(
-      `getCardPressureForCard(transactions) failed: ${txError.message}`,
-    );
-  }
+  const txData = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
+    "getCardPressureForCard(transactions)",
+    (from, to) =>
+      client
+        .from("transactions")
+        .select("kind, amount_cents")
+        .eq("household_id", householdId)
+        .eq("credit_card_id", creditCardId)
+        .gte("occurred_on", start)
+        .lte("occurred_on", end)
+        .range(from, to),
+  );
 
-  const { data: instData, error: instError } = await client
-    .from("installments")
-    .select("amount_cents")
-    .eq("household_id", householdId)
-    .eq("credit_card_id", creditCardId)
-    .eq("due_month", month);
-  if (instError !== null) {
-    throw new Error(
-      `getCardPressureForCard(installments) failed: ${instError.message}`,
-    );
-  }
+  const instData = await fetchAllRows<Pick<InstallmentRow, "amount_cents">>(
+    "getCardPressureForCard(installments)",
+    (from, to) =>
+      client
+        .from("installments")
+        .select("amount_cents")
+        .eq("household_id", householdId)
+        .eq("credit_card_id", creditCardId)
+        .eq("due_month", month)
+        .range(from, to),
+  );
 
   return summarizeCardPressure(
     month,
@@ -1939,11 +1977,19 @@ export async function resolveTelegramMember(
     HouseholdMemberRow,
     "id" | "household_id" | "user_id" | "display_name"
   >;
-  // Best-effort back-fill; a failure here must not block the lançamento.
+  // Back-fill the stable numeric id AND clear the username in the same write.
+  // Telegram @usernames are releasable and re-claimable by strangers; once the
+  // numeric id is bound, leaving the username on the row would let whoever
+  // later grabs that handle resolve as this member. Clearing it makes the
+  // link id-only going forward. Best-effort: a failure must not block the
+  // lançamento (the id was still resolved for THIS message).
   try {
     await client
       .from("household_members")
-      .update({ telegram_user_id: sender.telegramUserId })
+      .update({
+        telegram_user_id: sender.telegramUserId,
+        telegram_username: null,
+      })
       .eq("id", row.id);
   } catch {
     // ignored — resolution by username keeps working

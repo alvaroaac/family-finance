@@ -20,6 +20,8 @@ import {
   updateTransaction,
   deleteTransaction,
   findMemberByTelegramUserId,
+  resolveTelegramMember,
+  getMonthlySummary,
   loadBotConversation,
   saveBotConversation,
   deleteBotConversation,
@@ -990,5 +992,110 @@ describe("obligationUpdateFromChanges", () => {
     expect(() =>
       obligationUpdateFromChanges({ description: "  " }),
     ).toThrow();
+  });
+});
+
+describe("resolveTelegramMember (review: id back-fill clears username)", () => {
+  /** Recording client: null on the id lookup, a member on the username lookup,
+   * capturing the back-fill update payload. */
+  function client() {
+    const updates: Array<{ payload: Record<string, unknown>; eq: Array<[string, unknown]> }> = [];
+    let call = 0;
+    const build = () => {
+      const eqs: Array<[string, unknown]> = [];
+      let updatePayload: Record<string, unknown> | undefined;
+      const b: Record<string, unknown> = {
+        select() {
+          return b;
+        },
+        update(payload: Record<string, unknown>) {
+          updatePayload = payload;
+          return b;
+        },
+        eq(col: string, val: unknown) {
+          eqs.push([col, val]);
+          if (updatePayload !== undefined) {
+            updates.push({ payload: updatePayload, eq: eqs.slice() });
+            return Promise.resolve({ data: null, error: null });
+          }
+          return b;
+        },
+        maybeSingle() {
+          call += 1;
+          // 1st select = by telegram_user_id (miss); 2nd = by username (hit).
+          if (call === 1) return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({
+            data: {
+              id: "member-1",
+              household_id: HOUSEHOLD,
+              user_id: USER,
+              display_name: "Karol",
+            },
+            error: null,
+          });
+        },
+      };
+      return b;
+    };
+    const c = { from: () => build() } as unknown as AppSupabaseClient;
+    return { c, updates };
+  }
+
+  it("clears telegram_username when back-filling the numeric id", async () => {
+    const { c, updates } = client();
+    const identity = await resolveTelegramMember(c, {
+      telegramUserId: 555,
+      telegramUsername: "karol",
+    });
+    expect(identity).toEqual({
+      householdId: HOUSEHOLD,
+      userId: USER,
+      displayName: "Karol",
+    });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.payload).toEqual({
+      telegram_user_id: 555,
+      telegram_username: null,
+    });
+    expect(updates[0]?.eq).toContainEqual(["id", "member-1"]);
+  });
+});
+
+describe("getMonthlySummary pagination (review: no 1000-row cap on money sums)", () => {
+  /** A fake that caps each .range() page like PostgREST's max_rows, so the
+   * repository must page to see every row. */
+  function pagingClient(rows: Array<{ kind: string; amount_cents: number }>, cap = 1000) {
+    const build = () => {
+      let rangeFrom = 0;
+      let rangeTo = Number.MAX_SAFE_INTEGER;
+      const b: Record<string, unknown> = {
+        select: () => b,
+        eq: () => b,
+        gte: () => b,
+        lte: () => b,
+        not: () => b,
+        range(from: number, to: number) {
+          rangeFrom = from;
+          rangeTo = to;
+          const pageSpan = Math.min(to - from + 1, cap);
+          const page = rows.slice(from, from + pageSpan);
+          return Promise.resolve({ data: page, error: null });
+        },
+      };
+      return b;
+    };
+    return { from: () => build() } as unknown as AppSupabaseClient;
+  }
+
+  it("sums income/expense across more than 1000 rows", async () => {
+    // 2500 expense rows of 100 cents each = 250000; the naive single select
+    // would stop at 1000 (=100000).
+    const rows = Array.from({ length: 2500 }, () => ({
+      kind: "expense",
+      amount_cents: 100,
+    }));
+    const client = pagingClient(rows);
+    const summary = await getMonthlySummary(client, HOUSEHOLD, "2026-07");
+    expect(summary.expenseCents).toBe(250000);
   });
 });
