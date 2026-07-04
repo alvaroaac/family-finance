@@ -150,7 +150,8 @@ Manual walkthrough that mirrors the offline test:
    ```sh
    curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
      -d "url=https://<your-public-host>/api/telegram/webhook" \
-     -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+     -d "secret_token=$TELEGRAM_WEBHOOK_SECRET" \
+     -d "allowed_updates=[\"message\",\"callback_query\"]"
    ```
 
 4. (Optional) Voice notes need `OPENAI_API_KEY` for transcription. Raw audio is

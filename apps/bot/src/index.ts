@@ -38,6 +38,10 @@ import {
   listActiveCategorizationMemory,
   listObligations,
   materializeObligationPayment as dbMaterializeObligationPayment,
+  listAllCategories as dbListAllCategories,
+  createCategory as dbCreateCategory,
+  restoreCategory as dbRestoreCategory,
+  createCategorizationMemory,
   type AppSupabaseClient,
   type BotMemberIdentity,
 } from "@family-finance/db";
@@ -54,14 +58,19 @@ import {
 import {
   createHttpTelegramClient,
   createNoopTelegramClient,
+  parseTelegramCallback,
   parseTelegramUpdate,
   parseTelegramVoice,
   verifyWebhookSecret,
+  webhookMissesCallbacks,
+  fetchWebhookAllowedUpdates,
+  type InlineKeyboardMarkup,
   type TelegramClient,
 } from "./telegram.js";
 import {
   startConversation,
   startConversationFromAudio,
+  applyCallback,
   applyMessage,
   type ConversationDeps,
   type ConversationState,
@@ -87,6 +96,7 @@ import {
   createDbConversationStore,
   type ConversationStore,
 } from "./store.js";
+import { SESSION_EXPIRED_TOAST } from "./replies.js";
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -249,6 +259,52 @@ async function buildDeps(
     },
     accountNameById: (accountId: string) =>
       accounts.find((account) => account.id === accountId)?.name,
+    // Category creation (inline buttons + nova categoria design, 2026-07-04).
+    listAllCategories: async () =>
+      (await dbListAllCategories(client, householdId)).map((c) => ({
+        id: c.id,
+        name: c.name,
+        isActive: c.is_active,
+      })),
+    createCategory: async (name: string) => {
+      const row = await dbCreateCategory(client, householdId, name);
+      // Make the new category visible to labels/grids within THIS webhook call
+      // (deps are rebuilt per update, so this never leaks across requests).
+      (catalog.categories as Array<{ id: string; name: string }>).push({
+        id: row.id,
+        name: row.name,
+      });
+      return { id: row.id };
+    },
+    restoreCategory: async (categoryId: string) => {
+      await dbRestoreCategory(client, householdId, categoryId);
+      const known = catalog.categories.some((c) => c.id === categoryId);
+      if (!known) {
+        const all = await dbListAllCategories(client, householdId);
+        const row = all.find((c) => c.id === categoryId);
+        if (row !== undefined) {
+          (catalog.categories as Array<{ id: string; name: string }>).push({
+            id: row.id,
+            name: row.name,
+          });
+        }
+      }
+    },
+    seedCategorizationMemory: async (entry) => {
+      await createCategorizationMemory(client, {
+        household_id: householdId,
+        pattern: entry.pattern,
+        category_id: entry.categoryId,
+        subcategory_id: null,
+        confidence: entry.confidence,
+        explanation: entry.explanation,
+        is_active: true,
+      });
+    },
+    listActiveMembers: () =>
+      members
+        .filter((m) => m.isActive && m.displayName !== null)
+        .map((m) => ({ userId: m.userId, displayName: m.displayName as string })),
   };
 }
 
@@ -288,6 +344,84 @@ export async function handleWebhook(args: {
 }): Promise<WebhookResult> {
   if (!verifyWebhookSecret(args.secretHeader, args.configuredSecret)) {
     return { status: 401, body: { ok: false, error: "invalid secret" } };
+  }
+
+  // 0. Inline-button tap: ALWAYS answer the callback (stops the client
+  // spinner), then advance the conversation through applyCallback.
+  const callback = parseTelegramCallback(args.rawBody);
+  if (callback !== null) {
+    const strip = async (chatId: string, messageId: number): Promise<void> => {
+      try {
+        await args.telegram.editMessageReplyMarkup(chatId, messageId);
+      } catch (error) {
+        // A already-stripped/deleted message must not fail the webhook.
+        console.warn("[bot] editMessageReplyMarkup failed:", error);
+      }
+    };
+
+    // Partial payload (no message/data): answer and ignore.
+    if (
+      callback.chatId === undefined ||
+      callback.messageId === undefined ||
+      callback.data === undefined
+    ) {
+      await args.telegram.answerCallbackQuery(callback.callbackQueryId);
+      return { status: 200, body: { ok: true } };
+    }
+
+    const identity = await args.resolveMember({
+      telegramUserId: callback.fromId,
+      telegramUsername: callback.fromUsername,
+    });
+    if (identity === null) {
+      console.warn(
+        `[bot] unmatched telegram user ${callback.fromId} tapped a button — refused.`,
+      );
+      await args.telegram.answerCallbackQuery(callback.callbackQueryId);
+      return { status: 200, body: { ok: true } };
+    }
+
+    const existing = await args.store.load(callback.chatId);
+    if (existing === undefined) {
+      // Draft expired past the 24h TTL (or never existed on this chat).
+      await args.telegram.answerCallbackQuery(
+        callback.callbackQueryId,
+        SESSION_EXPIRED_TOAST,
+      );
+      await strip(callback.chatId, callback.messageId);
+      return { status: 200, body: { ok: true } };
+    }
+
+    const deps = await buildDeps(
+      args.client,
+      identity.householdId,
+      args.ai,
+      args.interpretText,
+      args.classifyMessage,
+    );
+    const outcome = await applyCallback(existing, callback.data, deps, {
+      today: todayIso(),
+    });
+
+    await args.telegram.answerCallbackQuery(
+      callback.callbackQueryId,
+      outcome.toast,
+    );
+    // The tapped message's buttons are spent either way (acted on or stale).
+    await strip(callback.chatId, callback.messageId);
+
+    if (outcome.silent !== true && outcome.reply.length > 0) {
+      const sent = await args.telegram.sendMessage(
+        callback.chatId,
+        outcome.reply,
+        outcome.keyboard !== undefined
+          ? { replyMarkup: outcome.keyboard }
+          : undefined,
+      );
+      outcome.state.promptMessageId = sent?.messageId;
+    }
+    await args.store.save(callback.chatId, outcome.state);
+    return { status: 200, body: { ok: true } };
   }
 
   const voice = parseTelegramVoice(args.rawBody);
@@ -353,8 +487,15 @@ export async function handleWebhook(args: {
       await args.telegram.sendMessage(voice.chatId, reply);
       return { status: 200, body: { ok: true } };
     }
+    const sentVoice = await args.telegram.sendMessage(
+      voice.chatId,
+      outcome.reply,
+      outcome.keyboard !== undefined
+        ? { replyMarkup: outcome.keyboard }
+        : undefined,
+    );
+    outcome.state.promptMessageId = sentVoice?.messageId;
     await args.store.save(voice.chatId, outcome.state);
-    await args.telegram.sendMessage(voice.chatId, outcome.reply);
     return { status: 200, body: { ok: true } };
   }
 
@@ -367,6 +508,7 @@ export async function handleWebhook(args: {
 
   let reply: string;
   let nextState: ConversationState;
+  let keyboard: InlineKeyboardMarkup | undefined;
   if (
     existing === undefined ||
     existing.status === "saved" ||
@@ -379,16 +521,33 @@ export async function handleWebhook(args: {
     );
     nextState = outcome.state;
     reply = outcome.reply;
+    keyboard = outcome.keyboard;
   } else {
     const outcome = await applyMessage(existing, message.text, deps, {
       today: todayIso(),
     });
     nextState = outcome.state;
     reply = outcome.reply;
+    keyboard = outcome.keyboard;
+    if (existing.promptMessageId !== undefined) {
+      try {
+        await args.telegram.editMessageReplyMarkup(
+          message.chatId,
+          existing.promptMessageId,
+        );
+      } catch (error) {
+        console.warn("[bot] editMessageReplyMarkup failed:", error);
+      }
+    }
   }
-  await args.store.save(message.chatId, nextState);
 
-  await args.telegram.sendMessage(message.chatId, reply);
+  const sent = await args.telegram.sendMessage(
+    message.chatId,
+    reply,
+    keyboard !== undefined ? { replyMarkup: keyboard } : undefined,
+  );
+  nextState.promptMessageId = sent?.messageId;
+  await args.store.save(message.chatId, nextState);
   return { status: 200, body: { ok: true } };
 }
 
@@ -434,6 +593,21 @@ export async function startBot(): Promise<{
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
     : createNoopTelegramClient();
+
+  // Spec §1: the webhook registration must deliver callback_query, or every
+  // button tap silently vanishes. Warn loudly — the fix is a one-line curl
+  // (see deploy/README.md).
+  if (env.TELEGRAM_BOT_TOKEN) {
+    void fetchWebhookAllowedUpdates(env.TELEGRAM_BOT_TOKEN).then((allowed) => {
+      if (webhookMissesCallbacks(allowed)) {
+        console.warn(
+          '[bot] webhook allowed_updates does not include "callback_query" — ' +
+            "inline buttons will NOT work. Re-run setWebhook with " +
+            'allowed_updates=["message","callback_query"] (deploy/README.md).',
+        );
+      }
+    });
+  }
 
   // AI features — only when an Anthropic key is configured. ONE completion
   // client backs both the categorization fallback and the text interpretation

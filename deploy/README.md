@@ -104,7 +104,7 @@ Exact curl (secret must equal `TELEGRAM_WEBHOOK_SECRET` in `deploy/bot/.env`):
 curl -s "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
   -d "url=https://bot.alvaroekarol.com.br/webhook" \
   -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
-  -d "allowed_updates=[\"message\"]"
+  -d "allowed_updates=[\"message\",\"callback_query\"]"
 ```
 
 Verify: `curl -s "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"`
