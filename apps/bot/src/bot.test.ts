@@ -912,6 +912,13 @@ function fakeTelegram(): {
     telegram: {
       async sendMessage(chatId: string, text: string) {
         sent.push({ chatId, text });
+        return { messageId: sent.length };
+      },
+      async answerCallbackQuery() {
+        // Not exercised by these text-flow tests.
+      },
+      async editMessageReplyMarkup() {
+        // Not exercised by these text-flow tests.
       },
     },
   };

@@ -153,12 +153,90 @@ export function parseTelegramVoice(raw: unknown): IncomingVoiceMessage | null {
 }
 
 // ---------------------------------------------------------------------------
+// Callback query parsing (inline keyboard taps).
+// ---------------------------------------------------------------------------
+
+/** One inline-keyboard button. `callback_data` is capped at 64 bytes by Telegram. */
+export type InlineKeyboardButton = { text: string; callback_data: string };
+
+/** Telegram `reply_markup` payload for an inline keyboard. */
+export type InlineKeyboardMarkup = { inline_keyboard: InlineKeyboardButton[][] };
+
+/** A normalized inbound callback (inline-button tap) from a Telegram update. */
+export type IncomingCallbackQuery = {
+  updateId: number;
+  callbackQueryId: string;
+  fromId: string;
+  fromUsername?: string;
+  /** Absent when Telegram omitted the origin message (e.g. too old). */
+  chatId?: string;
+  messageId?: number;
+  /** The raw callback token. Absent for game/url callbacks. */
+  data?: string;
+};
+
+const telegramCallbackSchema = z.object({
+  update_id: z.number(),
+  callback_query: z.object({
+    id: z.string(),
+    from: z.object({
+      id: z.union([z.number(), z.string()]),
+      username: z.string().optional(),
+    }),
+    message: z
+      .object({
+        message_id: z.number(),
+        chat: z.object({ id: z.union([z.number(), z.string()]) }),
+      })
+      .optional(),
+    data: z.string().optional(),
+  }),
+});
+
+/**
+ * Parse a raw Telegram update into a normalized callback, or `null` when the
+ * update is not a callback_query. `chatId`/`messageId`/`data` stay optional so
+ * the handler can still `answerCallbackQuery` (stop the spinner) on partial
+ * payloads instead of leaving the client hanging.
+ */
+export function parseTelegramCallback(
+  raw: unknown,
+): IncomingCallbackQuery | null {
+  const result = telegramCallbackSchema.safeParse(raw);
+  if (!result.success) {
+    return null;
+  }
+  const cb = result.data.callback_query;
+  return {
+    updateId: result.data.update_id,
+    callbackQueryId: cb.id,
+    fromId: String(cb.from.id),
+    fromUsername: cb.from.username,
+    chatId: cb.message !== undefined ? String(cb.message.chat.id) : undefined,
+    messageId: cb.message?.message_id,
+    data: cb.data,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Outgoing client interface + HTTP implementation.
 // ---------------------------------------------------------------------------
 
-/** Minimal injectable Telegram client used to send replies. */
+/** Options for an outgoing message (inline keyboard, when any). */
+export type SendMessageOptions = { replyMarkup?: InlineKeyboardMarkup };
+
+/** Minimal injectable Telegram client used to send replies and answer taps. */
 export type TelegramClient = {
-  sendMessage(chatId: string, text: string): Promise<void>;
+  /** Returns the sent message's id when the API provides it (HTTP client does). */
+  sendMessage(
+    chatId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<{ messageId?: number }>;
+  /** ALWAYS called for a callback — stops the client spinner; text shows a toast. */
+  answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
+  /** Strip the inline keyboard from a previously sent message. */
+  editMessageReplyMarkup(chatId: string, messageId: number): Promise<void>;
 };
 
 /**
@@ -167,19 +245,59 @@ export type TelegramClient = {
  */
 export function createHttpTelegramClient(botToken: string): TelegramClient {
   const base = `https://api.telegram.org/bot${botToken}`;
+
+  async function call(
+    method: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    const response = await fetch(`${base}/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Telegram ${method} failed: ${response.status} ${body}`);
+    }
+    return response.json().catch(() => undefined);
+  }
+
   return {
-    async sendMessage(chatId: string, text: string): Promise<void> {
-      const response = await fetch(`${base}/sendMessage`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text }),
-      });
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(
-          `Telegram sendMessage failed: ${response.status} ${body}`,
-        );
+    async sendMessage(
+      chatId: string,
+      text: string,
+      options?: SendMessageOptions,
+    ): Promise<{ messageId?: number }> {
+      const payload: Record<string, unknown> = { chat_id: chatId, text };
+      if (options?.replyMarkup !== undefined) {
+        payload.reply_markup = options.replyMarkup;
       }
+      const data = (await call("sendMessage", payload)) as
+        | { result?: { message_id?: number } }
+        | undefined;
+      return { messageId: data?.result?.message_id };
+    },
+    async answerCallbackQuery(
+      callbackQueryId: string,
+      text?: string,
+    ): Promise<void> {
+      const payload: Record<string, unknown> = {
+        callback_query_id: callbackQueryId,
+      };
+      if (text !== undefined) {
+        payload.text = text;
+      }
+      await call("answerCallbackQuery", payload);
+    },
+    async editMessageReplyMarkup(
+      chatId: string,
+      messageId: number,
+    ): Promise<void> {
+      await call("editMessageReplyMarkup", {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [] },
+      });
     },
   };
 }
@@ -187,8 +305,51 @@ export function createHttpTelegramClient(botToken: string): TelegramClient {
 /** A no-op client (useful for dry-run / unconfigured local environments). */
 export function createNoopTelegramClient(): TelegramClient {
   return {
-    async sendMessage(): Promise<void> {
+    async sendMessage(): Promise<{ messageId?: number }> {
+      return {};
+    },
+    async answerCallbackQuery(): Promise<void> {
+      // Intentionally does nothing.
+    },
+    async editMessageReplyMarkup(): Promise<void> {
       // Intentionally does nothing.
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Webhook registration sanity check (spec §1: allowed_updates must include
+// callback_query, or every button tap silently vanishes).
+// ---------------------------------------------------------------------------
+
+/** True when the webhook's allowed_updates will never deliver callback_query. */
+export function webhookMissesCallbacks(
+  allowedUpdates: string[] | undefined,
+): boolean {
+  // undefined = Telegram default = all update types except a few opt-ins,
+  // which INCLUDES callback_query — only an explicit list can exclude it.
+  if (allowedUpdates === undefined) {
+    return false;
+  }
+  return !allowedUpdates.includes("callback_query");
+}
+
+/** GET getWebhookInfo and return its allowed_updates (undefined on any failure). */
+export async function fetchWebhookAllowedUpdates(
+  botToken: string,
+): Promise<string[] | undefined> {
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
+    );
+    if (!response.ok) {
+      return undefined;
+    }
+    const data = (await response.json()) as {
+      result?: { allowed_updates?: string[] };
+    };
+    return data.result?.allowed_updates;
+  } catch {
+    return undefined;
+  }
 }
