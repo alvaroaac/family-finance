@@ -150,12 +150,17 @@ describe("TransactionsTable: amount edit", () => {
   it("renders a clickable amount trigger for a normal row, disabled for a parcela row", () => {
     const normal = renderTable({ installmentId: null, kind: "expense" });
     expect(normal).toContain("56,13");
-    expect(normal).not.toContain("ff-num ff-amount--neg\" title=\"Clique para editar o valor\" disabled");
+
+    // For normal (non-parcela) row: assert button exists with correct title and is NOT disabled.
+    const editableBtn = /<button[^>]*title="Clique para editar o valor"[^>]*>/.exec(normal)?.[0] ?? "";
+    expect(editableBtn).not.toBe("");
+    expect(editableBtn).not.toContain("disabled");
 
     const parcela = renderTable({ installmentId: "inst-1", kind: "expense" });
-    expect(parcela).toContain(
-      'title="Valor de parcela — edite o parcelamento" disabled=""',
-    );
+    // For parcela row: assert button exists with correct title and IS disabled.
+    const parcelaBtn = /<button[^>]*title="Valor de parcela — edite o parcelamento"[^>]*>/.exec(parcela)?.[0] ?? "";
+    expect(parcelaBtn).not.toBe("");
+    expect(parcelaBtn).toContain("disabled");
   });
 });
 
