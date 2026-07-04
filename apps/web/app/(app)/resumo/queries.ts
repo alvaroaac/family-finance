@@ -16,6 +16,7 @@ import {
   getMonthlySummary,
   getCardPressure,
   getCardPressureForCard,
+  getObligationsPressure,
   findRecentTransactions,
   findPendingReviewTransactions,
   listCreditCards,
@@ -42,6 +43,13 @@ export type ResumoData = {
   deltaVsPreviousCents: number;
   /** Projected invoice per card this month (direct + parcelas due). */
   cards: Array<{ id: string; name: string; projectedCents: number }>;
+  /**
+   * This month's fixed-obligation total: projected-unpaid + materialized
+   * actuals. Display-only next to card pressure — paid obligation
+   * transactions are already inside expenseCents, so this line is NEVER
+   * added to totalSpentCents (that would double count).
+   */
+  obligationsCents: number;
   pendingCount: number;
   /** Last 5 lançamentos, newest first. */
   recent: DashboardTransaction[];
@@ -114,16 +122,33 @@ export async function buildResumoData(
   const month = currentMonth(now);
   const previousMonth = shiftMonth(month, -1);
 
-  const [summary, previousSummary, pressure, previousPressure, creditCards, pending, recent] =
-    await Promise.all([
-      getMonthlySummary(client, householdId, month),
-      getMonthlySummary(client, householdId, previousMonth),
-      getCardPressure(client, householdId, month),
-      getCardPressure(client, householdId, previousMonth),
-      listCreditCards(client, householdId),
-      findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
-      findRecentTransactions(client, householdId, 5),
-    ]);
+  const [
+    summary,
+    previousSummary,
+    pressure,
+    previousPressure,
+    creditCards,
+    obligationsPressure,
+    pending,
+    recent,
+  ] = await Promise.all([
+    getMonthlySummary(client, householdId, month),
+    getMonthlySummary(client, householdId, previousMonth),
+    getCardPressure(client, householdId, month),
+    getCardPressure(client, householdId, previousMonth),
+    listCreditCards(client, householdId),
+    // Resilient on purpose: the obligations schema arrives with migration
+    // 0011, applied out-of-band. If the table/columns are missing (or this
+    // one query fails), only THIS stat zeroes out — never the whole resumo.
+    getObligationsPressure(client, householdId, month).catch(() => ({
+      month,
+      projectedUnpaidCents: 0,
+      paidCents: 0,
+      totalCents: 0,
+    })),
+    findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
+    findRecentTransactions(client, householdId, 5),
+  ]);
 
   const cards = await Promise.all(
     creditCards.map(async (card) => {
@@ -154,6 +179,7 @@ export async function buildResumoData(
     cardSpentCents,
     deltaVsPreviousCents: previousTotalCents - totalSpentCents,
     cards,
+    obligationsCents: obligationsPressure.totalCents,
     pendingCount: pending.length,
     recent,
     loadError: null,
@@ -169,6 +195,7 @@ function emptyResumo(month: string, loadError: string | null): ResumoData {
     cardSpentCents: 0,
     deltaVsPreviousCents: 0,
     cards: [],
+    obligationsCents: 0,
     pendingCount: 0,
     recent: [],
     loadError,

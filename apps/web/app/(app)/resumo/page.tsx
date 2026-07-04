@@ -41,6 +41,7 @@ export default async function ResumoPage() {
     cardSpentCents,
     deltaVsPreviousCents,
     cards,
+    obligationsCents,
     pendingCount,
     recent,
     loadError,
@@ -84,6 +85,14 @@ export default async function ResumoPage() {
                 <strong>{formatBrlCents(cardSpentCents)}</strong> no cartão
               </span>
             </div>
+            {obligationsCents > 0 ? (
+              <div className="ff-hero__split ff-num">
+                <span>
+                  <strong>{formatBrlCents(obligationsCents)}</strong> em
+                  obrigações fixas no mês
+                </span>
+              </div>
+            ) : null}
             <div className="ff-hero__delta">
               {deltaVsPreviousCents === 0 ? (
                 <span className="ff-delta ff-delta--positive ff-num">
