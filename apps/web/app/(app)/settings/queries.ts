@@ -25,6 +25,7 @@ export {
   DEFAULT_THEME,
   parseTheme,
   memberPatchFromFormData,
+  telegramDisplayValue,
   botStatusLabel,
   inputKindLabel,
   type ThemeId,

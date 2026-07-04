@@ -100,6 +100,13 @@ describe("parseExpenseText", () => {
     expect(parsed.occurredOn).toBe(TODAY);
     expect(parsed.uncertainFields).toContain("date");
   });
+
+  it("strips leading/trailing punctuation from the description", () => {
+    const parsed = parseExpenseText("Tabacaria, 25 reais", { today: TODAY });
+    expect(parsed.description).toBe("Tabacaria");
+    const trailing = parseExpenseText("25 reais na Padaria.", { today: TODAY });
+    expect(trailing.description).toBe("Padaria");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -185,6 +192,46 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
   return { deps, createTransaction, logInteraction };
 }
 
+describe("conversation: save-time validation errors", () => {
+  it("no account and no card -> friendly pt-BR message, does not persist", async () => {
+    const { deps, createTransaction } = buildDeps({
+      // Household with no account at all (production `defaultAccountId` is "").
+      defaultAccountId: "",
+      resolveCardId: () => undefined,
+      resolveAccountId: () => undefined,
+    });
+
+    const started = await startConversation(
+      { text: "Tabacaria 25 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const confirmed = await applyMessage(started.state, "confirmar", deps);
+
+    expect(createTransaction).not.toHaveBeenCalled();
+    // Intuitive reason — never the raw Zod "String must contain at least 1 character".
+    expect(confirmed.reply).not.toMatch(/at least 1 character/i);
+    expect(confirmed.reply).toMatch(/conta/i);
+    expect(confirmed.reply).toMatch(/cadastr/i);
+  });
+
+  it("surfaces the offending field in pt-BR, not the raw Zod message", async () => {
+    // Empty createdByUserId makes the domain reject createdByUserId (min 1),
+    // exercising the generic field -> pt-BR mapping (the account is valid here).
+    const { deps, createTransaction } = buildDeps();
+    const started = await startConversation(
+      { text: "Tabacaria 25 reais", fromUserId: "" },
+      deps,
+      { today: TODAY },
+    );
+    const confirmed = await applyMessage(started.state, "confirmar", deps);
+
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(confirmed.reply).not.toMatch(/at least 1 character/i);
+    expect(confirmed.reply).toMatch(/identificar/i);
+  });
+});
+
 describe("conversation: text -> confirmed transaction", () => {
   let deps: ConversationDeps;
   let createTransaction: ReturnType<typeof vi.fn>;
@@ -222,15 +269,16 @@ describe("conversation: text -> confirmed transaction", () => {
 
     const savedDraft = firstCallArg(createTransaction) as {
       createdByUserId: string;
-      responsibility: { scope: string };
+      responsibility: { scope: string; userId?: string };
       amount: { cents: number };
       category: { categoryId?: string };
       payment: { type: string };
     };
     // createdByUserId is the linked Telegram identity.
     expect(savedDraft.createdByUserId).toBe("user-alvaro");
-    // Responsibility defaults to the house.
-    expect(savedDraft.responsibility.scope).toBe("household");
+    // Responsibility defaults to the SENDER (2026-07-03 bugfix).
+    expect(savedDraft.responsibility.scope).toBe("user");
+    expect(savedDraft.responsibility.userId).toBe("user-alvaro");
     expect(savedDraft.amount.cents).toBe(3200);
     expect(savedDraft.category.categoryId).toBe("cat-transport");
     // Success reply confirms the save.
@@ -310,6 +358,45 @@ describe("conversation: text -> confirmed transaction", () => {
       deps,
     );
     expect(corrected.state.draft.categoryId).toBe("cat-food");
+  });
+
+  it("defaults responsibility to the Telegram sender", async () => {
+    const started = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(started.state.draft.responsibleUserId).toBe("user-alvaro");
+  });
+
+  it('"responsável casa" moves responsibility back to the house', async () => {
+    // Default resolver knows no member named "casa" -> undefined = the house.
+    const started = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const corrected = await applyMessage(started.state, "responsável casa", deps);
+    expect(corrected.state.draft.responsibleUserId).toBeUndefined();
+
+    await applyMessage(corrected.state, "confirmar", deps);
+    const savedDraft = firstCallArg(createTransaction) as {
+      responsibility: { scope: string };
+    };
+    expect(savedDraft.responsibility.scope).toBe("household");
+  });
+
+  it("shows the sender's display name as responsável in the summary", async () => {
+    ({ deps } = buildDeps({
+      memberDisplayName: (userId: string) =>
+        userId === "user-alvaro" ? "Alvaro" : undefined,
+    }));
+    const { reply } = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(reply).toContain("Responsável: Alvaro");
   });
 
   it("cancels without persisting", async () => {
@@ -496,11 +583,55 @@ describe("AI fallback in the bot flow", () => {
   });
 });
 
-describe("LLM text interpretation fallback (parser miss -> interpretText)", () => {
-  it("NEVER calls the interpreter when the deterministic parser found an amount", async () => {
-    const interpretText = vi.fn<TextInterpreter>(
-      async () => null,
+describe("LLM text interpretation (always runs; parser owns amount/date)", () => {
+  it("calls the interpreter even when the parser found an amount; parser amount/date win, LLM description wins", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      amountCents: 9999, // must NOT beat the parser's amount
+      description: "OpenAI",
+      occurredOn: "2026-01-01", // must NOT beat the parser's explicit date
+      categoryHint: "Assinaturas",
+    }));
+    const { deps } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      {
+        text: "Gasto em OpenAI no valor de 56,13 reais ontem",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
     );
+
+    expect(interpretText).toHaveBeenCalledTimes(1);
+    expect(interpretText).toHaveBeenCalledWith(
+      "Gasto em OpenAI no valor de 56,13 reais ontem",
+      { today: TODAY },
+    );
+    expect(outcome.state.draft.amountCents).toBe(5613);
+    expect(outcome.state.draft.occurredOn).toBe("2026-06-21");
+    expect(outcome.state.draft.description).toBe("OpenAI");
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+  });
+
+  it("does not flag needsAttention just because the interpreter ran", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      description: "Uber",
+    }));
+    const { deps } = buildDeps({ interpretText });
+
+    // Amount AND date are deterministic -> nothing merits extra attention.
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(interpretText).toHaveBeenCalledTimes(1);
+    expect(outcome.state.draft.needsAttention).toBe(false);
+  });
+
+  it("keeps the parser description when the interpreter fails", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => null);
     const { deps } = buildDeps({ interpretText });
 
     const outcome = await startConversation(
@@ -509,9 +640,25 @@ describe("LLM text interpretation fallback (parser miss -> interpretText)", () =
       { today: TODAY },
     );
 
-    expect(interpretText).not.toHaveBeenCalled();
+    expect(interpretText).toHaveBeenCalledTimes(1);
     expect(outcome.state.status).toBe("awaiting_confirmation");
     expect(outcome.state.draft.amountCents).toBe(3200);
+    expect(outcome.state.draft.description.toLowerCase()).toContain("uber");
+  });
+
+  it("strips leading/trailing punctuation from an LLM description", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      description: "OpenAI,",
+    }));
+    const { deps } = buildDeps({ interpretText });
+
+    const outcome = await startConversation(
+      { text: "Gasto em OpenAI 56,13 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.draft.description).toBe("OpenAI");
   });
 
   it("parser miss + interpreter success -> awaiting_confirmation with the interpreted fields (still no save)", async () => {
@@ -773,19 +920,34 @@ function fakeTelegram(): {
 const IDENTITIES: Record<string, BotMemberIdentity> = {
   "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
+  "@karolzinha": {
+    householdId: "house-1",
+    userId: "user-karol",
+    displayName: "Karol",
+  },
 };
 
-const resolveMemberFake = async (
-  telegramUserId: string,
-): Promise<BotMemberIdentity | null> => IDENTITIES[telegramUserId] ?? null;
+const resolveMemberFake = async (sender: {
+  telegramUserId: string;
+  telegramUsername?: string;
+}): Promise<BotMemberIdentity | null> =>
+  IDENTITIES[sender.telegramUserId] ??
+  (sender.telegramUsername !== undefined
+    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
+    : null);
 
-function textUpdate(fromId: number, text: string, chatId = 555): unknown {
+function textUpdate(
+  fromId: number,
+  text: string,
+  chatId = 555,
+  fromUsername?: string,
+): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
       chat: { id: chatId },
-      from: { id: fromId },
+      from: { id: fromId, username: fromUsername },
       text,
     },
   };
@@ -817,6 +979,28 @@ describe("handleWebhook: telegram identity", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.text).toMatch(/não conheço/i);
     // No transaction, no interaction row: there is no household to scope to.
+    expect(tables.transactions).toHaveLength(0);
+  });
+
+  it("resolves the sender by @username when the numeric id is not linked yet", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+
+    const result = await handleWebhook({
+      rawBody: textUpdate(999, "mercado 54,30", 555, "KarolZinha"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    });
+
+    expect(result.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    // Known member via username → the normal confirmation flow, not a refusal.
+    expect(sent[0]?.text).not.toMatch(/não conheço/i);
     expect(tables.transactions).toHaveLength(0);
     expect(tables.bot_interactions).toHaveLength(0);
   });

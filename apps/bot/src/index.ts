@@ -4,7 +4,7 @@
  * Telegram entry point. The bot is a THIN consumer of the shared core: it parses
  * a Portuguese message into a draft, asks the categorization engine
  * (@family-finance/categorization) for a suggestion, builds the transaction via
- * @family-finance/domain (default responsibility = the house, createdByUserId =
+ * @family-finance/domain (default responsibility = the sender, createdByUserId =
  * the linked Telegram identity), and persists it via @family-finance/db — exactly
  * like the web app. It never re-implements transaction or categorization logic.
  *
@@ -32,7 +32,7 @@ import {
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findAccountsByHousehold,
-  findMemberByTelegramUserId,
+  resolveTelegramMember,
   listCreditCards,
   listHouseholdMembers,
   listActiveCategorizationMemory,
@@ -164,7 +164,10 @@ async function buildDeps(
   return {
     householdId,
     catalog,
-    defaultAccountId: checking?.id ?? "",
+    // undefined (not "") when the household has no account — `persist` then
+    // refuses a non-card lançamento with a clear message instead of building
+    // an invalid empty accountId.
+    defaultAccountId: checking?.id,
     resolveCardId: () => cards[0]?.id,
     resolveAccountId: () => checking?.id,
     // Map a spoken name ("responsável Karol") to an active member by
@@ -183,6 +186,10 @@ async function buildDeps(
       );
       return matches.length === 1 ? matches[0]?.userId : undefined;
     },
+    // Show the responsible member's display name in the confirmation summary.
+    memberDisplayName: (userId: string) =>
+      members.find((member) => member.isActive && member.userId === userId)
+        ?.displayName ?? undefined,
     // AI is the LAST resort inside the engine: it fires only when memory and
     // deterministic rules are uncertain. Omitted when no AI key is configured.
     suggestCategory: (context: CategorizationContext) =>
@@ -203,8 +210,9 @@ async function buildDeps(
         transaction_id: entry.transactionId ?? null,
       });
     },
-    // LLM text interpretation fallback (spec §3.4) — only consulted when the
-    // deterministic parser finds no amount; result stays behind confirmation.
+    // LLM text interpretation (spec §3.4) — consulted on every new entry for a
+    // clean description + category hint; the deterministic parser stays the
+    // amount/date source. Result stays behind confirmation.
     interpretText,
     // Unified intent classifier (recurring obligations) — sees every NEW
     // message when configured; null falls back to the parser path above.
@@ -262,8 +270,11 @@ export async function handleWebhook(args: {
   configuredSecret: string | undefined;
   client: AppSupabaseClient;
   telegram: TelegramClient;
-  /** Map a Telegram user id to a linked household member (null = unknown). */
-  resolveMember: (telegramUserId: string) => Promise<BotMemberIdentity | null>;
+  /** Map a Telegram sender (id + optional @username) to a linked member. */
+  resolveMember: (sender: {
+    telegramUserId: string;
+    telegramUsername?: string;
+  }) => Promise<BotMemberIdentity | null>;
   /** Per-chat conversation persistence (DB-backed in production). */
   store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
@@ -291,7 +302,10 @@ export async function handleWebhook(args: {
   // Identity first: the sender's Telegram id must map to a household member.
   // Unmatched → one polite refusal; NOTHING is written (there is no household
   // to scope a bot_interactions row to), so we only log to the console.
-  const identity = await args.resolveMember(incoming.fromId);
+  const identity = await args.resolveMember({
+    telegramUserId: incoming.fromId,
+    telegramUsername: incoming.fromUsername,
+  });
   if (identity === null) {
     console.warn(
       `[bot] unmatched telegram user ${incoming.fromId} (chat ${incoming.chatId}) — refused.`,
@@ -408,8 +422,14 @@ export async function startBot(): Promise<{
   });
 
   const store = createDbConversationStore(client);
-  const resolveMember = (telegramUserId: string) =>
-    findMemberByTelegramUserId(client, Number(telegramUserId));
+  const resolveMember = (sender: {
+    telegramUserId: string;
+    telegramUsername?: string;
+  }) =>
+    resolveTelegramMember(client, {
+      telegramUserId: Number(sender.telegramUserId),
+      telegramUsername: sender.telegramUsername ?? null,
+    });
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)

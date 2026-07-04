@@ -5,8 +5,8 @@ import { useState, useTransition } from "react";
 import type { HouseholdMemberProfile } from "@family-finance/db";
 
 import { setThemeAction, updateMemberAction } from "./actions";
-import { THEMES, type ThemeId } from "./helpers";
-import { Badge, Field, Input } from "../../../components/ui";
+import { THEMES, telegramDisplayValue, type ThemeId } from "./helpers";
+import { Badge, Field, Input, useToast } from "../../../components/ui";
 
 /**
  * Client widgets for "Configurações": the theme picker (two theme-preview
@@ -43,6 +43,7 @@ const THEME_CARD: Record<
 };
 
 export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
+  const toast = useToast();
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -58,7 +59,12 @@ export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
             aria-pressed={isActive}
             onClick={() => {
               startTransition(async () => {
-                await setThemeAction(theme.id);
+                try {
+                  await setThemeAction(theme.id);
+                  toast.success("Tema atualizado.");
+                } catch {
+                  toast.error("Não foi possível trocar o tema.");
+                }
               });
             }}
             className={[
@@ -103,6 +109,7 @@ function memberInitial(member: HouseholdMemberProfile): string {
 }
 
 export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
+  const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -113,9 +120,12 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
     startTransition(async () => {
       const result = await updateMemberAction(formData);
       if (!result.ok) {
-        setError(result.error ?? "Não foi possível salvar o perfil.");
+        const message = result.error ?? "Não foi possível salvar o perfil.";
+        setError(message);
+        toast.error(message);
       } else {
         setSaved(true);
+        toast.success("Perfil salvo.");
       }
     });
   }
@@ -145,18 +155,12 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
           </Field>
         </div>
         <div className="ff-member__field">
-          <Field label="Telegram">
+          <Field label="Telegram (@username ou ID)">
             <Input
-              name="telegramUserId"
-              defaultValue={
-                member.telegramUserId === null
-                  ? ""
-                  : String(member.telegramUserId)
-              }
-              placeholder="ID do Telegram"
-              aria-label="ID do Telegram"
-              inputMode="numeric"
-              className="ff-num"
+              name="telegram"
+              defaultValue={telegramDisplayValue(member)}
+              placeholder="@username"
+              aria-label="Telegram (@username ou ID)"
             />
           </Field>
         </div>

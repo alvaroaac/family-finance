@@ -11,3 +11,5 @@ playwright-report
 test-results
 *.tsbuildinfo
 .pr-review/
+.vercel/
+supabase/config.toml
