@@ -376,6 +376,39 @@ toast-timers warning, untouched).
 
 ---
 
+## 2026-07-04 — Manual transaction entry + payment/amount edit BUILT (subagent-driven)
+
+User hit two gaps testing v1.0: no way to add a transaction from the web, and no way to convert an
+account expense into a card expense. Brainstormed → spec (user plan-review: Approved, 0 comments) →
+plan → subagent-driven execution (user's pick). 4 impl tasks + gate, all reviews clean, 2 fix rounds.
+
+### What shipped (commits dd7d58a..333b375)
+- **db:** `TransactionPatch` gained `amountCents` + `payment` (account↔card swap sets BOTH columns in
+  one UPDATE — DB CHECK safe); parcela rows refuse amount/payment edits (same lookup pattern as the
+  delete guard); income rows refuse card payments (guard shares the one lookup, fetches `kind`).
+- **web action:** `createManualTransactionAction` + `manualEntryFromFormData` (pt-BR amount parsing,
+  payment "account:<id>"/"card:<id>" encoding, entrada-só-conta server-side) via domain
+  `createTransactionDraft`; `transactionPatchFromFormData` gained amount/payment keys.
+- **web UI:** "Novo lançamento" inline panel on /transactions (collapsed; `?novo=1` opens; dashboard
+  "+ Lançamento" button links there); edit row gained Pagamento select (income = accounts-only,
+  parcela = plain text) + click-to-edit valor (parcela disabled).
+
+### Review findings worth remembering
+- **Final review (opus) caught the cross-task seam:** the EDIT path had no income+card guard at any
+  layer (UI-only) — a crafted FormData could park an entrada num cartão and the money silently
+  vanished from card-pressure math (sums only kind="expense"). Fixed in `333b375` by widening the
+  parcela-guard lookup to `installment_id, kind` (no extra query). Per-task reviews couldn't see it.
+- Pre-existing debt logged: account/card FKs not household-scoped at DB layer (thoughts/tech-debt.md).
+- Deferred follow-ups: colonless payment value + blank description/occurredOn untested in
+  manualEntryFromFormData; render tests can't exercise income→card reset (static markup).
+
+### Gate
+12/12 typecheck, db 47/47, web 122/122, builds green, lint clean (pre-existing toast warning only).
+~11 subagents (impl sonnet/haiku, reviews sonnet, final review opus), 2 fix rounds, ledger in
+`.superpowers/sdd/progress.md`. NOT deployed — web needs a Vercel prod deploy to go live.
+
+---
+
 ## Current state
 
 **v1.0 is LIVE.** Web on Vercel prod (`https://casa.alvaroekarol.com.br`), bot container running on the VPS (mine-ops), Supabase self-hosted, Telegram webhook healthy, audio (Whisper) working. Model = Haiku 4.5. Everything pushed to `feat/family-finance-mvp` (PR #2), working tree clean (thoughts/ local-only).

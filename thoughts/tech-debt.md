@@ -396,6 +396,30 @@ by category, join names) + a simple bar/donut on /resumo using the design-system
 
 **Status:** open (deferred by user, 2026-07-02)
 
+## 2026-07-04: account_id/credit_card_id FKs not household-scoped at the DB layer
+
+**Area:** supabase schema (transactions), packages/db write paths
+
+**Impact:** The `transactions.account_id`/`credit_card_id` foreign keys only check
+that the referenced row EXISTS — nothing at the DB layer asserts the instrument
+belongs to the SAME household as the transaction. A crafted request could point a
+transaction at another household's account/card id (RLS hides the other
+household's rows from reads, but the FK insert/update itself succeeds via the
+service-role bot path or any authenticated write whose RLS policy doesn't join
+the instrument's household). Flagged by the 2026-07-04 final whole-branch review
+of the manual-entry feature; pre-existing — applies equally to the bot, import,
+and card-purchase paths, not introduced by that branch.
+
+**Current workaround:** All UI/action paths only offer instruments loaded from
+the caller's own household, and the family-scale threat model is benign.
+
+**Revisit trigger:** Any multi-household deployment, or adding an API surface
+that accepts instrument ids directly — then add a composite FK
+(`(household_id, account_id)` referencing a unique key on accounts, same for
+cards) or a CHECK trigger.
+
+**Status:** open
+
 ## Entry Format
 
 ```md
