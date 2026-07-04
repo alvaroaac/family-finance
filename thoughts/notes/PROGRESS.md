@@ -405,7 +405,15 @@ plan → subagent-driven execution (user's pick). 4 impl tasks + gate, all revie
 ### Gate
 12/12 typecheck, db 47/47, web 122/122, builds green, lint clean (pre-existing toast warning only).
 ~11 subagents (impl sonnet/haiku, reviews sonnet, final review opus), 2 fix rounds, ledger in
-`.superpowers/sdd/progress.md`. NOT deployed — web needs a Vercel prod deploy to go live.
+`.superpowers/sdd/progress.md`.
+
+### Deploy (2026-07-04)
+Merged origin first (obligations PR #3 had landed remotely mid-run; one semantic test-literal fix,
+`7cc3ae5`). Web deployed to Vercel prod — **`vercel --prod` must run from the REPO ROOT**: the root
+`.vercel/` links the real project (`family-finance`, rootDirectory=apps/web, pnpm); `apps/web/.vercel/`
+links a stale junk project ("web") that installs with npm and dies on `workspace:*`. Alias
+`casa.alvaroekarol.com.br` → new deploy, 200. VPS was already current (other session): migration 0011
+applied, 0012 grants effective, bot container running merged code (obligations + the 3 bot fixes).
 
 ---
 
