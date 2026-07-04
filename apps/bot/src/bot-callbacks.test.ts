@@ -4,6 +4,7 @@ import { handleWebhook } from "./index.js";
 import { createInMemoryConversationStore } from "./store.js";
 import type { TelegramClient, InlineKeyboardMarkup } from "./telegram.js";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
+import type { AiCategorizer } from "@family-finance/categorization";
 
 // ---------------------------------------------------------------------------
 // Fixtures copied verbatim from bot.test.ts (module-private there).
@@ -14,6 +15,7 @@ type FakeRow = Record<string, unknown>;
 function fakeQueryBuilder(rows: FakeRow[]) {
   let filtered = [...rows];
   let deleteMode = false;
+  let patch: FakeRow | null = null;
   const finish = (): { data: FakeRow[]; error: null } => {
     if (deleteMode) {
       for (const row of filtered) {
@@ -21,6 +23,11 @@ function fakeQueryBuilder(rows: FakeRow[]) {
         if (index >= 0) {
           rows.splice(index, 1);
         }
+      }
+    }
+    if (patch !== null) {
+      for (const row of filtered) {
+        Object.assign(row, patch);
       }
     }
     return { data: filtered, error: null };
@@ -49,6 +56,10 @@ function fakeQueryBuilder(rows: FakeRow[]) {
     delete() {
       deleteMode = true;
       filtered = [...rows];
+      return api;
+    },
+    update(payload: FakeRow) {
+      patch = payload;
       return api;
     },
     eq(column: string, value: unknown) {
@@ -328,5 +339,129 @@ describe("handleWebhook: callback routing", () => {
     });
     expect(result.status).toBe(401);
     expect(answered).toHaveLength(0);
+  });
+});
+
+describe("integration: the Petz flow (spec §6)", () => {
+  const petsAi: AiCategorizer = {
+    async categorize() {
+      return {
+        categoryName: "Pets",
+        subcategoryName: null,
+        confidence: 0.9,
+        explanation: "Petz é um pet shop.",
+      };
+    },
+  };
+
+  function petzHarness() {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent, answered, stripped } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      ai: petsAi,
+    };
+    return { base, tables, sent, answered, stripped };
+  }
+
+  it("text in → proposal keyboard out → nca tap → created + saved + seeded → memory hit next time", async () => {
+    const { base, tables, sent } = petzHarness();
+
+    // 1. New expense for an unknown merchant: proposal keyboard.
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Petz 90 reais") });
+    const proposal = sent.at(-1);
+    expect(proposal?.text).toContain('Categoria: "Pets" (nova — sugerida)');
+    expect(proposal?.replyMarkup?.inline_keyboard[0]?.[0]).toEqual({
+      text: '✅ Confirmar (cria "Pets")',
+      callback_data: "nca",
+    });
+
+    // 2. One tap: category created (active), transaction saved, memory seeded.
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "nca", 555, 1001),
+    });
+    const category = tables.categories!.find((c) => c.name === "Pets");
+    expect(category).toBeDefined();
+    expect(category?.is_active).toBe(true);
+    expect(tables.transactions).toHaveLength(1);
+    expect(tables.transactions![0]?.category_id).toBe(category?.id);
+    expect(tables.categorization_memory).toHaveLength(1);
+    expect(tables.categorization_memory![0]).toMatchObject({
+      pattern: "petz",
+      category_id: category?.id,
+      confidence: 0.95,
+    });
+    expect(String(tables.categorization_memory![0]?.explanation)).toContain(
+      "criada pelo usuário via bot",
+    );
+    expect(sent.at(-1)?.text).toContain("Lançamento salvo");
+
+    // 3. Same merchant again: memory resolves it — no proposal this time.
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Petz 55 reais") });
+    const second = sent.at(-1);
+    expect(second?.text).not.toContain("(nova — sugerida)");
+    expect(second?.text).toContain("Categoria: Pets");
+  });
+
+  it("dedupe: proposing 'pets' when 'Pets' exists assigns, not duplicates", async () => {
+    const { base, tables, sent } = petzHarness();
+    tables.categories!.push({
+      id: "cat-pets-existing",
+      household_id: "house-1",
+      name: "Pets",
+      is_active: true,
+    });
+    // The catalog now contains "Pets", so the engine resolves the AI's
+    // suggestion to the EXISTING id — no proposal, no creation.
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "petz 30 reais") });
+    expect(sent.at(-1)?.text).not.toContain("(nova — sugerida)");
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf", 555, 1001) });
+    expect(
+      tables.categories!.filter((c) => String(c.name).toLowerCase() === "pets"),
+    ).toHaveLength(1);
+    expect(tables.transactions![0]?.category_id).toBe("cat-pets-existing");
+  });
+
+  it("dedupe at accept-time: an ARCHIVED 'pets' is reactivated by nca, not duplicated", async () => {
+    const { base, tables } = petzHarness();
+    tables.categories!.push({
+      id: "cat-pets-archived",
+      household_id: "house-1",
+      name: "pets",
+      is_active: false,
+    });
+    // Archived categories are NOT in the engine catalog → the AI proposal
+    // still fires; the accept path must find and reactivate the archived row.
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Petz 90 reais") });
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "nca", 555, 1001) });
+
+    const rows = tables.categories!.filter(
+      (c) => String(c.name).toLowerCase() === "pets",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.is_active).toBe(true);
+    expect(tables.transactions![0]?.category_id).toBe("cat-pets-archived");
+  });
+
+  it("manual: nova categoria via grid button, end to end", async () => {
+    const { base, tables, sent } = petzHarness();
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cats", 555, 1001) });
+    expect(sent.at(-1)?.text).toBe("Escolha a categoria:");
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "nc", 555, 1002) });
+    expect(sent.at(-1)?.text).toContain("nome da nova categoria");
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Viagens") });
+    expect(tables.categories!.some((c) => c.name === "Viagens")).toBe(true);
+    // Manual creation seeds NO memory.
+    expect(tables.categorization_memory).toHaveLength(0);
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf", 555, 1004) });
+    expect(tables.transactions).toHaveLength(1);
   });
 });
