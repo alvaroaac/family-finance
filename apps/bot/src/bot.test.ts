@@ -76,6 +76,31 @@ describe("parseExpenseText", () => {
     expect(parsed.occurredOn).toBe("2026-06-22");
   });
 
+  it("reads pt-BR thousands (dot groups of 3) as reais, not centavos", () => {
+    // Regression: "1.500" used to match ".50" as a dot-decimal -> 150 cents.
+    expect(parseExpenseText("aluguel R$ 1.500", { today: TODAY }).amountCents).toBe(
+      150000,
+    );
+    expect(
+      parseExpenseText("financiamento 1.234 reais", { today: TODAY }).amountCents,
+    ).toBe(123400);
+    expect(
+      parseExpenseText("carro 51.000 em 72x", { today: TODAY }).amountCents,
+    ).toBe(5100000);
+    expect(
+      parseExpenseText("casa 1.234.567", { today: TODAY }).amountCents,
+    ).toBe(123456700);
+  });
+
+  it("keeps thousands+decimals and plain decimals correct", () => {
+    expect(
+      parseExpenseText("R$ 1.234,56", { today: TODAY }).amountCents,
+    ).toBe(123456);
+    // A 2-digit group after the dot is a decimal, not thousands.
+    expect(parseExpenseText("R$ 1.50", { today: TODAY }).amountCents).toBe(150);
+    expect(parseExpenseText("32.50", { today: TODAY }).amountCents).toBe(3250);
+  });
+
   it("parses an explicit DD/MM date hint", () => {
     const parsed = parseExpenseText("Padaria 10 reais 12/03", { today: TODAY });
     expect(parsed.amountCents).toBe(1000);
@@ -1071,6 +1096,31 @@ describe("handleWebhook: telegram identity", () => {
     await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável Zeca") });
     state = await store.load("555");
     expect(state?.draft.responsibleUserId).toBeUndefined();
+  });
+
+  it("does NOT let a second member's message act on the first member's pending draft", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    // Alvaro (777) starts a draft in the shared group chat 555.
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    expect((await store.load("555"))?.draft.createdByUserId).toBe("user-alvaro");
+
+    // Karol (888) says "confirmar" in the same chat — it must NOT save Alvaro's
+    // draft. It starts Karol's OWN fresh conversation instead.
+    await handleWebhook({ ...base, rawBody: textUpdate(888, "confirmar") });
+    expect(tables.transactions).toHaveLength(0);
+    const afterKarol = await store.load("555");
+    expect(afterKarol?.draft.createdByUserId).toBe("user-karol");
   });
 });
 

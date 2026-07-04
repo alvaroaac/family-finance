@@ -542,11 +542,21 @@ export async function handleWebhook(args: {
 
   const existing = await args.store.load(message.chatId);
 
+  // In a group chat the store is keyed by chat id, so a pending draft belongs
+  // to whoever started it. If a DIFFERENT member now writes, do NOT feed their
+  // message into the first member's draft — that would let B's "sim" confirm
+  // A's lançamento (saved with A as responsável) or misread B's expense as a
+  // correction to A's. Treat it as a fresh conversation for the new sender.
+  const belongsToSender =
+    existing !== undefined &&
+    existing.draft.createdByUserId === identity.userId;
+
   let reply: string;
   let nextState: ConversationState;
   let keyboard: InlineKeyboardMarkup | undefined;
   if (
     existing === undefined ||
+    !belongsToSender ||
     existing.status === "saved" ||
     existing.status === "cancelled"
   ) {

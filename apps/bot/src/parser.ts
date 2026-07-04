@@ -69,9 +69,12 @@ function extractAmount(
   text: string,
 ): { cents: number; matched: string } | null {
   // Prefer an explicit money token: optional R$, then a number with BR or dot
-  // decimals. We pick the first money-looking token.
+  // decimals. We pick the first money-looking token. Order matters — the
+  // thousands-grouped branches (dot groups of EXACTLY 3 digits) must precede
+  // the `\d+\.\d{2}` dot-decimal branch so "1.500" is read as 1500 reais, not
+  // as the dot-decimal "1.50" (which used to yield 150 cents).
   const moneyRe =
-    /(r\$\s*)?(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2}|\d+)(\s*(reais|real))?/i;
+    /(r\$\s*)?(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d{1,3}(?:\.\d{3})+|\d+\.\d{2}|\d+)(\s*(reais|real))?/i;
   const match = moneyRe.exec(text);
   if (match === null) {
     return null;
@@ -85,6 +88,9 @@ function extractAmount(
     // BR format: thousands "." removed, decimal ",".
     const normalized = numberToken.replace(/\./g, "").replace(",", ".");
     cents = Math.round(Number.parseFloat(normalized) * 100);
+  } else if (/^\d{1,3}(?:\.\d{3})+$/.test(numberToken)) {
+    // Thousands-grouped integer reais with no decimals: "1.500" -> 150000.
+    cents = Number.parseInt(numberToken.replace(/\./g, ""), 10) * 100;
   } else if (/^\d+\.\d{2}$/.test(numberToken)) {
     // Dot-decimal "32.50".
     cents = Math.round(Number.parseFloat(numberToken) * 100);

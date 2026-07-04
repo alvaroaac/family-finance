@@ -443,6 +443,104 @@ async function checkInstallmentRollback(member, householdId) {
   );
 }
 
+/**
+ * (e) The public `anon` role must NOT be able to EXECUTE any SECURITY DEFINER
+ * RPC. The Supabase stack grants EXECUTE to anon by default; migration 0012
+ * revokes it. This is the regression gate for that hole — an unauthenticated
+ * anon client calling each RPC must fail at the permission layer (Postgres
+ * error 42501, surfaced by PostgREST), NOT reach the function body.
+ */
+async function checkAnonCannotExecuteRpcs(householdId) {
+  const anon = anonClient();
+  const rpcs = [
+    ["materialize_obligation_payment", {
+      target_obligation_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      target_month: "2026-01",
+    }],
+    ["merge_category", {
+      target_household_id: householdId,
+      source_category_id: created.categoryId,
+      target_category_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    }],
+    ["create_installment_purchase", { group_payload: {}, installments_payload: [] }],
+    ["confirm_import", { batch_payload: {}, rows_payload: [] }],
+  ];
+  for (const [name, args] of rpcs) {
+    const { error } = await anon.rpc(name, args);
+    // Any error that denies execution is a pass; a permission error is the
+    // expected shape. A SUCCESS (or a body-level validation error, which means
+    // the body RAN) is a fail — anon reached the function.
+    const denied =
+      Boolean(error) &&
+      /permission denied|not allowed|does not exist|42501/i.test(error.message);
+    record(
+      `(e) anon cannot EXECUTE ${name}`,
+      denied,
+      error ? `denied: ${error.message}` : "anon reached the RPC (NOT denied)",
+    );
+  }
+}
+
+/**
+ * (f) Obligations RPC: a member can materialize a month once (idempotent
+ * repeat is a no-op), and a month outside the obligation's [start, term-end]
+ * window is rejected. Uses a throwaway obligation, cleaned up here.
+ */
+async function checkObligationMaterialization(member, householdId) {
+  const { data: ob, error: obErr } = await admin
+    .from("obligations")
+    .insert({
+      household_id: householdId,
+      description: `${MARKER} obligation`,
+      amount_cents: 71044,
+      start_month: "2026-01",
+      term_months: 12,
+      due_day: 5,
+      account_id: created.accountId,
+      created_by_user_id: created.memberUserId,
+    })
+    .select("id")
+    .single();
+  if (obErr) {
+    record("(f) obligations fixture created", false, obErr.message);
+    return;
+  }
+
+  const first = await member.rpc("materialize_obligation_payment", {
+    target_obligation_id: ob.id,
+    target_month: "2026-03",
+  });
+  record(
+    "(f1) member materializes an in-window month",
+    !first.error && first.data && first.data.already_paid === false,
+    first.error ? first.error.message : `already_paid=${first.data?.already_paid}`,
+  );
+
+  const repeat = await member.rpc("materialize_obligation_payment", {
+    target_obligation_id: ob.id,
+    target_month: "2026-03",
+  });
+  record(
+    "(f2) repeat is idempotent (already_paid=true, no double row)",
+    !repeat.error && repeat.data && repeat.data.already_paid === true,
+    repeat.error ? repeat.error.message : `already_paid=${repeat.data?.already_paid}`,
+  );
+
+  const outOfWindow = await member.rpc("materialize_obligation_payment", {
+    target_obligation_id: ob.id,
+    target_month: "2030-01",
+  });
+  record(
+    "(f3) month after the term is rejected",
+    Boolean(outOfWindow.error),
+    outOfWindow.error ? outOfWindow.error.message : "unexpectedly accepted",
+  );
+
+  // Cleanup: the materialized transaction + the obligation.
+  await admin.from("transactions").delete().eq("obligation_id", ob.id);
+  await admin.from("obligations").delete().eq("id", ob.id);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -468,6 +566,8 @@ async function main() {
     await checkMergeCategoryRollback(member, householdId);
     await checkConfirmImportRollback(member, householdId);
     await checkInstallmentRollback(member, householdId);
+    await checkAnonCannotExecuteRpcs(householdId);
+    await checkObligationMaterialization(member, householdId);
 
     await member.auth.signOut();
     await outsider.auth.signOut();
