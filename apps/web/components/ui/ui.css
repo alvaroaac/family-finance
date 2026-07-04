@@ -2556,3 +2556,10 @@ a.ff-callout:hover {
     width: auto;
   }
 }
+
+.ff-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}

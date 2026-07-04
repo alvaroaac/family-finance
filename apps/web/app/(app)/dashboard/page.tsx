@@ -116,6 +116,11 @@ export default async function DashboardPage() {
         kicker={`Nossa casa · ${formatMonthLabel(month)}`}
         title="O mês inteiro, de uma vez"
         lead="Quanto entrou, quanto sobrou, a pressão dos cartões e as caixinhas."
+        actions={
+          <Link className="ff-btn ff-btn--primary" href="/transactions?novo=1">
+            + Lançamento
+          </Link>
+        }
       />
 
       {loadError ? (

@@ -34,6 +34,7 @@ import {
   type SubcategoryOption,
   type ResponsibleOption,
 } from "./transactions-table";
+import { NewTransactionForm } from "./new-transaction-form";
 
 export const metadata = {
   title: "Transações — Casa",
@@ -87,6 +88,8 @@ export default async function TransactionsPage({
   await requireAuthorizedUser();
   const params = await searchParams;
   const { month, page, filters } = parseTransactionsSearchParams(params);
+  const novoRaw = params.novo;
+  const novo = (Array.isArray(novoRaw) ? novoRaw[0] : novoRaw) === "1";
 
   let data = EMPTY_PAGE;
   let accounts: { id: string; name: string }[] = [];
@@ -198,6 +201,15 @@ export default async function TransactionsPage({
           Não foi possível carregar os lançamentos agora. ({loadError})
         </div>
       ) : null}
+
+      <NewTransactionForm
+        accounts={accounts}
+        cards={cards}
+        categories={categories}
+        subcategories={subcategories}
+        responsibles={responsibles}
+        initiallyOpen={novo}
+      />
 
       {/* Filter bar */}
       <div className="ff-filterbar">

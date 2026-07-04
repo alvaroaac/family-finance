@@ -13,6 +13,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   findTransactionsFiltered,
@@ -30,11 +32,57 @@ import {
   manualEntryFromFormData,
   PAGE_SIZE,
 } from "../app/(app)/transactions/filters.js";
+import { NewTransactionForm } from "../app/(app)/transactions/new-transaction-form.js";
+import { ToastProvider } from "../components/ui/toast.js";
 import {
   FakeSupabaseStore,
   createFakeSupabaseClient,
   type FakeDatabaseSeed,
 } from "./fake-supabase.js";
+
+// ---------------------------------------------------------------------------
+// 0. NewTransactionForm render tests
+// ---------------------------------------------------------------------------
+
+describe("NewTransactionForm", () => {
+  const formProps = {
+    accounts: [{ id: "acct-1", name: "Conta Corrente" }],
+    cards: [{ id: "card-1", name: "Nubank" }],
+    categories: [{ id: "cat-1", name: "Alimentação" }],
+    subcategories: [{ id: "sub-1", categoryId: "cat-1", name: "Mercado" }],
+    responsibles: [
+      { value: "household", label: "Casa" },
+      { value: "user-alvaro", label: "Alvaro" },
+    ],
+    initiallyOpen: true,
+  };
+
+  it("renders the open panel with every field and both payment options", () => {
+    const html = renderToStaticMarkup(
+      createElement(ToastProvider, null, createElement(NewTransactionForm, formProps)),
+    );
+    expect(html).toContain("Novo lançamento");
+    expect(html).toContain('name="amount"');
+    expect(html).toContain('name="description"');
+    expect(html).toContain('name="occurredOn"');
+    expect(html).toContain('value="account:acct-1"');
+    expect(html).toContain('value="card:card-1"');
+    expect(html).toContain("Conta: Conta Corrente");
+    expect(html).toContain("Cartão: Nubank");
+  });
+
+  it("starts collapsed (button only) when initiallyOpen is false", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ToastProvider,
+        null,
+        createElement(NewTransactionForm, { ...formProps, initiallyOpen: false }),
+      ),
+    );
+    expect(html).toContain("+ Lançamento");
+    expect(html).not.toContain('name="amount"');
+  });
+});
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
 const ALVARO = "11111111-1111-1111-1111-111111111111";
