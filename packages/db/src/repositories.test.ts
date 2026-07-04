@@ -710,6 +710,35 @@ describe("updateTransaction with parcela guard", () => {
   });
 });
 
+describe("updateTransaction with income+card guard", () => {
+  it("rejects a card payment patch on an income row, pt-BR", async () => {
+    const client = fakeClientWithRow({ kind: "income", installment_id: null });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", {
+        payment: { type: "card", creditCardId: "card-1" },
+      }),
+    ).rejects.toThrow(/conta/i);
+  });
+
+  it("allows an account payment patch on an income row", async () => {
+    const client = fakeClientWithRow({ kind: "income", installment_id: null });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", {
+        payment: { type: "account", accountId: "acct-1" },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("still allows a card payment patch on an expense row (regression)", async () => {
+    const client = fakeClientWithRow({ kind: "expense", installment_id: null });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", {
+        payment: { type: "card", creditCardId: "card-1" },
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("findMemberByTelegramUserId", () => {
   it("maps an active member row to the bot identity shape", async () => {
     const { client, calls } = createRecordingClient({

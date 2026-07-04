@@ -1612,7 +1612,7 @@ export async function updateTransaction(
   if (patch.amountCents !== undefined || patch.payment !== undefined) {
     const { data, error: lookupError } = await client
       .from("transactions")
-      .select("installment_id")
+      .select("installment_id, kind")
       .eq("household_id", householdId)
       .eq("id", transactionId)
       .maybeSingle();
@@ -1623,6 +1623,14 @@ export async function updateTransaction(
       throw new Error(
         "Parcelas são gerenciadas pelo grupo do parcelamento — edite o parcelamento, não a parcela avulsa.",
       );
+    }
+    if (
+      data !== null &&
+      patch.payment !== undefined &&
+      patch.payment.type === "card" &&
+      data.kind === "income"
+    ) {
+      throw new Error("Entrada é sempre numa conta — escolha uma conta.");
     }
   }
 

@@ -77,10 +77,12 @@ export async function updateTransactionAction(
 
 /**
  * Create one manual transaction (despesa ou entrada) from the "Novo
- * lançamento" form. Validation runs through the shared domain
- * `createTransactionDraft` — the exact same choke point the bot and the
- * import flow use — and the income-needs-account rule is enforced here
- * server-side, not only in the UI.
+ * lançamento" form. Amount/date/description/payment-shape validation runs
+ * through the shared domain `createTransactionDraft` — the exact same choke
+ * point the bot and the import flow use. The income-needs-account rule is
+ * NOT part of that domain validation; it is enforced server-side by
+ * `manualEntryFromFormData` (see ./filters.ts), which rejects a card payment
+ * on an income entry before the draft is even built.
  */
 export async function createManualTransactionAction(
   formData: FormData,
