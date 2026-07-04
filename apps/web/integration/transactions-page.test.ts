@@ -27,6 +27,7 @@ import {
   shiftMonth,
   transactionsHref,
   transactionPatchFromFormData,
+  manualEntryFromFormData,
   PAGE_SIZE,
 } from "../app/(app)/transactions/filters.js";
 import {
@@ -181,6 +182,84 @@ describe("transactionPatchFromFormData", () => {
     fd.set("occurredOn", "2026-06-11");
     expect(transactionPatchFromFormData(fd)).toEqual({
       occurredOn: "2026-06-11",
+    });
+  });
+});
+
+describe("manualEntryFromFormData", () => {
+  function form(entries: Record<string, string>): FormData {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(entries)) fd.set(k, v);
+    return fd;
+  }
+  const base = {
+    kind: "expense",
+    amount: "56,13",
+    description: "OpenAI",
+    occurredOn: "2026-07-04",
+    payment: "account:acct-1",
+    responsible: "household",
+  };
+
+  it("parses a pt-BR amount into cents and decodes the payment", () => {
+    const input = manualEntryFromFormData(form(base));
+    expect(input.amountCents).toBe(5613);
+    expect(input.payment).toEqual({ type: "account", accountId: "acct-1" });
+    expect(input.kind).toBe("expense");
+  });
+
+  it("decodes a card payment", () => {
+    const input = manualEntryFromFormData(
+      form({ ...base, payment: "card:card-1" }),
+    );
+    expect(input.payment).toEqual({ type: "card", creditCardId: "card-1" });
+  });
+
+  it("rejects a non-positive or unparseable amount in pt-BR", () => {
+    expect(() =>
+      manualEntryFromFormData(form({ ...base, amount: "0" })),
+    ).toThrow(/valor/i);
+    expect(() =>
+      manualEntryFromFormData(form({ ...base, amount: "abc" })),
+    ).toThrow(/valor/i);
+  });
+
+  it("rejects income paid by card", () => {
+    expect(() =>
+      manualEntryFromFormData(
+        form({ ...base, kind: "income", payment: "card:card-1" }),
+      ),
+    ).toThrow(/entrada.*conta/i);
+  });
+
+  it("maps responsible member and casa", () => {
+    expect(manualEntryFromFormData(form(base)).responsible).toBe("household");
+    expect(
+      manualEntryFromFormData(form({ ...base, responsible: "user-karol" }))
+        .responsible,
+    ).toBe("user-karol");
+  });
+});
+
+describe("transactionPatchFromFormData: amount + payment", () => {
+  it("parses an edited amount (pt-BR) into amountCents", () => {
+    const fd = new FormData();
+    fd.set("amount", "45,90");
+    expect(transactionPatchFromFormData(fd).amountCents).toBe(4590);
+  });
+
+  it("throws pt-BR on an unparseable amount", () => {
+    const fd = new FormData();
+    fd.set("amount", "quarenta");
+    expect(() => transactionPatchFromFormData(fd)).toThrow(/valor/i);
+  });
+
+  it("decodes payment account:/card: values", () => {
+    const fd = new FormData();
+    fd.set("payment", "card:card-9");
+    expect(transactionPatchFromFormData(fd).payment).toEqual({
+      type: "card",
+      creditCardId: "card-9",
     });
   });
 });

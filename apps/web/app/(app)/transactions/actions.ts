@@ -6,10 +6,12 @@ import {
   findHouseholdIdForCurrentUser,
   updateTransaction,
   deleteTransaction,
+  createTransaction,
 } from "@family-finance/db";
+import { brl, createTransactionDraft } from "@family-finance/domain";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
-import { transactionPatchFromFormData } from "./filters";
+import { transactionPatchFromFormData, manualEntryFromFormData } from "./filters";
 
 /**
  * Server actions for the "Transações" screen (inline edit + guarded delete).
@@ -17,7 +19,7 @@ import { transactionPatchFromFormData } from "./filters";
  * Each action re-resolves the caller's household from the SESSION — the
  * client-sent form never carries (nor is trusted with) a household id — then
  * calls the household-scoped `packages/db` repository and revalidates the page.
- * Amount, kind and payment source are NOT editable here by design.
+ * Amount and payment source ARE editable via the inline patch; kind is not.
  */
 
 export type TransactionActionResult = { ok: boolean; error?: string };
@@ -69,6 +71,64 @@ export async function updateTransactionAction(
         error instanceof Error
           ? error.message
           : "Não foi possível salvar a alteração.",
+    };
+  }
+}
+
+/**
+ * Create one manual transaction (despesa ou entrada) from the "Novo
+ * lançamento" form. Validation runs through the shared domain
+ * `createTransactionDraft` — the exact same choke point the bot and the
+ * import flow use — and the income-needs-account rule is enforced here
+ * server-side, not only in the UI.
+ */
+export async function createManualTransactionAction(
+  formData: FormData,
+): Promise<TransactionActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const input = manualEntryFromFormData(formData);
+
+    const {
+      data: { user },
+    } = await client.auth.getUser();
+    if (user === null) {
+      return { ok: false, error: "Sessão inválida. Faça login novamente." };
+    }
+
+    const draftResult = createTransactionDraft({
+      householdId,
+      kind: input.kind,
+      amount: brl(input.amountCents),
+      occurredOn: input.occurredOn,
+      description: input.description,
+      createdByUserId: user.id,
+      payment: input.payment,
+      responsibleUserId:
+        input.responsible === "household" ? undefined : input.responsible,
+      category:
+        input.categoryId !== undefined
+          ? { categoryId: input.categoryId, subcategoryId: input.subcategoryId }
+          : undefined,
+    });
+    if (!draftResult.ok) {
+      return {
+        ok: false,
+        error: draftResult.errors.map((e) => e.message).join(" "),
+      };
+    }
+
+    await createTransaction(client, draftResult.value);
+    revalidatePath("/transactions");
+    revalidatePath("/dashboard");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar o lançamento.",
     };
   }
 }
