@@ -660,6 +660,8 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
     responsible_user_id: null,
     created_by_user_id: USER,
     import_batch_id: null,
+    obligation_id: null,
+    obligation_month: null,
     created_at: "2026-07-01T00:00:00Z",
     updated_at: "2026-07-01T00:00:00Z",
   };
