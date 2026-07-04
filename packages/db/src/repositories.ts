@@ -1513,6 +1513,16 @@ export type TransactionPatch = {
   description?: string;
   responsibility?: { scope: "household" } | { scope: "user"; userId: string };
   occurredOn?: string; // ISO date (YYYY-MM-DD)
+  /** Integer cents > 0. Parcela rows refuse this (managed via the group). */
+  amountCents?: number;
+  /**
+   * Swap the payment instrument. Maps to BOTH columns in one UPDATE so the
+   * DB CHECK (exactly one of account/card) can never be violated mid-edit.
+   * Parcela rows refuse this (managed via the group).
+   */
+  payment?:
+    | { type: "account"; accountId: string }
+    | { type: "card"; creditCardId: string };
 };
 
 /**
@@ -1556,6 +1566,27 @@ export function transactionUpdateFromPatch(
     }
     update.occurred_on = patch.occurredOn;
   }
+  if (patch.amountCents !== undefined) {
+    if (!Number.isInteger(patch.amountCents) || patch.amountCents <= 0) {
+      throw new Error("O valor precisa ser maior que zero.");
+    }
+    update.amount_cents = patch.amountCents;
+  }
+  if (patch.payment !== undefined) {
+    if (patch.payment.type === "account") {
+      if (patch.payment.accountId === "") {
+        throw new Error("Escolha a conta do lançamento.");
+      }
+      update.account_id = patch.payment.accountId;
+      update.credit_card_id = null;
+    } else {
+      if (patch.payment.creditCardId === "") {
+        throw new Error("Escolha o cartão do lançamento.");
+      }
+      update.credit_card_id = patch.payment.creditCardId;
+      update.account_id = null;
+    }
+  }
 
   return update;
 }
@@ -1563,6 +1594,9 @@ export function transactionUpdateFromPatch(
 /**
  * Apply a partial edit to one transaction. Validation happens in the pure
  * `transactionUpdateFromPatch`; an empty patch is a no-op (no query issued).
+ * Parcela rows (linked to an installment) are refused for amount/payment edits:
+ * installments are managed through their group, so editing a lone parcela's
+ * amount or payment would silently unbalance the plan.
  */
 export async function updateTransaction(
   client: AppSupabaseClient,
@@ -1574,6 +1608,24 @@ export async function updateTransaction(
   if (Object.keys(update).length === 0) {
     return;
   }
+
+  if (patch.amountCents !== undefined || patch.payment !== undefined) {
+    const { data, error: lookupError } = await client
+      .from("transactions")
+      .select("installment_id")
+      .eq("household_id", householdId)
+      .eq("id", transactionId)
+      .maybeSingle();
+    if (lookupError !== null) {
+      throw new Error(`updateTransaction lookup failed: ${lookupError.message}`);
+    }
+    if (data !== null && data.installment_id !== null) {
+      throw new Error(
+        "Parcelas são gerenciadas pelo grupo do parcelamento — edite o parcelamento, não a parcela avulsa.",
+      );
+    }
+  }
+
   const { error } = await client
     .from("transactions")
     .update(update)

@@ -17,6 +17,8 @@ import {
   needsReview,
   transactionUpdateFromPatch,
   updateInvestmentBucketBalance,
+  updateTransaction,
+  deleteTransaction,
   findMemberByTelegramUserId,
   loadBotConversation,
   saveBotConversation,
@@ -491,6 +493,39 @@ describe("transactionUpdateFromPatch", () => {
       /descrição/i,
     );
   });
+
+  it("maps amountCents and rejects non-positive or non-integer values", () => {
+    expect(transactionUpdateFromPatch({ amountCents: 4590 })).toEqual({
+      amount_cents: 4590,
+    });
+    for (const bad of [0, -100, 12.5]) {
+      expect(() => transactionUpdateFromPatch({ amountCents: bad })).toThrow(
+        /valor/i,
+      );
+    }
+  });
+
+  it("maps a payment swap to BOTH columns in one update (account and card)", () => {
+    expect(
+      transactionUpdateFromPatch({
+        payment: { type: "card", creditCardId: "card-1" },
+      }),
+    ).toEqual({ credit_card_id: "card-1", account_id: null });
+    expect(
+      transactionUpdateFromPatch({
+        payment: { type: "account", accountId: "acct-1" },
+      }),
+    ).toEqual({ account_id: "acct-1", credit_card_id: null });
+  });
+
+  it("rejects a payment patch with an empty id", () => {
+    expect(() =>
+      transactionUpdateFromPatch({ payment: { type: "account", accountId: "" } }),
+    ).toThrow(/conta/i);
+    expect(() =>
+      transactionUpdateFromPatch({ payment: { type: "card", creditCardId: "" } }),
+    ).toThrow(/cartão/i);
+  });
 });
 
 describe("updateInvestmentBucketBalance validation", () => {
@@ -591,6 +626,89 @@ function createRecordingClient(response: {
   } as unknown as AppSupabaseClient;
   return { client, calls };
 }
+
+/**
+ * Fake client for updateTransaction and deleteTransaction tests.
+ * Returns a pre-configured row when selecting by household_id + id,
+ * and returns success on update/delete.
+ */
+function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
+  const defaultRow: TransactionRow = {
+    id: "tx-1",
+    household_id: HOUSEHOLD,
+    kind: "expense",
+    amount_cents: 1000,
+    occurred_on: "2026-07-01",
+    description: "Test",
+    category_id: null,
+    subcategory_id: null,
+    account_id: "acct-1",
+    credit_card_id: null,
+    installment_id: null,
+    responsibility_scope: "household",
+    responsible_user_id: null,
+    created_by_user_id: USER,
+    import_batch_id: null,
+    created_at: "2026-07-01T00:00:00Z",
+    updated_at: "2026-07-01T00:00:00Z",
+  };
+  const row = { ...defaultRow, ...rowData };
+  let selectCalled = false;
+  let updateCalled = false;
+  let eqFilters: Array<[string, unknown]> = [];
+
+  const builder = {
+    select() {
+      selectCalled = true;
+      return builder;
+    },
+    update() {
+      updateCalled = true;
+      return builder;
+    },
+    eq(column: string, value: unknown) {
+      eqFilters.push([column, value]);
+      return builder;
+    },
+    maybeSingle() {
+      return Promise.resolve({ data: selectCalled ? row : null, error: null });
+    },
+    then(resolve: (value: { data: null; error: null }) => unknown) {
+      return Promise.resolve({ data: updateCalled ? null : null, error: null }).then(
+        resolve,
+      );
+    },
+  };
+
+  const client = {
+    from() {
+      return builder;
+    },
+  } as unknown as AppSupabaseClient;
+
+  return client;
+}
+
+describe("updateTransaction with parcela guard", () => {
+  it("refuses amount/payment edits on a parcela row (installment_id set), pt-BR", async () => {
+    const client = fakeClientWithRow({ installment_id: "inst-1" });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", { amountCents: 1000 }),
+    ).rejects.toThrow(/parcelamento/i);
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", {
+        payment: { type: "card", creditCardId: "card-1" },
+      }),
+    ).rejects.toThrow(/parcelamento/i);
+  });
+
+  it("still allows description/category edits on a parcela row", async () => {
+    const client = fakeClientWithRow({ installment_id: "inst-1" });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", { description: "Café" }),
+    ).resolves.toBeUndefined();
+  });
+});
 
 describe("findMemberByTelegramUserId", () => {
   it("maps an active member row to the bot identity shape", async () => {
