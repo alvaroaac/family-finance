@@ -1,12 +1,13 @@
 -- allowlisted-email auto-provisioning into household "casa" (spec §4.1)
-create table allowed_emails (
+create table if not exists allowed_emails (
   email text primary key,
   household_slug text not null default 'casa'
 );
 alter table allowed_emails enable row level security; -- no policies: service/definer only
 
 insert into allowed_emails (email) values
-  ('alvaro.a.a.a.c@gmail.com');
+  ('alvaro.a.a.a.c@gmail.com')
+on conflict (email) do nothing;
 -- NOTE: add Karol's dotted-form Gmail before prod deploy (runbook step) — not known at migration time.
 
 create or replace function provision_household_member()
@@ -30,6 +31,7 @@ begin
 end;
 $$;
 
+drop trigger if exists provision_member_on_signup on auth.users;
 create trigger provision_member_on_signup
   after insert on auth.users
   for each row execute function provision_household_member();
