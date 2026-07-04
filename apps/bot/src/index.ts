@@ -403,6 +403,14 @@ export async function handleWebhook(args: {
       today: todayIso(),
     });
 
+    // Persist FIRST: applyCallback may already have inserted a transaction
+    // (e.g. cf/nca). If a later Telegram call throws (stale >15s callback,
+    // network hiccup), the webhook still returns 200 to Telegram (no retry),
+    // so the state MUST already be saved — otherwise a re-tap on a
+    // still-"awaiting_confirmation" state with an unstripped keyboard would
+    // insert a second transaction.
+    await args.store.save(callback.chatId, outcome.state);
+
     await args.telegram.answerCallbackQuery(
       callback.callbackQueryId,
       outcome.toast,
@@ -418,9 +426,23 @@ export async function handleWebhook(args: {
           ? { replyMarkup: outcome.keyboard }
           : undefined,
       );
-      outcome.state.promptMessageId = sent?.messageId;
+      // Only record promptMessageId when a keyboard was actually attached —
+      // a keyboard-less reply has nothing to strip later, and leaving a stale
+      // promptMessageId around would cause editMessageReplyMarkup to target
+      // the wrong (already-stripped) message on the next turn.
+      if (outcome.keyboard !== undefined) {
+        outcome.state.promptMessageId = sent?.messageId;
+      } else {
+        outcome.state.promptMessageId = undefined;
+      }
+      try {
+        await args.store.save(callback.chatId, outcome.state);
+      } catch (error) {
+        // Best-effort only: losing promptMessageId just means a future stale
+        // tap won't get its keyboard stripped, which is already handled.
+        console.warn("[bot] re-save after send failed:", error);
+      }
     }
-    await args.store.save(callback.chatId, outcome.state);
     return { status: 200, body: { ok: true } };
   }
 
@@ -487,6 +509,11 @@ export async function handleWebhook(args: {
       await args.telegram.sendMessage(voice.chatId, reply);
       return { status: 200, body: { ok: true } };
     }
+    // Persist FIRST: startConversationFromAudio may already have inserted a
+    // transaction (auto-confirm paths). If sendMessage below throws, the
+    // state must already reflect that so a retry/re-send can't double-insert.
+    await args.store.save(voice.chatId, outcome.state);
+
     const sentVoice = await args.telegram.sendMessage(
       voice.chatId,
       outcome.reply,
@@ -494,8 +521,17 @@ export async function handleWebhook(args: {
         ? { replyMarkup: outcome.keyboard }
         : undefined,
     );
-    outcome.state.promptMessageId = sentVoice?.messageId;
-    await args.store.save(voice.chatId, outcome.state);
+    // Only record promptMessageId when a keyboard was actually attached.
+    if (outcome.keyboard !== undefined) {
+      outcome.state.promptMessageId = sentVoice?.messageId;
+    } else {
+      outcome.state.promptMessageId = undefined;
+    }
+    try {
+      await args.store.save(voice.chatId, outcome.state);
+    } catch (error) {
+      console.warn("[bot] re-save after send failed:", error);
+    }
     return { status: 200, body: { ok: true } };
   }
 
@@ -529,15 +565,26 @@ export async function handleWebhook(args: {
     nextState = outcome.state;
     reply = outcome.reply;
     keyboard = outcome.keyboard;
-    if (existing.promptMessageId !== undefined) {
-      try {
-        await args.telegram.editMessageReplyMarkup(
-          message.chatId,
-          existing.promptMessageId,
-        );
-      } catch (error) {
-        console.warn("[bot] editMessageReplyMarkup failed:", error);
-      }
+  }
+
+  // Persist FIRST: applyMessage/startConversation may already have inserted a
+  // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
+  // the state must already be saved so a re-send/retry can't double-insert.
+  await args.store.save(message.chatId, nextState);
+
+  if (
+    existing !== undefined &&
+    existing.status !== "saved" &&
+    existing.status !== "cancelled" &&
+    existing.promptMessageId !== undefined
+  ) {
+    try {
+      await args.telegram.editMessageReplyMarkup(
+        message.chatId,
+        existing.promptMessageId,
+      );
+    } catch (error) {
+      console.warn("[bot] editMessageReplyMarkup failed:", error);
     }
   }
 
@@ -546,8 +593,20 @@ export async function handleWebhook(args: {
     reply,
     keyboard !== undefined ? { replyMarkup: keyboard } : undefined,
   );
-  nextState.promptMessageId = sent?.messageId;
-  await args.store.save(message.chatId, nextState);
+  // Only record promptMessageId when a keyboard was actually attached — the
+  // previous prompt was already stripped above, so a keyboard-less reply
+  // (e.g. needs_amount) must not leave a stale promptMessageId behind (that
+  // would cause editMessageReplyMarkup 400 + warn-noise on the next message).
+  if (keyboard !== undefined) {
+    nextState.promptMessageId = sent?.messageId;
+  } else {
+    nextState.promptMessageId = undefined;
+  }
+  try {
+    await args.store.save(message.chatId, nextState);
+  } catch (error) {
+    console.warn("[bot] re-save after send failed:", error);
+  }
   return { status: 200, body: { ok: true } };
 }
 

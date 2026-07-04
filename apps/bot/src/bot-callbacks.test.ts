@@ -325,6 +325,59 @@ describe("handleWebhook: callback routing", () => {
     expect(tables.transactions).toHaveLength(0);
   });
 
+  it("state is saved before the Telegram send, so a throwing answerCallbackQuery can't reopen a double-insert window", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent, answered } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+
+    // Make answerCallbackQuery throw exactly once, simulating a Telegram 400
+    // on a stale (>15s-old) callback. The webhook's caller (the real server)
+    // catches this, but here we call handleWebhook directly and catch any
+    // rejection ourselves to assert the state was already saved beforehand.
+    let thrown = false;
+    const flakyTelegram: TelegramClient = {
+      ...telegram,
+      async answerCallbackQuery(id, text) {
+        if (!thrown) {
+          thrown = true;
+          throw new Error("Telegram 400: query is too old");
+        }
+        return telegram.answerCallbackQuery(id, text);
+      },
+    };
+
+    await expect(
+      handleWebhook({ ...base, telegram: flakyTelegram, rawBody: callbackUpdate(777, "cf") }),
+    ).rejects.toThrow("Telegram 400");
+
+    // Despite the throw, applyCallback already inserted the transaction and
+    // the state must already have been persisted as "saved" BEFORE the
+    // throwing Telegram call — otherwise a second tap would insert again.
+    expect(tables.transactions).toHaveLength(1);
+
+    // The throw happened in answerCallbackQuery, BEFORE sendMessage — so the
+    // "Lançamento salvo" confirmation was never sent for the first tap. That
+    // is fine: the transaction row (the money-affecting side effect) is what
+    // must not duplicate, and it hasn't.
+    expect(sent.some((s) => s.text.includes("Lançamento salvo"))).toBe(false);
+
+    // A second tap must be a no-op double-tap (state already "saved" →
+    // "Já salvo" toast), NOT a second insert.
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
+    expect(tables.transactions).toHaveLength(1);
+    expect(answered.at(-1)?.text).toBe("Já salvo ✅");
+  });
+
   it("rejects a callback with a bad webhook secret", async () => {
     const { client } = fakeSupabase();
     const { telegram, answered } = fakeTelegram();

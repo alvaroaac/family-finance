@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import {
   startConversation,
@@ -349,6 +349,28 @@ describe("AI new-category proposal", () => {
     const picked = await applyCallback(start.state, "ct:cat-food", deps, { today: TODAY });
     expect(picked.state.proposedCategoryName).toBeUndefined();
     await applyCallback(picked.state, "cf", deps, { today: TODAY });
+    expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
+  });
+
+  it("typed `categoria X` correction clears a pending AI proposal (parity with ct:)", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(start.state.proposedCategoryName).toBe("Pets");
+
+    const corrected = await applyMessage(start.state, "categoria Alimentação", deps, {
+      today: TODAY,
+    });
+    expect(corrected.state.proposedCategoryName).toBeUndefined();
+    expect(corrected.reply).not.toContain("(nova — sugerida)");
+    expect(corrected.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    expect(corrected.state.draft.categoryId).toBe("cat-food");
+
+    await applyMessage(corrected.state, "confirmar", deps, { today: TODAY });
+    expect(deps.createCategory).not.toHaveBeenCalled();
     expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
   });
 

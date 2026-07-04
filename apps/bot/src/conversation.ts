@@ -879,6 +879,9 @@ async function createCategoryForDraft(
     status: statusForDraft(draft),
     draft,
     proposedCategoryName: undefined,
+    // This path always runs mid-draft (never standalone name-mode), so there
+    // is no standalone-creation flag to carry forward — explicit for clarity.
+    standaloneCategoryCreation: undefined,
   };
   const created = resolved.reused
     ? categoryReusedMessage(name)
@@ -1396,6 +1399,9 @@ export async function applyMessage(
     ...state,
     status: statusForDraft(draft),
     draft,
+    // A typed category correction replaces any pending AI proposal — mirrors
+    // the ct: tapped path so the UI never lies about which category is set.
+    ...(correction.field === "category" ? { proposedCategoryName: undefined } : {}),
   };
   const fieldLabel =
     correction.field === "amount"
