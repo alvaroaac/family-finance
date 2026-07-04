@@ -90,12 +90,16 @@ obligations pressure, web `/obligations` (list/create/edit/cancel, mark-paid,
 classifier with obligation-create + mark-paid flows (card intents reply
 "em breve" until PR-2).
 
-Branch pushed; **PR #3 open**
-(https://github.com/alvaroaac/family-finance/pull/3, base
-`feat/family-finance-v1` — note PR #2 is already merged into
-`feat/family-finance-mvp`, so a retarget to mvp is harmless).
+**PR #3 is MERGED into `feat/family-finance-mvp`** (2026-07-04, merge commit
+`b596ff8`). Before merging: a 20-agent PR review found 2 majors + 12 minors
+(all fixed in `95e5e80` — biggest one: bot mark-paid crashed silently when the
+current month fell outside the obligation's window; now a friendly reply), and
+the branch absorbed mvp's concurrent bot changes (interpret-on-every-entry,
+optional defaultAccountId → obligation create refuses without an account).
 
-**Next moves:** (1) get PR #3 reviewed/merged; (2) apply migration 0011 to the
-real Supabase project when merging; (3) PR-2 (card installment persistence +
-card-bill payment — remember the `nubank pago` schema wrinkle needs its own
-design).
+**Next moves:** (1) **apply migration 0011 to the real Supabase project** —
+the deployed loaders degrade gracefully until then (obligations stat zeroes,
+pages stay up); (2) PR #1 (mvp → main) carries everything to main; (3) PR-2
+(card installment persistence + card-bill payment — remember the `nubank
+pago` schema wrinkle needs its own design). This worktree/branch can be
+removed once PR-2 starts fresh from mvp.
