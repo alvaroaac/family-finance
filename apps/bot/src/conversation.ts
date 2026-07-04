@@ -49,6 +49,8 @@ import {
   cancelledMessage,
   cardBillDeferredMessage,
   cardInstallmentDeferredMessage,
+  chooseCategoryMessage,
+  chooseResponsibleMessage,
   confirmationMessage,
   correctionAppliedMessage,
   formatBrl,
@@ -64,9 +66,22 @@ import {
   obligationSettleFailedMessage,
   obligationUnavailableMessage,
   savedMessage,
+  ALREADY_SAVED_TOAST,
+  CATEGORY_NOT_FOUND_TOAST,
+  SESSION_EXPIRED_TOAST,
   type ObligationSummaryView,
   type SummaryView,
 } from "./replies.js";
+import type { InlineKeyboardMarkup } from "./telegram.js";
+import {
+  TOKENS,
+  CATEGORY_TOKEN_PREFIX,
+  RESPONSIBLE_TOKEN_PREFIX,
+  confirmationKeyboard,
+  categoryGridKeyboard,
+  responsibleGridKeyboard,
+  cancelOnlyKeyboard,
+} from "./keyboards.js";
 
 // ---------------------------------------------------------------------------
 // State.
@@ -80,7 +95,9 @@ export type ConversationStatus =
   /** An obligation template draft awaits its "confirmar" (PR-1). */
   | "awaiting_obligation_confirmation"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
-  | "awaiting_mark_paid_choice";
+  | "awaiting_mark_paid_choice"
+  /** Waiting for the user to TYPE a new category's name (nc button / bare "nova categoria"). */
+  | "awaiting_category_name";
 
 /** The editable, in-progress draft built up across the conversation. */
 export type DraftInProgress = {
@@ -91,6 +108,12 @@ export type DraftInProgress = {
   categoryId?: string;
   subcategoryId?: string;
   categoryExplanation?: string;
+  /**
+   * Display name for a category the loaded catalog does not carry (created or
+   * reactivated mid-conversation). Labels fall back to this when the id is
+   * not found in `deps.catalog`.
+   */
+  categoryNameFallback?: string;
   /** Set only when an explicit responsible person was chosen (not the house). */
   responsibleUserId?: string;
   cardId?: string;
@@ -136,6 +159,12 @@ export type ConversationState = {
   obligationDraft?: ObligationDraftInProgress;
   /** Set while status = awaiting_mark_paid_choice. */
   markPaidCandidates?: MarkPaidCandidate[];
+  /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
+  proposedCategoryName?: string;
+  /** message_id of the last keyboard-bearing prompt (to strip stale buttons). */
+  promptMessageId?: number;
+  /** True when awaiting_category_name was entered with NO expense draft. */
+  standaloneCategoryCreation?: boolean;
 };
 
 export type ConversationOutcome = {
@@ -144,6 +173,8 @@ export type ConversationOutcome = {
   reply: string;
   /** Set after a successful save, for auditing/follow-up. */
   transactionId?: string;
+  /** Inline keyboard to attach to the reply (buttons are additive to the text hints). */
+  keyboard?: InlineKeyboardMarkup;
 };
 
 // ---------------------------------------------------------------------------
@@ -224,6 +255,23 @@ export type ConversationDeps = {
   resolveAccountIdByName?: (name: string) => string | undefined;
   /** Display name of an account id, for the confirmation summary. */
   accountNameById?: (accountId: string) => string | undefined;
+  /** ALL categories (active + archived) for create-dedupe (bot category creation). */
+  listAllCategories?: () => Promise<
+    Array<{ id: string; name: string; isActive: boolean }>
+  >;
+  /** Create an ACTIVE category (db createCategory); impl must also expose it in `catalog`. */
+  createCategory?: (name: string) => Promise<{ id: string }>;
+  /** Reactivate an archived category (db restoreCategory). */
+  restoreCategory?: (categoryId: string) => Promise<void>;
+  /** Seed categorization_memory — ONLY the AI new-category accept path calls this. */
+  seedCategorizationMemory?: (entry: {
+    pattern: string;
+    categoryId: string;
+    confidence: number;
+    explanation: string;
+  }) => Promise<void>;
+  /** Active members for the responsável grid. */
+  listActiveMembers?: () => Array<{ userId: string; displayName: string }>;
 };
 
 export type StartInput = {
@@ -247,12 +295,13 @@ function categoryLabel(
   catalog: CategoryCatalog,
   categoryId: string | undefined,
   subcategoryId: string | undefined,
+  fallbackName?: string,
 ): string {
   if (categoryId === undefined) {
     return "Sem categoria (a definir)";
   }
   const category = catalog.categories.find((c) => c.id === categoryId);
-  const macro = category?.name ?? "Categoria";
+  const macro = category?.name ?? fallbackName ?? "Categoria";
   if (subcategoryId !== undefined) {
     const sub = catalog.subcategories.find((s) => s.id === subcategoryId);
     if (sub !== undefined) {
@@ -282,6 +331,7 @@ function responsibleLabel(
 function summaryView(
   draft: DraftInProgress,
   deps: ConversationDeps,
+  proposedNewCategory?: string,
 ): SummaryView {
   return {
     amountCents: draft.amountCents,
@@ -291,10 +341,12 @@ function summaryView(
       deps.catalog,
       draft.categoryId,
       draft.subcategoryId,
+      draft.categoryNameFallback,
     ),
     paymentLabel: paymentLabel(draft),
     responsibleLabel: responsibleLabel(draft, deps),
     categoryExplanation: draft.categoryExplanation,
+    proposedNewCategory,
     needsAttention: draft.needsAttention,
   };
 }
@@ -305,14 +357,26 @@ function statusForDraft(draft: DraftInProgress): ConversationStatus {
     : "awaiting_confirmation";
 }
 
-function replyForDraft(
-  draft: DraftInProgress,
-  deps: ConversationDeps,
-): string {
-  if (draft.amountCents === undefined) {
-    return needsAmountMessage(draft.description);
+function replyForState(state: ConversationState, deps: ConversationDeps): string {
+  if (state.draft.amountCents === undefined) {
+    return needsAmountMessage(state.draft.description);
   }
-  return confirmationMessage(summaryView(draft, deps));
+  return confirmationMessage(
+    summaryView(state.draft, deps, state.proposedCategoryName),
+  );
+}
+
+/** The keyboard each state's prompt carries (undefined = no buttons). */
+function keyboardForState(
+  state: ConversationState,
+): InlineKeyboardMarkup | undefined {
+  if (state.status === "awaiting_confirmation") {
+    return confirmationKeyboard(state.proposedCategoryName);
+  }
+  if (state.status === "awaiting_category_name") {
+    return cancelOnlyKeyboard();
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,7 +736,7 @@ export async function startConversation(
     status: statusForDraft(draft),
     draft,
   };
-  return { state, reply: replyForDraft(draft, deps) };
+  return { state, reply: replyForState(state, deps), keyboard: keyboardForState(state) };
 }
 
 // ---------------------------------------------------------------------------
@@ -902,6 +966,7 @@ async function persist(
         deps.catalog,
         draft.categoryId,
         draft.subcategoryId,
+        draft.categoryNameFallback,
       ),
     }),
   };
@@ -1109,7 +1174,7 @@ export async function applyMessage(
   }
 
   if (CONFIRM_RE.test(message)) {
-    return persist(state, deps, message);
+    return confirmDraft(state, deps, message, today);
   }
 
   // Otherwise treat it as a correction.
@@ -1153,6 +1218,162 @@ export async function applyMessage(
         : correction.field === "category"
           ? "a categoria"
           : "o responsável";
-  const reply = `${correctionAppliedMessage(fieldLabel)}\n\n${replyForDraft(draft, deps)}`;
-  return { state: next, reply };
+  const reply = `${correctionAppliedMessage(fieldLabel)}\n\n${replyForState(next, deps)}`;
+  return { state: next, reply, keyboard: keyboardForState(next) };
+}
+
+/** Confirm the draft. Task 6 extends this with the AI new-category proposal. */
+async function confirmDraft(
+  state: ConversationState,
+  deps: ConversationDeps,
+  messageText: string,
+  _today: string,
+): Promise<ConversationOutcome> {
+  return persist(state, deps, messageText);
+}
+
+/** ❌ while typing a category name — Task 7 wires the full flow. */
+function cancelCategoryName(
+  state: ConversationState,
+  deps: ConversationDeps,
+): ApplyCallbackOutcome {
+  const next: ConversationState = {
+    ...state,
+    status: "awaiting_confirmation",
+    standaloneCategoryCreation: undefined,
+  };
+  return summaryOutcome(next, deps);
+}
+
+// ---------------------------------------------------------------------------
+// Apply an inline-button tap: structured tokens through the SAME transitions
+// as typed messages (approach B — no text-spoofing into the regex parser).
+// ---------------------------------------------------------------------------
+
+export type ApplyCallbackOutcome = ConversationOutcome & {
+  /** answerCallbackQuery toast (shown even when no message is sent). */
+  toast?: string;
+  /** True when NO new message should be sent (reply is ""). */
+  silent?: boolean;
+};
+
+function expiredOutcome(state: ConversationState): ApplyCallbackOutcome {
+  return { state, reply: "", silent: true, toast: SESSION_EXPIRED_TOAST };
+}
+
+function summaryOutcome(
+  state: ConversationState,
+  deps: ConversationDeps,
+  prefix?: string,
+): ApplyCallbackOutcome {
+  const body = replyForState(state, deps);
+  return {
+    state,
+    reply: prefix !== undefined ? `${prefix}\n\n${body}` : body,
+    keyboard: keyboardForState(state),
+  };
+}
+
+export async function applyCallback(
+  state: ConversationState,
+  token: string,
+  deps: ConversationDeps,
+  options: { today?: string } = {},
+): Promise<ApplyCallbackOutcome> {
+  const today = options.today ?? state.draft.occurredOn;
+
+  // Terminal states: a confirm double-tap is a friendly no-op; anything else
+  // is a stale button. Never crash, never double-insert.
+  if (state.status === "saved") {
+    if (token === TOKENS.confirm || token === TOKENS.acceptProposal) {
+      return { state, reply: "", silent: true, toast: ALREADY_SAVED_TOAST };
+    }
+    return expiredOutcome(state);
+  }
+  if (state.status === "cancelled") {
+    return expiredOutcome(state);
+  }
+
+  // Obligation flows and mark-paid choices never get keyboards (out of scope),
+  // so any token landing there is stale.
+  if (
+    state.status === "awaiting_obligation_confirmation" ||
+    state.status === "awaiting_mark_paid_choice"
+  ) {
+    return expiredOutcome(state);
+  }
+
+  // awaiting_category_name: only ❌ (cx) is wired — Task 7 fills this in.
+  if (state.status === "awaiting_category_name") {
+    if (token === TOKENS.cancel) {
+      return cancelCategoryName(state, deps);
+    }
+    return expiredOutcome(state);
+  }
+
+  // awaiting_confirmation / needs_amount.
+  if (token === TOKENS.confirm) {
+    const outcome = await confirmDraft(state, deps, "confirmar (botão)", today);
+    return { ...outcome, keyboard: keyboardForState(outcome.state) };
+  }
+  if (token === TOKENS.cancel) {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: cancelledMessage(),
+    };
+  }
+  if (token === TOKENS.categories) {
+    return {
+      state,
+      reply: chooseCategoryMessage(),
+      keyboard: categoryGridKeyboard(deps.catalog.categories),
+    };
+  }
+  if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
+    const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
+    const category = deps.catalog.categories.find((c) => c.id === categoryId);
+    if (category === undefined) {
+      return { state, reply: "", silent: true, toast: CATEGORY_NOT_FOUND_TOAST };
+    }
+    const draft: DraftInProgress = {
+      ...state.draft,
+      categoryId: category.id,
+      subcategoryId: undefined,
+      categoryNameFallback: category.name,
+      categoryExplanation: "Categoria escolhida manualmente.",
+    };
+    const next: ConversationState = {
+      ...state,
+      status: statusForDraft(draft),
+      draft,
+      proposedCategoryName: undefined,
+    };
+    return summaryOutcome(next, deps, correctionAppliedMessage("a categoria"));
+  }
+  if (token === TOKENS.responsible) {
+    return {
+      state,
+      reply: chooseResponsibleMessage(),
+      keyboard: responsibleGridKeyboard(deps.listActiveMembers?.() ?? []),
+    };
+  }
+  if (token === TOKENS.responsibleHouse) {
+    const draft: DraftInProgress = { ...state.draft, responsibleUserId: undefined };
+    const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
+    return summaryOutcome(next, deps, correctionAppliedMessage("o responsável"));
+  }
+  if (token.startsWith(RESPONSIBLE_TOKEN_PREFIX)) {
+    const userId = token.slice(RESPONSIBLE_TOKEN_PREFIX.length);
+    const member = deps.listActiveMembers?.().find((m) => m.userId === userId);
+    if (member === undefined) {
+      return expiredOutcome(state);
+    }
+    const draft: DraftInProgress = { ...state.draft, responsibleUserId: userId };
+    const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
+    return summaryOutcome(next, deps, correctionAppliedMessage("o responsável"));
+  }
+
+  // TOKENS.newCategory / acceptProposal / dropProposal land in Tasks 6–7;
+  // until then (and for any future/unknown token) answer-and-ignore.
+  return expiredOutcome(state);
 }
