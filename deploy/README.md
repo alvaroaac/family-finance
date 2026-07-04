@@ -28,7 +28,7 @@ Google OAuth), `docker compose up -d`. Bring Caddy up with
 ## 2. Migrations
 
 From a machine with the repo and the Supabase CLI, push migrations
-0001..0009 to the VPS database:
+`0001..0014` to the VPS database:
 
 ```bash
 supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@<vps-host>:5432/postgres"
@@ -37,6 +37,19 @@ supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@<vps-host>:
 (Or apply `supabase/migrations/*.sql` in order via psql.) Then apply
 `supabase/seed.sql` the same way — it is idempotent (`on conflict do nothing`)
 and seeds the household, caixinhas, and starter categories.
+
+**Apply `seed.sql` (or otherwise create the household) BEFORE the first login.**
+Migration 0014 makes provisioning resilient (an `allowed_emails` trigger +
+one-time backfill provision anyone who logged in early or was allowlisted
+late, and a missing household now logs a `WARNING` instead of silently
+dropping the member), but the clean path is still household-first.
+
+Migration note: `0011` adds the obligations table + the idempotent
+`materialize_obligation_payment` RPC; `0012` revokes `anon` EXECUTE on every
+SECURITY DEFINER RPC (the Supabase default grants it — a real hole for the
+obligations RPC, whose gate lets a null-uid caller through); `0013` adds
+composite `(household_id, id)` FKs so no write path can reference another
+household's category/account/card.
 
 ## 3. Seed household members + allowlist
 
@@ -67,8 +80,11 @@ node deploy/checks/rls-proof.mjs
 ```
 
 It creates two throwaway users + fixtures, proves member visibility, outsider
-isolation, insert rejection, and atomic rollback of the 3 RPCs, then cleans up
-after itself. **Exit code must be 0 and every check PASS before continuing.**
+isolation, insert rejection, atomic rollback of the RPCs, that **`anon` cannot
+EXECUTE any SECURITY DEFINER RPC** (regression gate for the 0012 grant hole),
+and that `materialize_obligation_payment` is idempotent + rejects
+out-of-window months, then cleans up after itself. **Exit code must be 0 and
+every check PASS before continuing.**
 
 ## 5. Web — Vercel envs + deploy
 
