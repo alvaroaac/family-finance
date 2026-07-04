@@ -37,6 +37,8 @@ export type SummaryView = {
   responsibleLabel: string;
   /** Why the category was suggested (auditable explanation). */
   categoryExplanation?: string;
+  /** AI-proposed NEW category name — rendered as (nova — sugerida). */
+  proposedNewCategory?: string;
   /** True when confidence was low / fields were uncertain. */
   needsAttention?: boolean;
 };
@@ -54,7 +56,11 @@ export function confirmationMessage(view: SummaryView): string {
   );
   lines.push(`• Descrição: ${view.description || "—"}`);
   lines.push(`• Data: ${formatIsoDate(view.occurredOn)}`);
-  lines.push(`• Categoria: ${view.categoryLabel}`);
+  if (view.proposedNewCategory !== undefined) {
+    lines.push(`• Categoria: "${view.proposedNewCategory}" (nova — sugerida)`);
+  } else {
+    lines.push(`• Categoria: ${view.categoryLabel}`);
+  }
   lines.push(`• Pagamento: ${view.paymentLabel}`);
   lines.push(`• Responsável: ${view.responsibleLabel}`);
   if (view.categoryExplanation) {
@@ -265,3 +271,55 @@ export function obligationSettleFailedMessage(description: string): string {
 export function obligationUnavailableMessage(): string {
   return "Dar baixa em obrigações não está disponível por aqui agora. Use o painel, em Obrigações.";
 }
+
+// ---------------------------------------------------------------------------
+// Inline buttons + category creation (2026-07-04 design).
+// ---------------------------------------------------------------------------
+
+/** Prompt when the bot is waiting for a new category's name. */
+export function askCategoryNameMessage(): string {
+  return [
+    "Qual o nome da nova categoria?",
+    'Responda com o nome, ou "cancelar" para voltar.',
+  ].join("\n");
+}
+
+/** Success after a category is created (standalone or mid-draft). */
+export function categoryCreatedMessage(name: string): string {
+  return `Categoria "${name}" criada ✅`;
+}
+
+/** Dedupe outcome: an existing (or reactivated) category was used instead. */
+export function categoryReusedMessage(name: string): string {
+  return `A categoria "${name}" já existia — usei ela. ✅`;
+}
+
+/** Header for the category-pick grid message. */
+export function chooseCategoryMessage(): string {
+  return "Escolha a categoria:";
+}
+
+/** Header for the responsável-pick grid message. */
+export function chooseResponsibleMessage(): string {
+  return "Quem é o responsável?";
+}
+
+/** pt-BR validation errors for a typed category name. */
+export function invalidCategoryNameMessage(
+  reason: "empty" | "too_long",
+): string {
+  return reason === "empty"
+    ? "O nome da categoria não pode ficar vazio. Tente de novo, ou responda \"cancelar\"."
+    : "O nome da categoria precisa ter no máximo 40 caracteres. Tente um nome mais curto.";
+}
+
+/** Toast for a tap on an expired/mismatched conversation. */
+export const SESSION_EXPIRED_TOAST =
+  "Sessão expirada — envie o gasto novamente.";
+
+/** Toast for a double-tap on ✅ after the draft was already persisted. */
+export const ALREADY_SAVED_TOAST = "Já salvo ✅";
+
+/** Toast when a tapped category id is no longer in the catalog. */
+export const CATEGORY_NOT_FOUND_TOAST =
+  "Categoria não encontrada — abra a lista de novo.";
