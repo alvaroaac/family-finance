@@ -732,9 +732,23 @@ export async function startConversation(
     draft.needsAttention = true;
   }
 
+  // AI new-category proposal (spec §3): the engine returns pending_new_category
+  // with a proposed NAME; it lives in conversation state (never callback data)
+  // until the user accepts, picks another, or drops it.
+  let proposedCategoryName: string | undefined;
+  if (
+    result.status === "pending_new_category" &&
+    result.pendingCategory !== undefined
+  ) {
+    proposedCategoryName = result.pendingCategory.categoryName;
+    draft.categoryExplanation = result.pendingCategory.explanation;
+    draft.needsAttention = true;
+  }
+
   const state: ConversationState = {
     status: statusForDraft(draft),
     draft,
+    proposedCategoryName,
   };
   return { state, reply: replyForState(state, deps), keyboard: keyboardForState(state) };
 }
@@ -1174,7 +1188,8 @@ export async function applyMessage(
   }
 
   if (CONFIRM_RE.test(message)) {
-    return confirmDraft(state, deps, message, today);
+    const outcome = await confirmDraft(state, deps, message, today);
+    return { ...outcome, keyboard: keyboardForState(outcome.state) };
   }
 
   // Otherwise treat it as a correction.
@@ -1222,14 +1237,78 @@ export async function applyMessage(
   return { state: next, reply, keyboard: keyboardForState(next) };
 }
 
-/** Confirm the draft. Task 6 extends this with the AI new-category proposal. */
+/**
+ * Dedupe-then-create (spec §3): case- and accent-insensitive match against ALL
+ * categories. Active match → assign as-is; inactive match → reactivate; no
+ * match → create (active immediately). Returns null when the category-creation
+ * deps are not wired (flow degrades to "not understood").
+ */
+async function createOrReuseCategory(
+  name: string,
+  deps: ConversationDeps,
+): Promise<{ categoryId: string; reused: boolean } | null> {
+  if (deps.listAllCategories === undefined || deps.createCategory === undefined) {
+    return null;
+  }
+  const wanted = normalizeText(name);
+  const existing = await deps.listAllCategories();
+  const match = existing.find((c) => normalizeText(c.name) === wanted);
+  if (match !== undefined) {
+    if (!match.isActive) {
+      await deps.restoreCategory?.(match.id);
+    }
+    return { categoryId: match.id, reused: true };
+  }
+  const created = await deps.createCategory(name);
+  return { categoryId: created.id, reused: false };
+}
+
+/**
+ * Confirm the draft. With a pending AI category proposal and no category yet:
+ * create/reuse the category, assign it, seed categorization_memory (the ONLY
+ * path that seeds — spec §3), then persist through the normal `persist`.
+ */
 async function confirmDraft(
   state: ConversationState,
   deps: ConversationDeps,
   messageText: string,
-  _today: string,
+  today: string,
 ): Promise<ConversationOutcome> {
-  return persist(state, deps, messageText);
+  let working = state;
+  if (
+    state.proposedCategoryName !== undefined &&
+    state.draft.categoryId === undefined &&
+    state.draft.amountCents !== undefined
+  ) {
+    const resolved = await createOrReuseCategory(
+      state.proposedCategoryName,
+      deps,
+    );
+    if (resolved === null) {
+      // Category creation is not wired here — keep the draft, explain.
+      return { state, reply: notUnderstoodMessage() };
+    }
+    const draft: DraftInProgress = {
+      ...state.draft,
+      categoryId: resolved.categoryId,
+      subcategoryId: undefined,
+      categoryNameFallback: state.proposedCategoryName,
+    };
+    working = { ...state, draft, proposedCategoryName: undefined };
+
+    // Seed memory so the next identical merchant resolves instantly. Pattern =
+    // the interpreter's normalized merchant token (the draft description).
+    const pattern = normalizeText(draft.description);
+    if (deps.seedCategorizationMemory !== undefined && pattern.length > 0) {
+      await deps.seedCategorizationMemory({
+        pattern,
+        categoryId: resolved.categoryId,
+        confidence: 0.95,
+        explanation: `criada pelo usuário via bot em ${today}`,
+      });
+    }
+  }
+  return persist(working, deps, messageText);
 }
 
 /** ❌ while typing a category name — Task 7 wires the full flow. */
@@ -1373,7 +1452,27 @@ export async function applyCallback(
     return summaryOutcome(next, deps, correctionAppliedMessage("o responsável"));
   }
 
-  // TOKENS.newCategory / acceptProposal / dropProposal land in Tasks 6–7;
-  // until then (and for any future/unknown token) answer-and-ignore.
+  if (token === TOKENS.acceptProposal) {
+    if (state.proposedCategoryName === undefined) {
+      return expiredOutcome(state);
+    }
+    const outcome = await confirmDraft(
+      state,
+      deps,
+      `confirmar (botão, nova categoria "${state.proposedCategoryName}")`,
+      today,
+    );
+    return { ...outcome, keyboard: keyboardForState(outcome.state) };
+  }
+  if (token === TOKENS.dropProposal) {
+    if (state.proposedCategoryName === undefined) {
+      return expiredOutcome(state);
+    }
+    const next: ConversationState = { ...state, proposedCategoryName: undefined };
+    return summaryOutcome(next, deps);
+  }
+
+  // TOKENS.newCategory lands in Task 7; until then (and for any future/unknown
+  // token) answer-and-ignore.
   return expiredOutcome(state);
 }

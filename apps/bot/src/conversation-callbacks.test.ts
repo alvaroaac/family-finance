@@ -210,3 +210,145 @@ describe("applyCallback: stale states and double-taps", () => {
     expect(outcome.toast).toContain("Sessão expirada");
   });
 });
+
+const PROPOSAL: CategorizationResult = {
+  status: "pending_new_category",
+  suggestion: { confidence: 0.9, explanation: "Petz é um pet shop.", source: "ai" },
+  pendingCategory: {
+    categoryName: "Pets",
+    subcategoryName: null,
+    confidence: 0.9,
+    explanation: "Petz é um pet shop.",
+  },
+  requiresConfirmation: true,
+};
+
+function proposalDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
+  return makeDeps({
+    suggestCategory: vi.fn(async () => PROPOSAL),
+    listAllCategories: vi.fn(async () => [
+      { id: "cat-transport", name: "Transporte", isActive: true },
+      { id: "cat-food", name: "Alimentação", isActive: true },
+    ]),
+    createCategory: vi.fn(async () => ({ id: "cat-pets" })),
+    restoreCategory: vi.fn(async () => undefined),
+    seedCategorizationMemory: vi.fn(async () => undefined),
+    ...overrides,
+  });
+}
+
+describe("AI new-category proposal", () => {
+  it("startConversation surfaces the proposal in state, summary, and keyboard", async () => {
+    const deps = proposalDeps();
+    const outcome = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(outcome.state.proposedCategoryName).toBe("Pets");
+    expect(outcome.reply).toContain('Categoria: "Pets" (nova — sugerida)');
+    expect(outcome.reply).toContain("Sugestão: Petz é um pet shop.");
+    expect(outcome.keyboard?.inline_keyboard[0]?.[0]).toEqual({
+      text: '✅ Confirmar (cria "Pets")',
+      callback_data: "nca",
+    });
+  });
+
+  it("nca creates the category, seeds memory, and persists the transaction", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(start.state, "nca", deps, { today: TODAY });
+
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(deps.seedCategorizationMemory).toHaveBeenCalledWith({
+      pattern: "petz",
+      categoryId: "cat-pets",
+      confidence: 0.95,
+      explanation: `criada pelo usuário via bot em ${TODAY}`,
+    });
+    expect(outcome.state.status).toBe("saved");
+    const draft = (deps.createTransaction as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(draft.category).toEqual({ categoryId: "cat-pets", subcategoryId: undefined });
+    expect(outcome.reply).toContain("Pets");
+  });
+
+  it("typed confirmar with a pending proposal behaves exactly like nca (parity)", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyMessage(start.state, "confirmar", deps, { today: TODAY });
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(deps.seedCategorizationMemory).toHaveBeenCalledTimes(1);
+    expect(outcome.state.status).toBe("saved");
+  });
+
+  it("dedupe: an ACTIVE case/accent-insensitive match is assigned, not duplicated", async () => {
+    const deps = proposalDeps({
+      listAllCategories: vi.fn(async () => [
+        { id: "cat-pets-x", name: "PÉTS", isActive: true },
+      ]),
+    });
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    await applyCallback(start.state, "nca", deps, { today: TODAY });
+    expect(deps.createCategory).not.toHaveBeenCalled();
+    expect(deps.restoreCategory).not.toHaveBeenCalled();
+    const seeded = (deps.seedCategorizationMemory as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(seeded.categoryId).toBe("cat-pets-x");
+  });
+
+  it("dedupe: an INACTIVE match is reactivated and assigned", async () => {
+    const deps = proposalDeps({
+      listAllCategories: vi.fn(async () => [
+        { id: "cat-pets-old", name: "pets", isActive: false },
+      ]),
+    });
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    await applyCallback(start.state, "nca", deps, { today: TODAY });
+    expect(deps.restoreCategory).toHaveBeenCalledWith("cat-pets-old");
+    expect(deps.createCategory).not.toHaveBeenCalled();
+  });
+
+  it("nocat drops the proposal and returns to the plain confirmation", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(start.state, "nocat", deps, { today: TODAY });
+    expect(outcome.state.proposedCategoryName).toBeUndefined();
+    expect(outcome.reply).toContain("Categoria: Sem categoria (a definir)");
+    expect(outcome.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    // Dropping the proposal never writes memory or creates anything.
+    expect(deps.createCategory).not.toHaveBeenCalled();
+    expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
+  });
+
+  it("a regular ct:<id> pick clears the proposal and seeds NOTHING", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const picked = await applyCallback(start.state, "ct:cat-food", deps, { today: TODAY });
+    expect(picked.state.proposedCategoryName).toBeUndefined();
+    await applyCallback(picked.state, "cf", deps, { today: TODAY });
+    expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
+  });
+});
