@@ -59,6 +59,8 @@ import {
   obligationNotUnderstoodMessage,
   obligationPaidMessage,
   obligationSavedMessage,
+  obligationSettleFailedMessage,
+  obligationUnavailableMessage,
   savedMessage,
   type ObligationSummaryView,
   type SummaryView,
@@ -306,6 +308,28 @@ function normalizeText(value: string): string {
     .toLowerCase();
 }
 
+/** Meaningful tokens of a keyword/description (normalized, short words out). */
+function matchTokens(value: string): string[] {
+  return normalizeText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3);
+}
+
+/**
+ * Keyword ↔ description match on TOKEN overlap, not whole-string containment:
+ * the classifier extracts the keyword verbatim from the message ("placa
+ * solar"), while the stored description may differ ("Parcela solar") — a
+ * shared token like "solar" is what actually links them.
+ */
+function obligationKeywordMatch(keyword: string, description: string): boolean {
+  const keywordTokens = matchTokens(keyword);
+  const descriptionTokens = matchTokens(description);
+  if (keywordTokens.length === 0 || descriptionTokens.length === 0) {
+    return false;
+  }
+  return keywordTokens.some((token) => descriptionTokens.includes(token));
+}
+
 /** Minimal expense draft used as state ballast by non-expense flows. */
 function placeholderDraft(
   input: StartInput,
@@ -356,17 +380,34 @@ async function settleObligation(
   today: string,
 ): Promise<ConversationOutcome> {
   if (deps.materializeObligationPayment === undefined) {
+    // The obligation WAS found — the settle capability just is not wired.
     return {
       state: { status: "cancelled", draft: ballast },
-      reply: obligationNotFoundMessage(candidate.description),
+      reply: obligationUnavailableMessage(),
     };
   }
   const month = today.slice(0, 7);
-  const { alreadyPaid } = await deps.materializeObligationPayment({
-    obligationId: candidate.id,
-    month,
-    paidOn: today,
-  });
+  let alreadyPaid: boolean;
+  try {
+    ({ alreadyPaid } = await deps.materializeObligationPayment({
+      obligationId: candidate.id,
+      month,
+      paidOn: today,
+    }));
+  } catch (error) {
+    // The RPC rejects months outside [start_month, term end] and non-active
+    // templates (a future-start obligation is still listed as active). A
+    // silent webhook crash would mean NO reply — degrade to a friendly
+    // explanation instead.
+    console.warn(
+      `[bot] materializeObligationPayment failed for ${candidate.id}/${month}:`,
+      error,
+    );
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: obligationSettleFailedMessage(candidate.description),
+    };
+  }
   await deps.logInteraction({
     fromUserId: ballast.createdByUserId,
     inputKind: ballast.inputKind,
@@ -416,11 +457,9 @@ async function startClassifiedIntent(
       deps.listActiveObligations !== undefined
         ? await deps.listActiveObligations()
         : [];
-    const keyword = normalizeText(classified.keyword);
-    const matches = obligations.filter((o) => {
-      const description = normalizeText(o.description);
-      return description.includes(keyword) || keyword.includes(description);
-    });
+    const matches = obligations.filter((o) =>
+      obligationKeywordMatch(classified.keyword, o.description),
+    );
 
     if (matches.length === 0) {
       return {
@@ -803,12 +842,10 @@ async function applyMarkPaidChoice(
     };
   }
   const candidates = state.markPaidCandidates ?? [];
-  const wanted = normalizeText(message);
-  const matches = candidates.filter((c) => {
-    const description = normalizeText(c.description);
-    return description.includes(wanted) || wanted.includes(description);
-  });
-  if (matches.length !== 1 || wanted.length === 0) {
+  const matches = candidates.filter((c) =>
+    obligationKeywordMatch(message, c.description),
+  );
+  if (matches.length !== 1) {
     return {
       state,
       reply: obligationAmbiguousMessage(candidates.map((c) => c.description)),

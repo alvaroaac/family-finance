@@ -252,3 +252,16 @@ export function cardInstallmentDeferredMessage(): string {
 export function cardBillDeferredMessage(): string {
   return "Baixa de fatura do cartão ainda não está disponível por aqui — em breve.";
 }
+
+/** Mark-paid failed at materialization (e.g. month outside the term window). */
+export function obligationSettleFailedMessage(description: string): string {
+  return [
+    `Não consegui dar baixa em "${description}" — o mês atual pode estar fora do período dessa obrigação.`,
+    "Confira em Obrigações no painel.",
+  ].join("\n");
+}
+
+/** Mark-paid recognized but the settle capability is not wired here. */
+export function obligationUnavailableMessage(): string {
+  return "Dar baixa em obrigações não está disponível por aqui agora. Use o painel, em Obrigações.";
+}

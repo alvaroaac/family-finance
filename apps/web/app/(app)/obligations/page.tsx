@@ -16,8 +16,14 @@ import {
   PageTitle,
   Select,
 } from "../../../components/ui";
+import { currentMonth } from "@family-finance/db";
+
 import { monthLabelPtBr } from "../resumo/queries";
-import { loadObligationsData, type ObligationsData } from "./queries";
+import {
+  buildObligationsData,
+  emptyObligationsData,
+  type ObligationsData,
+} from "./queries";
 import {
   cancelObligationAction,
   createObligationAction,
@@ -55,26 +61,47 @@ function monthAbbrPtBr(month: string): string {
   return `${MONTH_ABBR_PT[idx] ?? month}/${match[1]}`;
 }
 
-type FormLookups = {
+type PageData = {
+  data: ObligationsData;
   accounts: AccountRow[];
   categories: CategoryRow[];
 };
 
-async function loadFormLookups(): Promise<FormLookups> {
+/**
+ * ONE client + ONE household resolution per request; the dataset and the two
+ * form lookups load in parallel. Degrades to the zero state instead of
+ * throwing (same contract as the resumo/dashboard loaders).
+ */
+async function loadPageData(now: Date = new Date()): Promise<PageData> {
+  const month = currentMonth(now);
   try {
     const { createServerSupabaseClient } = await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
-      return { accounts: [], categories: [] };
+      return {
+        data: emptyObligationsData(month, null),
+        accounts: [],
+        categories: [],
+      };
     }
-    const [accounts, categories] = await Promise.all([
+    const [data, accounts, categories] = await Promise.all([
+      buildObligationsData(client, householdId, now),
       findAccountsByHousehold(client, householdId),
       findCategoriesByHousehold(client, householdId),
     ]);
-    return { accounts, categories };
-  } catch {
-    return { accounts: [], categories: [] };
+    return { data, accounts, categories };
+  } catch (error) {
+    return {
+      data: emptyObligationsData(
+        month,
+        error instanceof Error
+          ? error.message
+          : "Não foi possível carregar as obrigações.",
+      ),
+      accounts: [],
+      categories: [],
+    };
   }
 }
 
@@ -89,8 +116,7 @@ function termLabel(item: ObligationsData["obligations"][number]): string {
 
 export default async function ObligationsPage() {
   await requireAuthorizedUser();
-  const data = await loadObligationsData();
-  const { accounts, categories } = await loadFormLookups();
+  const { data, accounts, categories } = await loadPageData();
   const accountName = (id: string): string =>
     accounts.find((a) => a.id === id)?.name ?? "Conta";
 

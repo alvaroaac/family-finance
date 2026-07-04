@@ -523,6 +523,14 @@ export type Database = {
       // onto the target and archive the source, all in one transaction. See
       // supabase/migrations/0003_merge_category.sql. Returns a jsonb summary
       // (archived source row + per-table moved counts) the repository ignores.
+      merge_category: {
+        Args: {
+          target_household_id: string;
+          source_category_id: string;
+          target_category_id: string;
+        };
+        Returns: MergeCategoryResult;
+      };
       // Atomic, idempotent obligation-month materialization: insert ONE
       // expense transaction linked via obligation_id/obligation_month, or
       // return the existing one (already_paid = true). See
@@ -534,14 +542,6 @@ export type Database = {
           paid_on?: string | null;
         };
         Returns: MaterializeObligationPaymentResult;
-      };
-      merge_category: {
-        Args: {
-          target_household_id: string;
-          source_category_id: string;
-          target_category_id: string;
-        };
-        Returns: MergeCategoryResult;
       };
     };
     Enums: {

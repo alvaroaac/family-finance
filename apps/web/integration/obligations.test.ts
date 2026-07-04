@@ -14,6 +14,7 @@ import type { AppSupabaseClient } from "@family-finance/db";
 import { materializeObligationPayment } from "@family-finance/db";
 
 import { buildObligationsData } from "../app/(app)/obligations/queries.js";
+import { obligationInputFromForm } from "../app/(app)/obligations/form.js";
 import {
   FakeSupabaseStore,
   createFakeSupabaseClient,
@@ -159,5 +160,91 @@ describe("buildObligationsData", () => {
     const data = await buildObligationsData(client, HOUSEHOLD, NOW);
     expect(data.thisMonth.paid).toHaveLength(1);
     expect(data.timeline[0]?.totalCents).toBe(71044 + 120000);
+  });
+});
+
+describe("paid entries reflect materialized actuals (review F4)", () => {
+  it("editing the template amount after payment does not rewrite the paid figure", async () => {
+    const { client, store } = seededClient();
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+
+    // Template edited AFTER the payment: paid rows must keep the actual.
+    const rent = store
+      .table("obligations")
+      .find((r) => r.id === "ob-rent") as Record<string, unknown>;
+    rent.amount_cents = 999999;
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.thisMonth.paid[0]?.amountCents).toBe(120000);
+    expect(data.timeline[0]?.paidCents).toBe(120000);
+  });
+});
+
+describe("obligationInputFromForm (review F9 — server-action input parsing)", () => {
+  function form(entries: Record<string, string>): FormData {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(entries)) fd.set(k, v);
+    return fd;
+  }
+  const IDS = { householdId: HOUSEHOLD, createdByUserId: ALVARO };
+  const BASE = {
+    description: "Parcela solar",
+    amount: "710,44",
+    startMonth: "2026-10",
+    termMonths: "72",
+    dueDay: "5",
+    accountId: ACCOUNT,
+  };
+
+  it("maps the happy path: pt-BR amount to cents, term to number", () => {
+    expect(obligationInputFromForm(form(BASE), IDS)).toEqual({
+      householdId: HOUSEHOLD,
+      description: "Parcela solar",
+      amountCents: 71044,
+      startMonth: "2026-10",
+      termMonths: 72,
+      dueDay: 5,
+      accountId: ACCOUNT,
+      createdByUserId: ALVARO,
+      category: undefined,
+    });
+  });
+
+  it("blank term means indefinite (null); category flows through when set", () => {
+    const input = obligationInputFromForm(
+      form({ ...BASE, termMonths: "", categoryId: "cat-1" }),
+      IDS,
+    );
+    expect(input.termMonths).toBeNull();
+    expect(input.category).toEqual({ categoryId: "cat-1" });
+  });
+
+  it.each([
+    ["non-numeric amount", { amount: "abc" }],
+    ["zero amount", { amount: "0" }],
+    ["mixed term '12abc'", { termMonths: "12abc" }],
+    ["zero dueDay", { dueDay: "0" }],
+    ["missing description", { description: " " }],
+  ])("rejects %s", (_label, patch) => {
+    expect(() =>
+      obligationInputFromForm(form({ ...BASE, ...patch }), IDS),
+    ).toThrow();
+  });
+});
+
+describe("mark-paid default occurred date (no paidOn)", () => {
+  it("defaults occurred_on to the month's due day", async () => {
+    const { client, store } = seededClient();
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent", // due_day 10
+      month: "2026-07",
+    });
+    const tx = store
+      .table("transactions")
+      .find((r) => r.obligation_id === "ob-rent");
+    expect(tx?.occurred_on).toBe("2026-07-10");
   });
 });

@@ -2106,11 +2106,18 @@ export function obligationMonthYm(obligationMonth: string): string {
   return match[1] as string;
 }
 
-export type ObligationPaymentKey = { obligationId: string; month: string };
+export type ObligationPaymentKey = {
+  obligationId: string;
+  month: string;
+  /** The MATERIALIZED transaction's amount — the actual paid, not the
+   * (editable) template amount. */
+  amountCents: number;
+};
 
 /**
  * The `(obligationId, month)` pairs already materialized inside a month
- * window — the paid set the projector subtracts (anti-double-count).
+ * window — the paid set the projector subtracts (anti-double-count) — plus
+ * each payment's actual amount, so callers never re-query the same rows.
  */
 export async function listObligationPayments(
   client: AppSupabaseClient,
@@ -2120,22 +2127,25 @@ export async function listObligationPayments(
 ): Promise<ObligationPaymentKey[]> {
   const { data, error } = await client
     .from("transactions")
-    .select("obligation_id, obligation_month")
+    .select("obligation_id, obligation_month, amount_cents")
     .eq("household_id", householdId)
     .not("obligation_id", "is", null)
     .gte("obligation_month", `${fromMonth}-01`)
-    .lte("obligation_month", `${toMonth}-01`)
-    ;
+    .lte("obligation_month", `${toMonth}-01`);
   if (error !== null) {
     throw new Error(`listObligationPayments failed: ${error.message}`);
   }
   return (
     (data ?? []) as Array<
-      Pick<TransactionRow, "obligation_id" | "obligation_month">
+      Pick<
+        TransactionRow,
+        "obligation_id" | "obligation_month" | "amount_cents"
+      >
     >
   ).map((row) => ({
     obligationId: row.obligation_id as string,
     month: obligationMonthYm(row.obligation_month as string),
+    amountCents: row.amount_cents,
   }));
 }
 
@@ -2184,13 +2194,12 @@ export async function getObligationsPressure(
   householdId: string,
   month: string,
 ): Promise<ObligationsPressure> {
-  const obligations = await listObligations(client, householdId);
-  const payments = await listObligationPayments(
-    client,
-    householdId,
-    month,
-    month,
-  );
+  // Independent reads — one parallel round trip; the payments query already
+  // carries each actual's amount, so no third query over the same rows.
+  const [obligations, payments] = await Promise.all([
+    listObligations(client, householdId),
+    listObligationPayments(client, householdId, month, month),
+  ]);
   const paid = new Set(payments.map((p) => paidKey(p.obligationId, p.month)));
   const projected = projectObligations(obligations.map(mapObligationRow), {
     fromMonth: month,
@@ -2198,19 +2207,9 @@ export async function getObligationsPressure(
     paid,
   });
 
-  const { data, error } = await client
-    .from("transactions")
-    .select("amount_cents")
-    .eq("household_id", householdId)
-    .not("obligation_id", "is", null)
-    .eq("obligation_month", `${month}-01`);
-  if (error !== null) {
-    throw new Error(`getObligationsPressure failed: ${error.message}`);
-  }
-
   return summarizeObligationsPressure(
     month,
     projected,
-    (data ?? []) as Pick<TransactionRow, "amount_cents">[],
+    payments.map((p) => ({ amount_cents: p.amountCents })),
   );
 }

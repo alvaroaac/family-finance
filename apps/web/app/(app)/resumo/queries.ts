@@ -137,7 +137,15 @@ export async function buildResumoData(
     getCardPressure(client, householdId, month),
     getCardPressure(client, householdId, previousMonth),
     listCreditCards(client, householdId),
-    getObligationsPressure(client, householdId, month),
+    // Resilient on purpose: the obligations schema arrives with migration
+    // 0011, applied out-of-band. If the table/columns are missing (or this
+    // one query fails), only THIS stat zeroes out — never the whole resumo.
+    getObligationsPressure(client, householdId, month).catch(() => ({
+      month,
+      projectedUnpaidCents: 0,
+      paidCents: 0,
+      totalCents: 0,
+    })),
     findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
     findRecentTransactions(client, householdId, 5),
   ]);

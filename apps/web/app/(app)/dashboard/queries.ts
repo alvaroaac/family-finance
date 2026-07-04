@@ -97,7 +97,15 @@ export async function loadDashboardData(
     ] = await Promise.all([
       getMonthlySummary(client, householdId, month),
       getCardPressure(client, householdId, month),
-      getObligationsPressure(client, householdId, month),
+      // Resilient on purpose: the obligations schema arrives with migration
+      // 0011, applied out-of-band. If the table/columns are missing, only
+      // this stat zeroes out — never the whole dashboard.
+      getObligationsPressure(client, householdId, month).catch(() => ({
+        month,
+        projectedUnpaidCents: 0,
+        paidCents: 0,
+        totalCents: 0,
+      })),
       findUpcomingInstallments(client, householdId, month),
       listInvestmentBuckets(client, householdId),
       findRecentTransactions(client, householdId),

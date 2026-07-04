@@ -425,3 +425,197 @@ describe("classifier fallback", () => {
     expect(createTransaction).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review fixes (PR #3): failure paths, matching robustness, error surfaces.
+// ---------------------------------------------------------------------------
+
+describe("mark_paid keyword matching robustness", () => {
+  it("matches on token overlap: 'placa solar' finds 'Parcela solar'", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "placa solar",
+      }),
+    });
+    const { state } = await startConversation(
+      { text: "placa solar pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ obligationId: "ob-solar" }),
+    );
+  });
+
+  it("is accent-insensitive in both directions", async () => {
+    const cases = [
+      { keyword: "condominio", description: "Condomínio" },
+      { keyword: "condomínio", description: "Condominio" },
+    ];
+    for (const { keyword, description } of cases) {
+      const { deps, materializeObligationPayment } = buildDeps({
+        classifyMessage: classifierReturning({
+          intent: "mark_paid",
+          target: "obligation",
+          keyword,
+        }),
+        listActiveObligations: async () => [
+          { id: "ob-cond", description, amountCents: 45000 },
+        ],
+      });
+      const { state } = await startConversation(
+        { text: `${keyword} pago`, fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      expect(state.status).toBe("saved");
+      expect(materializeObligationPayment).toHaveBeenCalledWith(
+        expect.objectContaining({ obligationId: "ob-cond" }),
+      );
+    }
+  });
+});
+
+describe("mark_paid failure surfaces", () => {
+  const MARK_SOLAR: InterpretedIntent = {
+    intent: "mark_paid",
+    target: "obligation",
+    keyword: "solar",
+  };
+
+  it("replies gracefully (no crash, terminal state) when materialization throws", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(MARK_SOLAR),
+      materializeObligationPayment: vi.fn(async () => {
+        throw new Error(
+          "materializeObligationPayment failed: month 2026-07 precedes start 2026-10",
+        );
+      }),
+    });
+    const { state, reply } = await startConversation(
+      { text: "placa solar pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(state.status).toBe("cancelled");
+    expect(reply.length).toBeGreaterThan(0);
+    expect(reply).toMatch(/fora do período|não consegui dar baixa/i);
+  });
+
+  it("a missing materialize dep does NOT claim the obligation was not found", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(MARK_SOLAR),
+      materializeObligationPayment: undefined,
+    });
+    const { state, reply } = await startConversation(
+      { text: "placa solar pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(state.status).toBe("cancelled");
+    expect(reply).not.toMatch(/não encontrei/i);
+    expect(reply).toMatch(/não está disponível|nao esta disponivel/i);
+  });
+
+  it("cancelar during an ambiguous choice cancels without materializing", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "financiamento",
+      }),
+      listActiveObligations: async () => [
+        { id: "ob-a", description: "Financiamento solar", amountCents: 1 },
+        { id: "ob-b", description: "Financiamento carro", amountCents: 2 },
+      ],
+    });
+    const asked = await startConversation(
+      { text: "financiamento pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const cancelled = await applyMessage(asked.state, "cancelar", deps, {
+      today: TODAY,
+    });
+    expect(cancelled.state.status).toBe("cancelled");
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it("a non-matching choice answer re-asks and does not materialize", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "financiamento",
+      }),
+      listActiveObligations: async () => [
+        { id: "ob-a", description: "Financiamento solar", amountCents: 1 },
+        { id: "ob-b", description: "Financiamento carro", amountCents: 2 },
+      ],
+    });
+    const asked = await startConversation(
+      { text: "financiamento pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const retry = await applyMessage(asked.state, "bicicleta", deps, {
+      today: TODAY,
+    });
+    expect(retry.state.status).toBe("awaiting_mark_paid_choice");
+    expect(retry.reply).toContain("Financiamento solar");
+    expect(retry.reply).toContain("Financiamento carro");
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("obligation correction failure paths", () => {
+  async function startedSolar(deps: ConversationDeps) {
+    return startConversation(
+      { text: "Parcela solar 710,44 72x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+  }
+
+  it("'dia 29' keeps the draft and explains the 1–28 rule", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(SOLAR_INTENT),
+    });
+    const started = await startedSolar(deps);
+    const outcome = await applyMessage(started.state, "dia 29", deps, {
+      today: TODAY,
+    });
+    expect(outcome.state.status).toBe("awaiting_obligation_confirmation");
+    expect(outcome.reply).toMatch(/entre 1 e 28/);
+    expect(createObligation).not.toHaveBeenCalled();
+  });
+
+  it("'conta Inexistente' keeps the draft and replies account-not-found", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(SOLAR_INTENT),
+    });
+    const started = await startedSolar(deps);
+    const outcome = await applyMessage(started.state, "conta Inexistente", deps, {
+      today: TODAY,
+    });
+    expect(outcome.state.status).toBe("awaiting_obligation_confirmation");
+    expect(outcome.reply).toMatch(/não encontrei a conta/i);
+  });
+
+  it("'valor abc' and gibberish reply the obligation help text", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(SOLAR_INTENT),
+    });
+    const started = await startedSolar(deps);
+    for (const msg of ["valor abc", "sei lá o que"]) {
+      const outcome = await applyMessage(started.state, msg, deps, {
+        today: TODAY,
+      });
+      expect(outcome.state.status).toBe("awaiting_obligation_confirmation");
+      expect(outcome.reply).toMatch(/não entendi/i);
+    }
+  });
+});

@@ -122,21 +122,18 @@ begin
   from obligations
   where id = target_obligation_id;
 
-  if obligation.id is null then
+  -- Household isolation: SECURITY DEFINER skips RLS, so re-assert membership
+  -- exactly as the table policies would have (the bot's service_role client
+  -- bypasses RLS anyway — auth.uid() is null there). A non-member gets the
+  -- SAME 'not found' error as a nonexistent id, and no household_id is ever
+  -- echoed: distinguishable errors would let any authenticated user probe
+  -- foreign obligation ids for existence/ownership that RLS hides.
+  if obligation.id is null
+     or (auth.uid() is not null
+         and not is_household_member(obligation.household_id)) then
     raise exception 'materialize_obligation_payment: obligation % not found',
       target_obligation_id
       using errcode = '22023';
-  end if;
-
-  -- Household isolation: SECURITY DEFINER skips RLS, so re-assert membership
-  -- exactly as the table policies would have. The bot's service_role client
-  -- bypasses RLS anyway (auth.uid() is null there), matching how it already
-  -- writes transactions directly.
-  if auth.uid() is not null
-     and not is_household_member(obligation.household_id) then
-    raise exception 'materialize_obligation_payment: not a member of household %',
-      obligation.household_id
-      using errcode = '42501'; -- insufficient_privilege
   end if;
 
   if obligation.status <> 'active' then

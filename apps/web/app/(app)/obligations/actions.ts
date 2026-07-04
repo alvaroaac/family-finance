@@ -6,6 +6,8 @@ import { createObligationDraft } from "@family-finance/domain";
 import {
   cancelObligation,
   createObligation,
+  findAccountsByHousehold,
+  findCategoriesByHousehold,
   findHouseholdIdForCurrentUser,
   materializeObligationPayment,
   updateObligation,
@@ -13,6 +15,7 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { parseReaisToCents } from "../../../lib/format";
+import { obligationInputFromForm, requireField } from "./form";
 
 /**
  * Server actions for the "Obrigações" screen.
@@ -42,21 +45,6 @@ async function authedHousehold(): Promise<{
   return { householdId, client };
 }
 
-function requireField(formData: FormData, name: string): string {
-  const value = formData.get(name);
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Missing required field: ${name}`);
-  }
-  return value.trim();
-}
-
-function optionalField(formData: FormData, name: string): string | undefined {
-  const value = formData.get(name);
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
 function revalidateObligationPaths(): void {
   revalidatePath("/obligations");
   revalidatePath("/resumo");
@@ -76,29 +64,31 @@ export async function createObligationAction(
     throw new Error("Sessão inválida. Faça login novamente.");
   }
 
-  const amountCents = parseReaisToCents(requireField(formData, "amount"));
-  if (amountCents === null || amountCents <= 0) {
-    throw new Error("Valor mensal inválido — use por exemplo 710,44.");
+  const input = obligationInputFromForm(formData, {
+    householdId,
+    createdByUserId: user.id,
+  });
+
+  // Ownership: the FK checks on obligations run as the table owner (they
+  // bypass RLS), so a submitted id pointing at ANOTHER household's account or
+  // category would be accepted by the database. Verify both against the
+  // caller's own household before inserting.
+  const [accounts, categories] = await Promise.all([
+    findAccountsByHousehold(client, householdId),
+    findCategoriesByHousehold(client, householdId),
+  ]);
+  if (!accounts.some((account) => account.id === input.accountId)) {
+    throw new Error("Conta de pagamento inválida.");
+  }
+  const categoryId = input.category?.categoryId;
+  if (
+    categoryId !== undefined &&
+    !categories.some((category) => category.id === categoryId)
+  ) {
+    throw new Error("Categoria inválida.");
   }
 
-  const termRaw = optionalField(formData, "termMonths");
-  const termMonths =
-    termRaw === undefined ? null : Number.parseInt(termRaw, 10);
-
-  const dueDay = Number.parseInt(requireField(formData, "dueDay"), 10);
-  const categoryId = optionalField(formData, "categoryId");
-
-  const result = createObligationDraft({
-    householdId,
-    description: requireField(formData, "description"),
-    amountCents,
-    startMonth: requireField(formData, "startMonth"),
-    termMonths,
-    dueDay,
-    accountId: requireField(formData, "accountId"),
-    createdByUserId: user.id,
-    category: categoryId !== undefined ? { categoryId } : undefined,
-  });
+  const result = createObligationDraft(input);
   if (!result.ok) {
     throw new Error(result.errors.map((e) => e.message).join(" "));
   }

@@ -11,8 +11,9 @@
  * stays constant — projected-unpaid + paid actuals.
  *
  * `buildObligationsData` is the composition tested against the fake store;
- * `loadObligationsData` wraps it with auth/household resolution and degrades
- * to a zeroed state instead of throwing (same pattern as resumo/dashboard).
+ * the page's `loadPageData` wraps it with auth/household resolution (resolved
+ * ONCE per request) and degrades to `emptyObligationsData` instead of
+ * throwing (same pattern as resumo/dashboard).
  */
 
 import {
@@ -24,7 +25,6 @@ import {
 } from "@family-finance/domain";
 import {
   currentMonth,
-  findHouseholdIdForCurrentUser,
   listObligationPayments,
   listObligations,
   mapObligationRow,
@@ -117,7 +117,9 @@ export async function buildObligationsData(
     paid,
   });
 
-  // Paid amounts per month, from the payment keys joined with the templates.
+  // Paid amounts per month. The amount comes from the MATERIALIZED
+  // transaction (the actual at payment time) — never the template, which is
+  // editable afterwards; only the description is looked up on the template.
   const paidByMonth = new Map<
     string,
     Array<{ obligationId: string; description: string; amountCents: number }>
@@ -131,7 +133,7 @@ export async function buildObligationsData(
     list.push({
       obligationId: obligation.id,
       description: obligation.description,
-      amountCents: obligation.amountCents,
+      amountCents: payment.amountCents,
     });
     paidByMonth.set(payment.month, list);
   }
@@ -166,7 +168,10 @@ export async function buildObligationsData(
 }
 
 /** The empty/zero state used when the DB is unreachable. */
-function emptyObligations(month: string, loadError: string | null): ObligationsData {
+export function emptyObligationsData(
+  month: string,
+  loadError: string | null,
+): ObligationsData {
   return {
     month,
     obligations: [],
@@ -174,30 +179,4 @@ function emptyObligations(month: string, loadError: string | null): ObligationsD
     timeline: [],
     loadError,
   };
-}
-
-/**
- * Load the obligations dataset. Never throws: any failure (no household,
- * unreachable DB) collapses to the zero state with a `loadError` message.
- */
-export async function loadObligationsData(
-  now: Date = new Date(),
-): Promise<ObligationsData> {
-  const month = currentMonth(now);
-  try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
-    const client = await createServerSupabaseClient();
-    const householdId = await findHouseholdIdForCurrentUser(client);
-    if (householdId === null) {
-      return emptyObligations(month, null);
-    }
-    return await buildObligationsData(client, householdId, now);
-  } catch (error) {
-    return emptyObligations(
-      month,
-      error instanceof Error
-        ? error.message
-        : "Não foi possível carregar as obrigações.",
-    );
-  }
 }
