@@ -28,6 +28,7 @@ import {
   obligationMonthYm,
   summarizeObligationsPressure,
   obligationUpdateFromChanges,
+  createCategory,
   type AppSupabaseClient,
 } from "./repositories.js";
 import { createServiceRoleClient } from "./index.js";
@@ -990,5 +991,73 @@ describe("obligationUpdateFromChanges", () => {
     expect(() =>
       obligationUpdateFromChanges({ description: "  " }),
     ).toThrow();
+  });
+});
+
+describe("createCategory", () => {
+  it("inserts an ACTIVE category scoped to the household and returns the row", async () => {
+    let captured: Record<string, unknown> | null = null;
+    const client = {
+      from(table: string) {
+        expect(table).toBe("categories");
+        return {
+          insert(payload: Record<string, unknown>) {
+            captured = payload;
+            return {
+              select() {
+                return {
+                  async single() {
+                    return {
+                      data: {
+                        id: "cat-new",
+                        household_id: "house-1",
+                        name: "Pets",
+                        is_active: true,
+                        created_at: "2026-07-04T00:00:00Z",
+                        updated_at: "2026-07-04T00:00:00Z",
+                      },
+                      error: null,
+                    };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as AppSupabaseClient;
+
+    const row = await createCategory(client, "house-1", "Pets");
+
+    expect(captured).toEqual({
+      household_id: "house-1",
+      name: "Pets",
+      is_active: true,
+    });
+    expect(row.id).toBe("cat-new");
+  });
+
+  it("throws a named error when the insert fails", async () => {
+    const client = {
+      from() {
+        return {
+          insert() {
+            return {
+              select() {
+                return {
+                  async single() {
+                    return { data: null, error: { message: "boom" } };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as AppSupabaseClient;
+
+    await expect(createCategory(client, "house-1", "Pets")).rejects.toThrow(
+      /createCategory failed: boom/,
+    );
   });
 });

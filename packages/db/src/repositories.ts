@@ -587,6 +587,29 @@ export async function restoreCategory(
 }
 
 /**
+ * Create a new ACTIVE macro category for a household. Used by the Telegram
+ * bot's category-creation flows (AI proposal accept + "nova categoria"); the
+ * bot dedupes case/accent-insensitively BEFORE calling this, so the repo stays
+ * a plain insert. `is_active` is set explicitly: the design requires the new
+ * category to be usable immediately, with no approval queue.
+ */
+export async function createCategory(
+  client: AppSupabaseClient,
+  householdId: string,
+  name: string,
+): Promise<CategoryRow> {
+  const { data, error } = await client
+    .from("categories")
+    .insert({ household_id: householdId, name, is_active: true })
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createCategory failed: ${error.message}`);
+  }
+  return data as CategoryRow;
+}
+
+/**
  * Merge `sourceCategoryId` into `targetCategoryId`: re-point every transaction,
  * installment group, installment, subcategory, and categorization-memory row
  * from the source onto the target, then archive the now-empty source category.
