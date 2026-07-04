@@ -895,7 +895,7 @@ async function persist(
 
   // Cannot save without a value — fall back to asking for it.
   if (draft.amountCents === undefined) {
-    const next: ConversationState = { status: "needs_amount", draft };
+    const next: ConversationState = { ...state, status: "needs_amount", draft };
     return { state: next, reply: needsAmountMessage(draft.description) };
   }
 
@@ -912,7 +912,7 @@ async function persist(
   } else {
     const accountId = draft.accountId ?? deps.defaultAccountId;
     if (accountId === undefined || accountId.length === 0) {
-      const next: ConversationState = { status: statusForDraft(draft), draft };
+      const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
       return {
         state: next,
         reply:
@@ -946,6 +946,7 @@ async function persist(
     // Surface the offending field in plain pt-BR — the raw Zod message is
     // opaque to the household. Keep the conversation open so they can correct.
     const next: ConversationState = {
+      ...state,
       status: statusForDraft(draft),
       draft,
     };
@@ -1222,6 +1223,7 @@ export async function applyMessage(
   }
 
   const next: ConversationState = {
+    ...state,
     status: statusForDraft(draft),
     draft,
   };

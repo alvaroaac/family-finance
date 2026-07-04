@@ -351,4 +351,28 @@ describe("AI new-category proposal", () => {
     await applyCallback(picked.state, "cf", deps, { today: TODAY });
     expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
   });
+
+  it("keeps the proposal when confirm arrives before the amount", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "Petz", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(start.state.status).toBe("needs_amount");
+    expect(start.state.proposedCategoryName).toBe("Pets");
+
+    // Confirm without an amount: no create/seed yet, proposal must survive.
+    const early = await applyMessage(start.state, "confirmar", deps, { today: TODAY });
+    expect(early.state.status).toBe("needs_amount");
+    expect(early.state.proposedCategoryName).toBe("Pets");
+    expect(deps.createCategory).not.toHaveBeenCalled();
+
+    // Supply the amount, then confirm: the full nca-equivalent path runs.
+    const withAmount = await applyMessage(early.state, "valor 90", deps, { today: TODAY });
+    expect(withAmount.state.proposedCategoryName).toBe("Pets");
+    const done = await applyMessage(withAmount.state, "confirmar", deps, { today: TODAY });
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(done.state.status).toBe("saved");
+  });
 });
