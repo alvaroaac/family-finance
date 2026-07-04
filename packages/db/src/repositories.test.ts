@@ -18,6 +18,7 @@ import {
   transactionUpdateFromPatch,
   updateInvestmentBucketBalance,
   findMemberByTelegramUserId,
+  resolveTelegramMember,
   loadBotConversation,
   saveBotConversation,
   deleteBotConversation,
@@ -841,5 +842,71 @@ describe("obligationUpdateFromChanges", () => {
     expect(() =>
       obligationUpdateFromChanges({ description: "  " }),
     ).toThrow();
+  });
+});
+
+describe("resolveTelegramMember (review: id back-fill clears username)", () => {
+  /** Recording client: null on the id lookup, a member on the username lookup,
+   * capturing the back-fill update payload. */
+  function client() {
+    const updates: Array<{ payload: Record<string, unknown>; eq: Array<[string, unknown]> }> = [];
+    let call = 0;
+    const build = () => {
+      const eqs: Array<[string, unknown]> = [];
+      let updatePayload: Record<string, unknown> | undefined;
+      const b: Record<string, unknown> = {
+        select() {
+          return b;
+        },
+        update(payload: Record<string, unknown>) {
+          updatePayload = payload;
+          return b;
+        },
+        eq(col: string, val: unknown) {
+          eqs.push([col, val]);
+          if (updatePayload !== undefined) {
+            updates.push({ payload: updatePayload, eq: eqs.slice() });
+            return Promise.resolve({ data: null, error: null });
+          }
+          return b;
+        },
+        maybeSingle() {
+          call += 1;
+          // 1st select = by telegram_user_id (miss); 2nd = by username (hit).
+          if (call === 1) return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({
+            data: {
+              id: "member-1",
+              household_id: HOUSEHOLD,
+              user_id: USER,
+              display_name: "Karol",
+            },
+            error: null,
+          });
+        },
+      };
+      return b;
+    };
+    const c = { from: () => build() } as unknown as AppSupabaseClient;
+    return { c, updates };
+  }
+
+  it("clears telegram_username when back-filling the numeric id", async () => {
+    const { c, updates } = client();
+    const identity = await resolveTelegramMember(c, {
+      telegramUserId: 555,
+      telegramUsername: "karol",
+    });
+    expect(identity).toEqual({
+      householdId: HOUSEHOLD,
+      userId: USER,
+      displayName: "Karol",
+    });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.payload).toEqual({
+      telegram_user_id: 555,
+      telegram_username: null,
+    });
+    expect(updates[0]?.eq).toContainEqual(["id", "member-1"]);
   });
 });

@@ -1879,11 +1879,19 @@ export async function resolveTelegramMember(
     HouseholdMemberRow,
     "id" | "household_id" | "user_id" | "display_name"
   >;
-  // Best-effort back-fill; a failure here must not block the lançamento.
+  // Back-fill the stable numeric id AND clear the username in the same write.
+  // Telegram @usernames are releasable and re-claimable by strangers; once the
+  // numeric id is bound, leaving the username on the row would let whoever
+  // later grabs that handle resolve as this member. Clearing it makes the
+  // link id-only going forward. Best-effort: a failure must not block the
+  // lançamento (the id was still resolved for THIS message).
   try {
     await client
       .from("household_members")
-      .update({ telegram_user_id: sender.telegramUserId })
+      .update({
+        telegram_user_id: sender.telegramUserId,
+        telegram_username: null,
+      })
       .eq("id", row.id);
   } catch {
     // ignored — resolution by username keeps working
