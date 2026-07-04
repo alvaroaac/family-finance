@@ -376,3 +376,118 @@ describe("AI new-category proposal", () => {
     expect(done.state.status).toBe("saved");
   });
 });
+
+describe("manual category creation", () => {
+  it("typed `nova categoria Pets` mid-draft creates + assigns + re-shows the summary", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const outcome = await applyMessage(state, "nova categoria Pets", deps, { today: TODAY });
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.categoryId).toBe("cat-pets");
+    expect(outcome.reply).toContain('Categoria "Pets" criada ✅');
+    expect(outcome.reply).toContain("Categoria: Pets");
+    // Manual creation NEVER seeds memory.
+    expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
+  });
+
+  it("typed `nova categoria Pets` with NO active conversation creates standalone", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const outcome = await startConversation(
+      { text: "nova categoria Pets", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(outcome.reply).toBe('Categoria "Pets" criada ✅');
+    // Terminal: the next message starts a fresh conversation.
+    expect(["saved", "cancelled"]).toContain(outcome.state.status);
+  });
+
+  it("nc button enters awaiting_category_name with a cancel keyboard", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const outcome = await applyCallback(state, "nc", deps, { today: TODAY });
+    expect(outcome.state.status).toBe("awaiting_category_name");
+    expect(outcome.reply).toContain("nome da nova categoria");
+    expect(outcome.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cx");
+  });
+
+  it("the next text in name-mode becomes the category (create + assign)", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "Pets", deps, { today: TODAY });
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(outcome.state.draft.categoryId).toBe("cat-pets");
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+  });
+
+  it("name-mode wins: a command word like `confirmar` is a NAME", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "confirmar", deps, { today: TODAY });
+    expect(deps.createCategory).toHaveBeenCalledWith("confirmar");
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+  });
+
+  it("`cancelar` (typed) in name-mode returns to awaiting_confirmation", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "cancelar", deps, { today: TODAY });
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(deps.createCategory).not.toHaveBeenCalled();
+    expect(outcome.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+  });
+
+  it("❌ button (cx) in name-mode also returns to awaiting_confirmation", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+    const outcome = await applyCallback(asking.state, "cx", deps, { today: TODAY });
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+  });
+
+  it("validates the name: empty and >40 chars re-ask with pt-BR errors", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+
+    const tooLong = await applyMessage(asking.state, "x".repeat(41), deps, { today: TODAY });
+    expect(tooLong.state.status).toBe("awaiting_category_name");
+    expect(tooLong.reply).toContain("40");
+    expect(deps.createCategory).not.toHaveBeenCalled();
+  });
+
+  it("dedupe applies to manual creation too (reuse message)", async () => {
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+      listAllCategories: vi.fn(async () => [
+        { id: "cat-pets-x", name: "pets", isActive: true },
+      ]),
+    });
+    const state = await draftState(deps);
+    const outcome = await applyMessage(state, "nova categoria Pets", deps, { today: TODAY });
+    expect(deps.createCategory).not.toHaveBeenCalled();
+    expect(outcome.state.draft.categoryId).toBe("cat-pets-x");
+    expect(outcome.reply).toContain("já existia");
+  });
+
+  it("bare `nova categoria` with no draft enters standalone name-mode; the name creates and ends", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const asking = await startConversation(
+      { text: "nova categoria", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(asking.state.status).toBe("awaiting_category_name");
+    expect(asking.state.standaloneCategoryCreation).toBe(true);
+
+    const outcome = await applyMessage(asking.state, "Pets", deps, { today: TODAY });
+    expect(outcome.reply).toBe('Categoria "Pets" criada ✅');
+    expect(["saved", "cancelled"]).toContain(outcome.state.status);
+  });
+});

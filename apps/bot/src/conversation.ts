@@ -46,14 +46,18 @@ import {
   type VoiceMessageRef,
 } from "./audio.js";
 import {
+  askCategoryNameMessage,
   cancelledMessage,
   cardBillDeferredMessage,
   cardInstallmentDeferredMessage,
+  categoryCreatedMessage,
+  categoryReusedMessage,
   chooseCategoryMessage,
   chooseResponsibleMessage,
   confirmationMessage,
   correctionAppliedMessage,
   formatBrl,
+  invalidCategoryNameMessage,
   needsAmountMessage,
   notUnderstoodMessage,
   obligationAlreadyPaidMessage,
@@ -634,6 +638,49 @@ export async function startConversation(
 ): Promise<ConversationOutcome> {
   const inputKind: BotInputKind = input.inputKind ?? "text";
 
+  // Manual category creation with NO active conversation (spec §4).
+  const newCategoryMatch = NEW_CATEGORY_RE.exec(input.text);
+  if (newCategoryMatch !== null) {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    const rawName = (newCategoryMatch[1] ?? "").trim();
+    if (rawName.length === 0) {
+      return {
+        state: {
+          status: "awaiting_category_name",
+          draft: ballast,
+          standaloneCategoryCreation: true,
+        },
+        reply: askCategoryNameMessage(),
+        keyboard: cancelOnlyKeyboard(),
+      };
+    }
+    const validated = validateCategoryName(rawName);
+    if (!validated.ok) {
+      return {
+        state: { status: "cancelled", draft: ballast },
+        reply: validated.error,
+      };
+    }
+    const resolved = await createOrReuseCategory(validated.name, deps);
+    if (resolved === null) {
+      return {
+        state: { status: "cancelled", draft: ballast },
+        reply: notUnderstoodMessage(),
+      };
+    }
+    await deps.logInteraction({
+      fromUserId: input.fromUserId,
+      inputKind,
+      messageText: input.text,
+    });
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: resolved.reused
+        ? categoryReusedMessage(validated.name)
+        : categoryCreatedMessage(validated.name),
+    };
+  }
+
   // Unified intent classification (recurring-obligations design): when
   // configured it sees every NEW message first. A null result — or a plain
   // expense — falls through to the deterministic parser path below, so the
@@ -793,6 +840,105 @@ export async function startConversationFromAudio(
 
 const CONFIRM_RE = /^\s*(confirmar|confirma|confirmo|sim|ok|salvar|salva)\b/i;
 const CANCEL_RE = /^\s*(cancelar|cancela|nao|não|descartar|apagar)\b/i;
+
+/** "nova categoria" [name] — manual category creation (spec §4). */
+const NEW_CATEGORY_RE = /^\s*nova\s+categoria\b\s*(.*)$/i;
+
+/** Trimmed, non-empty, ≤ 40 chars (spec §4 validation). */
+function validateCategoryName(
+  raw: string,
+): { ok: true; name: string } | { ok: false; error: string } {
+  const name = raw.trim();
+  if (name.length === 0) {
+    return { ok: false, error: invalidCategoryNameMessage("empty") };
+  }
+  if (name.length > 40) {
+    return { ok: false, error: invalidCategoryNameMessage("too_long") };
+  }
+  return { ok: true, name };
+}
+
+/** Create/reuse `name`, assign it to the draft, and re-show the confirmation. */
+async function createCategoryForDraft(
+  state: ConversationState,
+  name: string,
+  deps: ConversationDeps,
+): Promise<ConversationOutcome> {
+  const resolved = await createOrReuseCategory(name, deps);
+  if (resolved === null) {
+    return { state, reply: notUnderstoodMessage() };
+  }
+  const draft: DraftInProgress = {
+    ...state.draft,
+    categoryId: resolved.categoryId,
+    subcategoryId: undefined,
+    categoryNameFallback: name,
+    categoryExplanation: "Categoria criada pelo usuário.",
+  };
+  const next: ConversationState = {
+    status: statusForDraft(draft),
+    draft,
+    proposedCategoryName: undefined,
+  };
+  const created = resolved.reused
+    ? categoryReusedMessage(name)
+    : categoryCreatedMessage(name);
+  return {
+    state: next,
+    reply: `${created}\n\n${replyForState(next, deps)}`,
+    keyboard: keyboardForState(next),
+  };
+}
+
+/**
+ * awaiting_category_name: NAME-MODE WINS — anything except "cancelar" is a
+ * category name (so "confirmar" can be a category). Keeps the state machine
+ * unambiguous (spec §5).
+ */
+async function applyCategoryName(
+  state: ConversationState,
+  message: string,
+  deps: ConversationDeps,
+): Promise<ConversationOutcome> {
+  if (/^\s*(cancelar|cancela)\s*$/i.test(message)) {
+    if (state.standaloneCategoryCreation === true) {
+      return {
+        state: { status: "cancelled", draft: state.draft },
+        reply: cancelledMessage(),
+      };
+    }
+    const back: ConversationState = {
+      ...state,
+      status: "awaiting_confirmation",
+      standaloneCategoryCreation: undefined,
+    };
+    return {
+      state: back,
+      reply: replyForState(back, deps),
+      keyboard: keyboardForState(back),
+    };
+  }
+
+  const validated = validateCategoryName(message);
+  if (!validated.ok) {
+    return { state, reply: validated.error, keyboard: cancelOnlyKeyboard() };
+  }
+
+  if (state.standaloneCategoryCreation === true) {
+    const resolved = await createOrReuseCategory(validated.name, deps);
+    if (resolved === null) {
+      return { state, reply: notUnderstoodMessage() };
+    }
+    // Terminal: the category exists; no transaction draft is open.
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: resolved.reused
+        ? categoryReusedMessage(validated.name)
+        : categoryCreatedMessage(validated.name),
+    };
+  }
+  return createCategoryForDraft(state, validated.name, deps);
+}
 
 type Correction =
   | { field: "amount"; cents: number }
@@ -1173,11 +1319,35 @@ export async function applyMessage(
 
   const today = options.today ?? state.draft.occurredOn;
 
+  if (state.status === "awaiting_category_name") {
+    return applyCategoryName(state, message, deps);
+  }
   if (state.status === "awaiting_mark_paid_choice") {
     return applyMarkPaidChoice(state, message, deps, today);
   }
   if (state.status === "awaiting_obligation_confirmation") {
     return applyObligationMessage(state, message, deps, today);
+  }
+
+  const newCategoryMatch = NEW_CATEGORY_RE.exec(message);
+  if (newCategoryMatch !== null) {
+    const rawName = (newCategoryMatch[1] ?? "").trim();
+    if (rawName.length === 0) {
+      const next: ConversationState = {
+        ...state,
+        status: "awaiting_category_name",
+      };
+      return {
+        state: next,
+        reply: askCategoryNameMessage(),
+        keyboard: cancelOnlyKeyboard(),
+      };
+    }
+    const validated = validateCategoryName(rawName);
+    if (!validated.ok) {
+      return { state, reply: validated.error };
+    }
+    return createCategoryForDraft(state, validated.name, deps);
   }
 
   if (CANCEL_RE.test(message)) {
@@ -1313,11 +1483,17 @@ async function confirmDraft(
   return persist(working, deps, messageText);
 }
 
-/** ❌ while typing a category name — Task 7 wires the full flow. */
+/** ❌ while typing a category name — standalone mode cancels fully. */
 function cancelCategoryName(
   state: ConversationState,
   deps: ConversationDeps,
 ): ApplyCallbackOutcome {
+  if (state.standaloneCategoryCreation === true) {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: cancelledMessage(),
+    };
+  }
   const next: ConversationState = {
     ...state,
     status: "awaiting_confirmation",
@@ -1474,7 +1650,15 @@ export async function applyCallback(
     return summaryOutcome(next, deps);
   }
 
-  // TOKENS.newCategory lands in Task 7; until then (and for any future/unknown
-  // token) answer-and-ignore.
+  if (token === TOKENS.newCategory) {
+    const next: ConversationState = { ...state, status: "awaiting_category_name" };
+    return {
+      state: next,
+      reply: askCategoryNameMessage(),
+      keyboard: cancelOnlyKeyboard(),
+    };
+  }
+
+  // Any future/unknown token — answer-and-ignore.
   return expiredOutcome(state);
 }
