@@ -85,6 +85,7 @@ export default async function DashboardPage() {
     month,
     summary,
     cardPressure,
+    obligationsCents,
     upcomingInstallments,
     buckets,
     bucketsTotalCents,
@@ -149,6 +150,11 @@ export default async function DashboardPage() {
           hint={`compras ${formatBrlCents(
             cardPressure.directCents,
           )} + parcelas ${formatBrlCents(cardPressure.installmentCents)}`}
+        />
+        <StatCard
+          kicker="Obrigações fixas"
+          value={formatBrlCents(obligationsCents)}
+          hint="financiamentos e contas do mês"
         />
       </div>
 

@@ -69,3 +69,19 @@ export type {
   CreateInstallmentPlanInput,
 } from "./installments.js";
 export { createInstallmentPlan } from "./installments.js";
+
+// Obligations — recurring fixed obligations as templates + projections.
+export type {
+  ObligationStatus,
+  ObligationDraft,
+  CreateObligationInput,
+  ProjectableObligation,
+  ProjectedEntry,
+} from "./obligations.js";
+export {
+  createObligationDraft,
+  addMonthsYm,
+  obligationEndMonth,
+  projectObligations,
+  paidKey,
+} from "./obligations.js";

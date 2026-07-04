@@ -14,12 +14,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   brl,
+  paidKey,
+  projectObligations,
   type MoneyAmount,
   type TransactionDraft,
   type TransactionKind,
   type AccountKind,
   type InvestmentBucketSlug,
   type InstallmentPlan,
+  type ObligationDraft,
+  type ProjectableObligation,
+  type ProjectedEntry,
 } from "@family-finance/domain";
 import type {
   Database,
@@ -46,6 +51,10 @@ import type {
   HouseholdMemberRow,
   ResponsibilityScope,
   BotConversationRow,
+  ObligationRow,
+  ObligationInsert,
+  ObligationStatus,
+  MaterializeObligationPaymentResult,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -1938,4 +1947,349 @@ export async function deleteBotConversation(
   if (error !== null) {
     throw new Error(`deleteBotConversation failed: ${error.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Obligations (recurring fixed obligations — migration 0011).
+//
+// An obligation is a TEMPLATE; months are projected by the pure domain
+// `projectObligations` engine and a mark-paid materializes exactly one
+// transactions row via the atomic `materialize_obligation_payment` RPC
+// (idempotent through the unique partial index — no double-pay).
+// ---------------------------------------------------------------------------
+
+/** Pure: build the obligations insert payload from a validated domain draft. */
+export function obligationInsertFromDraft(
+  draft: ObligationDraft,
+): ObligationInsert {
+  const isUser = draft.responsibility.scope === "user";
+  return {
+    household_id: draft.householdId,
+    description: draft.description,
+    amount_cents: draft.amountCents,
+    start_month: draft.startMonth,
+    term_months: draft.termMonths,
+    due_day: draft.dueDay,
+    category_id: draft.category.categoryId ?? null,
+    subcategory_id: draft.category.subcategoryId ?? null,
+    responsibility_scope: isUser ? "user" : "household",
+    responsible_user_id:
+      draft.responsibility.scope === "user"
+        ? draft.responsibility.userId
+        : null,
+    account_id: draft.accountId,
+    status: "active",
+    created_by_user_id: draft.createdByUserId,
+  };
+}
+
+/** A persisted obligation surfaced in a domain-friendly camelCase shape. */
+export type PersistedObligation = ProjectableObligation & {
+  householdId: string;
+  categoryId: string | null;
+  subcategoryId: string | null;
+  responsibilityScope: ResponsibilityScope;
+  responsibleUserId: string | null;
+  createdByUserId: string;
+};
+
+/** Pure: map an obligations row to the domain-facing shape. */
+export function mapObligationRow(row: ObligationRow): PersistedObligation {
+  return {
+    id: row.id,
+    householdId: row.household_id,
+    description: row.description,
+    amountCents: row.amount_cents,
+    startMonth: row.start_month,
+    termMonths: row.term_months,
+    dueDay: row.due_day,
+    categoryId: row.category_id,
+    subcategoryId: row.subcategory_id,
+    responsibilityScope: row.responsibility_scope,
+    responsibleUserId: row.responsible_user_id,
+    accountId: row.account_id,
+    status: row.status,
+    createdByUserId: row.created_by_user_id,
+  };
+}
+
+/** Persist an obligation template. RLS scopes the insert to the household. */
+export async function createObligation(
+  client: AppSupabaseClient,
+  draft: ObligationDraft,
+): Promise<ObligationRow> {
+  const { data, error } = await client
+    .from("obligations")
+    .insert(obligationInsertFromDraft(draft))
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createObligation failed: ${error.message}`);
+  }
+  return data as ObligationRow;
+}
+
+/**
+ * List a household's obligations, active only by default, ordered by
+ * description. Pass a status to inspect ended/canceled templates too.
+ */
+export async function listObligations(
+  client: AppSupabaseClient,
+  householdId: string,
+  options: { status?: ObligationStatus } = {},
+): Promise<ObligationRow[]> {
+  const { data, error } = await client
+    .from("obligations")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("status", options.status ?? "active")
+    .order("description", { ascending: true });
+  if (error !== null) {
+    throw new Error(`listObligations failed: ${error.message}`);
+  }
+  return (data ?? []) as ObligationRow[];
+}
+
+/**
+ * Cancel an obligation (soft: status = canceled). Past materialized payments
+ * are kept; the projector simply stops emitting months for it.
+ */
+export async function cancelObligation(
+  client: AppSupabaseClient,
+  householdId: string,
+  obligationId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("obligations")
+    .update({ status: "canceled" })
+    .eq("household_id", householdId)
+    .eq("id", obligationId);
+  if (error !== null) {
+    throw new Error(`cancelObligation failed: ${error.message}`);
+  }
+}
+
+/** Editable obligation fields. Absent keys are left untouched. */
+export type ObligationChanges = {
+  description?: string;
+  amountCents?: number;
+  dueDay?: number;
+  accountId?: string;
+  termMonths?: number | null;
+  categoryId?: string | null;
+  subcategoryId?: string | null;
+};
+
+/**
+ * Pure: map `ObligationChanges` onto the column-keyed partial update.
+ * Error messages are pt-BR because the web actions surface them directly.
+ */
+export function obligationUpdateFromChanges(
+  changes: ObligationChanges,
+): Partial<ObligationInsert> {
+  const update: Partial<ObligationInsert> = {};
+  if (changes.description !== undefined) {
+    const description = changes.description.trim();
+    if (description === "") {
+      throw new Error("A descrição não pode ficar vazia.");
+    }
+    update.description = description;
+  }
+  if (changes.amountCents !== undefined) {
+    if (!Number.isInteger(changes.amountCents) || changes.amountCents <= 0) {
+      throw new Error("O valor mensal precisa ser positivo, em centavos inteiros.");
+    }
+    update.amount_cents = changes.amountCents;
+  }
+  if (changes.dueDay !== undefined) {
+    if (
+      !Number.isInteger(changes.dueDay) ||
+      changes.dueDay < 1 ||
+      changes.dueDay > 28
+    ) {
+      throw new Error("O dia de vencimento precisa estar entre 1 e 28.");
+    }
+    update.due_day = changes.dueDay;
+  }
+  if (changes.accountId !== undefined) {
+    update.account_id = changes.accountId;
+  }
+  if (changes.termMonths !== undefined) {
+    if (
+      changes.termMonths !== null &&
+      (!Number.isInteger(changes.termMonths) || changes.termMonths < 1)
+    ) {
+      throw new Error("O prazo precisa ser um número de meses positivo (ou vazio).");
+    }
+    update.term_months = changes.termMonths;
+  }
+  if (changes.categoryId !== undefined) {
+    update.category_id = changes.categoryId;
+  }
+  if (changes.subcategoryId !== undefined) {
+    update.subcategory_id = changes.subcategoryId;
+  }
+  return update;
+}
+
+/** Apply a partial edit to one obligation. Empty patch = no-op. */
+export async function updateObligation(
+  client: AppSupabaseClient,
+  householdId: string,
+  obligationId: string,
+  changes: ObligationChanges,
+): Promise<void> {
+  const update = obligationUpdateFromChanges(changes);
+  if (Object.keys(update).length === 0) {
+    return;
+  }
+  const { error } = await client
+    .from("obligations")
+    .update(update)
+    .eq("household_id", householdId)
+    .eq("id", obligationId);
+  if (error !== null) {
+    throw new Error(`updateObligation failed: ${error.message}`);
+  }
+}
+
+/**
+ * Materialize one obligation month as a real transaction via the atomic
+ * `materialize_obligation_payment` RPC (see migration 0011). Idempotent: a
+ * repeat call for an already-paid month returns `already_paid: true` and
+ * writes nothing. `paidOn` overrides the default `month + dueDay` occurred
+ * date (the bot passes the message send date).
+ */
+export async function materializeObligationPayment(
+  client: AppSupabaseClient,
+  args: { obligationId: string; month: string; paidOn?: string },
+): Promise<MaterializeObligationPaymentResult> {
+  const { data, error } = await client.rpc("materialize_obligation_payment", {
+    target_obligation_id: args.obligationId,
+    target_month: args.month,
+    paid_on: args.paidOn ?? null,
+  });
+  if (error !== null) {
+    throw new Error(`materializeObligationPayment failed: ${error.message}`);
+  }
+  return data as MaterializeObligationPaymentResult;
+}
+
+/** Pure: `obligation_month` date ("2026-10-01") -> `YYYY-MM` ("2026-10"). */
+export function obligationMonthYm(obligationMonth: string): string {
+  const match = /^(\d{4}-(?:0[1-9]|1[0-2]))-\d{2}$/.exec(obligationMonth);
+  if (match === null) {
+    throw new Error(
+      `Invalid obligation_month "${obligationMonth}", expected YYYY-MM-DD`,
+    );
+  }
+  return match[1] as string;
+}
+
+export type ObligationPaymentKey = {
+  obligationId: string;
+  month: string;
+  /** The MATERIALIZED transaction's amount — the actual paid, not the
+   * (editable) template amount. */
+  amountCents: number;
+};
+
+/**
+ * The `(obligationId, month)` pairs already materialized inside a month
+ * window — the paid set the projector subtracts (anti-double-count) — plus
+ * each payment's actual amount, so callers never re-query the same rows.
+ */
+export async function listObligationPayments(
+  client: AppSupabaseClient,
+  householdId: string,
+  fromMonth: string,
+  toMonth: string,
+): Promise<ObligationPaymentKey[]> {
+  const { data, error } = await client
+    .from("transactions")
+    .select("obligation_id, obligation_month, amount_cents")
+    .eq("household_id", householdId)
+    .not("obligation_id", "is", null)
+    .gte("obligation_month", `${fromMonth}-01`)
+    .lte("obligation_month", `${toMonth}-01`);
+  if (error !== null) {
+    throw new Error(`listObligationPayments failed: ${error.message}`);
+  }
+  return (
+    (data ?? []) as Array<
+      Pick<
+        TransactionRow,
+        "obligation_id" | "obligation_month" | "amount_cents"
+      >
+    >
+  ).map((row) => ({
+    obligationId: row.obligation_id as string,
+    month: obligationMonthYm(row.obligation_month as string),
+    amountCents: row.amount_cents,
+  }));
+}
+
+export type ObligationsPressure = {
+  month: string;
+  /** Sum of the month's projected obligations not yet paid. */
+  projectedUnpaidCents: number;
+  /** Sum of the month's materialized obligation payments (actuals). */
+  paidCents: number;
+  /** projectedUnpaidCents + paidCents — the month's fixed-obligation total. */
+  totalCents: number;
+};
+
+/**
+ * Reduce a month's projected entries + materialized payment rows into the
+ * fixed-obligation pressure figure. Pure: callers fetch/project and pass here.
+ */
+export function summarizeObligationsPressure(
+  month: string,
+  projected: ProjectedEntry[],
+  paidRows: Pick<TransactionRow, "amount_cents">[],
+): ObligationsPressure {
+  let projectedUnpaidCents = 0;
+  for (const entry of projected) {
+    projectedUnpaidCents += entry.amountCents;
+  }
+  let paidCents = 0;
+  for (const row of paidRows) {
+    paidCents += row.amount_cents;
+  }
+  return {
+    month,
+    projectedUnpaidCents,
+    paidCents,
+    totalCents: projectedUnpaidCents + paidCents,
+  };
+}
+
+/**
+ * This month's fixed-obligation pressure for a household: projected-unpaid
+ * (via the pure domain projector, minus already-paid months) plus the month's
+ * materialized actuals.
+ */
+export async function getObligationsPressure(
+  client: AppSupabaseClient,
+  householdId: string,
+  month: string,
+): Promise<ObligationsPressure> {
+  // Independent reads — one parallel round trip; the payments query already
+  // carries each actual's amount, so no third query over the same rows.
+  const [obligations, payments] = await Promise.all([
+    listObligations(client, householdId),
+    listObligationPayments(client, householdId, month, month),
+  ]);
+  const paid = new Set(payments.map((p) => paidKey(p.obligationId, p.month)));
+  const projected = projectObligations(obligations.map(mapObligationRow), {
+    fromMonth: month,
+    toMonth: month,
+    paid,
+  });
+
+  return summarizeObligationsPressure(
+    month,
+    projected,
+    payments.map((p) => ({ amount_cents: p.amountCents })),
+  );
 }

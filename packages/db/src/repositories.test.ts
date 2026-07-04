@@ -21,10 +21,19 @@ import {
   loadBotConversation,
   saveBotConversation,
   deleteBotConversation,
+  obligationInsertFromDraft,
+  mapObligationRow,
+  obligationMonthYm,
+  summarizeObligationsPressure,
+  obligationUpdateFromChanges,
   type AppSupabaseClient,
 } from "./repositories.js";
 import { createServiceRoleClient } from "./index.js";
-import type { TransactionRow, InstallmentRow } from "./types.js";
+import type {
+  TransactionRow,
+  InstallmentRow,
+  ObligationRow,
+} from "./types.js";
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
 const USER = "11111111-1111-1111-1111-111111111111";
@@ -105,6 +114,8 @@ describe("mapTransactionRow", () => {
       responsible_user_id: null,
       created_by_user_id: USER,
       import_batch_id: null,
+      obligation_id: null,
+      obligation_month: null,
       created_at: "2026-06-01T00:00:00Z",
       updated_at: "2026-06-01T00:00:00Z",
     };
@@ -679,5 +690,156 @@ describe("bot conversation store repositories", () => {
     await expect(deleteBotConversation(failingDelete.client, 1)).rejects.toThrow(
       /deleteBotConversation failed: nope/,
     );
+  });
+});
+
+describe("obligationInsertFromDraft", () => {
+  const draft = {
+    householdId: HOUSEHOLD,
+    description: "Parcela solar",
+    amountCents: 71044,
+    startMonth: "2026-10",
+    termMonths: 72 as number | null,
+    dueDay: 5,
+    category: {},
+    responsibility: { scope: "household" as const },
+    accountId: "acc-1",
+    createdByUserId: USER,
+  };
+
+  it("maps a household-responsibility draft", () => {
+    expect(obligationInsertFromDraft(draft)).toEqual({
+      household_id: HOUSEHOLD,
+      description: "Parcela solar",
+      amount_cents: 71044,
+      start_month: "2026-10",
+      term_months: 72,
+      due_day: 5,
+      category_id: null,
+      subcategory_id: null,
+      responsibility_scope: "household",
+      responsible_user_id: null,
+      account_id: "acc-1",
+      status: "active",
+      created_by_user_id: USER,
+    });
+  });
+
+  it("maps user responsibility, category and an indefinite term", () => {
+    const insert = obligationInsertFromDraft({
+      ...draft,
+      termMonths: null,
+      category: { categoryId: "cat-1", subcategoryId: "sub-1" },
+      responsibility: { scope: "user", userId: USER },
+    });
+    expect(insert.term_months).toBeNull();
+    expect(insert.category_id).toBe("cat-1");
+    expect(insert.subcategory_id).toBe("sub-1");
+    expect(insert.responsibility_scope).toBe("user");
+    expect(insert.responsible_user_id).toBe(USER);
+  });
+});
+
+describe("mapObligationRow", () => {
+  it("maps a row to the domain-facing shape", () => {
+    const row: ObligationRow = {
+      id: "ob-1",
+      household_id: HOUSEHOLD,
+      description: "Aluguel",
+      amount_cents: 120000,
+      start_month: "2026-01",
+      term_months: null,
+      due_day: 10,
+      category_id: "cat-1",
+      subcategory_id: null,
+      responsibility_scope: "household",
+      responsible_user_id: null,
+      account_id: "acc-1",
+      status: "active",
+      created_by_user_id: USER,
+      created_at: "2026-07-03T00:00:00Z",
+      updated_at: "2026-07-03T00:00:00Z",
+    };
+    expect(mapObligationRow(row)).toEqual({
+      id: "ob-1",
+      householdId: HOUSEHOLD,
+      description: "Aluguel",
+      amountCents: 120000,
+      startMonth: "2026-01",
+      termMonths: null,
+      dueDay: 10,
+      categoryId: "cat-1",
+      subcategoryId: null,
+      responsibilityScope: "household",
+      responsibleUserId: null,
+      accountId: "acc-1",
+      status: "active",
+      createdByUserId: USER,
+    });
+  });
+});
+
+describe("obligationMonthYm", () => {
+  it("converts the obligation_month date to YYYY-MM", () => {
+    expect(obligationMonthYm("2026-10-01")).toBe("2026-10");
+  });
+  it("throws on malformed dates", () => {
+    expect(() => obligationMonthYm("2026-10")).toThrow();
+  });
+});
+
+describe("summarizeObligationsPressure", () => {
+  it("sums projected-unpaid and paid actuals separately", () => {
+    const projected = [
+      {
+        obligationId: "ob-1",
+        month: "2026-07",
+        amountCents: 71044,
+        description: "Solar",
+        dueDay: 5,
+        accountId: "acc-1",
+      },
+      {
+        obligationId: "ob-2",
+        month: "2026-07",
+        amountCents: 120000,
+        description: "Aluguel",
+        dueDay: 10,
+        accountId: "acc-1",
+      },
+    ];
+    const paidRows = [{ amount_cents: 50000 }];
+    expect(summarizeObligationsPressure("2026-07", projected, paidRows)).toEqual({
+      month: "2026-07",
+      projectedUnpaidCents: 191044,
+      paidCents: 50000,
+      totalCents: 241044,
+    });
+  });
+
+  it("is all zeros when nothing projects and nothing was paid", () => {
+    expect(summarizeObligationsPressure("2026-07", [], [])).toEqual({
+      month: "2026-07",
+      projectedUnpaidCents: 0,
+      paidCents: 0,
+      totalCents: 0,
+    });
+  });
+});
+
+describe("obligationUpdateFromChanges", () => {
+  it("maps partial changes to columns and ignores absent keys", () => {
+    expect(
+      obligationUpdateFromChanges({ amountCents: 80000, dueDay: 7 }),
+    ).toEqual({ amount_cents: 80000, due_day: 7 });
+    expect(obligationUpdateFromChanges({})).toEqual({});
+  });
+
+  it("rejects invalid amounts and due days", () => {
+    expect(() => obligationUpdateFromChanges({ amountCents: 0 })).toThrow();
+    expect(() => obligationUpdateFromChanges({ dueDay: 29 })).toThrow();
+    expect(() =>
+      obligationUpdateFromChanges({ description: "  " }),
+    ).toThrow();
   });
 });

@@ -109,3 +109,159 @@ export function notUnderstoodMessage(): string {
     '• corrigir: "valor 32,50", "data 12/03", "categoria X", "responsável Karol"',
   ].join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Obligations (recurring fixed obligations) — PR-1.
+// ---------------------------------------------------------------------------
+
+const MONTH_ABBR_PT = [
+  "jan",
+  "fev",
+  "mar",
+  "abr",
+  "mai",
+  "jun",
+  "jul",
+  "ago",
+  "set",
+  "out",
+  "nov",
+  "dez",
+];
+
+/** "2026-10" -> "out/2026". */
+export function monthAbbrPtBr(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (match === null) {
+    return month;
+  }
+  const idx = Number.parseInt(match[2] as string, 10) - 1;
+  return `${MONTH_ABBR_PT[idx] ?? month}/${match[1]}`;
+}
+
+/** What an obligation confirmation summary needs to render. */
+export type ObligationSummaryView = {
+  description: string;
+  /** Monthly amount in cents; undefined = still missing (ask for "valor"). */
+  monthlyAmountCents?: number;
+  termMonths: number | null;
+  startMonth: string;
+  /** Derived last month, or null when indefinite. */
+  endMonth: string | null;
+  dueDay: number;
+  accountLabel: string;
+  categoryLabel: string;
+  categoryExplanation?: string;
+};
+
+/**
+ * Obligation confirmation SUMMARY (design: never one line per parcel).
+ * `Financiamento: Solar — R$ 710,44/mês × 72 (out/2026 → set/2032)`.
+ */
+export function obligationConfirmationMessage(
+  view: ObligationSummaryView,
+): string {
+  const amount =
+    view.monthlyAmountCents !== undefined
+      ? `R$ ${formatBrl(view.monthlyAmountCents)}/mês`
+      : '— (informe com "valor 710,44")';
+  const term =
+    view.termMonths !== null
+      ? ` × ${view.termMonths} (${monthAbbrPtBr(view.startMonth)} → ${monthAbbrPtBr(view.endMonth ?? view.startMonth)})`
+      : ` (sem prazo, desde ${monthAbbrPtBr(view.startMonth)})`;
+  const kind = view.termMonths !== null ? "Financiamento" : "Obrigação fixa";
+
+  const lines: string[] = [];
+  lines.push("Confirme a obrigação:");
+  lines.push("");
+  lines.push(`• ${kind}: ${view.description} — ${amount}${term}`);
+  lines.push(`• Vence dia ${view.dueDay}`);
+  lines.push(`• Pago via: ${view.accountLabel}`);
+  lines.push(`• Categoria: ${view.categoryLabel}`);
+  if (view.categoryExplanation) {
+    lines.push(`Sugestão: ${view.categoryExplanation}`);
+  }
+  lines.push("");
+  lines.push("Responda *confirmar* para salvar, ou corrija:");
+  lines.push('"valor 710,44" · "dia 5" · "conta Nubank"');
+  lines.push("Para descartar, responda *cancelar*.");
+  return lines.join("\n");
+}
+
+/** Success message after an obligation template is saved. */
+export function obligationSavedMessage(view: {
+  description: string;
+  monthlyAmountCents: number;
+  termMonths: number | null;
+}): string {
+  const term =
+    view.termMonths !== null ? ` × ${view.termMonths}` : " (sem prazo)";
+  return [
+    "Obrigação salva! ✅",
+    `${view.description} — R$ ${formatBrl(view.monthlyAmountCents)}/mês${term}`,
+    "Quando pagar um mês, é só dizer: por exemplo, " +
+      `"${view.description.toLowerCase()} pago".`,
+  ].join("\n");
+}
+
+/** Success message after a month is materialized as paid. */
+export function obligationPaidMessage(view: {
+  description: string;
+  amountCents: number;
+  month: string;
+}): string {
+  return `Pago! ✅ ${view.description} — R$ ${formatBrl(view.amountCents)} (${monthAbbrPtBr(view.month)})`;
+}
+
+/** Friendly no-op when the month was already settled (idempotent repeat). */
+export function obligationAlreadyPaidMessage(view: {
+  description: string;
+  month: string;
+}): string {
+  return `${view.description} de ${monthAbbrPtBr(view.month)} já estava pago — não lancei de novo. 👍`;
+}
+
+/** No active obligation matched the keyword. */
+export function obligationNotFoundMessage(keyword: string): string {
+  return [
+    `Não encontrei uma obrigação parecida com "${keyword}".`,
+    "Veja as obrigações ativas no painel, em Obrigações.",
+  ].join("\n");
+}
+
+/** Two or more obligations matched — ask which one. */
+export function obligationAmbiguousMessage(names: string[]): string {
+  return `Qual delas? ${names.join(" ou ")}?`;
+}
+
+/** Help shown for an unrecognized message during obligation confirmation. */
+export function obligationNotUnderstoodMessage(): string {
+  return [
+    "Não entendi. Você pode:",
+    "• confirmar · cancelar",
+    '• corrigir: "valor 710,44", "dia 5", "conta Nubank"',
+  ].join("\n");
+}
+
+/** PR-2 deferred: card installments are recognized but not yet persisted. */
+export function cardInstallmentDeferredMessage(): string {
+  return "Compra parcelada no cartão ainda não dá pra registrar por aqui — em breve. Por ora, cadastre em Cartões no painel.";
+}
+
+/** PR-2 deferred: card-bill payment ("nubank pago"). */
+export function cardBillDeferredMessage(): string {
+  return "Baixa de fatura do cartão ainda não está disponível por aqui — em breve.";
+}
+
+/** Mark-paid failed at materialization (e.g. month outside the term window). */
+export function obligationSettleFailedMessage(description: string): string {
+  return [
+    `Não consegui dar baixa em "${description}" — o mês atual pode estar fora do período dessa obrigação.`,
+    "Confira em Obrigações no painel.",
+  ].join("\n");
+}
+
+/** Mark-paid recognized but the settle capability is not wired here. */
+export function obligationUnavailableMessage(): string {
+  return "Dar baixa em obrigações não está disponível por aqui agora. Use o painel, em Obrigações.";
+}

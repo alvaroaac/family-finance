@@ -511,6 +511,76 @@ function mergeCategoryRpc(
 }
 
 /**
+ * JS stand-in for the `materialize_obligation_payment` plpgsql function
+ * (supabase/migrations/0011_create_obligations.sql). The REAL atomicity +
+ * idempotency guarantee (unique partial index) is proven against live Postgres
+ * separately; here we reproduce the happy-path DATA EFFECT: insert ONE expense
+ * transaction linked via obligation_id/obligation_month — or return the
+ * existing one with already_paid = true — with occurred_on defaulting to the
+ * month's due day unless paid_on overrides it.
+ */
+function materializeObligationPaymentRpc(
+  store: FakeSupabaseStore,
+  args: {
+    target_obligation_id: string;
+    target_month: string;
+    paid_on?: string | null;
+  },
+): Result<Row> {
+  const obligation = store
+    .table("obligations")
+    .find((r) => r.id === args.target_obligation_id);
+  if (obligation === undefined) {
+    return {
+      data: null as unknown as Row,
+      error: { message: `obligation ${args.target_obligation_id} not found` },
+    };
+  }
+  if (obligation.status !== "active") {
+    return {
+      data: null as unknown as Row,
+      error: { message: `obligation is ${String(obligation.status)}` },
+    };
+  }
+
+  const monthStart = `${args.target_month}-01`;
+  const existing = store
+    .table("transactions")
+    .find(
+      (r) =>
+        r.obligation_id === obligation.id && r.obligation_month === monthStart,
+    );
+  if (existing !== undefined) {
+    return {
+      data: { transaction: existing, already_paid: true },
+      error: null,
+    };
+  }
+
+  const dueDay = String(obligation.due_day as number).padStart(2, "0");
+  const tx = store.materialize({
+    household_id: obligation.household_id,
+    kind: "expense",
+    amount_cents: obligation.amount_cents,
+    occurred_on: args.paid_on ?? `${args.target_month}-${dueDay}`,
+    description: obligation.description,
+    category_id: obligation.category_id ?? null,
+    subcategory_id: obligation.subcategory_id ?? null,
+    account_id: obligation.account_id,
+    credit_card_id: null,
+    installment_id: null,
+    responsibility_scope: obligation.responsibility_scope ?? "household",
+    responsible_user_id: obligation.responsible_user_id ?? null,
+    created_by_user_id: obligation.created_by_user_id,
+    import_batch_id: null,
+    obligation_id: obligation.id,
+    obligation_month: monthStart,
+  });
+  store.table("transactions").push(tx);
+  return { data: { transaction: tx, already_paid: false }, error: null };
+}
+
+/**
  * Build a fake Supabase client. The returned object is structurally compatible
  * with the `AppSupabaseClient` surface the repositories use (`.from(table)...`
  * and `.rpc(name, args)`). We deliberately cast at the call site in the test to
@@ -543,6 +613,18 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
             args as {
               batch_payload: Row;
               rows_payload: Row[];
+            },
+          ),
+        );
+      }
+      if (name === "materialize_obligation_payment") {
+        return Promise.resolve(
+          materializeObligationPaymentRpc(
+            store,
+            args as {
+              target_obligation_id: string;
+              target_month: string;
+              paid_on?: string | null;
             },
           ),
         );
