@@ -9,7 +9,7 @@
 -- Access model: RLS is enabled with ZERO policies, so anon/authenticated are
 -- denied every row (the 0005 table grants open the door, RLS closes it).
 -- Only the bot's service_role client — which bypasses RLS — can touch it.
-create table bot_conversations (
+create table if not exists bot_conversations (
   chat_id bigint primary key,
   state jsonb not null,
   updated_at timestamptz not null default now()

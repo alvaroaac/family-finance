@@ -11,5 +11,5 @@ create policy household_members_update on household_members
 -- lowercase without the "@"; the bot matches update.from.username against it
 -- and back-fills telegram_user_id on first contact (ids are the stable key).
 alter table household_members
-  add column telegram_username text unique
+  add column if not exists telegram_username text unique
   check (telegram_username = lower(telegram_username));
