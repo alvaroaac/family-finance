@@ -19,11 +19,14 @@ import {
 import { updateTransactionAction, deleteTransactionAction } from "./actions";
 
 /**
- * Client table for the "Transações" screen: inline edit of descrição,
- * categoria/subcategoria, responsável, plus the guarded excluir. Every change
- * posts ONE edited field to a server action (the household is re-resolved from
- * the session there); the action revalidates the page, so the fresh rows come
- * back through the server component. Amount/kind/payment are read-only here.
+ * Client table for the "Transações" screen: inline edit of descrição, valor,
+ * meio de pagamento (conta/cartão), categoria/subcategoria, responsável, plus
+ * the guarded excluir. Every change posts ONE edited field to a server action
+ * (the household is re-resolved from the session there); the action
+ * revalidates the page, so the fresh rows come back through the server
+ * component. `kind` stays read-only here; parcela rows (installmentId set)
+ * keep both valor and meio de pagamento read-only too — those are managed via
+ * the installment group, and the server repo refuses the edit anyway.
  *
  * Re-skin (Transacoes.dc.html): desktop grid table with pending stripes and
  * an inline delete-confirm row ("Isso não dá pra desfazer." / "Deixa pra lá"
@@ -121,6 +124,9 @@ export function TransactionsTable({
   // Row id being description-edited + its draft text.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // Row id being amount-edited + its draft text (pt-BR decimal string).
+  const [editingAmountId, setEditingAmountId] = useState<string | null>(null);
+  const [amountDraft, setAmountDraft] = useState("");
   // Row id waiting on the inline delete confirm (mockup's neg-wash row).
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   // Mobile: row id with the categorize/edit panel expanded.
@@ -170,6 +176,14 @@ export function TransactionsTable({
         toast.success("Lançamento excluído.");
       }
     });
+  }
+
+  function commitAmount(row: TransactionListItem) {
+    setEditingAmountId(null);
+    const trimmed = amountDraft.trim();
+    if (trimmed === "") return;
+    // Server re-validates; this just posts the pt-BR string.
+    patchRow(row.id, { amount: trimmed });
   }
 
   function paymentName(row: TransactionListItem): string {
@@ -324,6 +338,92 @@ export function TransactionsTable({
     );
   }
 
+  function paymentSelect(row: TransactionListItem, compact: boolean) {
+    if (row.installmentId !== null) {
+      // Parcelas: payment is managed via the installment group.
+      return <span className="ff-dim">{paymentName(row)}</span>;
+    }
+    const value =
+      row.creditCardId !== null
+        ? `card:${row.creditCardId}`
+        : row.accountId !== null
+          ? `account:${row.accountId}`
+          : "";
+    return (
+      <Select
+        className={compact ? "ff-select--compact" : undefined}
+        value={value}
+        aria-label="Pagamento"
+        onChange={(e) => patchRow(row.id, { payment: e.target.value })}
+      >
+        {accounts.map((a) => (
+          <option key={a.id} value={`account:${a.id}`}>
+            Conta: {a.name}
+          </option>
+        ))}
+        {row.kind === "expense"
+          ? cards.map((c) => (
+              <option key={c.id} value={`card:${c.id}`}>
+                Cartão: {c.name}
+              </option>
+            ))
+          : null}
+      </Select>
+    );
+  }
+
+  function amountCell(
+    row: TransactionListItem,
+    amount: { text: string; className: string },
+  ) {
+    if (row.installmentId === null && editingAmountId === row.id) {
+      return (
+        <Input
+          className="ff-input--compact ff-input--editing"
+          value={amountDraft}
+          autoFocus
+          inputMode="decimal"
+          aria-label="Editar valor"
+          onChange={(e) => setAmountDraft(e.target.value)}
+          onBlur={() => commitAmount(row)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            else if (e.key === "Escape") setEditingAmountId(null);
+          }}
+        />
+      );
+    }
+    return (
+      <button
+        type="button"
+        className={`ff-num ${amount.className}`}
+        title={
+          row.installmentId === null
+            ? "Clique para editar o valor"
+            : "Valor de parcela — edite o parcelamento"
+        }
+        disabled={row.installmentId !== null}
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          font: "inherit",
+          fontWeight: 600,
+          cursor: row.installmentId === null ? "text" : "default",
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+        onClick={() => {
+          if (row.installmentId !== null) return;
+          setEditingAmountId(row.id);
+          setAmountDraft((row.amount.cents / 100).toFixed(2).replace(".", ","));
+        }}
+      >
+        {amount.text}
+      </button>
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <p className="ff-muted" style={{ marginTop: 18 }}>
@@ -386,27 +486,19 @@ export function TransactionsTable({
                 </span>
                 <span style={{ minWidth: 0 }}>{descriptionCell(row)}</span>
                 <span
-                  className="ff-dim"
                   style={{
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {paymentName(row)}
+                  {paymentSelect(row, true)}
                 </span>
                 <span>{categorySelect(row, true)}</span>
                 <span>{subcategorySelect(row, true)}</span>
                 <span>{responsibleSelect(row, true)}</span>
-                <span
-                  className={`ff-num ${amount.className}`}
-                  style={{
-                    textAlign: "right",
-                    whiteSpace: "nowrap",
-                    fontWeight: 600,
-                  }}
-                >
-                  {amount.text}
+                <span style={{ textAlign: "right" }}>
+                  {amountCell(row, amount)}
                 </span>
                 <span
                   style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}
@@ -474,10 +566,8 @@ export function TransactionsTable({
                       ) : null}
                       {pending ? <Badge tone="warn">Pendente</Badge> : null}
                     </span>
-                    <span
-                      className={`ff-txrow__amount ff-num ${amount.className}`}
-                    >
-                      {amount.text}
+                    <span className="ff-txrow__amount">
+                      {amountCell(row, amount)}
                     </span>
                   </div>
                   <div className="ff-txrow__meta">
@@ -515,6 +605,7 @@ export function TransactionsTable({
                   ) : expanded ? (
                     <div className="ff-rowcard__panel">
                       {descriptionCell(row)}
+                      {paymentSelect(row, false)}
                       {categorySelect(row, false)}
                       {subcategorySelect(row, false)}
                       {responsibleSelect(row, false)}

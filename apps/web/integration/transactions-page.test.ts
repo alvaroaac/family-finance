@@ -22,6 +22,7 @@ import {
   deleteTransaction,
   listHouseholdMembers,
   type AppSupabaseClient,
+  type TransactionListItem,
 } from "@family-finance/db";
 
 import {
@@ -33,6 +34,7 @@ import {
   PAGE_SIZE,
 } from "../app/(app)/transactions/filters.js";
 import { NewTransactionForm } from "../app/(app)/transactions/new-transaction-form.js";
+import { TransactionsTable } from "../app/(app)/transactions/transactions-table.js";
 import { ToastProvider } from "../components/ui/toast.js";
 import {
   FakeSupabaseStore,
@@ -81,6 +83,79 @@ describe("NewTransactionForm", () => {
     );
     expect(html).toContain("+ Lançamento");
     expect(html).not.toContain('name="amount"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0b. TransactionsTable: payment select + amount edit render tests
+// ---------------------------------------------------------------------------
+
+function renderTable(overrides: {
+  installmentId: string | null;
+  kind: "expense" | "income";
+}): string {
+  const row: TransactionListItem = {
+    id: "tx-1",
+    householdId: "00000000-0000-0000-0000-000000000001",
+    description: "Mercado",
+    occurredOn: "2026-07-04",
+    amount: { currency: "BRL", cents: 5613 },
+    kind: overrides.kind,
+    categoryId: null,
+    subcategoryId: null,
+    createdByUserId: "11111111-1111-1111-1111-111111111111",
+    responsibilityScope: "household",
+    responsibleUserId: null,
+    accountId: overrides.installmentId === null ? "acct-1" : null,
+    creditCardId: overrides.installmentId === null ? null : "card-1",
+    installmentId: overrides.installmentId,
+  };
+  return renderToStaticMarkup(
+    createElement(
+      ToastProvider,
+      null,
+      createElement(TransactionsTable, {
+        rows: [row],
+        categories: [],
+        subcategories: [],
+        responsibles: [{ value: "household", label: "Casa" }],
+        accounts: [{ id: "acct-1", name: "Conta Corrente" }],
+        cards: [{ id: "card-1", name: "Nubank" }],
+      }),
+    ),
+  );
+}
+
+describe("TransactionsTable: payment select", () => {
+  it("renders a payment select for a normal row with account and card options", () => {
+    const html = renderTable({ installmentId: null, kind: "expense" });
+    expect(html).toContain('aria-label="Pagamento"');
+    expect(html).toContain('value="account:acct-1"');
+    expect(html).toContain('value="card:card-1"');
+  });
+
+  it("shows plain text (no select) for a parcela row", () => {
+    const html = renderTable({ installmentId: "inst-1", kind: "expense" });
+    expect(html).not.toContain('aria-label="Pagamento"');
+  });
+
+  it("offers only accounts for an income row", () => {
+    const html = renderTable({ installmentId: null, kind: "income" });
+    expect(html).toContain('value="account:acct-1"');
+    expect(html).not.toContain('value="card:card-1"');
+  });
+});
+
+describe("TransactionsTable: amount edit", () => {
+  it("renders a clickable amount trigger for a normal row, disabled for a parcela row", () => {
+    const normal = renderTable({ installmentId: null, kind: "expense" });
+    expect(normal).toContain("56,13");
+    expect(normal).not.toContain("ff-num ff-amount--neg\" title=\"Clique para editar o valor\" disabled");
+
+    const parcela = renderTable({ installmentId: "inst-1", kind: "expense" });
+    expect(parcela).toContain(
+      'title="Valor de parcela — edite o parcelamento" disabled=""',
+    );
   });
 });
 
