@@ -19,6 +19,7 @@ import {
   updateInvestmentBucketBalance,
   findMemberByTelegramUserId,
   resolveTelegramMember,
+  getMonthlySummary,
   loadBotConversation,
   saveBotConversation,
   deleteBotConversation,
@@ -908,5 +909,44 @@ describe("resolveTelegramMember (review: id back-fill clears username)", () => {
       telegram_username: null,
     });
     expect(updates[0]?.eq).toContainEqual(["id", "member-1"]);
+  });
+});
+
+describe("getMonthlySummary pagination (review: no 1000-row cap on money sums)", () => {
+  /** A fake that caps each .range() page like PostgREST's max_rows, so the
+   * repository must page to see every row. */
+  function pagingClient(rows: Array<{ kind: string; amount_cents: number }>, cap = 1000) {
+    const build = () => {
+      let rangeFrom = 0;
+      let rangeTo = Number.MAX_SAFE_INTEGER;
+      const b: Record<string, unknown> = {
+        select: () => b,
+        eq: () => b,
+        gte: () => b,
+        lte: () => b,
+        not: () => b,
+        range(from: number, to: number) {
+          rangeFrom = from;
+          rangeTo = to;
+          const pageSpan = Math.min(to - from + 1, cap);
+          const page = rows.slice(from, from + pageSpan);
+          return Promise.resolve({ data: page, error: null });
+        },
+      };
+      return b;
+    };
+    return { from: () => build() } as unknown as AppSupabaseClient;
+  }
+
+  it("sums income/expense across more than 1000 rows", async () => {
+    // 2500 expense rows of 100 cents each = 250000; the naive single select
+    // would stop at 1000 (=100000).
+    const rows = Array.from({ length: 2500 }, () => ({
+      kind: "expense",
+      amount_cents: 100,
+    }));
+    const client = pagingClient(rows);
+    const summary = await getMonthlySummary(client, HOUSEHOLD, "2026-07");
+    expect(summary.expenseCents).toBe(250000);
   });
 });
