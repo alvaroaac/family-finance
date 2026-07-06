@@ -248,14 +248,72 @@ describe("createMessageClassifier", () => {
     });
   });
 
-  it("classifies a card installment (deferred to PR-2)", async () => {
-    const client = clientReplying(
-      JSON.stringify({ intent: "card_installment" }),
+  it("extracts a card_installment payload (total form)", async () => {
+    const classify = createMessageClassifier(
+      clientReplying(
+        '{"intent":"card_installment","purchase":{"description":"Notebook","total_cents":360000,"per_installment_cents":null,"installment_count":12,"purchased_on":null,"card_keyword":"nubank","category_hint":null}}',
+      ),
     );
-    const classify = createMessageClassifier(client);
+    const out = await classify("notebook 3600 em 12x no nubank", {
+      today: TODAY_JUL,
+    });
+    expect(out).toEqual({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+        cardKeyword: "nubank",
+      },
+    });
+  });
+
+  it("extracts the per-installment form", async () => {
+    const classify = createMessageClassifier(
+      clientReplying(
+        '{"intent":"card_installment","purchase":{"description":"Notebook","total_cents":null,"per_installment_cents":30000,"installment_count":12,"purchased_on":null,"card_keyword":"nubank","category_hint":null}}',
+      ),
+    );
+    const out = await classify("notebook 12x de 300 no nubank", {
+      today: TODAY_JUL,
+    });
+    expect(out).toEqual({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        perInstallmentCents: 30000,
+        installmentCount: 12,
+        cardKeyword: "nubank",
+      },
+    });
+  });
+
+  it("tolerates a missing installment_count", async () => {
+    const classify = createMessageClassifier(
+      clientReplying(
+        '{"intent":"card_installment","purchase":{"description":"Notebook","total_cents":360000,"per_installment_cents":null,"installment_count":null,"purchased_on":null,"card_keyword":"nubank","category_hint":null}}',
+      ),
+    );
+    const out = await classify("notebook 3600 no nubank", {
+      today: TODAY_JUL,
+    });
+    expect(out).toEqual({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        cardKeyword: "nubank",
+      },
+    });
+  });
+
+  it("rejects a bare {intent:'card_installment'} (old shape) → null", async () => {
+    const classify = createMessageClassifier(
+      clientReplying(JSON.stringify({ intent: "card_installment" })),
+    );
     expect(
       await classify("notebook 3600 em 12x no nubank", { today: TODAY_JUL }),
-    ).toEqual({ intent: "card_installment" });
+    ).toBeNull();
   });
 
   it("classifies mark_paid with obligation and card targets", async () => {
@@ -282,8 +340,37 @@ describe("createMessageClassifier", () => {
     ).toEqual({ intent: "mark_paid", target: "card", keyword: "nubank" });
   });
 
+  it("extracts mark_paid card with a trailing amount", async () => {
+    const classify = createMessageClassifier(
+      clientReplying(
+        '{"intent":"mark_paid","target":"card","keyword":"nubank","amount_cents":235000}',
+      ),
+    );
+    expect(await classify("nubank pago 2350", { today: TODAY_JUL })).toEqual({
+      intent: "mark_paid",
+      target: "card",
+      keyword: "nubank",
+      amountCents: 235000,
+    });
+  });
+
+  it("mark_paid amount_cents omitted → amountCents absent", async () => {
+    const classify = createMessageClassifier(
+      clientReplying(
+        '{"intent":"mark_paid","target":"card","keyword":"nubank","amount_cents":null}',
+      ),
+    );
+    expect(await classify("nubank pago", { today: TODAY_JUL })).toEqual({
+      intent: "mark_paid",
+      target: "card",
+      keyword: "nubank",
+    });
+  });
+
   it("builds a prompt naming the four intents, the rules and today", async () => {
-    const client = clientReplying(JSON.stringify({ intent: "card_installment" }));
+    const client = clientReplying(
+      '{"intent":"card_installment","purchase":{"description":"X","total_cents":100,"per_installment_cents":null,"installment_count":null,"purchased_on":null,"card_keyword":null,"category_hint":null}}',
+    );
     const classify = createMessageClassifier(client);
     await classify("qualquer coisa", { today: TODAY_JUL });
     const prompt = client.complete.mock.calls[0]?.[0] as string;
@@ -294,6 +381,16 @@ describe("createMessageClassifier", () => {
     expect(prompt).toContain(TODAY_JUL);
     // Per-month vs total disambiguation must be spelled out for the model.
     expect(prompt).toMatch(/72x/);
+    // card_installment JSON format line.
+    expect(prompt).toContain('"purchase"');
+    expect(prompt).toContain("per_installment_cents");
+    expect(prompt).toContain("card_keyword");
+    // installment wording disambiguation rule.
+    expect(prompt).toMatch(/12x de 300/);
+    expect(prompt).toMatch(/3600 em 12x/);
+    // mark_paid amount_cents format + rule.
+    expect(prompt).toContain("amount_cents");
+    expect(prompt).toMatch(/nubank pago 2350/);
   });
 
   it("returns null on abstention, junk, or schema mismatch", async () => {

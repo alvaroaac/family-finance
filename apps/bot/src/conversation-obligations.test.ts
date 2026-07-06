@@ -396,7 +396,10 @@ describe("mark_paid{obligation} flow", () => {
 describe("deferred card intents (PR-2)", () => {
   it("card_installment replies the exact em-breve copy", async () => {
     const { deps, createTransaction } = buildDeps({
-      classifyMessage: classifierReturning({ intent: "card_installment" }),
+      classifyMessage: classifierReturning({
+        intent: "card_installment",
+        purchase: { description: "Notebook", totalCents: 360000 },
+      }),
     });
     const { state, reply } = await startConversation(
       { text: "notebook 3600 em 12x no nubank", fromUserId: "user-alvaro" },
