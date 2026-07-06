@@ -53,12 +53,15 @@ export type {
   CreateTransactionInput,
   ValidationError,
   DomainResult,
+  CardBillSettlementInput,
+  CardBillSettlementDraft,
 } from "./transactions.js";
 export {
   transactionKindSchema,
   HOUSEHOLD_RESPONSIBILITY,
   createTransactionDraft,
   isCardPayment,
+  createCardBillSettlement,
 } from "./transactions.js";
 
 // Installments — support dashboard projections without a full invoice system.
