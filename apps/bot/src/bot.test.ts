@@ -1188,4 +1188,18 @@ describe("conversation stores", () => {
     const store = createDbConversationStore(client);
     expect(await store.load("555")).toBeUndefined();
   });
+
+  it("treats a persisted row with an unknown future status as absent", async () => {
+    const { client } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: { ...sampleState(), status: "some_future_status" },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+    const store = createDbConversationStore(client);
+    expect(await store.load("555")).toBeUndefined();
+  });
 });

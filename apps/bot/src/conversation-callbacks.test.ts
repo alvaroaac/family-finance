@@ -276,6 +276,50 @@ describe("AI new-category proposal", () => {
     expect(outcome.reply).toContain("Pets");
   });
 
+  it("does not seed memory when transaction persistence fails", async () => {
+    const deps = proposalDeps({
+      createTransaction: vi.fn(async () => {
+        throw new Error("db down");
+      }),
+    });
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    await expect(applyCallback(start.state, "nca", deps, { today: TODAY })).rejects.toThrow(
+      "db down",
+    );
+
+    expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
+  });
+
+  it("saves the transaction even when memory seeding fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const deps = proposalDeps({
+      seedCategorizationMemory: vi.fn(async () => {
+        throw new Error("memory down");
+      }),
+    });
+    const start = await startConversation(
+      { text: "Petz 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    const outcome = await applyCallback(start.state, "nca", deps, { today: TODAY });
+
+    expect(deps.createTransaction).toHaveBeenCalledTimes(1);
+    expect(outcome.state.status).toBe("saved");
+    expect(outcome.reply).toContain("Lançamento salvo");
+    expect(warn).toHaveBeenCalledWith(
+      "[bot] seedCategorizationMemory failed:",
+      expect.any(Error),
+    );
+    warn.mockRestore();
+  });
+
   it("typed confirmar with a pending proposal behaves exactly like nca (parity)", async () => {
     const deps = proposalDeps();
     const start = await startConversation(
@@ -319,7 +363,7 @@ describe("AI new-category proposal", () => {
       { today: TODAY },
     );
     await applyCallback(start.state, "nca", deps, { today: TODAY });
-    expect(deps.restoreCategory).toHaveBeenCalledWith("cat-pets-old");
+    expect(deps.restoreCategory).toHaveBeenCalledWith("cat-pets-old", "pets");
     expect(deps.createCategory).not.toHaveBeenCalled();
   });
 
@@ -481,6 +525,36 @@ describe("manual category creation", () => {
     const tooLong = await applyMessage(asking.state, "x".repeat(41), deps, { today: TODAY });
     expect(tooLong.state.status).toBe("awaiting_category_name");
     expect(tooLong.reply).toContain("40");
+    expect(deps.createCategory).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes control and zero-width characters before creating typed category names", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+
+    const outcome = await applyMessage(
+      asking.state,
+      "  Petz\n\r\u200B\u200C\u200D\uFEFFVIP\t  Especial  ",
+      deps,
+      { today: TODAY },
+    );
+
+    expect(deps.createCategory).toHaveBeenCalledWith("Petz VIP Especial");
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+  });
+
+  it("rejects category names that become empty after sanitization", async () => {
+    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const state = await draftState(deps);
+    const asking = await applyCallback(state, "nc", deps, { today: TODAY });
+
+    const outcome = await applyMessage(asking.state, "\n\r\u200B\u200C\u200D\uFEFF", deps, {
+      today: TODAY,
+    });
+
+    expect(outcome.state.status).toBe("awaiting_category_name");
+    expect(outcome.reply).toContain("nome");
     expect(deps.createCategory).not.toHaveBeenCalled();
   });
 

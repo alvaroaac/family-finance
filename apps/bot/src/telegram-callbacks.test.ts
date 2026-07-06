@@ -5,6 +5,7 @@ import {
   createHttpTelegramClient,
   createNoopTelegramClient,
   webhookMissesCallbacks,
+  fetchWebhookAllowedUpdates,
 } from "./telegram.js";
 
 function callbackUpdate(overrides: Record<string, unknown> = {}): unknown {
@@ -131,5 +132,51 @@ describe("noop client + allowed_updates check", () => {
     expect(webhookMissesCallbacks(["message", "callback_query"])).toBe(false);
     // undefined = Telegram default = ALL update types → callbacks arrive.
     expect(webhookMissesCallbacks(undefined)).toBe(false);
+  });
+
+  it("fetchWebhookAllowedUpdates returns allowed_updates on the happy path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: { allowed_updates: ["message", "callback_query"] } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toEqual([
+      "message",
+      "callback_query",
+    ]);
+  });
+
+  it("fetchWebhookAllowedUpdates falls back to undefined when result is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true }),
+      }),
+    );
+
+    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toBeUndefined();
+  });
+
+  it("fetchWebhookAllowedUpdates falls back to undefined on non-OK responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        json: async () => ({ ok: false }),
+      }),
+    );
+
+    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toBeUndefined();
+  });
+
+  it("fetchWebhookAllowedUpdates falls back to undefined on network errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("network down")),
+    );
+
+    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toBeUndefined();
   });
 });

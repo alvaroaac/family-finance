@@ -304,18 +304,14 @@ async function buildDeps(
       });
       return { id: row.id };
     },
-    restoreCategory: async (categoryId: string) => {
+    restoreCategory: async (categoryId: string, categoryName: string) => {
       await dbRestoreCategory(client, householdId, categoryId);
       const known = catalog.categories.some((c) => c.id === categoryId);
       if (!known) {
-        const all = await dbListAllCategories(client, householdId);
-        const row = all.find((c) => c.id === categoryId);
-        if (row !== undefined) {
-          (catalog.categories as Array<{ id: string; name: string }>).push({
-            id: row.id,
-            name: row.name,
-          });
-        }
+        (catalog.categories as Array<{ id: string; name: string }>).push({
+          id: categoryId,
+          name: categoryName,
+        });
       }
     },
     seedCategorizationMemory: async (entry) => {
@@ -439,14 +435,18 @@ export async function handleWebhook(args: {
         return { status: 200, body: { ok: true } };
       }
 
-      const deps = await buildDeps(
-        args.client,
-        identity.householdId,
-        args.ai,
-        args.interpretText,
-        args.classifyMessage,
-      );
-      const outcome = await applyCallback(existing, data, deps, {
+      let deps: ConversationDeps | undefined;
+      const getDeps = async (): Promise<ConversationDeps> => {
+        deps ??= await buildDeps(
+          args.client,
+          identity.householdId,
+          args.ai,
+          args.interpretText,
+          args.classifyMessage,
+        );
+        return deps;
+      };
+      const outcome = await applyCallback(existing, data, getDeps, {
         today: todayIso(),
       });
 
@@ -627,12 +627,17 @@ export async function handleWebhook(args: {
   // the state must already be saved so a re-send/retry can't double-insert.
   await args.store.save(message.chatId, nextState);
 
-  if (
+  const shouldStripPreviousPrompt =
     existing !== undefined &&
     existing.status !== "saved" &&
     existing.status !== "cancelled" &&
-    existing.promptMessageId !== undefined
-  ) {
+    existing.promptMessageId !== undefined &&
+    (keyboard !== undefined ||
+      nextState.status === "saved" ||
+      nextState.status === "cancelled" ||
+      nextState !== existing);
+
+  if (shouldStripPreviousPrompt && existing?.promptMessageId !== undefined) {
     try {
       await args.telegram.editMessageReplyMarkup(
         message.chatId,
@@ -654,6 +659,10 @@ export async function handleWebhook(args: {
   // would cause editMessageReplyMarkup 400 + warn-noise on the next message).
   if (keyboard !== undefined) {
     nextState.promptMessageId = sent?.messageId;
+  } else if (shouldStripPreviousPrompt) {
+    nextState.promptMessageId = undefined;
+  } else if (existing?.promptMessageId !== undefined) {
+    nextState.promptMessageId = existing.promptMessageId;
   } else {
     nextState.promptMessageId = undefined;
   }

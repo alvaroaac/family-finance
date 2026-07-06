@@ -5,6 +5,7 @@ import { createInMemoryConversationStore } from "./store.js";
 import type { TelegramClient, InlineKeyboardMarkup } from "./telegram.js";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import type { AiCategorizer } from "@family-finance/categorization";
+import type { TranscribeDeps } from "./audio.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures copied verbatim from bot.test.ts (module-private there).
@@ -184,6 +185,22 @@ function textUpdate(
   };
 }
 
+function voiceUpdate(
+  fromId: number,
+  fileId: string,
+  chatId = 555,
+): unknown {
+  return {
+    update_id: 3,
+    message: {
+      message_id: 3,
+      chat: { id: chatId },
+      from: { id: fromId },
+      voice: { file_id: fileId, mime_type: "audio/ogg" },
+    },
+  };
+}
+
 const SECRET = "s3cr3t";
 
 // ---------------------------------------------------------------------------
@@ -284,6 +301,76 @@ describe("handleWebhook: callback routing", () => {
     expect(sent.at(-1)?.text).toContain("Lançamento salvo");
   });
 
+  it("gibberish typed while awaiting confirmation keeps the previous buttons tappable", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent, stripped } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "blarg nada") });
+
+    expect(stripped).not.toContainEqual({ chatId: "555", messageId: 1001 });
+    expect(sent.at(-1)?.replyMarkup).toBeUndefined();
+
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf", 555, 1001) });
+    expect(tables.transactions).toHaveLength(1);
+  });
+
+  it("typed correction that advances strips the previous keyboard and records the new one", async () => {
+    const { client } = fakeSupabase();
+    const { telegram, sent, stripped } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "valor 45,90") });
+
+    expect(stripped).toContainEqual({ chatId: "555", messageId: 1001 });
+    expect(sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    expect((await store.load("555"))?.promptMessageId).toBe(1002);
+  });
+
+  it("voice draft reply carries the confirmation keyboard and records promptMessageId", async () => {
+    const { client } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const transcribe: TranscribeDeps = {
+      downloader: { download: async () => new Uint8Array([1]) },
+      provider: { transcribe: async () => "Uber 32 reais ontem" },
+    };
+
+    await handleWebhook({
+      rawBody: voiceUpdate(777, "voice-1"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      transcribe,
+    });
+
+    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    const state = await store.load("555");
+    expect(state?.draft.inputKind).toBe("audio");
+    expect(state?.promptMessageId).toBe(1001);
+  });
+
   it("a tap with NO stored conversation answers Sessão expirada and strips", async () => {
     const { client, tables } = fakeSupabase();
     const { telegram, answered, stripped, sent } = fakeTelegram();
@@ -323,6 +410,36 @@ describe("handleWebhook: callback routing", () => {
     expect(answered).toHaveLength(1);
     expect(sent).toHaveLength(0);
     expect(tables.transactions).toHaveLength(0);
+  });
+
+  it("partial callback payload is answered and ignored without side effects", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, answered, sent, stripped } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+
+    const result = await handleWebhook({
+      rawBody: {
+        update_id: 2,
+        callback_query: {
+          id: "cbq-partial",
+          from: { id: 777 },
+        },
+      },
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    });
+
+    expect(result.status).toBe(200);
+    expect(answered).toEqual([{ id: "cbq-partial", text: undefined }]);
+    expect(sent).toHaveLength(0);
+    expect(stripped).toHaveLength(0);
+    expect(tables.transactions).toHaveLength(0);
+    expect(tables.bot_interactions).toHaveLength(0);
+    expect(tables.bot_conversations).toHaveLength(0);
   });
 
   it("state is saved before the Telegram send, so a throwing answerCallbackQuery can't reopen a double-insert window", async () => {
@@ -376,6 +493,39 @@ describe("handleWebhook: callback routing", () => {
     await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
     expect(tables.transactions).toHaveLength(1);
     expect(answered.at(-1)?.text).toBe("Já salvo ✅");
+  });
+
+  it("already-saved double-tap answers without rebuilding conversation deps", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, answered } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
+    expect(tables.transactions).toHaveLength(1);
+
+    const throwingClient = {
+      from(table: string) {
+        throw new Error(`unexpected query for ${table}`);
+      },
+    } as unknown as AppSupabaseClient;
+
+    await handleWebhook({
+      ...base,
+      client: throwingClient,
+      rawBody: callbackUpdate(777, "cf", 555, 1001),
+    });
+
+    expect(answered.at(-1)?.text).toBe("Já salvo ✅");
+    expect(tables.transactions).toHaveLength(1);
   });
 
   it("rejects a callback with a bad webhook secret", async () => {
