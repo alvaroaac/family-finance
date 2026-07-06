@@ -38,6 +38,10 @@ import {
   listActiveCategorizationMemory,
   listObligations,
   materializeObligationPayment as dbMaterializeObligationPayment,
+  listAllCategories as dbListAllCategories,
+  createCategory as dbCreateCategory,
+  restoreCategory as dbRestoreCategory,
+  createCategorizationMemory,
   type AppSupabaseClient,
   type BotMemberIdentity,
 } from "@family-finance/db";
@@ -54,14 +58,19 @@ import {
 import {
   createHttpTelegramClient,
   createNoopTelegramClient,
+  parseTelegramCallback,
   parseTelegramUpdate,
   parseTelegramVoice,
   verifyWebhookSecret,
+  webhookMissesCallbacks,
+  fetchWebhookAllowedUpdates,
+  type InlineKeyboardMarkup,
   type TelegramClient,
 } from "./telegram.js";
 import {
   startConversation,
   startConversationFromAudio,
+  applyCallback,
   applyMessage,
   type ConversationDeps,
   type ConversationState,
@@ -87,6 +96,7 @@ import {
   createDbConversationStore,
   type ConversationStore,
 } from "./store.js";
+import { SESSION_EXPIRED_TOAST, DRAFT_NOT_YOURS_TOAST } from "./replies.js";
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -94,6 +104,34 @@ const UNKNOWN_USER_REPLY =
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Telegram delivers webhook updates over parallel connections, so two taps in
+// quick succession (a physical double-tap on ✅) can be in flight at once. The
+// save-before-send ordering inside handleWebhook only protects SEQUENTIAL
+// requests; without serialization both would load the same
+// awaiting_confirmation state and both insert. This map chains processing per
+// chat so the second request observes the first one's saved state. In-process
+// only — the bot runs as a single process (see deploy/README.md).
+const chatQueues = new Map<string, Promise<void>>();
+
+async function withChatQueue<T>(
+  chatId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const prev = chatQueues.get(chatId) ?? Promise.resolve();
+  const run = prev.then(task, task);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  chatQueues.set(chatId, tail);
+  void tail.then(() => {
+    if (chatQueues.get(chatId) === tail) {
+      chatQueues.delete(chatId);
+    }
+  });
+  return run;
 }
 
 /** Case- and accent-insensitive normalization for display-name matching. */
@@ -249,6 +287,48 @@ async function buildDeps(
     },
     accountNameById: (accountId: string) =>
       accounts.find((account) => account.id === accountId)?.name,
+    // Category creation (inline buttons + nova categoria design, 2026-07-04).
+    listAllCategories: async () =>
+      (await dbListAllCategories(client, householdId)).map((c) => ({
+        id: c.id,
+        name: c.name,
+        isActive: c.is_active,
+      })),
+    createCategory: async (name: string) => {
+      const row = await dbCreateCategory(client, householdId, name);
+      // Make the new category visible to labels/grids within THIS webhook call
+      // (deps are rebuilt per update, so this never leaks across requests).
+      (catalog.categories as Array<{ id: string; name: string }>).push({
+        id: row.id,
+        name: row.name,
+      });
+      return { id: row.id };
+    },
+    restoreCategory: async (categoryId: string, categoryName: string) => {
+      await dbRestoreCategory(client, householdId, categoryId);
+      const known = catalog.categories.some((c) => c.id === categoryId);
+      if (!known) {
+        (catalog.categories as Array<{ id: string; name: string }>).push({
+          id: categoryId,
+          name: categoryName,
+        });
+      }
+    },
+    seedCategorizationMemory: async (entry) => {
+      await createCategorizationMemory(client, {
+        household_id: householdId,
+        pattern: entry.pattern,
+        category_id: entry.categoryId,
+        subcategory_id: null,
+        confidence: entry.confidence,
+        explanation: entry.explanation,
+        is_active: true,
+      });
+    },
+    listActiveMembers: () =>
+      members
+        .filter((m) => m.isActive && m.displayName !== null)
+        .map((m) => ({ userId: m.userId, displayName: m.displayName as string })),
   };
 }
 
@@ -288,6 +368,127 @@ export async function handleWebhook(args: {
 }): Promise<WebhookResult> {
   if (!verifyWebhookSecret(args.secretHeader, args.configuredSecret)) {
     return { status: 401, body: { ok: false, error: "invalid secret" } };
+  }
+
+  // 0. Inline-button tap: ALWAYS answer the callback (stops the client
+  // spinner), then advance the conversation through applyCallback.
+  const callback = parseTelegramCallback(args.rawBody);
+  if (callback !== null) {
+    const strip = async (chatId: string, messageId: number): Promise<void> => {
+      try {
+        await args.telegram.editMessageReplyMarkup(chatId, messageId);
+      } catch (error) {
+        // A already-stripped/deleted message must not fail the webhook.
+        console.warn("[bot] editMessageReplyMarkup failed:", error);
+      }
+    };
+
+    // Partial payload (no message/data): answer and ignore.
+    if (
+      callback.chatId === undefined ||
+      callback.messageId === undefined ||
+      callback.data === undefined
+    ) {
+      await args.telegram.answerCallbackQuery(callback.callbackQueryId);
+      return { status: 200, body: { ok: true } };
+    }
+
+    const identity = await args.resolveMember({
+      telegramUserId: callback.fromId,
+      telegramUsername: callback.fromUsername,
+    });
+    if (identity === null) {
+      console.warn(
+        `[bot] unmatched telegram user ${callback.fromId} tapped a button — refused.`,
+      );
+      await args.telegram.answerCallbackQuery(callback.callbackQueryId);
+      return { status: 200, body: { ok: true } };
+    }
+
+    const { chatId, messageId, data, callbackQueryId } = callback;
+
+    // Serialized per chat: two concurrent deliveries (physical double-tap)
+    // must not both load the same awaiting_confirmation state.
+    return withChatQueue(chatId, async (): Promise<WebhookResult> => {
+      const existing = await args.store.load(chatId);
+      if (existing === undefined) {
+        // Draft expired past the 24h TTL (or never existed on this chat).
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          SESSION_EXPIRED_TOAST,
+        );
+        await strip(chatId, messageId);
+        return { status: 200, body: { ok: true } };
+      }
+
+      // Same ownership rule as the typed path's belongsToSender: in a group
+      // chat the store is keyed by chat id, so without this check another
+      // member's tap on ✅ would confirm the creator's lançamento (or worse,
+      // a member of a DIFFERENT household would run the draft against their
+      // own catalog/household). Refuse the tap; keep the keyboard — the
+      // creator still needs it.
+      if (existing.draft.createdByUserId !== identity.userId) {
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          DRAFT_NOT_YOURS_TOAST,
+        );
+        return { status: 200, body: { ok: true } };
+      }
+
+      let deps: ConversationDeps | undefined;
+      const getDeps = async (): Promise<ConversationDeps> => {
+        deps ??= await buildDeps(
+          args.client,
+          identity.householdId,
+          args.ai,
+          args.interpretText,
+          args.classifyMessage,
+        );
+        return deps;
+      };
+      const outcome = await applyCallback(existing, data, getDeps, {
+        today: todayIso(),
+      });
+
+      // Persist FIRST: applyCallback may already have inserted a transaction
+      // (e.g. cf/nca). If a later Telegram call throws (stale >15s callback,
+      // network hiccup), the webhook still returns 200 to Telegram (no retry),
+      // so the state MUST already be saved — otherwise a re-tap on a
+      // still-"awaiting_confirmation" state with an unstripped keyboard would
+      // insert a second transaction.
+      await args.store.save(chatId, outcome.state);
+
+      await args.telegram.answerCallbackQuery(callbackQueryId, outcome.toast);
+      // The tapped message's buttons are spent either way (acted on or stale).
+      await strip(chatId, messageId);
+
+      if (outcome.silent !== true && outcome.reply.length > 0) {
+        const sent = await args.telegram.sendMessage(
+          chatId,
+          outcome.reply,
+          outcome.keyboard !== undefined
+            ? { replyMarkup: outcome.keyboard }
+            : undefined,
+        );
+        // Only record promptMessageId when a keyboard was actually attached —
+        // a keyboard-less reply has nothing to strip later, and leaving a stale
+        // promptMessageId around would cause editMessageReplyMarkup to target
+        // the wrong (already-stripped) message on the next turn.
+        if (outcome.keyboard !== undefined) {
+          outcome.state.promptMessageId = sent?.messageId;
+        } else {
+          outcome.state.promptMessageId = undefined;
+        }
+        try {
+          await args.store.save(chatId, outcome.state);
+        } catch (error) {
+          // Best-effort only: losing promptMessageId just means a future stale
+          // tap won't get its keyboard stripped, which is already handled.
+          console.warn("[bot] re-save after send failed:", error);
+        }
+      }
+      return { status: 200, body: { ok: true } };
+    });
   }
 
   const voice = parseTelegramVoice(args.rawBody);
@@ -353,8 +554,29 @@ export async function handleWebhook(args: {
       await args.telegram.sendMessage(voice.chatId, reply);
       return { status: 200, body: { ok: true } };
     }
+    // Persist FIRST: startConversationFromAudio may already have inserted a
+    // transaction (auto-confirm paths). If sendMessage below throws, the
+    // state must already reflect that so a retry/re-send can't double-insert.
     await args.store.save(voice.chatId, outcome.state);
-    await args.telegram.sendMessage(voice.chatId, outcome.reply);
+
+    const sentVoice = await args.telegram.sendMessage(
+      voice.chatId,
+      outcome.reply,
+      outcome.keyboard !== undefined
+        ? { replyMarkup: outcome.keyboard }
+        : undefined,
+    );
+    // Only record promptMessageId when a keyboard was actually attached.
+    if (outcome.keyboard !== undefined) {
+      outcome.state.promptMessageId = sentVoice?.messageId;
+    } else {
+      outcome.state.promptMessageId = undefined;
+    }
+    try {
+      await args.store.save(voice.chatId, outcome.state);
+    } catch (error) {
+      console.warn("[bot] re-save after send failed:", error);
+    }
     return { status: 200, body: { ok: true } };
   }
 
@@ -376,6 +598,7 @@ export async function handleWebhook(args: {
 
   let reply: string;
   let nextState: ConversationState;
+  let keyboard: InlineKeyboardMarkup | undefined;
   if (
     existing === undefined ||
     !belongsToSender ||
@@ -389,16 +612,65 @@ export async function handleWebhook(args: {
     );
     nextState = outcome.state;
     reply = outcome.reply;
+    keyboard = outcome.keyboard;
   } else {
     const outcome = await applyMessage(existing, message.text, deps, {
       today: todayIso(),
     });
     nextState = outcome.state;
     reply = outcome.reply;
+    keyboard = outcome.keyboard;
   }
+
+  // Persist FIRST: applyMessage/startConversation may already have inserted a
+  // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
+  // the state must already be saved so a re-send/retry can't double-insert.
   await args.store.save(message.chatId, nextState);
 
-  await args.telegram.sendMessage(message.chatId, reply);
+  const shouldStripPreviousPrompt =
+    existing !== undefined &&
+    existing.status !== "saved" &&
+    existing.status !== "cancelled" &&
+    existing.promptMessageId !== undefined &&
+    (keyboard !== undefined ||
+      nextState.status === "saved" ||
+      nextState.status === "cancelled" ||
+      nextState !== existing);
+
+  if (shouldStripPreviousPrompt && existing?.promptMessageId !== undefined) {
+    try {
+      await args.telegram.editMessageReplyMarkup(
+        message.chatId,
+        existing.promptMessageId,
+      );
+    } catch (error) {
+      console.warn("[bot] editMessageReplyMarkup failed:", error);
+    }
+  }
+
+  const sent = await args.telegram.sendMessage(
+    message.chatId,
+    reply,
+    keyboard !== undefined ? { replyMarkup: keyboard } : undefined,
+  );
+  // Only record promptMessageId when a keyboard was actually attached — the
+  // previous prompt was already stripped above, so a keyboard-less reply
+  // (e.g. needs_amount) must not leave a stale promptMessageId behind (that
+  // would cause editMessageReplyMarkup 400 + warn-noise on the next message).
+  if (keyboard !== undefined) {
+    nextState.promptMessageId = sent?.messageId;
+  } else if (shouldStripPreviousPrompt) {
+    nextState.promptMessageId = undefined;
+  } else if (existing?.promptMessageId !== undefined) {
+    nextState.promptMessageId = existing.promptMessageId;
+  } else {
+    nextState.promptMessageId = undefined;
+  }
+  try {
+    await args.store.save(message.chatId, nextState);
+  } catch (error) {
+    console.warn("[bot] re-save after send failed:", error);
+  }
   return { status: 200, body: { ok: true } };
 }
 
@@ -444,6 +716,21 @@ export async function startBot(): Promise<{
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
     : createNoopTelegramClient();
+
+  // Spec §1: the webhook registration must deliver callback_query, or every
+  // button tap silently vanishes. Warn loudly — the fix is a one-line curl
+  // (see deploy/README.md).
+  if (env.TELEGRAM_BOT_TOKEN) {
+    void fetchWebhookAllowedUpdates(env.TELEGRAM_BOT_TOKEN).then((allowed) => {
+      if (webhookMissesCallbacks(allowed)) {
+        console.warn(
+          '[bot] webhook allowed_updates does not include "callback_query" — ' +
+            "inline buttons will NOT work. Re-run setWebhook with " +
+            'allowed_updates=["message","callback_query"] (deploy/README.md).',
+        );
+      }
+    });
+  }
 
   // AI features — only when an Anthropic key is configured. ONE completion
   // client backs both the categorization fallback and the text interpretation

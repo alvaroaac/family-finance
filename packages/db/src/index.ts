@@ -128,6 +128,7 @@ export {
   listAllSubcategories,
   archiveCategory,
   restoreCategory,
+  createCategory,
   mergeCategory,
   listCategorizationMemory,
   listActiveCategorizationMemory,

@@ -46,12 +46,18 @@ import {
   type VoiceMessageRef,
 } from "./audio.js";
 import {
+  askCategoryNameMessage,
   cancelledMessage,
   cardBillDeferredMessage,
   cardInstallmentDeferredMessage,
+  categoryCreatedMessage,
+  categoryReusedMessage,
+  chooseCategoryMessage,
+  chooseResponsibleMessage,
   confirmationMessage,
   correctionAppliedMessage,
   formatBrl,
+  invalidCategoryNameMessage,
   needsAmountMessage,
   notUnderstoodMessage,
   obligationAlreadyPaidMessage,
@@ -64,9 +70,22 @@ import {
   obligationSettleFailedMessage,
   obligationUnavailableMessage,
   savedMessage,
+  ALREADY_SAVED_TOAST,
+  CATEGORY_NOT_FOUND_TOAST,
+  SESSION_EXPIRED_TOAST,
   type ObligationSummaryView,
   type SummaryView,
 } from "./replies.js";
+import type { InlineKeyboardMarkup } from "./telegram.js";
+import {
+  TOKENS,
+  CATEGORY_TOKEN_PREFIX,
+  RESPONSIBLE_TOKEN_PREFIX,
+  confirmationKeyboard,
+  categoryGridKeyboard,
+  responsibleGridKeyboard,
+  cancelOnlyKeyboard,
+} from "./keyboards.js";
 
 // ---------------------------------------------------------------------------
 // State.
@@ -80,7 +99,9 @@ export type ConversationStatus =
   /** An obligation template draft awaits its "confirmar" (PR-1). */
   | "awaiting_obligation_confirmation"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
-  | "awaiting_mark_paid_choice";
+  | "awaiting_mark_paid_choice"
+  /** Waiting for the user to TYPE a new category's name (nc button / bare "nova categoria"). */
+  | "awaiting_category_name";
 
 /** The editable, in-progress draft built up across the conversation. */
 export type DraftInProgress = {
@@ -91,6 +112,12 @@ export type DraftInProgress = {
   categoryId?: string;
   subcategoryId?: string;
   categoryExplanation?: string;
+  /**
+   * Display name for a category the loaded catalog does not carry (created or
+   * reactivated mid-conversation). Labels fall back to this when the id is
+   * not found in `deps.catalog`.
+   */
+  categoryNameFallback?: string;
   /** Set only when an explicit responsible person was chosen (not the house). */
   responsibleUserId?: string;
   cardId?: string;
@@ -136,6 +163,12 @@ export type ConversationState = {
   obligationDraft?: ObligationDraftInProgress;
   /** Set while status = awaiting_mark_paid_choice. */
   markPaidCandidates?: MarkPaidCandidate[];
+  /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
+  proposedCategoryName?: string;
+  /** message_id of the last keyboard-bearing prompt (to strip stale buttons). */
+  promptMessageId?: number;
+  /** True when awaiting_category_name was entered with NO expense draft. */
+  standaloneCategoryCreation?: boolean;
 };
 
 export type ConversationOutcome = {
@@ -144,6 +177,8 @@ export type ConversationOutcome = {
   reply: string;
   /** Set after a successful save, for auditing/follow-up. */
   transactionId?: string;
+  /** Inline keyboard to attach to the reply (buttons are additive to the text hints). */
+  keyboard?: InlineKeyboardMarkup;
 };
 
 // ---------------------------------------------------------------------------
@@ -224,6 +259,23 @@ export type ConversationDeps = {
   resolveAccountIdByName?: (name: string) => string | undefined;
   /** Display name of an account id, for the confirmation summary. */
   accountNameById?: (accountId: string) => string | undefined;
+  /** ALL categories (active + archived) for create-dedupe (bot category creation). */
+  listAllCategories?: () => Promise<
+    Array<{ id: string; name: string; isActive: boolean }>
+  >;
+  /** Create an ACTIVE category (db createCategory); impl must also expose it in `catalog`. */
+  createCategory?: (name: string) => Promise<{ id: string }>;
+  /** Reactivate an archived category (db restoreCategory). */
+  restoreCategory?: (categoryId: string, categoryName: string) => Promise<void>;
+  /** Seed categorization_memory — ONLY the AI new-category accept path calls this. */
+  seedCategorizationMemory?: (entry: {
+    pattern: string;
+    categoryId: string;
+    confidence: number;
+    explanation: string;
+  }) => Promise<void>;
+  /** Active members for the responsável grid. */
+  listActiveMembers?: () => Array<{ userId: string; displayName: string }>;
 };
 
 export type StartInput = {
@@ -247,12 +299,13 @@ function categoryLabel(
   catalog: CategoryCatalog,
   categoryId: string | undefined,
   subcategoryId: string | undefined,
+  fallbackName?: string,
 ): string {
   if (categoryId === undefined) {
     return "Sem categoria (a definir)";
   }
   const category = catalog.categories.find((c) => c.id === categoryId);
-  const macro = category?.name ?? "Categoria";
+  const macro = category?.name ?? fallbackName ?? "Categoria";
   if (subcategoryId !== undefined) {
     const sub = catalog.subcategories.find((s) => s.id === subcategoryId);
     if (sub !== undefined) {
@@ -282,6 +335,7 @@ function responsibleLabel(
 function summaryView(
   draft: DraftInProgress,
   deps: ConversationDeps,
+  proposedNewCategory?: string,
 ): SummaryView {
   return {
     amountCents: draft.amountCents,
@@ -291,10 +345,12 @@ function summaryView(
       deps.catalog,
       draft.categoryId,
       draft.subcategoryId,
+      draft.categoryNameFallback,
     ),
     paymentLabel: paymentLabel(draft),
     responsibleLabel: responsibleLabel(draft, deps),
     categoryExplanation: draft.categoryExplanation,
+    proposedNewCategory,
     needsAttention: draft.needsAttention,
   };
 }
@@ -305,14 +361,26 @@ function statusForDraft(draft: DraftInProgress): ConversationStatus {
     : "awaiting_confirmation";
 }
 
-function replyForDraft(
-  draft: DraftInProgress,
-  deps: ConversationDeps,
-): string {
-  if (draft.amountCents === undefined) {
-    return needsAmountMessage(draft.description);
+function replyForState(state: ConversationState, deps: ConversationDeps): string {
+  if (state.draft.amountCents === undefined) {
+    return needsAmountMessage(state.draft.description);
   }
-  return confirmationMessage(summaryView(draft, deps));
+  return confirmationMessage(
+    summaryView(state.draft, deps, state.proposedCategoryName),
+  );
+}
+
+/** The keyboard each state's prompt carries (undefined = no buttons). */
+function keyboardForState(
+  state: ConversationState,
+): InlineKeyboardMarkup | undefined {
+  if (state.status === "awaiting_confirmation") {
+    return confirmationKeyboard(state.proposedCategoryName);
+  }
+  if (state.status === "awaiting_category_name") {
+    return cancelOnlyKeyboard();
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +638,49 @@ export async function startConversation(
 ): Promise<ConversationOutcome> {
   const inputKind: BotInputKind = input.inputKind ?? "text";
 
+  // Manual category creation with NO active conversation (spec §4).
+  const newCategoryMatch = NEW_CATEGORY_RE.exec(input.text);
+  if (newCategoryMatch !== null) {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    const rawName = (newCategoryMatch[1] ?? "").trim();
+    if (rawName.length === 0) {
+      return {
+        state: {
+          status: "awaiting_category_name",
+          draft: ballast,
+          standaloneCategoryCreation: true,
+        },
+        reply: askCategoryNameMessage(),
+        keyboard: cancelOnlyKeyboard(),
+      };
+    }
+    const validated = validateCategoryName(rawName);
+    if (!validated.ok) {
+      return {
+        state: { status: "cancelled", draft: ballast },
+        reply: validated.error,
+      };
+    }
+    const resolved = await createOrReuseCategory(validated.name, deps);
+    if (resolved === null) {
+      return {
+        state: { status: "cancelled", draft: ballast },
+        reply: notUnderstoodMessage(),
+      };
+    }
+    await deps.logInteraction({
+      fromUserId: input.fromUserId,
+      inputKind,
+      messageText: input.text,
+    });
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: resolved.reused
+        ? categoryReusedMessage(validated.name)
+        : categoryCreatedMessage(validated.name),
+    };
+  }
+
   // Unified intent classification (recurring-obligations design): when
   // configured it sees every NEW message first. A null result — or a plain
   // expense — falls through to the deterministic parser path below, so the
@@ -668,11 +779,25 @@ export async function startConversation(
     draft.needsAttention = true;
   }
 
+  // AI new-category proposal (spec §3): the engine returns pending_new_category
+  // with a proposed NAME; it lives in conversation state (never callback data)
+  // until the user accepts, picks another, or drops it.
+  let proposedCategoryName: string | undefined;
+  if (
+    result.status === "pending_new_category" &&
+    result.pendingCategory !== undefined
+  ) {
+    proposedCategoryName = result.pendingCategory.categoryName;
+    draft.categoryExplanation = result.pendingCategory.explanation;
+    draft.needsAttention = true;
+  }
+
   const state: ConversationState = {
     status: statusForDraft(draft),
     draft,
+    proposedCategoryName,
   };
-  return { state, reply: replyForDraft(draft, deps) };
+  return { state, reply: replyForState(state, deps), keyboard: keyboardForState(state) };
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +840,111 @@ export async function startConversationFromAudio(
 
 const CONFIRM_RE = /^\s*(confirmar|confirma|confirmo|sim|ok|salvar|salva)\b/i;
 const CANCEL_RE = /^\s*(cancelar|cancela|nao|não|descartar|apagar)\b/i;
+
+/** "nova categoria" [name] — manual category creation (spec §4). */
+const NEW_CATEGORY_RE = /^\s*nova\s+categoria\b\s*(.*)$/i;
+
+/** Trimmed, non-empty, ≤ 40 chars (spec §4 validation). */
+function validateCategoryName(
+  raw: string,
+): { ok: true; name: string } | { ok: false; error: string } {
+  const name = raw
+    .replace(/[\p{Cc}\p{Cf}\u200B-\u200D\uFEFF]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (name.length === 0) {
+    return { ok: false, error: invalidCategoryNameMessage("empty") };
+  }
+  if (name.length > 40) {
+    return { ok: false, error: invalidCategoryNameMessage("too_long") };
+  }
+  return { ok: true, name };
+}
+
+/** Create/reuse `name`, assign it to the draft, and re-show the confirmation. */
+async function createCategoryForDraft(
+  state: ConversationState,
+  name: string,
+  deps: ConversationDeps,
+): Promise<ConversationOutcome> {
+  const resolved = await createOrReuseCategory(name, deps);
+  if (resolved === null) {
+    return { state, reply: notUnderstoodMessage() };
+  }
+  const draft: DraftInProgress = {
+    ...state.draft,
+    categoryId: resolved.categoryId,
+    subcategoryId: undefined,
+    categoryNameFallback: name,
+    categoryExplanation: "Categoria criada pelo usuário.",
+  };
+  const next: ConversationState = {
+    status: statusForDraft(draft),
+    draft,
+    proposedCategoryName: undefined,
+    // This path always runs mid-draft (never standalone name-mode), so there
+    // is no standalone-creation flag to carry forward — explicit for clarity.
+    standaloneCategoryCreation: undefined,
+  };
+  const created = resolved.reused
+    ? categoryReusedMessage(name)
+    : categoryCreatedMessage(name);
+  return {
+    state: next,
+    reply: `${created}\n\n${replyForState(next, deps)}`,
+    keyboard: keyboardForState(next),
+  };
+}
+
+/**
+ * awaiting_category_name: NAME-MODE WINS — anything except "cancelar" is a
+ * category name (so "confirmar" can be a category). Keeps the state machine
+ * unambiguous (spec §5).
+ */
+async function applyCategoryName(
+  state: ConversationState,
+  message: string,
+  deps: ConversationDeps,
+): Promise<ConversationOutcome> {
+  if (/^\s*(cancelar|cancela)\s*$/i.test(message)) {
+    if (state.standaloneCategoryCreation === true) {
+      return {
+        state: { status: "cancelled", draft: state.draft },
+        reply: cancelledMessage(),
+      };
+    }
+    const back: ConversationState = {
+      ...state,
+      status: "awaiting_confirmation",
+      standaloneCategoryCreation: undefined,
+    };
+    return {
+      state: back,
+      reply: replyForState(back, deps),
+      keyboard: keyboardForState(back),
+    };
+  }
+
+  const validated = validateCategoryName(message);
+  if (!validated.ok) {
+    return { state, reply: validated.error, keyboard: cancelOnlyKeyboard() };
+  }
+
+  if (state.standaloneCategoryCreation === true) {
+    const resolved = await createOrReuseCategory(validated.name, deps);
+    if (resolved === null) {
+      return { state, reply: notUnderstoodMessage() };
+    }
+    // Terminal: the category exists; no transaction draft is open.
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: resolved.reused
+        ? categoryReusedMessage(validated.name)
+        : categoryCreatedMessage(validated.name),
+    };
+  }
+  return createCategoryForDraft(state, validated.name, deps);
+}
 
 type Correction =
   | { field: "amount"; cents: number }
@@ -817,7 +1047,7 @@ async function persist(
 
   // Cannot save without a value — fall back to asking for it.
   if (draft.amountCents === undefined) {
-    const next: ConversationState = { status: "needs_amount", draft };
+    const next: ConversationState = { ...state, status: "needs_amount", draft };
     return { state: next, reply: needsAmountMessage(draft.description) };
   }
 
@@ -834,7 +1064,7 @@ async function persist(
   } else {
     const accountId = draft.accountId ?? deps.defaultAccountId;
     if (accountId === undefined || accountId.length === 0) {
-      const next: ConversationState = { status: statusForDraft(draft), draft };
+      const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
       return {
         state: next,
         reply:
@@ -868,6 +1098,7 @@ async function persist(
     // Surface the offending field in plain pt-BR — the raw Zod message is
     // opaque to the household. Keep the conversation open so they can correct.
     const next: ConversationState = {
+      ...state,
       status: statusForDraft(draft),
       draft,
     };
@@ -902,6 +1133,7 @@ async function persist(
         deps.catalog,
         draft.categoryId,
         draft.subcategoryId,
+        draft.categoryNameFallback,
       ),
     }),
   };
@@ -1093,11 +1325,35 @@ export async function applyMessage(
 
   const today = options.today ?? state.draft.occurredOn;
 
+  if (state.status === "awaiting_category_name") {
+    return applyCategoryName(state, message, deps);
+  }
   if (state.status === "awaiting_mark_paid_choice") {
     return applyMarkPaidChoice(state, message, deps, today);
   }
   if (state.status === "awaiting_obligation_confirmation") {
     return applyObligationMessage(state, message, deps, today);
+  }
+
+  const newCategoryMatch = NEW_CATEGORY_RE.exec(message);
+  if (newCategoryMatch !== null) {
+    const rawName = (newCategoryMatch[1] ?? "").trim();
+    if (rawName.length === 0) {
+      const next: ConversationState = {
+        ...state,
+        status: "awaiting_category_name",
+      };
+      return {
+        state: next,
+        reply: askCategoryNameMessage(),
+        keyboard: cancelOnlyKeyboard(),
+      };
+    }
+    const validated = validateCategoryName(rawName);
+    if (!validated.ok) {
+      return { state, reply: validated.error };
+    }
+    return createCategoryForDraft(state, validated.name, deps);
   }
 
   if (CANCEL_RE.test(message)) {
@@ -1109,7 +1365,8 @@ export async function applyMessage(
   }
 
   if (CONFIRM_RE.test(message)) {
-    return persist(state, deps, message);
+    const outcome = await confirmDraft(state, deps, message, today);
+    return { ...outcome, keyboard: keyboardForState(outcome.state) };
   }
 
   // Otherwise treat it as a correction.
@@ -1142,8 +1399,12 @@ export async function applyMessage(
   }
 
   const next: ConversationState = {
+    ...state,
     status: statusForDraft(draft),
     draft,
+    // A typed category correction replaces any pending AI proposal — mirrors
+    // the ct: tapped path so the UI never lies about which category is set.
+    ...(correction.field === "category" ? { proposedCategoryName: undefined } : {}),
   };
   const fieldLabel =
     correction.field === "amount"
@@ -1153,6 +1414,295 @@ export async function applyMessage(
         : correction.field === "category"
           ? "a categoria"
           : "o responsável";
-  const reply = `${correctionAppliedMessage(fieldLabel)}\n\n${replyForDraft(draft, deps)}`;
-  return { state: next, reply };
+  const reply = `${correctionAppliedMessage(fieldLabel)}\n\n${replyForState(next, deps)}`;
+  return { state: next, reply, keyboard: keyboardForState(next) };
+}
+
+/**
+ * Dedupe-then-create (spec §3): case- and accent-insensitive match against ALL
+ * categories. Active match → assign as-is; inactive match → reactivate; no
+ * match → create (active immediately). Returns null when the category-creation
+ * deps are not wired (flow degrades to "not understood").
+ */
+async function createOrReuseCategory(
+  name: string,
+  deps: ConversationDeps,
+): Promise<{ categoryId: string; reused: boolean } | null> {
+  if (deps.listAllCategories === undefined || deps.createCategory === undefined) {
+    return null;
+  }
+  const wanted = normalizeText(name);
+  const existing = await deps.listAllCategories();
+  const match = existing.find((c) => normalizeText(c.name) === wanted);
+  if (match !== undefined) {
+    if (!match.isActive) {
+      await deps.restoreCategory?.(match.id, match.name);
+    }
+    return { categoryId: match.id, reused: true };
+  }
+  const created = await deps.createCategory(name);
+  return { categoryId: created.id, reused: false };
+}
+
+/**
+ * Confirm the draft. With a pending AI category proposal and no category yet:
+ * create/reuse the category, assign it, persist through the normal `persist`,
+ * then seed categorization_memory (the ONLY path that seeds — spec §3).
+ */
+async function confirmDraft(
+  state: ConversationState,
+  deps: ConversationDeps,
+  messageText: string,
+  today: string,
+): Promise<ConversationOutcome> {
+  let working = state;
+  if (
+    state.proposedCategoryName !== undefined &&
+    state.draft.categoryId === undefined &&
+    state.draft.amountCents !== undefined
+  ) {
+    const resolved = await createOrReuseCategory(
+      state.proposedCategoryName,
+      deps,
+    );
+    if (resolved === null) {
+      // Category creation is not wired here — keep the draft, explain.
+      return { state, reply: notUnderstoodMessage() };
+    }
+    const draft: DraftInProgress = {
+      ...state.draft,
+      categoryId: resolved.categoryId,
+      subcategoryId: undefined,
+      categoryNameFallback: state.proposedCategoryName,
+    };
+    working = { ...state, draft, proposedCategoryName: undefined };
+
+    const outcome = await persist(working, deps, messageText);
+    // Seed only after the transaction is durable; seeding is an optimization
+    // and must never make a saved lançamento look failed to the user.
+    const pattern = normalizeText(draft.description);
+    if (
+      outcome.state.status === "saved" &&
+      deps.seedCategorizationMemory !== undefined &&
+      pattern.length > 0
+    ) {
+      try {
+        await deps.seedCategorizationMemory({
+          pattern,
+          categoryId: resolved.categoryId,
+          confidence: 0.95,
+          explanation: `criada pelo usuário via bot em ${today}`,
+        });
+      } catch (error) {
+        console.warn("[bot] seedCategorizationMemory failed:", error);
+      }
+    }
+    return outcome;
+  }
+  return persist(working, deps, messageText);
+}
+
+/** ❌ while typing a category name — standalone mode cancels fully. */
+function cancelCategoryName(
+  state: ConversationState,
+  deps: ConversationDeps,
+): ApplyCallbackOutcome {
+  if (state.standaloneCategoryCreation === true) {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: cancelledMessage(),
+    };
+  }
+  const next: ConversationState = {
+    ...state,
+    status: "awaiting_confirmation",
+    standaloneCategoryCreation: undefined,
+  };
+  return summaryOutcome(next, deps);
+}
+
+// ---------------------------------------------------------------------------
+// Apply an inline-button tap: structured tokens through the SAME transitions
+// as typed messages (approach B — no text-spoofing into the regex parser).
+// ---------------------------------------------------------------------------
+
+export type ApplyCallbackOutcome = ConversationOutcome & {
+  /** answerCallbackQuery toast (shown even when no message is sent). */
+  toast?: string;
+  /** True when NO new message should be sent (reply is ""). */
+  silent?: boolean;
+};
+
+function expiredOutcome(state: ConversationState): ApplyCallbackOutcome {
+  return { state, reply: "", silent: true, toast: SESSION_EXPIRED_TOAST };
+}
+
+function summaryOutcome(
+  state: ConversationState,
+  deps: ConversationDeps,
+  prefix?: string,
+): ApplyCallbackOutcome {
+  const body = replyForState(state, deps);
+  return {
+    state,
+    reply: prefix !== undefined ? `${prefix}\n\n${body}` : body,
+    keyboard: keyboardForState(state),
+  };
+}
+
+type ConversationDepsInput = ConversationDeps | (() => Promise<ConversationDeps>);
+
+function isDepsGetter(
+  deps: ConversationDepsInput,
+): deps is () => Promise<ConversationDeps> {
+  return typeof deps === "function";
+}
+
+export async function applyCallback(
+  state: ConversationState,
+  token: string,
+  deps: ConversationDepsInput,
+  options: { today?: string } = {},
+): Promise<ApplyCallbackOutcome> {
+  const today = options.today ?? state.draft.occurredOn;
+  let resolvedDeps: ConversationDeps | undefined;
+  const getDeps = async (): Promise<ConversationDeps> => {
+    if (resolvedDeps !== undefined) {
+      return resolvedDeps;
+    }
+    resolvedDeps = isDepsGetter(deps) ? await deps() : deps;
+    return resolvedDeps;
+  };
+
+  // Terminal states: a confirm double-tap is a friendly no-op; anything else
+  // is a stale button. Never crash, never double-insert.
+  if (state.status === "saved") {
+    if (token === TOKENS.confirm || token === TOKENS.acceptProposal) {
+      return { state, reply: "", silent: true, toast: ALREADY_SAVED_TOAST };
+    }
+    return expiredOutcome(state);
+  }
+  if (state.status === "cancelled") {
+    return expiredOutcome(state);
+  }
+
+  // Obligation flows and mark-paid choices never get keyboards (out of scope),
+  // so any token landing there is stale.
+  if (
+    state.status === "awaiting_obligation_confirmation" ||
+    state.status === "awaiting_mark_paid_choice"
+  ) {
+    return expiredOutcome(state);
+  }
+
+  // awaiting_category_name: only ❌ (cx) is a valid tap; the category name
+  // itself arrives as typed text through applyMessage, so other tokens are stale.
+  if (state.status === "awaiting_category_name") {
+    if (token === TOKENS.cancel) {
+      return cancelCategoryName(state, await getDeps());
+    }
+    return expiredOutcome(state);
+  }
+
+  // awaiting_confirmation / needs_amount.
+  if (token === TOKENS.confirm) {
+    const depsValue = await getDeps();
+    const outcome = await confirmDraft(state, depsValue, "confirmar (botão)", today);
+    return { ...outcome, keyboard: keyboardForState(outcome.state) };
+  }
+  if (token === TOKENS.cancel) {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: cancelledMessage(),
+    };
+  }
+  if (token === TOKENS.categories) {
+    const depsValue = await getDeps();
+    return {
+      state,
+      reply: chooseCategoryMessage(),
+      keyboard: categoryGridKeyboard(depsValue.catalog.categories),
+    };
+  }
+  if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
+    const depsValue = await getDeps();
+    const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
+    const category = depsValue.catalog.categories.find((c) => c.id === categoryId);
+    if (category === undefined) {
+      return { state, reply: "", silent: true, toast: CATEGORY_NOT_FOUND_TOAST };
+    }
+    const draft: DraftInProgress = {
+      ...state.draft,
+      categoryId: category.id,
+      subcategoryId: undefined,
+      categoryNameFallback: category.name,
+      categoryExplanation: "Categoria escolhida manualmente.",
+    };
+    const next: ConversationState = {
+      ...state,
+      status: statusForDraft(draft),
+      draft,
+      proposedCategoryName: undefined,
+    };
+    return summaryOutcome(next, depsValue, correctionAppliedMessage("a categoria"));
+  }
+  if (token === TOKENS.responsible) {
+    const depsValue = await getDeps();
+    return {
+      state,
+      reply: chooseResponsibleMessage(),
+      keyboard: responsibleGridKeyboard(depsValue.listActiveMembers?.() ?? []),
+    };
+  }
+  if (token === TOKENS.responsibleHouse) {
+    const depsValue = await getDeps();
+    const draft: DraftInProgress = { ...state.draft, responsibleUserId: undefined };
+    const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
+    return summaryOutcome(next, depsValue, correctionAppliedMessage("o responsável"));
+  }
+  if (token.startsWith(RESPONSIBLE_TOKEN_PREFIX)) {
+    const depsValue = await getDeps();
+    const userId = token.slice(RESPONSIBLE_TOKEN_PREFIX.length);
+    const member = depsValue.listActiveMembers?.().find((m) => m.userId === userId);
+    if (member === undefined) {
+      return expiredOutcome(state);
+    }
+    const draft: DraftInProgress = { ...state.draft, responsibleUserId: userId };
+    const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
+    return summaryOutcome(next, depsValue, correctionAppliedMessage("o responsável"));
+  }
+
+  if (token === TOKENS.acceptProposal) {
+    if (state.proposedCategoryName === undefined) {
+      return expiredOutcome(state);
+    }
+    const depsValue = await getDeps();
+    const outcome = await confirmDraft(
+      state,
+      depsValue,
+      `confirmar (botão, nova categoria "${state.proposedCategoryName}")`,
+      today,
+    );
+    return { ...outcome, keyboard: keyboardForState(outcome.state) };
+  }
+  if (token === TOKENS.dropProposal) {
+    if (state.proposedCategoryName === undefined) {
+      return expiredOutcome(state);
+    }
+    const depsValue = await getDeps();
+    const next: ConversationState = { ...state, proposedCategoryName: undefined };
+    return summaryOutcome(next, depsValue);
+  }
+
+  if (token === TOKENS.newCategory) {
+    const next: ConversationState = { ...state, status: "awaiting_category_name" };
+    return {
+      state: next,
+      reply: askCategoryNameMessage(),
+      keyboard: cancelOnlyKeyboard(),
+    };
+  }
+
+  // Any future/unknown token — answer-and-ignore.
+  return expiredOutcome(state);
 }

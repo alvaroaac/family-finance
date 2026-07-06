@@ -937,6 +937,13 @@ function fakeTelegram(): {
     telegram: {
       async sendMessage(chatId: string, text: string) {
         sent.push({ chatId, text });
+        return { messageId: sent.length };
+      },
+      async answerCallbackQuery() {
+        // Not exercised by these text-flow tests.
+      },
+      async editMessageReplyMarkup() {
+        // Not exercised by these text-flow tests.
       },
     },
   };
@@ -1174,6 +1181,20 @@ describe("conversation stores", () => {
         {
           chat_id: 555,
           state: { whatever: true },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+    const store = createDbConversationStore(client);
+    expect(await store.load("555")).toBeUndefined();
+  });
+
+  it("treats a persisted row with an unknown future status as absent", async () => {
+    const { client } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: { ...sampleState(), status: "some_future_status" },
           updated_at: new Date().toISOString(),
         },
       ],
