@@ -266,7 +266,7 @@ export type ConversationDeps = {
   /** Create an ACTIVE category (db createCategory); impl must also expose it in `catalog`. */
   createCategory?: (name: string) => Promise<{ id: string }>;
   /** Reactivate an archived category (db restoreCategory). */
-  restoreCategory?: (categoryId: string) => Promise<void>;
+  restoreCategory?: (categoryId: string, categoryName: string) => Promise<void>;
   /** Seed categorization_memory — ONLY the AI new-category accept path calls this. */
   seedCategorizationMemory?: (entry: {
     pattern: string;
@@ -848,7 +848,10 @@ const NEW_CATEGORY_RE = /^\s*nova\s+categoria\b\s*(.*)$/i;
 function validateCategoryName(
   raw: string,
 ): { ok: true; name: string } | { ok: false; error: string } {
-  const name = raw.trim();
+  const name = raw
+    .replace(/[\p{Cc}\p{Cf}\u200B-\u200D\uFEFF]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (name.length === 0) {
     return { ok: false, error: invalidCategoryNameMessage("empty") };
   }
@@ -1433,7 +1436,7 @@ async function createOrReuseCategory(
   const match = existing.find((c) => normalizeText(c.name) === wanted);
   if (match !== undefined) {
     if (!match.isActive) {
-      await deps.restoreCategory?.(match.id);
+      await deps.restoreCategory?.(match.id, match.name);
     }
     return { categoryId: match.id, reused: true };
   }
@@ -1443,8 +1446,8 @@ async function createOrReuseCategory(
 
 /**
  * Confirm the draft. With a pending AI category proposal and no category yet:
- * create/reuse the category, assign it, seed categorization_memory (the ONLY
- * path that seeds — spec §3), then persist through the normal `persist`.
+ * create/reuse the category, assign it, persist through the normal `persist`,
+ * then seed categorization_memory (the ONLY path that seeds — spec §3).
  */
 async function confirmDraft(
   state: ConversationState,
@@ -1474,17 +1477,27 @@ async function confirmDraft(
     };
     working = { ...state, draft, proposedCategoryName: undefined };
 
-    // Seed memory so the next identical merchant resolves instantly. Pattern =
-    // the interpreter's normalized merchant token (the draft description).
+    const outcome = await persist(working, deps, messageText);
+    // Seed only after the transaction is durable; seeding is an optimization
+    // and must never make a saved lançamento look failed to the user.
     const pattern = normalizeText(draft.description);
-    if (deps.seedCategorizationMemory !== undefined && pattern.length > 0) {
-      await deps.seedCategorizationMemory({
-        pattern,
-        categoryId: resolved.categoryId,
-        confidence: 0.95,
-        explanation: `criada pelo usuário via bot em ${today}`,
-      });
+    if (
+      outcome.state.status === "saved" &&
+      deps.seedCategorizationMemory !== undefined &&
+      pattern.length > 0
+    ) {
+      try {
+        await deps.seedCategorizationMemory({
+          pattern,
+          categoryId: resolved.categoryId,
+          confidence: 0.95,
+          explanation: `criada pelo usuário via bot em ${today}`,
+        });
+      } catch (error) {
+        console.warn("[bot] seedCategorizationMemory failed:", error);
+      }
     }
+    return outcome;
   }
   return persist(working, deps, messageText);
 }
@@ -1537,13 +1550,29 @@ function summaryOutcome(
   };
 }
 
+type ConversationDepsInput = ConversationDeps | (() => Promise<ConversationDeps>);
+
+function isDepsGetter(
+  deps: ConversationDepsInput,
+): deps is () => Promise<ConversationDeps> {
+  return typeof deps === "function";
+}
+
 export async function applyCallback(
   state: ConversationState,
   token: string,
-  deps: ConversationDeps,
+  deps: ConversationDepsInput,
   options: { today?: string } = {},
 ): Promise<ApplyCallbackOutcome> {
   const today = options.today ?? state.draft.occurredOn;
+  let resolvedDeps: ConversationDeps | undefined;
+  const getDeps = async (): Promise<ConversationDeps> => {
+    if (resolvedDeps !== undefined) {
+      return resolvedDeps;
+    }
+    resolvedDeps = isDepsGetter(deps) ? await deps() : deps;
+    return resolvedDeps;
+  };
 
   // Terminal states: a confirm double-tap is a friendly no-op; anything else
   // is a stale button. Never crash, never double-insert.
@@ -1566,17 +1595,19 @@ export async function applyCallback(
     return expiredOutcome(state);
   }
 
-  // awaiting_category_name: only ❌ (cx) is wired — Task 7 fills this in.
+  // awaiting_category_name: only ❌ (cx) is a valid tap; the category name
+  // itself arrives as typed text through applyMessage, so other tokens are stale.
   if (state.status === "awaiting_category_name") {
     if (token === TOKENS.cancel) {
-      return cancelCategoryName(state, deps);
+      return cancelCategoryName(state, await getDeps());
     }
     return expiredOutcome(state);
   }
 
   // awaiting_confirmation / needs_amount.
   if (token === TOKENS.confirm) {
-    const outcome = await confirmDraft(state, deps, "confirmar (botão)", today);
+    const depsValue = await getDeps();
+    const outcome = await confirmDraft(state, depsValue, "confirmar (botão)", today);
     return { ...outcome, keyboard: keyboardForState(outcome.state) };
   }
   if (token === TOKENS.cancel) {
@@ -1586,15 +1617,17 @@ export async function applyCallback(
     };
   }
   if (token === TOKENS.categories) {
+    const depsValue = await getDeps();
     return {
       state,
       reply: chooseCategoryMessage(),
-      keyboard: categoryGridKeyboard(deps.catalog.categories),
+      keyboard: categoryGridKeyboard(depsValue.catalog.categories),
     };
   }
   if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
+    const depsValue = await getDeps();
     const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
-    const category = deps.catalog.categories.find((c) => c.id === categoryId);
+    const category = depsValue.catalog.categories.find((c) => c.id === categoryId);
     if (category === undefined) {
       return { state, reply: "", silent: true, toast: CATEGORY_NOT_FOUND_TOAST };
     }
@@ -1611,38 +1644,42 @@ export async function applyCallback(
       draft,
       proposedCategoryName: undefined,
     };
-    return summaryOutcome(next, deps, correctionAppliedMessage("a categoria"));
+    return summaryOutcome(next, depsValue, correctionAppliedMessage("a categoria"));
   }
   if (token === TOKENS.responsible) {
+    const depsValue = await getDeps();
     return {
       state,
       reply: chooseResponsibleMessage(),
-      keyboard: responsibleGridKeyboard(deps.listActiveMembers?.() ?? []),
+      keyboard: responsibleGridKeyboard(depsValue.listActiveMembers?.() ?? []),
     };
   }
   if (token === TOKENS.responsibleHouse) {
+    const depsValue = await getDeps();
     const draft: DraftInProgress = { ...state.draft, responsibleUserId: undefined };
     const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
-    return summaryOutcome(next, deps, correctionAppliedMessage("o responsável"));
+    return summaryOutcome(next, depsValue, correctionAppliedMessage("o responsável"));
   }
   if (token.startsWith(RESPONSIBLE_TOKEN_PREFIX)) {
+    const depsValue = await getDeps();
     const userId = token.slice(RESPONSIBLE_TOKEN_PREFIX.length);
-    const member = deps.listActiveMembers?.().find((m) => m.userId === userId);
+    const member = depsValue.listActiveMembers?.().find((m) => m.userId === userId);
     if (member === undefined) {
       return expiredOutcome(state);
     }
     const draft: DraftInProgress = { ...state.draft, responsibleUserId: userId };
     const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
-    return summaryOutcome(next, deps, correctionAppliedMessage("o responsável"));
+    return summaryOutcome(next, depsValue, correctionAppliedMessage("o responsável"));
   }
 
   if (token === TOKENS.acceptProposal) {
     if (state.proposedCategoryName === undefined) {
       return expiredOutcome(state);
     }
+    const depsValue = await getDeps();
     const outcome = await confirmDraft(
       state,
-      deps,
+      depsValue,
       `confirmar (botão, nova categoria "${state.proposedCategoryName}")`,
       today,
     );
@@ -1652,8 +1689,9 @@ export async function applyCallback(
     if (state.proposedCategoryName === undefined) {
       return expiredOutcome(state);
     }
+    const depsValue = await getDeps();
     const next: ConversationState = { ...state, proposedCategoryName: undefined };
-    return summaryOutcome(next, deps);
+    return summaryOutcome(next, depsValue);
   }
 
   if (token === TOKENS.newCategory) {

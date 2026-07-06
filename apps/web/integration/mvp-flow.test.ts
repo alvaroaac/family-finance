@@ -68,6 +68,7 @@ import {
 import {
   startConversation,
   applyMessage,
+  applyCallback,
   type ConversationDeps,
 } from "../../bot/src/conversation.js";
 
@@ -607,6 +608,20 @@ describe("MVP review loop — Telegram text entry", () => {
 
     // The interaction was logged for auditing.
     expect(store.table("bot_interactions")).toHaveLength(1);
+
+    const buttonStarted = await startConversation(
+      { text: "Uber 25 reais hoje no cartão", fromUserId: ALVARO },
+      deps,
+      { today: TODAY },
+    );
+    const buttonConfirmed = await applyCallback(buttonStarted.state, "cf", deps, {
+      today: TODAY,
+    });
+    expect(buttonConfirmed.state.status).toBe("saved");
+    expect(buttonConfirmed.transactionId).toBeDefined();
+    expect(
+      store.table("transactions").some((t) => t.id === buttonConfirmed.transactionId),
+    ).toBe(true);
   });
 });
 
@@ -707,6 +722,15 @@ async function runFullStory(): Promise<void> {
     { today: TODAY },
   );
   await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+  const buttonStarted = await startConversation(
+    { text: "Uber 25 reais hoje no cartão", fromUserId: ALVARO },
+    deps,
+    { today: TODAY },
+  );
+  const buttonConfirmed = await applyCallback(buttonStarted.state, "cf", deps, {
+    today: TODAY,
+  });
+  expect(buttonConfirmed.state.status).toBe("saved");
 
   // 5. Parcelado card purchase (Geladeira 3x).
   const plan = createInstallmentPlan({
@@ -746,19 +770,26 @@ describe("MVP review loop — dashboard reconciles with the whole scenario", () 
     expect(summary.month).toBe(MONTH);
     expect(summary.incomeCents).toBe(SALARY_CENTS);
 
-    // --- Expenses: three imported expenses + the bot Uber (card) tx. -----
+    // --- Expenses: three imported expenses + typed + inline bot card txs. -
     const BOT_UBER_CENTS = 3200;
+    const BOT_BUTTON_UBER_CENTS = 2500;
     const expectedExpense =
-      IFOOD_CENTS + MERCADO_CENTS + FARMACIA_CENTS + BOT_UBER_CENTS;
+      IFOOD_CENTS +
+      MERCADO_CENTS +
+      FARMACIA_CENTS +
+      BOT_UBER_CENTS +
+      BOT_BUTTON_UBER_CENTS;
     expect(summary.expenseCents).toBe(expectedExpense);
 
     // --- Balance: income - expense. -------------------------------------
     expect(summary.balanceCents).toBe(SALARY_CENTS - expectedExpense);
 
-    // --- Card pressure: direct card expense (Uber) + June installment. ---
-    expect(cardPressure.directCents).toBe(BOT_UBER_CENTS);
+    // --- Card pressure: direct card expenses + June installment. ----------
+    expect(cardPressure.directCents).toBe(BOT_UBER_CENTS + BOT_BUTTON_UBER_CENTS);
     expect(cardPressure.installmentCents).toBe(40000); // first Geladeira parcel
-    expect(cardPressure.totalCents).toBe(BOT_UBER_CENTS + 40000);
+    expect(cardPressure.totalCents).toBe(
+      BOT_UBER_CENTS + BOT_BUTTON_UBER_CENTS + 40000,
+    );
 
     // --- Upcoming installments start this month (June, July, August). ----
     expect(upcoming).toHaveLength(3);
@@ -777,8 +808,8 @@ describe("MVP review loop — dashboard reconciles with the whole scenario", () 
     ]);
 
     // --- Recent + pending review reflect the recorded data. --------------
-    // 4 imported + 1 bot = 5 transactions total recorded.
-    expect(store.table("transactions")).toHaveLength(5);
+    // 4 imported + typed bot + inline-button bot = 6 transactions recorded.
+    expect(store.table("transactions")).toHaveLength(6);
     expect(recent.length).toBeGreaterThan(0);
 
     // After correcting Mercado, only Farmácia remains uncategorized (iFood was

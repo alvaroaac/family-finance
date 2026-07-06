@@ -323,3 +323,7 @@ export const ALREADY_SAVED_TOAST = "Já salvo ✅";
 /** Toast when a tapped category id is no longer in the catalog. */
 export const CATEGORY_NOT_FOUND_TOAST =
   "Categoria não encontrada — abra a lista de novo.";
+
+/** Toast for a tap on a draft created by ANOTHER household member. */
+export const DRAFT_NOT_YOURS_TOAST =
+  "Esse lançamento é de outra pessoa — só quem criou pode usar os botões.";

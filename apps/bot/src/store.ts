@@ -20,7 +20,7 @@ import {
   type AppSupabaseClient,
 } from "@family-finance/db";
 
-import type { ConversationState } from "./conversation.js";
+import type { ConversationState, ConversationStatus } from "./conversation.js";
 
 export type ConversationStore = {
   /** Load a chat's conversation state, or undefined when absent/stale/malformed. */
@@ -31,6 +31,23 @@ export type ConversationStore = {
 
 /** Conversations older than this are treated as abandoned (absent on load). */
 export const CONVERSATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+const CONVERSATION_STATUSES = [
+  "awaiting_confirmation",
+  "needs_amount",
+  "saved",
+  "cancelled",
+  "awaiting_obligation_confirmation",
+  "awaiting_mark_paid_choice",
+  "awaiting_category_name",
+] as const satisfies readonly ConversationStatus[];
+
+function isConversationStatus(value: unknown): value is ConversationStatus {
+  return (
+    typeof value === "string" &&
+    CONVERSATION_STATUSES.includes(value as ConversationStatus)
+  );
+}
 
 /** In-memory store — unit tests and local dry runs (state dies with the process). */
 export function createInMemoryConversationStore(): ConversationStore {
@@ -56,7 +73,7 @@ function isConversationState(value: unknown): value is ConversationState {
   }
   const candidate = value as { status?: unknown; draft?: unknown };
   return (
-    typeof candidate.status === "string" &&
+    isConversationStatus(candidate.status) &&
     typeof candidate.draft === "object" &&
     candidate.draft !== null
   );
