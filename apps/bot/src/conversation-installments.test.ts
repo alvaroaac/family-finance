@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import type { CategoryCatalog } from "@family-finance/categorization";
+import type { CategoryCatalog, CategorizationResult } from "@family-finance/categorization";
 import type { InstallmentPlan } from "@family-finance/domain";
 
 import {
@@ -639,5 +639,136 @@ describe("card installment callback parity", () => {
     );
     expect(stale.silent).toBe(true);
     expect(stale.toast).toBe("Sessão expirada — envie o gasto novamente.");
+  });
+});
+
+const PROPOSAL: CategorizationResult = {
+  status: "pending_new_category",
+  suggestion: { confidence: 0.9, explanation: "Petz é um pet shop.", source: "ai" },
+  pendingCategory: {
+    categoryName: "Pets",
+    subcategoryName: null,
+    confidence: 0.9,
+    explanation: "Petz é um pet shop.",
+  },
+  requiresConfirmation: true,
+};
+
+function proposalDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
+  const { deps } = buildDeps({
+    catalog: {
+      ...CATALOG,
+      categories: [...CATALOG.categories, { id: "cat-pets", name: "Pets" }],
+    },
+    classifyMessage: classifierReturning(
+      purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+    ),
+    suggestCategory: vi.fn(async () => PROPOSAL),
+    listAllCategories: vi.fn(async () => [
+      { id: "cat-transporte", name: "Transporte", isActive: true },
+    ]),
+    createCategory: vi.fn(async () => ({ id: "cat-pets" })),
+    restoreCategory: vi.fn(async () => undefined),
+    ...overrides,
+  });
+  return deps;
+}
+
+describe("card installment: AI new-category proposal sub-flow", () => {
+  it("start surfaces the proposal in state, summary, and keyboard (no plain cf button)", async () => {
+    const deps = proposalDeps();
+    const outcome = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(outcome.state.proposedCategoryName).toBe("Pets");
+    expect(outcome.reply).toContain('Categoria: "Pets" (nova — sugerida)');
+
+    const flat = (outcome.keyboard?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
+    expect(flat).toContain(TOKENS.acceptProposal);
+    expect(flat).toContain(TOKENS.categories);
+    expect(flat).toContain(TOKENS.dropProposal);
+    expect(flat).toContain(TOKENS.cancel);
+    expect(flat).not.toContain(TOKENS.confirm);
+  });
+
+  it("nca creates/reuses the category, updates the draft, and returns to the summary WITHOUT persisting", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(start.state, TOKENS.acceptProposal, deps, {
+      today: TODAY,
+    });
+
+    expect(deps.createCategory).toHaveBeenCalledWith("Pets");
+    expect(outcome.state.installmentDraft?.categoryId).toBe("cat-pets");
+    expect(outcome.state.proposedCategoryName).toBeUndefined();
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(outcome.reply).toContain("Pets");
+    expect(outcome.reply).not.toContain("(nova — sugerida)");
+    expect(deps.createInstallmentPurchase).not.toHaveBeenCalled();
+  });
+
+  it("dedupe: an active case/accent-insensitive match is reused, not duplicated", async () => {
+    const deps = proposalDeps({
+      catalog: {
+        ...CATALOG,
+        categories: [...CATALOG.categories, { id: "cat-pets-x", name: "PÉTS" }],
+      },
+      listAllCategories: vi.fn(async () => [
+        { id: "cat-pets-x", name: "PÉTS", isActive: true },
+      ]),
+    });
+    const start = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(start.state, TOKENS.acceptProposal, deps, {
+      today: TODAY,
+    });
+    expect(deps.createCategory).not.toHaveBeenCalled();
+    expect(outcome.state.installmentDraft?.categoryId).toBe("cat-pets-x");
+  });
+
+  it("nocat drops the proposal and returns to the normal keyboard", async () => {
+    const deps = proposalDeps();
+    const start = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(start.state, TOKENS.dropProposal, deps, {
+      today: TODAY,
+    });
+    expect(outcome.state.proposedCategoryName).toBeUndefined();
+    expect(outcome.reply).not.toContain("(nova — sugerida)");
+    const flat = (outcome.keyboard?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
+    expect(flat).toContain(TOKENS.confirm);
+    expect(deps.createCategory).not.toHaveBeenCalled();
+    expect(deps.createInstallmentPurchase).not.toHaveBeenCalled();
+  });
+
+  it("acceptProposal with deps.createCategory/listAllCategories undefined -> notUnderstood, draft intact", async () => {
+    const deps = proposalDeps({
+      createCategory: undefined,
+      listAllCategories: undefined,
+    });
+    const start = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(start.state, TOKENS.acceptProposal, deps, {
+      today: TODAY,
+    });
+    expect(outcome.state.proposedCategoryName).toBe("Pets");
+    expect(outcome.state.installmentDraft?.categoryId).toBeUndefined();
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(deps.createInstallmentPurchase).not.toHaveBeenCalled();
   });
 });
