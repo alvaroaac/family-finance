@@ -28,7 +28,7 @@ Google OAuth), `docker compose up -d`. Bring Caddy up with
 ## 2. Migrations
 
 From a machine with the repo and the Supabase CLI, push migrations
-`0001..0014` to the VPS database:
+`0001..0015` to the VPS database:
 
 ```bash
 supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@<vps-host>:5432/postgres"
@@ -49,7 +49,11 @@ Migration note: `0011` adds the obligations table + the idempotent
 SECURITY DEFINER RPC (the Supabase default grants it — a real hole for the
 obligations RPC, whose gate lets a null-uid caller through); `0013` adds
 composite `(household_id, id)` FKs so no write path can reference another
-household's category/account/card.
+household's category/account/card; `0015` adds the `bill_month` column and
+the `settle_card_bill` RPC, and re-gates `create_installment_purchase`, so the
+bot's service-role (null `auth.uid()`) client can call both card flows.
+**`0015` must be applied BEFORE the new bot container starts** — a new bot
+image against the old schema fails both the card-bill and installment flows.
 
 ## 3. Seed household members + allowlist
 
@@ -67,8 +71,9 @@ Run via `docker exec -i supabase-db psql -U postgres -d postgres` on the VPS.
 
 ## 4. Verification gate — RLS proof (must pass 100%)
 
-Run the 19-check proof against the VPS instance (from the repo root, after
-`pnpm install`; see the header of `checks/rls-proof.mjs` for details):
+Run the RLS proof (all checks must pass) against the VPS instance (from the
+repo root, after `pnpm install`; see the header of `checks/rls-proof.mjs` for
+details):
 
 ```bash
 SUPABASE_URL=https://supabase.alvaroekarol.com.br \
