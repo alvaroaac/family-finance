@@ -237,14 +237,7 @@ export function createCardBillSettlement(
 ): DomainResult<CardBillSettlementDraft> {
   const parsed = cardBillSettlementSchema.safeParse(input);
   if (!parsed.success) {
-    return {
-      ok: false,
-      errors: parsed.error.issues.map((issue) => ({
-        field: issue.path.join(".") || "root",
-        code: issue.code,
-        message: issue.message,
-      })),
-    };
+    return { ok: false, errors: zodToValidationErrors(parsed.error) };
   }
   return { ok: true, value: parsed.data };
 }
