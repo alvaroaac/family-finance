@@ -1421,6 +1421,7 @@ function describeValidationError(error: ValidationError | undefined): string {
     case "payment.creditCardId":
       return "cartão não informado";
     case "amount.cents":
+    case "amountCents":
     case "totalAmount.cents":
     case "totalAmount":
       return "valor inválido";
