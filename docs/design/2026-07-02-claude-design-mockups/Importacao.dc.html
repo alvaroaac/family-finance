@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0D1310; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;padding:48px;display:flex;flex-direction:column;gap:56px;align-items:center;font-family:Inter,system-ui,sans-serif">
+
+  <!-- ================= DESKTOP · PASSO 2 ================= -->
+  <div data-screen-label="Importação · desktop passo 2" style="animation:fadeUp 0.4s ease-out">
+    <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Importação · Desktop 1440 · Passo 2 de 3</div>
+    <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:1440px;min-height:1080px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:20px;overflow:hidden;display:flex;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+
+      <!-- Sidebar -->
+      <aside style="width:256px;flex-shrink:0;display:flex;flex-direction:column;background:var(--soft);border-right:1px solid var(--border);padding:30px 16px 22px">
+        <div style="padding:0 12px 28px">
+          <div style="font:600 10px Inter;letter-spacing:0.28em;text-transform:uppercase;color:var(--accent)">Nossa casa</div>
+          <div style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:23px;color:var(--ink);margin-top:6px">Alvaro <span style="font-style:italic;font-weight:500;font-size:16px;color:var(--accent)">&amp;</span> Karol</div>
+        </div>
+        <nav style="display:flex;flex-direction:column;gap:3px">
+          <a href="Resumo.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 L12 4.5 L21 11.5"></path><path d="M5.5 10 V19.5 H18.5 V10"></path></svg>Resumo</a>
+          <a href="Dashboard.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>Dashboard</a>
+          <a href="Transacoes.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13"></path><path d="M14 5l3 3-3 3"></path><path d="M20 16H7"></path><path d="M10 13l-3 3 3 3"></path></svg>Transações</a>
+          <a href="Importacao.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--tint);color:var(--accent);font:600 14px Inter;text-decoration:none;box-shadow:inset 2px 0 0 var(--accent)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"></path><path d="M8 8l4-4 4 4"></path><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"></path></svg>Importação</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7l9 9-7 7-9-9z"></path><circle cx="8" cy="8" r="1.3"></circle></svg>Categorias</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5 L12 4 L20 9.5"></path><path d="M6 10v8"></path><path d="M12 10v8"></path><path d="M18 10v8"></path><path d="M4 20h16"></path></svg>Contas</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2.5"></rect><path d="M3 10.5h18"></path></svg>Cartões</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8.5h10V19a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"></path><path d="M6 5.5h12"></path></svg>Investimentos</a>
+          <a href="Configuracoes.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16"></path><circle cx="9" cy="7" r="2"></circle><path d="M4 17h16"></path><circle cx="15" cy="17" r="2"></circle></svg>Configurações</a>
+        </nav>
+        <div style="margin-top:auto;display:flex;align-items:center;gap:11px;padding:12px;border-top:1px solid var(--border)">
+          <span style="width:34px;height:34px;border-radius:50%;background:var(--tint);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font:600 13px Inter;color:var(--accent)">A</span>
+          <div style="flex:1"><div style="font:500 13px Inter;color:var(--ink)">Alvaro</div><div style="font:400 11px Inter;color:var(--ink2)">alvaro@casa.com</div></div>
+          <button style="background:none;border:none;color:var(--ink2);cursor:pointer;font:400 12px Inter" style-hover="color:var(--ink)">sair</button>
+        </div>
+      </aside>
+
+      <!-- Content -->
+      <main style="flex:1;overflow-y:auto;padding:48px 56px">
+        <div style="font:600 11px Inter;letter-spacing:0.26em;text-transform:uppercase;color:var(--accent)">Nossa casa · Importação</div>
+        <h1 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:36px;color:var(--ink);margin:10px 0 4px">Dá uma olhada antes de gravar</h1>
+        <p style="font:300 15px Inter;color:var(--ink2);margin:0">Nada entra sem a sua revisão — desmarca o que não for da casa.</p>
+
+        <!-- Stepper -->
+        <div style="display:flex;align-items:center;gap:0;margin-top:30px;max-width:640px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="width:32px;height:32px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font:600 14px Inter">✓</span>
+            <span style="font:500 13px Inter;color:var(--ink2)">Enviar arquivo</span>
+          </div>
+          <div style="flex:1;height:1px;background:var(--accent);margin:0 14px"></div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="width:32px;height:32px;border-radius:50%;background:var(--tint);border:2px solid var(--accent);color:var(--accent);display:flex;align-items:center;justify-content:center;font:600 14px Inter">2</span>
+            <span style="font:600 13px Inter;color:var(--accent)">Revisar</span>
+          </div>
+          <div style="flex:1;height:1px;background:var(--border);margin:0 14px"></div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);color:var(--ink2);display:flex;align-items:center;justify-content:center;font:600 14px Inter">3</span>
+            <span style="font:500 13px Inter;color:var(--ink2)">Confirmar</span>
+          </div>
+        </div>
+
+        <!-- File chip -->
+        <div style="display:inline-flex;align-items:center;gap:12px;margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px">
+          <span style="width:34px;height:34px;border-radius:9px;background:var(--tint);display:flex;align-items:center;justify-content:center;color:var(--accent)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"></path><path d="M15 3v4h4"></path></svg></span>
+          <div><div style="font:500 13px Inter;color:var(--ink)">fatura-nubank-junho.pdf</div><div style="font:400 11px Inter;color:var(--ink2)">Fatura Nubank · cartão Nubank · 31 linhas encontradas</div></div>
+          <button style="background:none;border:none;color:var(--ink2);font:400 12px Inter;cursor:pointer;margin-left:8px" style-hover="color:var(--ink)">trocar</button>
+        </div>
+
+        <!-- Parcelamentos detectados -->
+        <div style="margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:26px 28px">
+          <div style="display:flex;align-items:baseline;gap:12px">
+            <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:22px;color:var(--ink);margin:0">Parcelamentos detectados</h2>
+            <span style="font:400 13px Inter;color:var(--ink2)">a gente achou 2 compras parceladas nessa fatura</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px">
+            <!-- Grupo 1: já existe -->
+            <div style="background:var(--soft);border:1px solid var(--border);border-radius:14px;padding:20px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <div style="font:600 14px Inter;color:var(--ink)">GELADEIRA BRASTEMP</div>
+                <span style="padding:4px 11px;border-radius:999px;background:transparent;color:var(--ink2);border:1px solid var(--border);font:600 11px Inter;white-space:nowrap">já existe</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px">
+                <div><label style="display:block;font:500 10px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px">Total</label><input value="R$ 2.899,00" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font:400 13px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent)"></div>
+                <div><label style="display:block;font:500 10px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px">Parcelas</label><input value="10" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font:400 13px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent)"></div>
+                <div><label style="display:block;font:500 10px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px">Compra</label><input value="12/05/2026" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font:400 13px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent)"></div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px">
+                <span style="font:400 12px Inter;color:var(--ink2)">vamos ligar a parcela 3/10 ao grupo que já existe</span>
+                <label style="display:inline-flex;align-items:center;gap:7px;font:500 12px Inter;color:var(--ink2);cursor:pointer"><span style="width:16px;height:16px;border-radius:5px;border:1px solid var(--border);display:inline-block"></span>pular</label>
+              </div>
+            </div>
+
+            <!-- Grupo 2: novo -->
+            <div style="background:var(--soft);border:1px solid var(--accent);border-radius:14px;padding:20px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <div style="font:600 14px Inter;color:var(--ink)">PASSAGENS GOL</div>
+                <span style="padding:4px 11px;border-radius:999px;background:var(--pos-wash);color:var(--pos);border:1px solid var(--pos-wash);font:600 11px Inter;white-space:nowrap">novo</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px">
+                <div><label style="display:block;font:500 10px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px">Total</label><input value="R$ 1.456,00" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font:400 13px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent)"></div>
+                <div><label style="display:block;font:500 10px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px">Parcelas</label><input value="4" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font:400 13px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent)"></div>
+                <div><label style="display:block;font:500 10px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px">Compra</label><input value="02/06/2026" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font:400 13px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent)"></div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px">
+                <span style="font:400 12px Inter;color:var(--ink2)">vira um grupo novo com projeção até setembro</span>
+                <label style="display:inline-flex;align-items:center;gap:7px;font:500 12px Inter;color:var(--ink2);cursor:pointer"><span style="width:16px;height:16px;border-radius:5px;border:1px solid var(--border);display:inline-block"></span>pular</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview table -->
+        <div style="margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;padding:22px 24px 14px">
+            <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:22px;color:var(--ink);margin:0">Prévia dos lançamentos</h2>
+            <span style="font:400 13px Inter;color:var(--ink2)">duplicatas já vêm desmarcadas</span>
+          </div>
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:11px 24px;background:var(--soft);font:600 10px Inter;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink2)">
+            <span></span><span>Dia</span><span>Descrição</span><span style="text-align:right">Valor</span><span>Categoria</span><span></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:12px 24px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center">
+            <span style="width:17px;height:17px;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter;cursor:pointer">✓</span>
+            <span style="color:var(--ink2)">05/06</span><span style="font-weight:500">IFOOD *REST SABOR</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 74,90</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:9px;padding:8px 11px;font:400 12px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Restaurantes</span><span style="color:var(--accent);font-size:10px">▾</span></div>
+            <span style="font:400 11px Inter;color:var(--pos)">sugerida pela memória ✨</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:12px 24px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center;opacity:0.55">
+            <span style="width:17px;height:17px;border-radius:5px;border:1px solid var(--border);display:inline-block;cursor:pointer"></span>
+            <span style="color:var(--ink2)">08/06</span><span style="font-weight:500">MERCADO GUANABARA</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 214,37</span>
+            <span style="color:var(--ink2);font-style:italic;font-size:12px">—</span>
+            <span><span style="padding:4px 11px;border-radius:999px;background:var(--neg-wash);color:var(--neg);font:600 11px Inter;white-space:nowrap">duplicata provável</span></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:12px 24px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center">
+            <span style="width:17px;height:17px;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter;cursor:pointer">✓</span>
+            <span style="color:var(--ink2)">12/06</span><span style="display:flex;align-items:center;gap:8px;font-weight:500">GELADEIRA BRASTEMP<span style="padding:2px 8px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 10px Inter;font-variant-numeric:tabular-nums">3/10</span></span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 289,90</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:9px;padding:8px 11px;font:400 12px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Casa</span><span style="color:var(--accent);font-size:10px">▾</span></div>
+            <span style="font:400 11px Inter;color:var(--ink2)">entra no grupo da geladeira</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:12px 24px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center;opacity:0.55">
+            <span style="width:17px;height:17px;border-radius:5px;border:1px solid var(--border);display:inline-block;cursor:pointer"></span>
+            <span style="color:var(--ink2)">15/06</span><span style="font-weight:500">POSTO SHELL</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 180,00</span>
+            <span style="color:var(--ink2);font-style:italic;font-size:12px">—</span>
+            <span><span style="padding:4px 11px;border-radius:999px;background:transparent;color:var(--ink2);border:1px solid var(--border);font:600 11px Inter;white-space:nowrap">já importada</span></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:12px 24px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center">
+            <span style="width:17px;height:17px;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter;cursor:pointer">✓</span>
+            <span style="color:var(--ink2)">18/06</span><span style="font-weight:500">DROGARIA PACHECO</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 45,80</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--warn);border-radius:9px;padding:8px 11px;font:400 12px Inter;cursor:pointer"><span style="color:var(--warn);font-style:italic">escolher…</span><span style="color:var(--warn);font-size:10px">▾</span></div>
+            <span><span style="padding:4px 11px;border-radius:999px;background:var(--warn-wash);color:var(--warn);font:600 11px Inter;white-space:nowrap">sem categoria</span></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 62px 1fr 120px 190px 170px;gap:12px;padding:12px 24px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center">
+            <span style="width:17px;height:17px;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter;cursor:pointer">✓</span>
+            <span style="color:var(--ink2)">22/06</span><span style="font-weight:500">SPOTIFY</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 34,90</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:9px;padding:8px 11px;font:400 12px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Assinaturas</span><span style="color:var(--accent);font-size:10px">▾</span></div>
+            <span style="font:400 11px Inter;color:var(--pos)">sugerida pela memória ✨</span>
+          </div>
+
+          <!-- Footer -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;border-top:1px solid var(--border);background:var(--soft)">
+            <span style="font:400 13px Inter;color:var(--ink2)"><strong style="font-weight:600;color:var(--ink)">28 novos</strong> · 1 duplicata desmarcada · 1 já importada · 1 sem categoria</span>
+            <div style="display:flex;gap:10px">
+              <button style="background:transparent;color:var(--ink);border:1px solid var(--border);border-radius:12px;padding:11px 20px;font:500 14px Inter;cursor:pointer" style-hover="background:var(--tint)">‹ Voltar</button>
+              <button style="background:var(--accent);color:var(--on-accent);border:none;border-radius:12px;padding:11px 24px;font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);transition:all 0.16s" style-hover="background:var(--accent-h);transform:translateY(-1px)">Gravar 28 lançamentos</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= PASSO 1 e PASSO 3 ================= -->
+  <div data-screen-label="Importação · passos 1 e 3" style="display:flex;flex-wrap:wrap;gap:56px;justify-content:center;animation:fadeUp 0.5s ease-out">
+    <div>
+      <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Passo 1 · Enviar arquivo</div>
+      <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:620px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:20px;padding:44px 48px;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+        <div style="font:600 11px Inter;letter-spacing:0.26em;text-transform:uppercase;color:var(--accent)">Importação · Passo 1 de 3</div>
+        <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:28px;color:var(--ink);margin:10px 0 6px">O que chegou pra gente?</h2>
+        <p style="font:300 14px Inter;color:var(--ink2);margin:0">CSV do Minhas Finanças ou fatura em PDF do cartão.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:24px">
+          <div>
+            <label style="display:block;font:500 11px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Origem</label>
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--ink);font:400 14px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Fatura Nubank (PDF)</span><span style="color:var(--accent);font-size:11px">▾</span></div>
+          </div>
+          <div>
+            <label style="display:block;font:500 11px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Cartão</label>
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--ink);font:400 14px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Nubank</span><span style="color:var(--accent);font-size:11px">▾</span></div>
+          </div>
+        </div>
+        <div style="margin-top:16px;border:1.5px dashed var(--border);border-radius:14px;padding:40px 24px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;cursor:pointer;transition:all 0.2s" style-hover="border-color:var(--accent);background:var(--tint)">
+          <span style="width:48px;height:48px;border-radius:50%;background:var(--tint);display:flex;align-items:center;justify-content:center;color:var(--accent)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"></path><path d="M8 8l4-4 4 4"></path><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"></path></svg></span>
+          <div style="font:500 14px Inter;color:var(--ink)">Solta o arquivo aqui</div>
+          <div style="font:400 12px Inter;color:var(--ink2)">ou <span style="color:var(--accent);font-weight:600">escolhe do computador</span> · PDF ou CSV</div>
+        </div>
+        <button style="margin-top:18px;width:100%;background:var(--accent);color:var(--on-accent);border:none;border-radius:12px;padding:13px;font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);transition:all 0.16s" style-hover="background:var(--accent-h);transform:translateY(-1px)">Ver prévia →</button>
+      </div>
+    </div>
+
+    <div>
+      <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Passo 3 · Confirmado</div>
+      <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:620px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:20px;padding:44px 48px;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+        <div style="font:600 11px Inter;letter-spacing:0.26em;text-transform:uppercase;color:var(--accent)">Importação · Passo 3 de 3</div>
+        <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:28px 0 8px">
+          <span style="width:64px;height:64px;border-radius:50%;background:var(--pos-wash);border:1px solid var(--pos);display:flex;align-items:center;justify-content:center;color:var(--pos);font:600 26px Inter">✓</span>
+          <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:28px;color:var(--ink);margin:18px 0 6px">Tudo guardado ✨</h2>
+          <p style="font:300 14px/1.6 Inter;color:var(--ink2);margin:0;max-width:380px"><strong style="font-weight:600;color:var(--ink)">28 lançamentos</strong> gravados da fatura de junho, com <strong style="font-weight:600;color:var(--ink)">1 parcelamento novo</strong> (Passagens Gol, 4x). A geladeira agora está na parcela 3 de 10.</p>
+          <div style="display:flex;gap:10px;margin-top:24px">
+            <a href="Transacoes.dc.html" style="background:var(--accent);color:var(--on-accent);border-radius:12px;padding:12px 22px;font:600 14px Inter;text-decoration:none;transition:all 0.16s" style-hover="background:var(--accent-h)">Ver na lista</a>
+            <button style="background:transparent;color:var(--ink);border:1px solid var(--border);border-radius:12px;padding:11px 20px;font:500 14px Inter;cursor:pointer" style-hover="background:var(--tint)">Importar outra</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MOBILE ================= -->
+  <div data-screen-label="Importação · mobile" style="animation:fadeUp 0.6s ease-out">
+    <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Importação · Mobile 390 · Passo 2</div>
+    <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:390px;height:844px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:28px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+      <div style="flex:1;overflow-y:auto;padding:28px 20px 20px">
+        <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">Importação · 2 de 3</div>
+        <h1 style="font-family:'Playfair Display',serif;font-weight:600;font-size:24px;color:var(--ink);margin:8px 0 4px">Dá uma olhada antes de gravar</h1>
+        <div style="font:400 12px Inter;color:var(--ink2)">fatura-nubank-junho.pdf · 31 linhas</div>
+
+        <!-- Parcelamento group card -->
+        <div style="background:var(--surface);border:1px solid var(--accent);border-radius:14px;padding:16px;margin-top:18px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span style="font:600 13px Inter;color:var(--ink)">PASSAGENS GOL</span>
+            <span style="padding:3px 10px;border-radius:999px;background:var(--pos-wash);color:var(--pos);font:600 10px Inter">novo</span>
+          </div>
+          <div style="font:400 12px Inter;color:var(--ink2);margin-top:6px">R$ 1.456,00 em 4x · compra 02/06</div>
+          <button style="margin-top:10px;background:transparent;border:1px solid var(--border);border-radius:999px;padding:6px 14px;color:var(--accent);font:600 11px Inter;cursor:pointer" style-hover="background:var(--tint)">ajustar</button>
+        </div>
+
+        <!-- Rows -->
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px">
+            <span style="width:18px;height:18px;flex-shrink:0;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter">✓</span>
+            <div style="flex:1;min-width:0"><div style="font:500 13px Inter;color:var(--ink)">IFOOD *REST SABOR</div><div style="font:400 11px Inter;color:var(--ink2);margin-top:2px">05/06 · Restaurantes ✨</div></div>
+            <span style="font:600 13px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 74,90</span>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px;opacity:0.55">
+            <span style="width:18px;height:18px;flex-shrink:0;border-radius:5px;border:1px solid var(--border)"></span>
+            <div style="flex:1;min-width:0"><div style="font:500 13px Inter;color:var(--ink)">MERCADO GUANABARA</div><div style="margin-top:4px"><span style="padding:2px 8px;border-radius:999px;background:var(--neg-wash);color:var(--neg);font:600 10px Inter">duplicata provável</span></div></div>
+            <span style="font:600 13px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 214,37</span>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px">
+            <span style="width:18px;height:18px;flex-shrink:0;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter">✓</span>
+            <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px"><span style="font:500 13px Inter;color:var(--ink)">GELADEIRA</span><span style="padding:2px 7px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter">3/10</span></div><div style="font:400 11px Inter;color:var(--ink2);margin-top:2px">12/06 · Casa</div></div>
+            <span style="font:600 13px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 289,90</span>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px;opacity:0.55">
+            <span style="width:18px;height:18px;flex-shrink:0;border-radius:5px;border:1px solid var(--border)"></span>
+            <div style="flex:1;min-width:0"><div style="font:500 13px Inter;color:var(--ink)">POSTO SHELL</div><div style="margin-top:4px"><span style="padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--ink2);font:600 10px Inter">já importada</span></div></div>
+            <span style="font:600 13px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 180,00</span>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--warn);border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px">
+            <span style="width:18px;height:18px;flex-shrink:0;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font:600 11px Inter">✓</span>
+            <div style="flex:1;min-width:0"><div style="font:500 13px Inter;color:var(--ink)">DROGARIA PACHECO</div><div style="font:400 11px Inter;color:var(--warn);margin-top:2px;font-style:italic">escolher categoria…</div></div>
+            <span style="font:600 13px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 45,80</span>
+          </div>
+        </div>
+      </div>
+      <!-- Sticky footer -->
+      <div style="flex-shrink:0;border-top:1px solid var(--border);background:var(--soft);padding:14px 18px 26px">
+        <div style="font:400 12px Inter;color:var(--ink2);margin-bottom:10px;text-align:center"><strong style="font-weight:600;color:var(--ink)">28 novos</strong> · 1 duplicata · 1 já importada</div>
+        <button style="width:100%;background:var(--accent);color:var(--on-accent);border:none;border-radius:12px;padding:14px;font:600 15px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14)" style-hover="background:var(--accent-h)">Gravar 28 lançamentos</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating theme picker -->
+  <div style="position:fixed;right:22px;bottom:22px;z-index:50;display:inline-flex;align-items:center;gap:10px;background:rgba(18,26,22,0.92);border:1px solid rgba(212,175,106,0.3);border-radius:999px;padding:9px 15px;backdrop-filter:blur(8px);box-shadow:0 8px 22px rgba(20,14,8,0.3)">
+    <span style="font:500 11px Inter;letter-spacing:0.12em;text-transform:uppercase;color:rgba(242,237,224,0.6)">Estilo</span>
+    <button onClick="{{ setSalvia }}" title="Sálvia" aria-label="Tema Sálvia" style="width:26px;height:26px;border-radius:50%;background:#E8EDE3;border:1px solid rgba(0,0,0,0.14);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringS }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#A8853C;display:block"></span></button>
+    <button onClick="{{ setEsmeralda }}" title="Esmeralda" aria-label="Tema Esmeralda" style="width:26px;height:26px;border-radius:50%;background:#16352B;border:1px solid rgba(212,175,106,0.4);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringE }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#D4AF6A;display:block"></span></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'esmeralda' };
+
+  themes = {
+    esmeralda: {
+      '--bg': '#16352B', '--surface': '#1E4133', '--soft': '#1A3A2E',
+      '--tint': 'rgba(212,175,106,0.14)', '--ink': '#F2EDE0', '--ink2': 'rgba(242,237,224,0.66)',
+      '--accent': '#D4AF6A', '--accent-h': '#E4C488', '--border': 'rgba(212,175,106,0.24)',
+      '--on-accent': '#16352B', '--pos': '#93C7A1', '--pos-wash': 'rgba(147,199,161,0.13)',
+      '--neg': '#E08B63', '--neg-wash': 'rgba(224,139,99,0.13)', '--warn': '#E0B662', '--warn-wash': 'rgba(224,182,98,0.15)'
+    },
+    salvia: {
+      '--bg': '#E8EDE3', '--surface': '#F7F9F3', '--soft': '#EFF3EA',
+      '--tint': 'rgba(168,133,60,0.12)', '--ink': '#2E3A2A', '--ink2': '#5F6B58',
+      '--accent': '#A8853C', '--accent-h': '#C2A258', '--border': '#CBD6C0',
+      '--on-accent': '#FFFFFF', '--pos': '#3E7D52', '--pos-wash': 'rgba(62,125,82,0.12)',
+      '--neg': '#B4552F', '--neg-wash': 'rgba(180,85,47,0.10)', '--warn': '#9A7526', '--warn-wash': 'rgba(154,117,38,0.13)'
+    }
+  };
+
+  componentDidMount() {
+    const saved = localStorage.getItem('ak-fin-theme');
+    if (saved && this.themes[saved] && saved !== this.state.theme) this.applyTheme(saved);
+  }
+
+  applyTheme(key) {
+    const t = this.themes[key];
+    document.querySelectorAll('[data-theme-root]').forEach((el) => {
+      for (const k in t) el.style.setProperty(k, t[k]);
+    });
+    try { localStorage.setItem('ak-fin-theme', key); } catch (e) {}
+    this.setState({ theme: key });
+  }
+
+  renderVals() {
+    const on = '0 0 0 2px rgba(18,26,22,0.92), 0 0 0 4px #D4AF6A';
+    return {
+      setSalvia: () => this.applyTheme('salvia'),
+      setEsmeralda: () => this.applyTheme('esmeralda'),
+      ringS: this.state.theme === 'salvia' ? on : 'none',
+      ringE: this.state.theme === 'esmeralda' ? on : 'none'
+    };
+  }
+}
+</script>
+</body>
+</html>

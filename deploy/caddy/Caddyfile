@@ -1,0 +1,21 @@
+# Caddy reverse proxy for the family-finance VPS (spec §4.1 / §4.3).
+#
+# Caddy terminates HTTPS (automatic Let's Encrypt certificates) and fronts:
+#   * supabase.alvaroekarol.com.br → Kong (the Supabase self-host API gateway,
+#     listening on :8000 inside the supabase compose network / on the host).
+#   * bot.alvaroekarol.com.br     → the Telegram bot webhook server on :8787.
+#
+# Assumes Caddy runs on the VPS host (or a container on the same docker
+# network) and can reach the upstream ports. Adjust the upstream host names if
+# Caddy joins the compose networks (e.g. `kong:8000`, `bot:8787`).
+
+supabase.alvaroekarol.com.br {
+	# Kong routes /auth/v1, /rest/v1, /storage/v1, /realtime/v1, /functions/v1.
+	reverse_proxy localhost:8000
+}
+
+bot.alvaroekarol.com.br {
+	# Telegram webhook server (apps/bot). Only POST /webhook and GET /health
+	# exist; everything else 404s in the app itself.
+	reverse_proxy localhost:8787
+}

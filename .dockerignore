@@ -1,0 +1,16 @@
+# Keep the docker build context (repo root) lean — apps/bot/Dockerfile copies
+# workspace manifests and sources explicitly.
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+.git
+supabase
+thoughts
+memory
+.superpowers
+docs
+*.log
+.env
+.env.*

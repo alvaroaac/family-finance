@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0D1310; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</helmet>
+
+<div data-screen-label="Design System" style="min-height:100vh;padding:56px 48px 120px;display:flex;justify-content:center;font-family:Inter,system-ui,sans-serif">
+  <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:1200px;max-width:100%;background:var(--bg);border:1px solid rgba(242,237,224,0.10);border-radius:20px;padding:72px 80px;box-shadow:0 24px 60px rgba(20,14,8,0.3);animation:fadeUp 0.4s ease-out">
+
+    <!-- Header -->
+    <div style="font:600 11px Inter,sans-serif;letter-spacing:0.28em;text-transform:uppercase;color:var(--accent)">Nossa casa · Design system</div>
+    <h1 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:52px;line-height:1.1;color:var(--ink);margin:14px 0 10px">Editorial acolhedor</h1>
+    <p style="font:300 17px/1.6 Inter,sans-serif;color:var(--ink2);max-width:620px;margin:0">A linguagem do nosso chá de casa nova, agora nas contas da casa. Sensação de convite impresso: serifa elegante, dourado antigo, verde esmeralda e bordas finas — quente sem ser infantil.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:24px">
+      <a href="Resumo.dc.html" style="padding:8px 16px;border-radius:999px;border:1px solid var(--border);color:var(--accent);font:500 13px Inter,sans-serif;text-decoration:none" style-hover="background:var(--tint)">Resumo →</a>
+      <a href="Dashboard.dc.html" style="padding:8px 16px;border-radius:999px;border:1px solid var(--border);color:var(--accent);font:500 13px Inter,sans-serif;text-decoration:none" style-hover="background:var(--tint)">Dashboard →</a>
+      <a href="Transacoes.dc.html" style="padding:8px 16px;border-radius:999px;border:1px solid var(--border);color:var(--accent);font:500 13px Inter,sans-serif;text-decoration:none" style-hover="background:var(--tint)">Transações →</a>
+      <a href="Importacao.dc.html" style="padding:8px 16px;border-radius:999px;border:1px solid var(--border);color:var(--accent);font:500 13px Inter,sans-serif;text-decoration:none" style-hover="background:var(--tint)">Importação →</a>
+      <a href="Configuracoes.dc.html" style="padding:8px 16px;border-radius:999px;border:1px solid var(--border);color:var(--accent);font:500 13px Inter,sans-serif;text-decoration:none" style-hover="background:var(--tint)">Configurações →</a>
+      <a href="Mais Telas.dc.html" style="padding:8px 16px;border-radius:999px;border:1px solid var(--border);color:var(--accent);font:500 13px Inter,sans-serif;text-decoration:none" style-hover="background:var(--tint)">Mais telas →</a>
+    </div>
+
+    <!-- ============ CORES ============ -->
+    <div style="margin-top:72px">
+      <div style="font:600 11px Inter,sans-serif;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">01 · Cores</div>
+      <h2 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:30px;color:var(--ink);margin:10px 0 24px">Dois temas, um dourado</h2>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <!-- Esmeralda -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="display:flex;align-items:baseline;justify-content:space-between">
+            <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:19px;color:var(--ink)">Esmeralda</div>
+            <div style="font:500 11px Inter,sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink2)">tema padrão</div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:18px">
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#16352B;border:1px solid rgba(242,237,224,0.25)"></span><span style="font:500 12px Inter;color:var(--ink)">Fundo</span><span style="font:400 11px ui-monospace,monospace;color:var(--ink2)">#16352B</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#1E4133;border:1px solid rgba(242,237,224,0.25)"></span><span style="font:500 12px Inter;color:var(--ink)">Card</span><span style="font:400 11px ui-monospace,monospace;color:var(--ink2)">#1E4133</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#1A3A2E;border:1px solid rgba(242,237,224,0.25)"></span><span style="font:500 12px Inter;color:var(--ink)">Painel</span><span style="font:400 11px ui-monospace,monospace;color:var(--ink2)">#1A3A2E</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#F2EDE0"></span><span style="font:500 12px Inter;color:var(--ink)">Marfim</span><span style="font:400 11px ui-monospace,monospace;color:var(--ink2)">#F2EDE0</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#D4AF6A"></span><span style="font:500 12px Inter;color:var(--ink)">Dourado</span><span style="font:400 11px ui-monospace,monospace;color:var(--ink2)">#D4AF6A</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:rgba(212,175,106,0.24)"></span><span style="font:500 12px Inter;color:var(--ink)">Borda</span><span style="font:400 10px ui-monospace,monospace;color:var(--ink2)">dourado 24%</span></div>
+          </div>
+        </div>
+        <!-- Sálvia -->
+        <div style="background:#F7F9F3;border:1px solid #CBD6C0;border-radius:14px;padding:24px">
+          <div style="display:flex;align-items:baseline;justify-content:space-between">
+            <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:19px;color:#2E3A2A">Sálvia</div>
+            <div style="font:500 11px Inter,sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:#5F6B58">tema claro</div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:18px">
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#E8EDE3;border:1px solid #CBD6C0"></span><span style="font:500 12px Inter;color:#2E3A2A">Fundo</span><span style="font:400 11px ui-monospace,monospace;color:#5F6B58">#E8EDE3</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#F7F9F3;border:1px solid #CBD6C0"></span><span style="font:500 12px Inter;color:#2E3A2A">Card</span><span style="font:400 11px ui-monospace,monospace;color:#5F6B58">#F7F9F3</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#EFF3EA;border:1px solid #CBD6C0"></span><span style="font:500 12px Inter;color:#2E3A2A">Painel</span><span style="font:400 11px ui-monospace,monospace;color:#5F6B58">#EFF3EA</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#2E3A2A"></span><span style="font:500 12px Inter;color:#2E3A2A">Tinta</span><span style="font:400 11px ui-monospace,monospace;color:#5F6B58">#2E3A2A</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#A8853C"></span><span style="font:500 12px Inter;color:#2E3A2A">Dourado</span><span style="font:400 11px ui-monospace,monospace;color:#5F6B58">#A8853C</span></div>
+            <div style="display:flex;flex-direction:column;gap:7px;width:86px"><span style="width:44px;height:44px;border-radius:50%;background:#CBD6C0"></span><span style="font:500 12px Inter;color:#2E3A2A">Borda</span><span style="font:400 11px ui-monospace,monospace;color:#5F6B58">#CBD6C0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Semânticas -->
+      <div style="background:var(--soft);border:1px solid var(--border);border-radius:14px;padding:24px;margin-top:20px">
+        <div style="font:600 11px Inter,sans-serif;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2)">Semânticas — derivadas da paleta, nunca verde-limão nem vermelho-alarme</div>
+        <div style="display:flex;flex-wrap:wrap;gap:40px;margin-top:18px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <span style="width:44px;height:44px;border-radius:50%;background:var(--pos)"></span>
+            <div><div style="font:500 13px Inter;color:var(--ink)">Positivo · receitas, saldo bom</div><div style="font:400 11px ui-monospace,monospace;color:var(--ink2);margin-top:3px">#93C7A1 esmeralda · #3E7D52 sálvia</div></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <span style="width:44px;height:44px;border-radius:50%;background:var(--neg)"></span>
+            <div><div style="font:500 13px Inter;color:var(--ink)">Negativo · despesas, terroso</div><div style="font:400 11px ui-monospace,monospace;color:var(--ink2);margin-top:3px">#E08B63 esmeralda · #B4552F sálvia</div></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <span style="width:44px;height:44px;border-radius:50%;background:var(--warn)"></span>
+            <div><div style="font:500 13px Inter;color:var(--ink)">Atenção · pendente de revisão</div><div style="font:400 11px ui-monospace,monospace;color:var(--ink2);margin-top:3px">#E0B662 esmeralda · #9A7526 sálvia</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TIPOGRAFIA ============ -->
+    <div style="margin-top:72px">
+      <div style="font:600 11px Inter,sans-serif;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">02 · Tipografia</div>
+      <h2 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:30px;color:var(--ink);margin:10px 0 24px">Playfair Display + Inter</h2>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;display:flex;flex-direction:column;gap:26px">
+        <div>
+          <div style="font:500 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:8px">Display · Playfair 600 · 44px</div>
+          <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:44px;line-height:1.15;color:var(--ink)">Como estão as contas da casa?</div>
+        </div>
+        <div>
+          <div style="font:500 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:8px">Número grande · Playfair 600 · 56px · tabular</div>
+          <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:56px;color:var(--ink);font-variant-numeric:tabular-nums">R$ 4.812,90</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px">
+          <div>
+            <div style="font:500 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:8px">Título de seção · Playfair 600 · 24px</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:24px;color:var(--ink)">Fatura do Nubank</div>
+          </div>
+          <div>
+            <div style="font:500 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:8px">Kicker · Inter 600 · 11px · 0.24em</div>
+            <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">Gasto do mês</div>
+          </div>
+        </div>
+        <div>
+          <div style="font:500 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:8px">Corpo · Inter 300–400 · 15px</div>
+          <div style="font:300 15px/1.6 Inter;color:var(--ink);max-width:560px">A gente lançou 42 coisas esse mês. A geladeira nova entra como parcela 3 de 10 e as caixinhas seguem crescendo devagarinho.</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:16px;font:400 13px/1.6 Inter;color:var(--ink2)">Dourado é acento — kickers, ícones, botões, títulos curtos. Nunca em texto corrido pequeno (contraste AA: corpo sempre marfim/tinta sobre fundo do tema).</div>
+      </div>
+    </div>
+
+    <!-- ============ COMPONENTES ============ -->
+    <div style="margin-top:72px">
+      <div style="font:600 11px Inter,sans-serif;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">03 · Componentes</div>
+      <h2 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:30px;color:var(--ink);margin:10px 0 24px">As peças da casa</h2>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+
+        <!-- Buttons -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">Button</div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
+            <button style="background:var(--accent);color:var(--on-accent);border:none;border-radius:12px;padding:11px 20px;font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);transition:all 0.16s" style-hover="background:var(--accent-h);transform:translateY(-1px)">Salvar lançamento</button>
+            <button style="background:transparent;color:var(--ink);border:1px solid var(--border);border-radius:12px;padding:10px 20px;font:500 14px Inter;cursor:pointer;transition:all 0.16s" style-hover="background:var(--tint);border-color:var(--accent)">Cancelar</button>
+            <button style="background:transparent;color:var(--neg);border:1px solid var(--neg-wash);border-radius:12px;padding:10px 20px;font:500 14px Inter;cursor:pointer;transition:all 0.16s" style-hover="background:var(--neg-wash)">Excluir</button>
+            <button style="background:transparent;color:var(--accent);border:none;padding:8px 6px;font:600 13px Inter;cursor:pointer" style-hover="color:var(--accent-h)">Ver tudo →</button>
+          </div>
+        </div>
+
+        <!-- Badges -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">Badge</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px">
+            <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;background:var(--warn-wash);color:var(--warn);border:1px solid var(--warn-wash);font:600 11px Inter;letter-spacing:0.03em"><span style="width:5px;height:5px;border-radius:50%;background:var(--warn)"></span>Pendente de revisão</span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:999px;background:var(--neg-wash);color:var(--neg);border:1px solid var(--neg-wash);font:600 11px Inter">Duplicata provável</span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:999px;background:transparent;color:var(--ink2);border:1px solid var(--border);font:600 11px Inter">Já importada</span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:999px;background:var(--pos-wash);color:var(--pos);border:1px solid var(--pos-wash);font:600 11px Inter">Novo</span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:999px;background:var(--tint);color:var(--accent);border:1px solid var(--border);font:600 11px Inter;font-variant-numeric:tabular-nums">Parcela 3/10</span>
+            <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;background:var(--pos-wash);color:var(--pos);border:1px solid var(--pos-wash);font:600 11px Inter">✓ Revisado</span>
+          </div>
+        </div>
+
+        <!-- StatCard -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">StatCard</div>
+          <div style="background:var(--soft);border:1px solid var(--border);border-radius:14px;padding:22px;max-width:300px;transition:all 0.16s" style-hover="transform:translateY(-1px);box-shadow:0 8px 22px rgba(20,14,8,0.14);border-color:var(--accent)">
+            <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">Gasto do mês</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:36px;color:var(--ink);margin-top:10px;font-variant-numeric:tabular-nums">R$ 4.812,90</div>
+            <div style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:4px 10px;border-radius:999px;background:var(--pos-wash);color:var(--pos);font:500 12px Inter">↓ R$ 320 a menos que junho</div>
+          </div>
+        </div>
+
+        <!-- Inputs -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">Inputs &amp; selects</div>
+          <div style="display:flex;flex-direction:column;gap:14px;max-width:320px">
+            <div>
+              <label style="display:block;font:500 11px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Descrição</label>
+              <input value="Mercado Guanabara" style="width:100%;box-sizing:border-box;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--ink);font:400 14px Inter;outline:none" style-focus="border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)">
+            </div>
+            <div style="display:flex;gap:10px">
+              <div style="flex:1;position:relative">
+                <label style="display:block;font:500 11px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Quem</label>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--ink);font:400 14px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>A casa</span><span style="color:var(--accent);font-size:11px">▾</span></div>
+              </div>
+              <div style="flex:1">
+                <label style="display:block;font:500 11px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Categoria</label>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--ink);font:400 14px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Mercado</span><span style="color:var(--accent);font-size:11px">▾</span></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="display:inline-flex;align-items:center;gap:2px;background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:4px 6px">
+                <button style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--accent);font:600 15px Inter;cursor:pointer" style-hover="background:var(--tint)">‹</button>
+                <span style="font:500 13px Inter;color:var(--ink);padding:0 8px">julho de 2026</span>
+                <button style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--accent);font:600 15px Inter;cursor:pointer" style-hover="background:var(--tint)">›</button>
+              </div>
+              <span style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:999px;background:var(--warn-wash);border:1px solid var(--warn);color:var(--warn);font:600 12px Inter;cursor:pointer">Só pendentes · 3</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table desktop -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">Table · desktop</div>
+          <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden">
+            <div style="display:grid;grid-template-columns:64px 1fr 110px 76px 100px;gap:12px;padding:10px 16px;background:var(--soft);font:600 10px Inter;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink2)">
+              <span>Dia</span><span>Descrição</span><span>Categoria</span><span>Quem</span><span style="text-align:right">Valor</span>
+            </div>
+            <div style="display:grid;grid-template-columns:64px 1fr 110px 76px 100px;gap:12px;padding:13px 16px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+              <span style="color:var(--ink2)">01/07</span><span>Mercado Guanabara</span><span style="color:var(--ink2)">Mercado</span><span style="color:var(--ink2)">A casa</span><span style="text-align:right;color:var(--neg);font-variant-numeric:tabular-nums">− R$ 214,37</span>
+            </div>
+            <div style="display:grid;grid-template-columns:64px 1fr 110px 76px 100px;gap:12px;padding:13px 16px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+              <span style="color:var(--ink2)">30/06</span><span style="display:flex;align-items:center;gap:8px">Posto Shell<span style="padding:3px 9px;border-radius:999px;background:var(--warn-wash);color:var(--warn);font:600 10px Inter">Pendente</span></span><span style="color:var(--ink2)">—</span><span style="color:var(--ink2)">Alvaro</span><span style="text-align:right;color:var(--neg);font-variant-numeric:tabular-nums">− R$ 180,00</span>
+            </div>
+            <div style="display:grid;grid-template-columns:64px 1fr 110px 76px 100px;gap:12px;padding:13px 16px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+              <span style="color:var(--ink2)">28/06</span><span>Salário Karol</span><span style="color:var(--ink2)">Renda</span><span style="color:var(--ink2)">Karol</span><span style="text-align:right;color:var(--pos);font-variant-numeric:tabular-nums">+ R$ 6.400,00</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table mobile collapse -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">Table · colapso mobile (lista de cards)</div>
+          <div style="display:flex;flex-direction:column;gap:10px;max-width:340px">
+            <div style="background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div><div style="font:500 14px Inter;color:var(--ink)">Mercado Guanabara</div><div style="font:400 12px Inter;color:var(--ink2);margin-top:3px">01/07 · Mercado · a casa</div></div>
+              <div style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 214,37</div>
+            </div>
+            <div style="background:var(--soft);border:1px solid var(--warn);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div><div style="display:flex;align-items:center;gap:8px"><span style="font:500 14px Inter;color:var(--ink)">Posto Shell</span><span style="padding:3px 9px;border-radius:999px;background:var(--warn-wash);color:var(--warn);font:600 10px Inter">Pendente</span></div><div style="font:400 12px Inter;color:var(--ink2);margin-top:3px">30/06 · sem categoria · Alvaro</div></div>
+              <div style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 180,00</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- EmptyState -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">EmptyState</div>
+          <div style="border:1px dashed var(--border);border-radius:14px;padding:36px 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px">
+            <span style="width:52px;height:52px;border-radius:50%;background:var(--tint);display:flex;align-items:center;justify-content:center;color:var(--accent)">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11 L12 4 L21 11"></path><path d="M5 10 V20 H19 V10"></path></svg>
+            </span>
+            <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:20px;color:var(--ink)">Nenhum lançamento por aqui ainda</div>
+            <div style="font:300 13px/1.5 Inter;color:var(--ink2);max-width:260px">Quando a gente lançar algo — pelo site ou pelo bot — aparece aqui.</div>
+            <button style="margin-top:4px;background:transparent;color:var(--ink);border:1px solid var(--border);border-radius:12px;padding:9px 18px;font:500 13px Inter;cursor:pointer" style-hover="background:var(--tint);border-color:var(--accent)">Importar fatura</button>
+          </div>
+        </div>
+
+        <!-- Nav item states -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">Sidebar · estados do item</div>
+          <div style="display:flex;flex-direction:column;gap:4px;max-width:240px">
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>
+              Dashboard <span style="margin-left:auto;font:400 10px Inter;color:var(--ink2);opacity:0.6">padrão</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:rgba(242,237,224,0.05);color:var(--ink);font:500 14px Inter">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>
+              Dashboard <span style="margin-left:auto;font:400 10px Inter;color:var(--ink2);opacity:0.6">hover</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--tint);color:var(--accent);font:600 14px Inter;box-shadow:inset 2px 0 0 var(--accent)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>
+              Dashboard <span style="margin-left:auto;font:400 10px Inter;color:var(--accent);opacity:0.8">ativo</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- PageTitle -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px">
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:16px">PageTitle</div>
+          <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">Nossa casa · Julho</div>
+          <h3 style="font-family:'Playfair Display',serif;font-weight:600;font-size:32px;color:var(--ink);margin:8px 0 6px">Transações</h3>
+          <p style="font:300 14px/1.5 Inter;color:var(--ink2);margin:0">Tudo que entrou e saiu — dá pra ajustar categoria e responsável direto na lista.</p>
+        </div>
+
+      </div>
+
+      <!-- Theme picker demo -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-top:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
+        <div>
+          <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2)">Theme picker flutuante</div>
+          <div style="font:300 13px Inter;color:var(--ink2);margin-top:6px">Bolinhas como na landing — canto inferior direito, discreto. Experimenta: esta página inteira troca de tema.</div>
+        </div>
+        <div style="display:inline-flex;align-items:center;gap:10px;background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:8px 14px">
+          <span style="font:500 11px Inter;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink2)">Estilo</span>
+          <button onClick="{{ setSalvia }}" title="Sálvia" aria-label="Tema Sálvia" style="width:26px;height:26px;border-radius:50%;background:#E8EDE3;border:1px solid rgba(0,0,0,0.14);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringS }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#A8853C;display:block"></span></button>
+          <button onClick="{{ setEsmeralda }}" title="Esmeralda" aria-label="Tema Esmeralda" style="width:26px;height:26px;border-radius:50%;background:#16352B;border:1px solid rgba(0,0,0,0.2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringE }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#D4AF6A;display:block"></span></button>
+        </div>
+      </div>
+
+      <!-- Forma e profundidade -->
+      <div style="background:var(--soft);border:1px solid var(--border);border-radius:14px;padding:24px;margin-top:20px">
+        <div style="font:600 10px Inter;letter-spacing:0.2em;text-transform:uppercase;color:var(--ink2);margin-bottom:14px">Forma, profundidade e movimento</div>
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:20px;font:400 13px/1.55 Inter;color:var(--ink)">
+          <div><strong style="font-weight:600;color:var(--accent)">Cantos</strong><br>10–16px em cards, botões e inputs; 999px em chips, badges e tabs.</div>
+          <div><strong style="font-weight:600;color:var(--accent)">Bordas</strong><br>Hairline 1px na cor de borda do tema em quase todo card — linguagem de convite.</div>
+          <div><strong style="font-weight:600;color:var(--accent)">Sombras</strong><br>Sempre quentes: rgba(20,14,8, 0.05–0.16). Nunca preto puro.</div>
+          <div><strong style="font-weight:600;color:var(--accent)">Movimento</strong><br>0.15–0.5s: fade+slide de painéis, pop de badges, translateY(−1px) no hover.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'esmeralda' };
+
+  themes = {
+    esmeralda: {
+      '--bg': '#16352B', '--surface': '#1E4133', '--soft': '#1A3A2E',
+      '--tint': 'rgba(212,175,106,0.14)', '--ink': '#F2EDE0', '--ink2': 'rgba(242,237,224,0.66)',
+      '--accent': '#D4AF6A', '--accent-h': '#E4C488', '--border': 'rgba(212,175,106,0.24)',
+      '--on-accent': '#16352B', '--pos': '#93C7A1', '--pos-wash': 'rgba(147,199,161,0.13)',
+      '--neg': '#E08B63', '--neg-wash': 'rgba(224,139,99,0.13)', '--warn': '#E0B662', '--warn-wash': 'rgba(224,182,98,0.15)'
+    },
+    salvia: {
+      '--bg': '#E8EDE3', '--surface': '#F7F9F3', '--soft': '#EFF3EA',
+      '--tint': 'rgba(168,133,60,0.12)', '--ink': '#2E3A2A', '--ink2': '#5F6B58',
+      '--accent': '#A8853C', '--accent-h': '#C2A258', '--border': '#CBD6C0',
+      '--on-accent': '#FFFFFF', '--pos': '#3E7D52', '--pos-wash': 'rgba(62,125,82,0.12)',
+      '--neg': '#B4552F', '--neg-wash': 'rgba(180,85,47,0.10)', '--warn': '#9A7526', '--warn-wash': 'rgba(154,117,38,0.13)'
+    }
+  };
+
+  componentDidMount() {
+    const saved = localStorage.getItem('ak-fin-theme');
+    if (saved && this.themes[saved] && saved !== this.state.theme) this.applyTheme(saved);
+  }
+
+  applyTheme(key) {
+    const t = this.themes[key];
+    document.querySelectorAll('[data-theme-root]').forEach((el) => {
+      for (const k in t) el.style.setProperty(k, t[k]);
+    });
+    try { localStorage.setItem('ak-fin-theme', key); } catch (e) {}
+    this.setState({ theme: key });
+  }
+
+  renderVals() {
+    const on = '0 0 0 2px var(--surface), 0 0 0 4px var(--accent)';
+    return {
+      setSalvia: () => this.applyTheme('salvia'),
+      setEsmeralda: () => this.applyTheme('esmeralda'),
+      ringS: this.state.theme === 'salvia' ? on : 'none',
+      ringE: this.state.theme === 'esmeralda' ? on : 'none'
+    };
+  }
+}
+</script>
+</body>
+</html>

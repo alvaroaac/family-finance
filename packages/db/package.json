@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@family-finance/config": "workspace:*",
+    "@family-finance/domain": "workspace:*",
     "@supabase/supabase-js": "^2.47.10",
     "zod": "^3.24.1"
   },

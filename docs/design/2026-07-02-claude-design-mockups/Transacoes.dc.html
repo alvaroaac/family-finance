@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0D1310; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;padding:48px;display:flex;flex-wrap:wrap;gap:56px;align-items:flex-start;justify-content:center;font-family:Inter,system-ui,sans-serif">
+
+  <!-- ================= DESKTOP ================= -->
+  <div data-screen-label="Transações · desktop" style="animation:fadeUp 0.4s ease-out">
+    <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Transações · Desktop 1440</div>
+    <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:1440px;min-height:960px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:20px;overflow:hidden;display:flex;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+
+      <!-- Sidebar -->
+      <aside style="width:256px;flex-shrink:0;display:flex;flex-direction:column;background:var(--soft);border-right:1px solid var(--border);padding:30px 16px 22px">
+        <div style="padding:0 12px 28px">
+          <div style="font:600 10px Inter;letter-spacing:0.28em;text-transform:uppercase;color:var(--accent)">Nossa casa</div>
+          <div style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:23px;color:var(--ink);margin-top:6px">Alvaro <span style="font-style:italic;font-weight:500;font-size:16px;color:var(--accent)">&amp;</span> Karol</div>
+        </div>
+        <nav style="display:flex;flex-direction:column;gap:3px">
+          <a href="Resumo.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 L12 4.5 L21 11.5"></path><path d="M5.5 10 V19.5 H18.5 V10"></path></svg>Resumo</a>
+          <a href="Dashboard.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>Dashboard</a>
+          <a href="Transacoes.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--tint);color:var(--accent);font:600 14px Inter;text-decoration:none;box-shadow:inset 2px 0 0 var(--accent)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13"></path><path d="M14 5l3 3-3 3"></path><path d="M20 16H7"></path><path d="M10 13l-3 3 3 3"></path></svg>Transações</a>
+          <a href="Importacao.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"></path><path d="M8 8l4-4 4 4"></path><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"></path></svg>Importação</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7l9 9-7 7-9-9z"></path><circle cx="8" cy="8" r="1.3"></circle></svg>Categorias</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5 L12 4 L20 9.5"></path><path d="M6 10v8"></path><path d="M12 10v8"></path><path d="M18 10v8"></path><path d="M4 20h16"></path></svg>Contas</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2.5"></rect><path d="M3 10.5h18"></path></svg>Cartões</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8.5h10V19a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"></path><path d="M6 5.5h12"></path></svg>Investimentos</a>
+          <a href="Configuracoes.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16"></path><circle cx="9" cy="7" r="2"></circle><path d="M4 17h16"></path><circle cx="15" cy="17" r="2"></circle></svg>Configurações</a>
+        </nav>
+        <div style="margin-top:auto;display:flex;align-items:center;gap:11px;padding:12px;border-top:1px solid var(--border)">
+          <span style="width:34px;height:34px;border-radius:50%;background:var(--tint);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font:600 13px Inter;color:var(--accent)">K</span>
+          <div style="flex:1"><div style="font:500 13px Inter;color:var(--ink)">Karol</div><div style="font:400 11px Inter;color:var(--ink2)">karol@casa.com</div></div>
+          <button style="background:none;border:none;color:var(--ink2);cursor:pointer;font:400 12px Inter" style-hover="color:var(--ink)">sair</button>
+        </div>
+      </aside>
+
+      <!-- Content -->
+      <main style="flex:1;overflow-y:auto;padding:48px 56px">
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px">
+          <div>
+            <div style="font:600 11px Inter;letter-spacing:0.26em;text-transform:uppercase;color:var(--accent)">Nossa casa · Julho de 2026</div>
+            <h1 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:36px;color:var(--ink);margin:10px 0 4px">Transações</h1>
+            <p style="font:300 15px Inter;color:var(--ink2);margin:0">Tudo que entrou e saiu — dá pra ajustar categoria, descrição e responsável direto na lista.</p>
+          </div>
+          <button style="flex-shrink:0;background:var(--accent);color:var(--on-accent);border:none;border-radius:12px;padding:12px 22px;font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);transition:all 0.16s" style-hover="background:var(--accent-h);transform:translateY(-1px)">+ Novo lançamento</button>
+        </div>
+
+        <!-- Filter bar -->
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:28px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px">
+          <div style="display:inline-flex;align-items:center;gap:2px;background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:4px 6px">
+            <button style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--accent);font:600 15px Inter;cursor:pointer" style-hover="background:var(--tint)">‹</button>
+            <span style="font:500 13px Inter;color:var(--ink);padding:0 8px">julho de 2026</span>
+            <button style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--accent);font:600 15px Inter;cursor:pointer" style-hover="background:var(--tint)">›</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:9px 13px;color:var(--ink);font:400 13px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span style="color:var(--ink2)">Conta:</span> todas <span style="color:var(--accent);font-size:10px">▾</span></div>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:9px 13px;color:var(--ink);font:400 13px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span style="color:var(--ink2)">Cartão:</span> todos <span style="color:var(--accent);font-size:10px">▾</span></div>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:9px 13px;color:var(--ink);font:400 13px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span style="color:var(--ink2)">Categoria:</span> todas <span style="color:var(--accent);font-size:10px">▾</span></div>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:9px 13px;color:var(--ink);font:400 13px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span style="color:var(--ink2)">Quem:</span> todo mundo <span style="color:var(--accent);font-size:10px">▾</span></div>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:999px;background:var(--warn-wash);border:1px solid var(--warn);color:var(--warn);font:600 12px Inter;cursor:pointer;margin-left:auto">Só pendentes · 3</span>
+        </div>
+
+        <!-- Table -->
+        <div style="margin-top:18px;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:12px 20px;background:var(--soft);font:600 10px Inter;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink2)">
+            <span>Dia</span><span>Descrição</span><span>Conta / Cartão</span><span>Categoria</span><span>Quem</span><span style="text-align:right">Valor</span><span></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+            <span style="color:var(--ink2)">01/07</span><span style="font-weight:500">Mercado Guanabara</span><span style="color:var(--ink2)">Itaú</span><span style="color:var(--ink2)">Mercado</span><span style="color:var(--ink2)">a casa</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 214,37</span>
+            <span style="display:flex;gap:6px;justify-content:flex-end"><button title="editar" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--tint);color:var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg></button><button title="excluir" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--neg-wash);color:var(--neg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M6 7l1 13h10l1-13"></path></svg></button></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+            <span style="color:var(--ink2)">01/07</span><span style="font-weight:500">Uber</span><span style="color:var(--ink2)">Nubank</span><span style="color:var(--ink2)">Transporte</span><span style="color:var(--ink2)">Karol</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 18,90</span>
+            <span style="display:flex;gap:6px;justify-content:flex-end"><button title="editar" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--tint);color:var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg></button><button title="excluir" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--neg-wash);color:var(--neg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M6 7l1 13h10l1-13"></path></svg></button></span>
+          </div>
+
+          <!-- Pendente -->
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center;background:rgba(224,182,98,0.05);box-shadow:inset 3px 0 0 var(--warn)">
+            <span style="color:var(--ink2)">30/06</span><span style="display:flex;align-items:center;gap:8px;font-weight:500">Posto Shell<span style="padding:3px 9px;border-radius:999px;background:var(--warn-wash);color:var(--warn);font:600 10px Inter">Pendente</span></span><span style="color:var(--ink2)">Nubank</span><span style="color:var(--warn);font-style:italic">sem categoria</span><span style="color:var(--ink2)">Alvaro</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 180,00</span>
+            <span style="display:flex;justify-content:flex-end"><button style="background:transparent;border:1px solid var(--warn);border-radius:999px;padding:5px 12px;color:var(--warn);font:600 11px Inter;cursor:pointer;white-space:nowrap" style-hover="background:var(--warn-wash)">revisar</button></span>
+          </div>
+
+          <!-- Inline edit row -->
+          <div style="border-top:1px solid var(--border);background:var(--soft);padding:16px 20px;box-shadow:inset 3px 0 0 var(--accent)">
+            <div style="font:600 10px Inter;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);margin-bottom:12px">Editando · 29/06</div>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+              <div style="flex:2;min-width:220px">
+                <label style="display:block;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Descrição</label>
+                <input value="PIX João da horta" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;color:var(--ink);font:400 13px Inter;outline:none;box-shadow:0 0 0 3px var(--tint)">
+              </div>
+              <div style="flex:1;min-width:150px">
+                <label style="display:block;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Categoria</label>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--ink);font:400 13px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>Mercado</span><span style="color:var(--accent);font-size:10px">▾</span></div>
+              </div>
+              <div style="flex:1;min-width:130px">
+                <label style="display:block;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Quem</label>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--ink);font:400 13px Inter;cursor:pointer" style-hover="border-color:var(--accent)"><span>a casa</span><span style="color:var(--accent);font-size:10px">▾</span></div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button style="background:var(--accent);color:var(--on-accent);border:none;border-radius:10px;padding:10px 18px;font:600 13px Inter;cursor:pointer;transition:all 0.16s" style-hover="background:var(--accent-h)">Salvar</button>
+                <button style="background:transparent;color:var(--ink2);border:1px solid var(--border);border-radius:10px;padding:10px 16px;font:500 13px Inter;cursor:pointer" style-hover="color:var(--ink)">Cancelar</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+            <span style="color:var(--ink2)">28/06</span><span style="display:flex;align-items:center;gap:8px;font-weight:500">Geladeira Brastemp<span style="padding:2px 8px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 10px Inter;font-variant-numeric:tabular-nums">parcela 3/10</span></span><span style="color:var(--ink2)">Nubank</span><span style="color:var(--ink2)">Casa</span><span style="color:var(--ink2)">a casa</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 289,90</span>
+            <span style="display:flex;gap:6px;justify-content:flex-end"><button title="editar" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--tint);color:var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg></button><button title="excluir" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--neg-wash);color:var(--neg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M6 7l1 13h10l1-13"></path></svg></button></span>
+          </div>
+
+          <!-- Delete confirm row -->
+          <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-top:1px solid var(--border);background:var(--neg-wash);box-shadow:inset 3px 0 0 var(--neg)">
+            <span style="font:400 13px Inter;color:var(--ink);flex:1">Excluir <strong style="font-weight:600">"Padaria do bairro · − R$ 32,50"</strong>? Isso não dá pra desfazer.</span>
+            <button style="background:var(--neg);color:#FFF7F0;border:none;border-radius:10px;padding:9px 18px;font:600 13px Inter;cursor:pointer">Excluir</button>
+            <button style="background:transparent;color:var(--ink);border:1px solid var(--border);border-radius:10px;padding:9px 16px;font:500 13px Inter;cursor:pointer" style-hover="background:var(--tint)">Deixa pra lá</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+            <span style="color:var(--ink2)">28/06</span><span style="font-weight:500">Salário Karol</span><span style="color:var(--ink2)">Itaú</span><span style="color:var(--ink2)">Renda</span><span style="color:var(--ink2)">Karol</span><span style="text-align:right;color:var(--pos);font-weight:600;font-variant-numeric:tabular-nums">+ R$ 6.400,00</span>
+            <span style="display:flex;gap:6px;justify-content:flex-end"><button title="editar" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--tint);color:var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg></button><button title="excluir" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--neg-wash);color:var(--neg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M6 7l1 13h10l1-13"></path></svg></button></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center;background:rgba(224,182,98,0.05);box-shadow:inset 3px 0 0 var(--warn)">
+            <span style="color:var(--ink2)">27/06</span><span style="display:flex;align-items:center;gap:8px;font-weight:500">Amazon BR<span style="padding:3px 9px;border-radius:999px;background:var(--warn-wash);color:var(--warn);font:600 10px Inter">Pendente</span></span><span style="color:var(--ink2)">Inter</span><span style="color:var(--warn);font-style:italic">sem categoria</span><span style="color:var(--ink2)">Karol</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 129,90</span>
+            <span style="display:flex;justify-content:flex-end"><button style="background:transparent;border:1px solid var(--warn);border-radius:999px;padding:5px 12px;color:var(--warn);font:600 11px Inter;cursor:pointer;white-space:nowrap" style-hover="background:var(--warn-wash)">revisar</button></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:62px 1fr 130px 130px 100px 110px 70px;gap:12px;padding:14px 20px;border-top:1px solid var(--border);font:400 13px Inter;color:var(--ink);align-items:center" style-hover="background:var(--tint)">
+            <span style="color:var(--ink2)">27/06</span><span style="font-weight:500">Conta de luz · Light</span><span style="color:var(--ink2)">Itaú</span><span style="color:var(--ink2)">Moradia</span><span style="color:var(--ink2)">a casa</span><span style="text-align:right;color:var(--neg);font-weight:600;font-variant-numeric:tabular-nums">− R$ 218,44</span>
+            <span style="display:flex;gap:6px;justify-content:flex-end"><button title="editar" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--tint);color:var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg></button><button title="excluir" style="width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--ink2);cursor:pointer" style-hover="background:var(--neg-wash);color:var(--neg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M6 7l1 13h10l1-13"></path></svg></button></span>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-top:1px solid var(--border);background:var(--soft)">
+            <span style="font:400 12px Inter;color:var(--ink2)">42 lançamentos em julho · 3 pendentes</span>
+            <div style="display:flex;gap:6px">
+              <button style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--ink2);font:500 12px Inter;cursor:pointer" style-hover="color:var(--ink);border-color:var(--accent)">‹ anterior</button>
+              <button style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--ink);font:500 12px Inter;cursor:pointer" style-hover="border-color:var(--accent)">próxima ›</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= MOBILE ================= -->
+  <div data-screen-label="Transações · mobile" style="animation:fadeUp 0.5s ease-out">
+    <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Transações · Mobile 390</div>
+    <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);width:390px;height:844px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:28px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+      <div style="flex:1;overflow-y:auto;padding:28px 20px 20px">
+        <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)">Nossa casa</div>
+        <h1 style="font-family:'Playfair Display',serif;font-weight:600;font-size:26px;color:var(--ink);margin:8px 0 0">Transações</h1>
+
+        <!-- Filters -->
+        <div style="display:flex;align-items:center;gap:8px;margin-top:16px">
+          <div style="display:inline-flex;align-items:center;gap:2px;background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:3px 5px;flex:1;justify-content:space-between">
+            <button style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--accent);font:600 15px Inter;cursor:pointer">‹</button>
+            <span style="font:500 13px Inter;color:var(--ink)">julho de 2026</span>
+            <button style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--accent);font:600 15px Inter;cursor:pointer">›</button>
+          </div>
+          <button style="width:38px;height:38px;flex-shrink:0;background:var(--soft);border:1px solid var(--border);border-radius:10px;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="border-color:var(--accent)" title="filtros">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
+          </button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;overflow-x:auto;padding-bottom:4px">
+          <span style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:999px;background:var(--warn-wash);border:1px solid var(--warn);color:var(--warn);font:600 12px Inter">Só pendentes · 3</span>
+          <span style="flex-shrink:0;padding:7px 14px;border-radius:999px;background:var(--soft);border:1px solid var(--border);color:var(--ink2);font:500 12px Inter">Cartão: Nubank ▾</span>
+          <span style="flex-shrink:0;padding:7px 14px;border-radius:999px;background:var(--soft);border:1px solid var(--border);color:var(--ink2);font:500 12px Inter">Quem: todos ▾</span>
+        </div>
+
+        <!-- Cards -->
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:15px 16px">
+            <div style="display:flex;justify-content:space-between;gap:12px"><span style="font:500 14px Inter;color:var(--ink)">Mercado Guanabara</span><span style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 214,37</span></div>
+            <div style="font:400 12px Inter;color:var(--ink2);margin-top:4px">01/07 · Itaú · Mercado · a casa</div>
+          </div>
+
+          <div style="background:var(--surface);border:1px solid var(--warn);border-radius:14px;padding:15px 16px">
+            <div style="display:flex;justify-content:space-between;gap:12px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="font:500 14px Inter;color:var(--ink)">Posto Shell</span><span style="padding:3px 9px;border-radius:999px;background:var(--warn-wash);color:var(--warn);font:600 10px Inter">Pendente</span></div>
+              <span style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 180,00</span>
+            </div>
+            <div style="font:400 12px Inter;color:var(--ink2);margin-top:4px">30/06 · Nubank · sem categoria · Alvaro</div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button style="flex:1;background:var(--accent);color:var(--on-accent);border:none;border-radius:10px;padding:10px;font:600 13px Inter;cursor:pointer" style-hover="background:var(--accent-h)">Categorizar</button>
+              <button style="background:transparent;border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--ink2);font:500 13px Inter;cursor:pointer">depois</button>
+            </div>
+          </div>
+
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:15px 16px">
+            <div style="display:flex;justify-content:space-between;gap:12px">
+              <div style="display:flex;align-items:center;gap:8px;min-width:0"><span style="font:500 14px Inter;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Geladeira Brastemp</span><span style="flex-shrink:0;padding:2px 8px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 10px Inter">3/10</span></div>
+              <span style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 289,90</span>
+            </div>
+            <div style="font:400 12px Inter;color:var(--ink2);margin-top:4px">28/06 · Nubank · Casa · a casa</div>
+          </div>
+
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:15px 16px">
+            <div style="display:flex;justify-content:space-between;gap:12px"><span style="font:500 14px Inter;color:var(--ink)">Padaria do bairro</span><span style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 32,50</span></div>
+            <div style="font:400 12px Inter;color:var(--ink2);margin-top:4px">28/06 · Itaú · Mercado · Alvaro</div>
+          </div>
+
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:15px 16px">
+            <div style="display:flex;justify-content:space-between;gap:12px"><span style="font:500 14px Inter;color:var(--ink)">Salário Karol</span><span style="font:600 14px Inter;color:var(--pos);font-variant-numeric:tabular-nums;white-space:nowrap">+ R$ 6.400,00</span></div>
+            <div style="font:400 12px Inter;color:var(--ink2);margin-top:4px">28/06 · Itaú · Renda · Karol</div>
+          </div>
+
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:15px 16px">
+            <div style="display:flex;justify-content:space-between;gap:12px"><span style="font:500 14px Inter;color:var(--ink)">Conta de luz · Light</span><span style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 218,44</span></div>
+            <div style="font:400 12px Inter;color:var(--ink2);margin-top:4px">27/06 · Itaú · Moradia · a casa</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FAB -->
+      <button style="position:absolute;right:18px;bottom:96px;width:52px;height:52px;border-radius:50%;background:var(--accent);color:var(--on-accent);border:none;font:400 26px Inter;cursor:pointer;box-shadow:0 8px 22px rgba(20,14,8,0.3);display:flex;align-items:center;justify-content:center" style-hover="background:var(--accent-h)">+</button>
+
+      <!-- Bottom nav -->
+      <div style="flex-shrink:0;display:flex;justify-content:space-around;align-items:center;border-top:1px solid var(--border);background:var(--soft);padding:10px 8px 22px">
+        <a href="Resumo.dc.html" style="display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--ink2);text-decoration:none;min-width:60px;padding:4px 0" style-hover="color:var(--ink)">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 L12 4.5 L21 11.5"></path><path d="M5.5 10 V19.5 H18.5 V10"></path></svg>
+          <span style="font:500 10px Inter">Resumo</span>
+        </a>
+        <a href="Transacoes.dc.html" style="display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--accent);text-decoration:none;min-width:60px;padding:4px 0">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13"></path><path d="M14 5l3 3-3 3"></path><path d="M20 16H7"></path><path d="M10 13l-3 3 3 3"></path></svg>
+          <span style="font:600 10px Inter">Transações</span>
+        </a>
+        <a href="Mais Telas.dc.html" style="display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--ink2);text-decoration:none;min-width:60px;padding:4px 0" style-hover="color:var(--ink)">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2.5"></rect><path d="M3 10.5h18"></path></svg>
+          <span style="font:500 10px Inter">Cartões</span>
+        </a>
+        <a href="Configuracoes.dc.html" style="display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--ink2);text-decoration:none;min-width:60px;padding:4px 0" style-hover="color:var(--ink)">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+          <span style="font:500 10px Inter">Mais</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating theme picker -->
+  <div style="position:fixed;right:22px;bottom:22px;z-index:50;display:inline-flex;align-items:center;gap:10px;background:rgba(18,26,22,0.92);border:1px solid rgba(212,175,106,0.3);border-radius:999px;padding:9px 15px;backdrop-filter:blur(8px);box-shadow:0 8px 22px rgba(20,14,8,0.3)">
+    <span style="font:500 11px Inter;letter-spacing:0.12em;text-transform:uppercase;color:rgba(242,237,224,0.6)">Estilo</span>
+    <button onClick="{{ setSalvia }}" title="Sálvia" aria-label="Tema Sálvia" style="width:26px;height:26px;border-radius:50%;background:#E8EDE3;border:1px solid rgba(0,0,0,0.14);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringS }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#A8853C;display:block"></span></button>
+    <button onClick="{{ setEsmeralda }}" title="Esmeralda" aria-label="Tema Esmeralda" style="width:26px;height:26px;border-radius:50%;background:#16352B;border:1px solid rgba(212,175,106,0.4);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringE }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#D4AF6A;display:block"></span></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'esmeralda' };
+
+  themes = {
+    esmeralda: {
+      '--bg': '#16352B', '--surface': '#1E4133', '--soft': '#1A3A2E',
+      '--tint': 'rgba(212,175,106,0.14)', '--ink': '#F2EDE0', '--ink2': 'rgba(242,237,224,0.66)',
+      '--accent': '#D4AF6A', '--accent-h': '#E4C488', '--border': 'rgba(212,175,106,0.24)',
+      '--on-accent': '#16352B', '--pos': '#93C7A1', '--pos-wash': 'rgba(147,199,161,0.13)',
+      '--neg': '#E08B63', '--neg-wash': 'rgba(224,139,99,0.13)', '--warn': '#E0B662', '--warn-wash': 'rgba(224,182,98,0.15)'
+    },
+    salvia: {
+      '--bg': '#E8EDE3', '--surface': '#F7F9F3', '--soft': '#EFF3EA',
+      '--tint': 'rgba(168,133,60,0.12)', '--ink': '#2E3A2A', '--ink2': '#5F6B58',
+      '--accent': '#A8853C', '--accent-h': '#C2A258', '--border': '#CBD6C0',
+      '--on-accent': '#FFFFFF', '--pos': '#3E7D52', '--pos-wash': 'rgba(62,125,82,0.12)',
+      '--neg': '#B4552F', '--neg-wash': 'rgba(180,85,47,0.10)', '--warn': '#9A7526', '--warn-wash': 'rgba(154,117,38,0.13)'
+    }
+  };
+
+  componentDidMount() {
+    const saved = localStorage.getItem('ak-fin-theme');
+    if (saved && this.themes[saved] && saved !== this.state.theme) this.applyTheme(saved);
+  }
+
+  applyTheme(key) {
+    const t = this.themes[key];
+    document.querySelectorAll('[data-theme-root]').forEach((el) => {
+      for (const k in t) el.style.setProperty(k, t[k]);
+    });
+    try { localStorage.setItem('ak-fin-theme', key); } catch (e) {}
+    this.setState({ theme: key });
+  }
+
+  renderVals() {
+    const on = '0 0 0 2px rgba(18,26,22,0.92), 0 0 0 4px #D4AF6A';
+    return {
+      setSalvia: () => this.applyTheme('salvia'),
+      setEsmeralda: () => this.applyTheme('esmeralda'),
+      ringS: this.state.theme === 'salvia' ? on : 'none',
+      ringE: this.state.theme === 'esmeralda' ? on : 'none'
+    };
+  }
+}
+</script>
+</body>
+</html>
