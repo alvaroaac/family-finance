@@ -415,11 +415,36 @@ links a stale junk project ("web") that installs with npm and dies on `workspace
 `casa.alvaroekarol.com.br` → new deploy, 200. VPS was already current (other session): migration 0011
 applied, 0012 grants effective, bot container running merged code (obligations + the 3 bot fixes).
 
+## 2026-07-06 — Bot inline buttons shipped (PR #6) + PR-2 card spec approved
+
+### Tried that worked
+- Subagent-driven execution of the bot-buttons plan (10 tasks, haiku for transcription tasks / sonnet for integration, per-task spec+quality reviews) → 11 commits, full gate green. Ledger: `.superpowers/sdd/progress.md`.
+- Final whole-branch review (fable) caught a real regression the per-task reviews missed: store.save moved AFTER Telegram sends reopened the double-insert window on ✅ re-tap → fixed `86e9e6a` (save-before-send + regression test with a throwing fake telegram).
+- Branch `feat/bot-inline-buttons` created off the feature commits, origin/mvp merged in (one append-append test-file conflict, kept both), PR #6 opened against `feat/family-finance-mvp`.
+- codex-review (GPT 5.5) of the PR-2 spec via plain `codex exec` → 6 findings, ALL verified real; spec fixed in `b177bbc`. Best catch: `create_installment_purchase`'s body gate rejects null-uid callers, so the bot's service-role client cannot call it despite 0012's service_role GRANT — migration 0015 must re-gate it to the 0011 pattern.
+- plan-review browser UI on the spec → Approved.
+
+### Tried that didn't work
+- `codex exec review --commit <sha> "custom prompt"` → exit 2: scope flags (`--base`/`--commit`/`--uncommitted`) are mutually exclusive with a PROMPT arg on codex-cli 0.142.3 (usage string misleads). Skill docs fixed at `~/.claude/skills/codex-review/SKILL.md`. Top-level `codex review` has the same exclusivity and no `-o`.
+- `gh pr merge 6` from the agent → blocked by the auto-mode classifier (self-authored PR). User must merge.
+
+### Decisions
+- Card-bill payment ("nubank pago") = **single `kind='transfer'` row with BOTH instruments** (account = source, card = destination) + `bill_month` + unique partial index + `settle_card_bill` RPC — user wants cash movement AND settled status; an expense row would double-count (purchases are already expenses).
+- Both-instruments check applies ONLY when `bill_month IS NOT NULL` — plain caixinha transfers keep the XOR (existing fixture "Aporte caixinha" is account-only).
+- Deleting the settle row = intentional undo (un-settles the month; repeat "pago" re-records).
+- Bill amount = computed invoice (`getCardPressureForCard`) with typed override; settles the current calendar month only.
+
 ---
 
 ## Current state
 
-**v1.0 is LIVE.** Web on Vercel prod (`https://casa.alvaroekarol.com.br`), bot container running on the VPS (mine-ops), Supabase self-hosted, Telegram webhook healthy, audio (Whisper) working. Model = Haiku 4.5. Everything pushed to `feat/family-finance-mvp` (PR #2), working tree clean (thoughts/ local-only).
+**Bot inline buttons + category creation: code DONE, awaiting merge + deploy.** Branch `feat/bot-inline-buttons`, PR #6 → `feat/family-finance-mvp` OPEN (user must merge). Two docs commits (`5c45bc5`, `b177bbc` — PR-2 spec) sit on that branch ahead of origin, unpushed. After merge: rsync-redeploy the bot to minesupply (commands in the 2026-07-04 block below; confirm with user first, never rsync `.env`) **and re-run setWebhook with `allowed_updates=["message","callback_query"]`** — buttons silently dead without it.
+
+**PR-2 (card installments + bill payment): spec approved** at `docs/superpowers/specs/2026-07-06-bot-card-installments-and-bill-payment-design.md` (post codex-review fixes). **Next move: invoke superpowers:writing-plans on that spec**, get plan approval + execution-mode choice, then execute.
+
+---
+
+**(prior current-state — 2026-07-04)** **v1.0 is LIVE.** Web on Vercel prod (`https://casa.alvaroekarol.com.br`), bot container running on the VPS (mine-ops), Supabase self-hosted, Telegram webhook healthy, audio (Whisper) working. Model = Haiku 4.5. Everything pushed to `feat/family-finance-mvp` (PR #2), working tree clean (thoughts/ local-only).
 
 **3 approved bot bugfixes: DONE + pushed (`19a7dd4`) but NOT yet deployed.** The bot container on the VPS still runs the old code. **Next move: rsync-redeploy the bot** (user must confirm first — their standing instruction):
 ```
