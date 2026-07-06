@@ -4,7 +4,7 @@ import { requireAuthorizedUser } from "../../../lib/auth";
 import { currentMemberName } from "../../../lib/member";
 import { formatBrlCents } from "../../../lib/format";
 import { RecentTransactions } from "../../../components/recent-transactions";
-import { Card, Delta, IconCard, IconTag, Kicker } from "../../../components/ui";
+import { Badge, Card, Delta, IconCard, IconTag, Kicker } from "../../../components/ui";
 import {
   loadResumoData,
   monthLabelPtBr,
@@ -146,7 +146,10 @@ export default async function ResumoPage() {
                       <span className="ff-bubble">
                         <IconCard size={17} />
                       </span>
-                      <div className="ff-icard__name">{card.name}</div>
+                      <div className="ff-icard__name">
+                        {card.name}
+                        {card.settled ? <Badge tone="positive">paga ✅</Badge> : null}
+                      </div>
                     </div>
                     <div className="ff-icard__value ff-serif ff-num">
                       {formatBrlCents(card.projectedCents)}

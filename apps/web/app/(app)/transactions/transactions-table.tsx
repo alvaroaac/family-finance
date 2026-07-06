@@ -339,8 +339,9 @@ export function TransactionsTable({
   }
 
   function paymentSelect(row: TransactionListItem, compact: boolean) {
-    if (row.installmentId !== null) {
-      // Parcelas: payment is managed via the installment group.
+    if (row.installmentId !== null || row.kind === "transfer") {
+      // Parcelas: managed via the group. Transfers (bill payments): both
+      // instruments are fixed — delete the row to undo.
       return <span className="ff-dim">{paymentName(row)}</span>;
     }
     const value =

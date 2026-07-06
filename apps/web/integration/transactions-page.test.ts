@@ -144,6 +144,41 @@ describe("TransactionsTable: payment select", () => {
     expect(html).toContain('value="account:acct-1"');
     expect(html).not.toContain('value="card:card-1"');
   });
+
+  it("shows plain text (no select) for a transfer row — card-bill payment, both instruments fixed", () => {
+    const row: TransactionListItem = {
+      id: "tx-transfer-1",
+      householdId: "00000000-0000-0000-0000-000000000001",
+      description: "Pagamento fatura Nubank",
+      occurredOn: "2026-07-04",
+      amount: { currency: "BRL", cents: 12000 },
+      kind: "transfer",
+      categoryId: null,
+      subcategoryId: null,
+      createdByUserId: "11111111-1111-1111-1111-111111111111",
+      responsibilityScope: "household",
+      responsibleUserId: null,
+      accountId: "acct-1",
+      creditCardId: "card-1",
+      installmentId: null,
+    };
+    const html = renderToStaticMarkup(
+      createElement(
+        ToastProvider,
+        null,
+        createElement(TransactionsTable, {
+          rows: [row],
+          categories: [],
+          subcategories: [],
+          responsibles: [{ value: "household", label: "Casa" }],
+          accounts: [{ id: "acct-1", name: "Conta Corrente" }],
+          cards: [{ id: "card-1", name: "Nubank" }],
+        }),
+      ),
+    );
+    expect(html).not.toContain('aria-label="Pagamento"');
+    expect(html).toContain("Nubank");
+  });
 });
 
 describe("TransactionsTable: amount edit", () => {
