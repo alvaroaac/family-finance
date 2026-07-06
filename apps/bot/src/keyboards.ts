@@ -118,9 +118,14 @@ export function installmentConfirmationKeyboard(
  * Category-pick grid: active categories alphabetically (pt-BR collation),
  * 2 per row, ending with the new-category button. Household scale — tens of
  * categories, far below Telegram's 100-button cap.
+ *
+ * `includeNewCategory` defaults to true; the installment flow passes `false`
+ * because its callback branch has no handler for `nc` — the button would
+ * otherwise show but expire the draft with a bogus "Sessão expirada" toast.
  */
 export function categoryGridKeyboard(
   categories: ReadonlyArray<{ id: string; name: string }>,
+  includeNewCategory = true,
 ): InlineKeyboardMarkup {
   const sorted = [...categories].sort((a, b) =>
     a.name.localeCompare(b.name, "pt-BR"),
@@ -131,7 +136,9 @@ export function categoryGridKeyboard(
       callback_data: `${CATEGORY_TOKEN_PREFIX}${c.id}`,
     })),
   );
-  rows.push([{ text: "➕ Nova categoria", callback_data: TOKENS.newCategory }]);
+  if (includeNewCategory) {
+    rows.push([{ text: "➕ Nova categoria", callback_data: TOKENS.newCategory }]);
+  }
   return { inline_keyboard: rows };
 }
 

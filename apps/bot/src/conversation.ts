@@ -2456,7 +2456,7 @@ export async function applyCallback(
       return {
         state,
         reply: chooseCategoryMessage(),
-        keyboard: categoryGridKeyboard(depsValue.catalog.categories),
+        keyboard: categoryGridKeyboard(depsValue.catalog.categories, false),
       };
     }
     if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {

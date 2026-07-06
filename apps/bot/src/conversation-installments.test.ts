@@ -492,6 +492,23 @@ describe("card installment confirmation keyboard has no responsável button", ()
     expect(flatten(outcome.keyboard)).not.toContain(TOKENS.responsible);
   });
 
+  it("tapping 📂 Categoria on a live installment draft shows a grid with no nova-categoria button", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const { state } = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(state, TOKENS.categories, deps, {
+      today: TODAY,
+    });
+    expect(flatten(outcome.keyboard)).not.toContain(TOKENS.newCategory);
+  });
+
   it("tapping resp (TOKENS.responsible) on a live installment session is stale (button no longer renders)", async () => {
     const { deps } = buildDeps({
       classifyMessage: classifierReturning(

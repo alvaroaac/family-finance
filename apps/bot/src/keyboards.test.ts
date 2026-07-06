@@ -111,6 +111,24 @@ describe("categoryGridKeyboard", () => {
       `${CATEGORY_TOKEN_PREFIX}11111111-2222-3333-4444-555555555555`,
     );
   });
+
+  it("omits nova categoria when includeNewCategory is false (installment variant)", () => {
+    const grid = categoryGridKeyboard(
+      [
+        { id: "cat-t", name: "Transporte" },
+        { id: "cat-a", name: "Alimentação" },
+      ],
+      false,
+    );
+    const flat = grid.inline_keyboard.flat();
+    expect(flat.some((b) => b.callback_data === TOKENS.newCategory)).toBe(false);
+  });
+
+  it("keeps nova categoria by default", () => {
+    const grid = categoryGridKeyboard([{ id: "cat-a", name: "Alimentação" }]);
+    const flat = grid.inline_keyboard.flat();
+    expect(flat.some((b) => b.callback_data === TOKENS.newCategory)).toBe(true);
+  });
 });
 
 describe("responsibleGridKeyboard", () => {
