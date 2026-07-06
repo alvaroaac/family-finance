@@ -5,6 +5,7 @@ import {
   CATEGORY_TOKEN_PREFIX,
   CARD_TOKEN_PREFIX,
   confirmationKeyboard,
+  installmentConfirmationKeyboard,
   categoryGridKeyboard,
   responsibleGridKeyboard,
   cancelOnlyKeyboard,
@@ -40,6 +41,41 @@ describe("confirmationKeyboard", () => {
         ],
       ],
     });
+  });
+});
+
+describe("installmentConfirmationKeyboard", () => {
+  it("without a proposal: confirm/cancel + categoria only, no responsável", () => {
+    const keyboard = installmentConfirmationKeyboard();
+    expect(keyboard).toEqual({
+      inline_keyboard: [
+        [
+          { text: "✅ Confirmar", callback_data: "cf" },
+          { text: "❌ Cancelar", callback_data: "cx" },
+        ],
+        [{ text: "📂 Categoria", callback_data: "cats" }],
+      ],
+    });
+    const flat = keyboard.inline_keyboard.flat();
+    expect(flat.some((b) => b.callback_data === TOKENS.responsible)).toBe(false);
+  });
+
+  it("with a proposal: accept-with-create / other / no-category / cancel, no responsável", () => {
+    const keyboard = installmentConfirmationKeyboard("Pets");
+    expect(keyboard).toEqual({
+      inline_keyboard: [
+        [
+          { text: '✅ Confirmar (cria "Pets")', callback_data: "nca" },
+          { text: "📂 Outra categoria", callback_data: "cats" },
+        ],
+        [
+          { text: "🚫 Sem categoria", callback_data: "nocat" },
+          { text: "❌ Cancelar", callback_data: "cx" },
+        ],
+      ],
+    });
+    const flat = keyboard.inline_keyboard.flat();
+    expect(flat.some((b) => b.callback_data === TOKENS.responsible)).toBe(false);
   });
 });
 

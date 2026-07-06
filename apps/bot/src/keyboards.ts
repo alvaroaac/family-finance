@@ -78,6 +78,43 @@ export function confirmationKeyboard(
 }
 
 /**
+ * Card-installment confirmation keyboard: same shape as
+ * `confirmationKeyboard`, minus the "👤 Responsável" button — the
+ * installment flow always attributes to whoever typed the purchase, so
+ * there is no responsável state to hand this button to.
+ */
+export function installmentConfirmationKeyboard(
+  proposedCategoryName?: string,
+): InlineKeyboardMarkup {
+  if (proposedCategoryName !== undefined) {
+    return {
+      inline_keyboard: [
+        [
+          {
+            text: `✅ Confirmar (cria "${proposedCategoryName}")`,
+            callback_data: TOKENS.acceptProposal,
+          },
+          { text: "📂 Outra categoria", callback_data: TOKENS.categories },
+        ],
+        [
+          { text: "🚫 Sem categoria", callback_data: TOKENS.dropProposal },
+          { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+        ],
+      ],
+    };
+  }
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Confirmar", callback_data: TOKENS.confirm },
+        { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+      ],
+      [{ text: "📂 Categoria", callback_data: TOKENS.categories }],
+    ],
+  };
+}
+
+/**
  * Category-pick grid: active categories alphabetically (pt-BR collation),
  * 2 per row, ending with the new-category button. Household scale — tens of
  * categories, far below Telegram's 100-button cap.

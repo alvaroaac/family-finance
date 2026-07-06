@@ -89,6 +89,7 @@ import {
   CARD_TOKEN_PREFIX,
   RESPONSIBLE_TOKEN_PREFIX,
   confirmationKeyboard,
+  installmentConfirmationKeyboard,
   categoryGridKeyboard,
   cardGridKeyboard,
   responsibleGridKeyboard,
@@ -719,8 +720,8 @@ async function startInstallmentIntent(
     installmentDraft.cardId === undefined
       ? cardGridKeyboard(cards)
       : proposedCategoryName !== undefined
-        ? confirmationKeyboard(proposedCategoryName)
-        : confirmationKeyboard();
+        ? installmentConfirmationKeyboard(proposedCategoryName)
+        : installmentConfirmationKeyboard();
   return { state, reply, keyboard };
 }
 
@@ -2077,8 +2078,8 @@ export async function applyCallback(
         ),
         keyboard:
           state.proposedCategoryName !== undefined
-            ? confirmationKeyboard(state.proposedCategoryName)
-            : confirmationKeyboard(),
+            ? installmentConfirmationKeyboard(state.proposedCategoryName)
+            : installmentConfirmationKeyboard(),
       };
     }
     if (token === TOKENS.categories) {
@@ -2110,7 +2111,7 @@ export async function applyCallback(
       return {
         state: nextState,
         reply: `${correctionAppliedMessage("a categoria")}\n\n${installmentConfirmationMessage(installmentSummaryView(next, depsValue))}`,
-        keyboard: confirmationKeyboard(),
+        keyboard: installmentConfirmationKeyboard(),
       };
     }
     if (token === TOKENS.acceptProposal) {
@@ -2136,7 +2137,7 @@ export async function applyCallback(
       return {
         state: nextState,
         reply: installmentConfirmationMessage(installmentSummaryView(next, depsValue)),
-        keyboard: confirmationKeyboard(),
+        keyboard: installmentConfirmationKeyboard(),
       };
     }
     if (token === TOKENS.dropProposal) {
@@ -2148,7 +2149,7 @@ export async function applyCallback(
       return {
         state: nextState,
         reply: installmentConfirmationMessage(installmentSummaryView(draft, depsValue)),
-        keyboard: confirmationKeyboard(),
+        keyboard: installmentConfirmationKeyboard(),
       };
     }
     return expiredOutcome(state);

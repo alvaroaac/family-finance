@@ -27,7 +27,7 @@ import type {
   InterpretedIntent,
   MessageClassifier,
 } from "./interpret.js";
-import { CARD_TOKEN_PREFIX } from "./keyboards.js";
+import { CARD_TOKEN_PREFIX, TOKENS } from "./keyboards.js";
 
 const TODAY = "2026-07-06";
 
@@ -409,6 +409,82 @@ describe("card installment confirm: persistence", () => {
     await applyMessage(state, "confirmar", deps, { today: TODAY });
     const plan = createInstallmentPurchase.mock.calls[0]?.[0] as InstallmentPlan;
     expect(plan.installments[0]?.dueMonth).toBe("2026-07");
+  });
+});
+
+describe("card installment confirmation keyboard has no responsável button", () => {
+  function flatten(keyboard: { inline_keyboard: { callback_data: string }[][] } | undefined) {
+    return (keyboard?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
+  }
+
+  it("start outcome (complete draft, card already resolved) omits responsável", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const { keyboard } = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(flatten(keyboard)).not.toContain(TOKENS.responsible);
+  });
+
+  it("cd:<uuid> re-render omits responsável", async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "Inter" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const { state } = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(state, `${CARD_TOKEN_PREFIX}card-2`, deps, {
+      today: TODAY,
+    });
+    expect(flatten(outcome.keyboard)).not.toContain(TOKENS.responsible);
+  });
+
+  it("ct:<uuid> category-pick re-render omits responsável", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const { state } = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(state, "ct:cat-transporte", deps, {
+      today: TODAY,
+    });
+    expect(flatten(outcome.keyboard)).not.toContain(TOKENS.responsible);
+  });
+
+  it("tapping resp (TOKENS.responsible) on a live installment session is stale (button no longer renders)", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const { state } = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyCallback(state, TOKENS.responsible, deps, {
+      today: TODAY,
+    });
+    expect(outcome.silent).toBe(true);
+    expect(outcome.toast).toBe("Sessão expirada — envie o gasto novamente.");
   });
 });
 
