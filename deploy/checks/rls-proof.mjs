@@ -626,7 +626,13 @@ async function checkCardBillSettlement(member, householdId) {
     target_paid_on: "2026-06-10",
     target_created_by_user_id: created.memberUserId,
   });
-  record("(g4) outsider settle rejected as not-found", Boolean(foreign.error));
+  const g4Ok =
+    Boolean(foreign.error) && /not found/i.test(foreign.error.message);
+  record(
+    "(g4) outsider settle rejected as not-found",
+    g4Ok,
+    foreign.error ? foreign.error.message : "rpc unexpectedly succeeded",
+  );
   await outsider.auth.signOut();
 
   // (g5) constraint matrix via admin direct inserts.
@@ -734,8 +740,16 @@ async function checkCardBillSettlement(member, householdId) {
     await admin.from("installment_groups").delete().eq("id", g6.data.group.id);
   }
 
-  // Cleanup: delete the settle transfers.
-  await admin.from("transactions").delete().not("bill_month", "is", null);
+  // Cleanup: delete the settle transfers — scoped to the fixture card so a
+  // VPS run never touches the household's real "fatura paga" rows (their
+  // description is RPC-derived, so they escape the MARKER-based teardown).
+  // Must run BEFORE any teardown step that deletes the fixture card itself,
+  // since transactions.credit_card_id is ON DELETE RESTRICT.
+  await admin
+    .from("transactions")
+    .delete()
+    .eq("credit_card_id", created.creditCardId)
+    .not("bill_month", "is", null);
 }
 
 // ---------------------------------------------------------------------------
