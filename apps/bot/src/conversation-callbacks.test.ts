@@ -36,7 +36,11 @@ function makeDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
     resolveResponsibleUserId: (name: string) =>
       name.trim().toLowerCase() === "karol" ? "user-karol" : undefined,
     memberDisplayName: (userId: string) =>
-      userId === "user-karol" ? "Karol" : userId === "user-alvaro" ? "Alvaro" : undefined,
+      userId === "user-karol"
+        ? "Karol"
+        : userId === "user-alvaro"
+          ? "Alvaro"
+          : undefined,
     suggestCategory: vi.fn(async () => UNCATEGORIZED),
     createTransaction: vi.fn(async () => ({ id: "tx-1" })),
     logInteraction: vi.fn(async () => undefined),
@@ -75,7 +79,9 @@ describe("keyboards on text outcomes", () => {
   it("a typed correction re-attaches the confirmation keyboard", async () => {
     const deps = makeDeps();
     const state = await draftState(deps);
-    const outcome = await applyMessage(state, "valor 45,90", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "valor 45,90", deps, {
+      today: TODAY,
+    });
     expect(outcome.keyboard).toBeDefined();
   });
 });
@@ -106,8 +112,10 @@ describe("applyCallback: cf / cx", () => {
     const stateB = await draftState(depsB);
     await applyMessage(stateA, "confirmar", depsA, { today: TODAY });
     await applyCallback(stateB, "cf", depsB, { today: TODAY });
-    const draftA = (depsA.createTransaction as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const draftB = (depsB.createTransaction as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const draftA = (depsA.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    const draftB = (depsB.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
     expect(draftB).toEqual(draftA);
   });
 });
@@ -130,7 +138,9 @@ describe("applyCallback: grids and picks", () => {
   it("ct:<id> assigns the category and re-sends the summary (parity with typed)", async () => {
     const deps = makeDeps();
     const state = await draftState(deps);
-    const outcome = await applyCallback(state, "ct:cat-food", deps, { today: TODAY });
+    const outcome = await applyCallback(state, "ct:cat-food", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.draft.categoryId).toBe("cat-food");
     expect(outcome.reply).toContain("Categoria: Alimentação");
     expect(outcome.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
@@ -139,7 +149,9 @@ describe("applyCallback: grids and picks", () => {
   it("ct with an unknown id answers a toast and keeps the state", async () => {
     const deps = makeDeps();
     const state = await draftState(deps);
-    const outcome = await applyCallback(state, "ct:cat-nope", deps, { today: TODAY });
+    const outcome = await applyCallback(state, "ct:cat-nope", deps, {
+      today: TODAY,
+    });
     expect(outcome.silent).toBe(true);
     expect(outcome.toast).toContain("não encontrada");
     expect(outcome.state.draft.categoryId).toBeUndefined();
@@ -160,11 +172,15 @@ describe("applyCallback: grids and picks", () => {
   it("rs:house moves responsibility to the house; rs:<id> to the member", async () => {
     const deps = makeDeps();
     const state = await draftState(deps);
-    const house = await applyCallback(state, "rs:house", deps, { today: TODAY });
+    const house = await applyCallback(state, "rs:house", deps, {
+      today: TODAY,
+    });
     expect(house.state.draft.responsibleUserId).toBeUndefined();
     expect(house.reply).toContain("Responsável: Casa");
 
-    const karol = await applyCallback(state, "rs:user-karol", deps, { today: TODAY });
+    const karol = await applyCallback(state, "rs:user-karol", deps, {
+      today: TODAY,
+    });
     expect(karol.state.draft.responsibleUserId).toBe("user-karol");
     expect(karol.reply).toContain("Responsável: Karol");
   });
@@ -175,7 +191,9 @@ describe("applyCallback: stale states and double-taps", () => {
     const deps = makeDeps();
     const state = await draftState(deps);
     const first = await applyCallback(state, "cf", deps, { today: TODAY });
-    const second = await applyCallback(first.state, "cf", deps, { today: TODAY });
+    const second = await applyCallback(first.state, "cf", deps, {
+      today: TODAY,
+    });
     expect(second.silent).toBe(true);
     expect(second.toast).toBe("Já salvo ✅");
     expect(deps.createTransaction).toHaveBeenCalledTimes(1);
@@ -185,7 +203,9 @@ describe("applyCallback: stale states and double-taps", () => {
     const deps = makeDeps();
     const state = await draftState(deps);
     const cancelled = await applyCallback(state, "cx", deps, { today: TODAY });
-    const late = await applyCallback(cancelled.state, "ct:cat-food", deps, { today: TODAY });
+    const late = await applyCallback(cancelled.state, "ct:cat-food", deps, {
+      today: TODAY,
+    });
     expect(late.silent).toBe(true);
     expect(late.toast).toContain("Sessão expirada");
   });
@@ -193,27 +213,48 @@ describe("applyCallback: stale states and double-taps", () => {
   it("an unknown token never crashes — answers Sessão expirada and ignores", async () => {
     const deps = makeDeps();
     const state = await draftState(deps);
-    const outcome = await applyCallback(state, "wat:???", deps, { today: TODAY });
+    const outcome = await applyCallback(state, "wat:???", deps, {
+      today: TODAY,
+    });
     expect(outcome.silent).toBe(true);
     expect(outcome.toast).toContain("Sessão expirada");
     expect(outcome.state).toBe(state);
   });
 
-  it("tokens on obligation states answer Sessão expirada (buttons are expense-only)", async () => {
+  it("stray tokens on obligation confirmation, and any token on mark-paid, answer Sessão expirada", async () => {
     const deps = makeDeps();
-    const state: ConversationState = {
+    const draft = (await draftState(deps)).draft;
+
+    // Obligation confirmation now handles cf/cx (see obligation button tests),
+    // but a non-confirm token there is still a stale tap.
+    const obligation: ConversationState = {
       status: "awaiting_obligation_confirmation",
-      draft: (await draftState(deps)).draft,
+      draft,
     };
-    const outcome = await applyCallback(state, "cf", deps, { today: TODAY });
-    expect(outcome.silent).toBe(true);
-    expect(outcome.toast).toContain("Sessão expirada");
+    const stray = await applyCallback(obligation, "cats", deps, {
+      today: TODAY,
+    });
+    expect(stray.silent).toBe(true);
+    expect(stray.toast).toContain("Sessão expirada");
+
+    // Mark-paid choice has no keyboard yet — every token is stale.
+    const markPaid: ConversationState = {
+      status: "awaiting_mark_paid_choice",
+      draft,
+    };
+    const tap = await applyCallback(markPaid, "cf", deps, { today: TODAY });
+    expect(tap.silent).toBe(true);
+    expect(tap.toast).toContain("Sessão expirada");
   });
 });
 
 const PROPOSAL: CategorizationResult = {
   status: "pending_new_category",
-  suggestion: { confidence: 0.9, explanation: "Petz é um pet shop.", source: "ai" },
+  suggestion: {
+    confidence: 0.9,
+    explanation: "Petz é um pet shop.",
+    source: "ai",
+  },
   pendingCategory: {
     categoryName: "Pets",
     subcategoryName: null,
@@ -223,7 +264,9 @@ const PROPOSAL: CategorizationResult = {
   requiresConfirmation: true,
 };
 
-function proposalDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
+function proposalDeps(
+  overrides: Partial<ConversationDeps> = {},
+): ConversationDeps {
   return makeDeps({
     suggestCategory: vi.fn(async () => PROPOSAL),
     listAllCategories: vi.fn(async () => [
@@ -261,7 +304,9 @@ describe("AI new-category proposal", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(start.state, "nca", deps, { today: TODAY });
+    const outcome = await applyCallback(start.state, "nca", deps, {
+      today: TODAY,
+    });
 
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(deps.seedCategorizationMemory).toHaveBeenCalledWith({
@@ -271,8 +316,12 @@ describe("AI new-category proposal", () => {
       explanation: `criada pelo usuário via bot em ${TODAY}`,
     });
     expect(outcome.state.status).toBe("saved");
-    const draft = (deps.createTransaction as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(draft.category).toEqual({ categoryId: "cat-pets", subcategoryId: undefined });
+    const draft = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(draft.category).toEqual({
+      categoryId: "cat-pets",
+      subcategoryId: undefined,
+    });
     expect(outcome.reply).toContain("Pets");
   });
 
@@ -288,9 +337,9 @@ describe("AI new-category proposal", () => {
       { today: TODAY },
     );
 
-    await expect(applyCallback(start.state, "nca", deps, { today: TODAY })).rejects.toThrow(
-      "db down",
-    );
+    await expect(
+      applyCallback(start.state, "nca", deps, { today: TODAY }),
+    ).rejects.toThrow("db down");
 
     expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
   });
@@ -308,7 +357,9 @@ describe("AI new-category proposal", () => {
       { today: TODAY },
     );
 
-    const outcome = await applyCallback(start.state, "nca", deps, { today: TODAY });
+    const outcome = await applyCallback(start.state, "nca", deps, {
+      today: TODAY,
+    });
 
     expect(deps.createTransaction).toHaveBeenCalledTimes(1);
     expect(outcome.state.status).toBe("saved");
@@ -327,7 +378,9 @@ describe("AI new-category proposal", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(start.state, "confirmar", deps, { today: TODAY });
+    const outcome = await applyMessage(start.state, "confirmar", deps, {
+      today: TODAY,
+    });
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(deps.seedCategorizationMemory).toHaveBeenCalledTimes(1);
     expect(outcome.state.status).toBe("saved");
@@ -347,7 +400,8 @@ describe("AI new-category proposal", () => {
     await applyCallback(start.state, "nca", deps, { today: TODAY });
     expect(deps.createCategory).not.toHaveBeenCalled();
     expect(deps.restoreCategory).not.toHaveBeenCalled();
-    const seeded = (deps.seedCategorizationMemory as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const seeded = (deps.seedCategorizationMemory as ReturnType<typeof vi.fn>)
+      .mock.calls[0]?.[0];
     expect(seeded.categoryId).toBe("cat-pets-x");
   });
 
@@ -374,7 +428,9 @@ describe("AI new-category proposal", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(start.state, "nocat", deps, { today: TODAY });
+    const outcome = await applyCallback(start.state, "nocat", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.proposedCategoryName).toBeUndefined();
     expect(outcome.reply).toContain("Categoria: Sem categoria (a definir)");
     expect(outcome.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
@@ -390,7 +446,9 @@ describe("AI new-category proposal", () => {
       deps,
       { today: TODAY },
     );
-    const picked = await applyCallback(start.state, "ct:cat-food", deps, { today: TODAY });
+    const picked = await applyCallback(start.state, "ct:cat-food", deps, {
+      today: TODAY,
+    });
     expect(picked.state.proposedCategoryName).toBeUndefined();
     await applyCallback(picked.state, "cf", deps, { today: TODAY });
     expect(deps.seedCategorizationMemory).not.toHaveBeenCalled();
@@ -405,12 +463,19 @@ describe("AI new-category proposal", () => {
     );
     expect(start.state.proposedCategoryName).toBe("Pets");
 
-    const corrected = await applyMessage(start.state, "categoria Alimentação", deps, {
-      today: TODAY,
-    });
+    const corrected = await applyMessage(
+      start.state,
+      "categoria Alimentação",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(corrected.state.proposedCategoryName).toBeUndefined();
     expect(corrected.reply).not.toContain("(nova — sugerida)");
-    expect(corrected.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    expect(corrected.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe(
+      "cf",
+    );
     expect(corrected.state.draft.categoryId).toBe("cat-food");
 
     await applyMessage(corrected.state, "confirmar", deps, { today: TODAY });
@@ -429,15 +494,21 @@ describe("AI new-category proposal", () => {
     expect(start.state.proposedCategoryName).toBe("Pets");
 
     // Confirm without an amount: no create/seed yet, proposal must survive.
-    const early = await applyMessage(start.state, "confirmar", deps, { today: TODAY });
+    const early = await applyMessage(start.state, "confirmar", deps, {
+      today: TODAY,
+    });
     expect(early.state.status).toBe("needs_amount");
     expect(early.state.proposedCategoryName).toBe("Pets");
     expect(deps.createCategory).not.toHaveBeenCalled();
 
     // Supply the amount, then confirm: the full nca-equivalent path runs.
-    const withAmount = await applyMessage(early.state, "valor 90", deps, { today: TODAY });
+    const withAmount = await applyMessage(early.state, "valor 90", deps, {
+      today: TODAY,
+    });
     expect(withAmount.state.proposedCategoryName).toBe("Pets");
-    const done = await applyMessage(withAmount.state, "confirmar", deps, { today: TODAY });
+    const done = await applyMessage(withAmount.state, "confirmar", deps, {
+      today: TODAY,
+    });
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(done.state.status).toBe("saved");
   });
@@ -445,9 +516,13 @@ describe("AI new-category proposal", () => {
 
 describe("manual category creation", () => {
   it("typed `nova categoria Pets` mid-draft creates + assigns + re-shows the summary", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
-    const outcome = await applyMessage(state, "nova categoria Pets", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "nova categoria Pets", deps, {
+      today: TODAY,
+    });
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(outcome.state.status).toBe("awaiting_confirmation");
     expect(outcome.state.draft.categoryId).toBe("cat-pets");
@@ -458,7 +533,9 @@ describe("manual category creation", () => {
   });
 
   it("typed `nova categoria Pets` with NO active conversation creates standalone", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const outcome = await startConversation(
       { text: "nova categoria Pets", fromUserId: "user-alvaro" },
       deps,
@@ -471,7 +548,9 @@ describe("manual category creation", () => {
   });
 
   it("nc button enters awaiting_category_name with a cancel keyboard", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const outcome = await applyCallback(state, "nc", deps, { today: TODAY });
     expect(outcome.state.status).toBe("awaiting_category_name");
@@ -480,56 +559,78 @@ describe("manual category creation", () => {
   });
 
   it("the next text in name-mode becomes the category (create + assign)", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
-    const outcome = await applyMessage(asking.state, "Pets", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "Pets", deps, {
+      today: TODAY,
+    });
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(outcome.state.draft.categoryId).toBe("cat-pets");
     expect(outcome.state.status).toBe("awaiting_confirmation");
   });
 
   it("name-mode wins: a command word like `confirmar` is a NAME", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
-    const outcome = await applyMessage(asking.state, "confirmar", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "confirmar", deps, {
+      today: TODAY,
+    });
     expect(deps.createCategory).toHaveBeenCalledWith("confirmar");
     expect(deps.createTransaction).not.toHaveBeenCalled();
     expect(outcome.state.status).toBe("awaiting_confirmation");
   });
 
   it("`cancelar` (typed) in name-mode returns to awaiting_confirmation", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
-    const outcome = await applyMessage(asking.state, "cancelar", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "cancelar", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.status).toBe("awaiting_confirmation");
     expect(deps.createCategory).not.toHaveBeenCalled();
     expect(outcome.keyboard?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
   });
 
   it("❌ button (cx) in name-mode also returns to awaiting_confirmation", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
-    const outcome = await applyCallback(asking.state, "cx", deps, { today: TODAY });
+    const outcome = await applyCallback(asking.state, "cx", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.status).toBe("awaiting_confirmation");
   });
 
   it("validates the name: empty and >40 chars re-ask with pt-BR errors", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
 
-    const tooLong = await applyMessage(asking.state, "x".repeat(41), deps, { today: TODAY });
+    const tooLong = await applyMessage(asking.state, "x".repeat(41), deps, {
+      today: TODAY,
+    });
     expect(tooLong.state.status).toBe("awaiting_category_name");
     expect(tooLong.reply).toContain("40");
     expect(deps.createCategory).not.toHaveBeenCalled();
   });
 
   it("sanitizes control and zero-width characters before creating typed category names", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
 
@@ -545,13 +646,20 @@ describe("manual category creation", () => {
   });
 
   it("rejects category names that become empty after sanitization", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const state = await draftState(deps);
     const asking = await applyCallback(state, "nc", deps, { today: TODAY });
 
-    const outcome = await applyMessage(asking.state, "\n\r\u200B\u200C\u200D\uFEFF", deps, {
-      today: TODAY,
-    });
+    const outcome = await applyMessage(
+      asking.state,
+      "\n\r\u200B\u200C\u200D\uFEFF",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
 
     expect(outcome.state.status).toBe("awaiting_category_name");
     expect(outcome.reply).toContain("nome");
@@ -566,14 +674,18 @@ describe("manual category creation", () => {
       ]),
     });
     const state = await draftState(deps);
-    const outcome = await applyMessage(state, "nova categoria Pets", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "nova categoria Pets", deps, {
+      today: TODAY,
+    });
     expect(deps.createCategory).not.toHaveBeenCalled();
     expect(outcome.state.draft.categoryId).toBe("cat-pets-x");
     expect(outcome.reply).toContain("já existia");
   });
 
   it("bare `nova categoria` with no draft enters standalone name-mode; the name creates and ends", async () => {
-    const deps = proposalDeps({ suggestCategory: vi.fn(async () => UNCATEGORIZED) });
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => UNCATEGORIZED),
+    });
     const asking = await startConversation(
       { text: "nova categoria", fromUserId: "user-alvaro" },
       deps,
@@ -582,7 +694,9 @@ describe("manual category creation", () => {
     expect(asking.state.status).toBe("awaiting_category_name");
     expect(asking.state.standaloneCategoryCreation).toBe(true);
 
-    const outcome = await applyMessage(asking.state, "Pets", deps, { today: TODAY });
+    const outcome = await applyMessage(asking.state, "Pets", deps, {
+      today: TODAY,
+    });
     expect(outcome.reply).toBe('Categoria "Pets" criada ✅');
     expect(["saved", "cancelled"]).toContain(outcome.state.status);
   });
