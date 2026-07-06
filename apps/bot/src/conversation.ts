@@ -69,6 +69,7 @@ import {
   formatBrl,
   installmentConfirmationMessage,
   installmentSavedMessage,
+  installmentSaveFailedMessage,
   invalidCategoryNameMessage,
   needsAmountMessage,
   noActiveCardMessage,
@@ -1768,7 +1769,21 @@ async function confirmInstallment(
     };
   }
 
-  await deps.createInstallmentPurchase(built.value);
+  // The RPC is atomic (nothing persists on a throw), but there is no DB-level
+  // idempotency for installment groups — cancel on failure so a blind retry
+  // can't double-insert; the user re-sends the purchase.
+  try {
+    await deps.createInstallmentPurchase(built.value);
+  } catch (error) {
+    console.warn(
+      `[bot] createInstallmentPurchase failed for ${draft.description}:`,
+      error,
+    );
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: installmentSaveFailedMessage(draft.description),
+    };
+  }
   await deps.logInteraction({
     fromUserId: draft.createdByUserId,
     inputKind: state.draft.inputKind,

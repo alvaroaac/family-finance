@@ -390,6 +390,29 @@ describe("card installment confirm: persistence", () => {
     expect(outcome.reply).toContain("1ª parcela ago/2026");
   });
 
+  it("persist throws -> failure message, state cancelled, no interaction logged", async () => {
+    const { deps, logInteraction } = buildDeps({
+      createInstallmentPurchase: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const { state } = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyMessage(state, "confirmar", deps, { today: TODAY });
+
+    expect(outcome.state.status).toBe("cancelled");
+    expect(outcome.reply).toBe(
+      'Não consegui salvar a compra parcelada "Notebook" — tenta de novo em instantes.',
+    );
+    expect(logInteraction).not.toHaveBeenCalled();
+  });
+
   it("closingDay shift: purchase ON closing day stays in the current month", async () => {
     const { deps, createInstallmentPurchase } = buildDeps({
       listActiveCards: () => [{ id: "card-1", name: "Nubank", closingDay: 5 }],

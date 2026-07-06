@@ -417,6 +417,11 @@ export function cardBillSettleFailedMessage(cardName: string): string {
   return `Não consegui registrar o pagamento da fatura do ${cardName} — tenta de novo em instantes.`;
 }
 
+/** Installment persist failed (RPC threw) — same recovery contract as above. */
+export function installmentSaveFailedMessage(description: string): string {
+  return `Não consegui salvar a compra parcelada "${description}" — tenta de novo em instantes.`;
+}
+
 // ---------------------------------------------------------------------------
 // Inline buttons + category creation (2026-07-04 design).
 // ---------------------------------------------------------------------------
