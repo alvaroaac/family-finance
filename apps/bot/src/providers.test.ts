@@ -58,6 +58,107 @@ describe("createAnthropicCompletionClient (timeout)", () => {
   });
 });
 
+/** A fetch that resolves once with the given status and JSON body. */
+function jsonFetch(status: number, body: unknown): typeof fetch {
+  return vi.fn(
+    async () =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+  ) as unknown as typeof fetch;
+}
+
+describe("createAnthropicCompletionClient (telemetry)", () => {
+  it("emits one ok record with token usage and the caller label", async () => {
+    globalThis.fetch = jsonFetch(200, {
+      content: [{ type: "text", text: "hello" }],
+      usage: { input_tokens: 42, output_tokens: 7 },
+    });
+    const logCall = vi.fn();
+    const client = createAnthropicCompletionClient({
+      apiKey: "sk-test",
+      model: "claude-test",
+      logCall,
+    });
+
+    const result = await client.complete("Uber 32 reais", {
+      label: "classifier",
+    });
+
+    expect(result).toBe("hello");
+    expect(logCall).toHaveBeenCalledTimes(1);
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "classifier",
+        model: "claude-test",
+        outcome: "ok",
+        inputTokens: 42,
+        outputTokens: 7,
+        latencyMs: expect.any(Number),
+      }),
+    );
+  });
+
+  it("records a 200-with-no-text call as an abstention, not a failure", async () => {
+    globalThis.fetch = jsonFetch(200, { content: [], usage: {} });
+    const logCall = vi.fn();
+    const client = createAnthropicCompletionClient({
+      apiKey: "sk-test",
+      model: "claude-test",
+      logCall,
+    });
+
+    const result = await client.complete("noise", { label: "interpreter" });
+
+    expect(result).toBeNull();
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "abstain", label: "interpreter" }),
+    );
+  });
+
+  it("records the status on an http_error and defaults an unlabeled call", async () => {
+    globalThis.fetch = jsonFetch(529, { error: "overloaded" });
+    const logCall = vi.fn();
+    const client = createAnthropicCompletionClient({
+      apiKey: "sk-test",
+      model: "claude-test",
+      logCall,
+    });
+
+    const result = await client.complete("mercado 230");
+
+    expect(result).toBeNull();
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "http_error",
+        status: 529,
+        label: "unknown",
+      }),
+    );
+  });
+
+  it("records a timeout as its own outcome", async () => {
+    globalThis.fetch = hangingFetch();
+    const logCall = vi.fn();
+    const client = createAnthropicCompletionClient({
+      apiKey: "sk-test",
+      model: "claude-test",
+      timeoutMs: 5,
+      logCall,
+    });
+
+    const result = await client.complete("farmácia 45", {
+      label: "categorizer",
+    });
+
+    expect(result).toBeNull();
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "timeout", label: "categorizer" }),
+    );
+  });
+});
+
 describe("createOpenAiTranscriptionProvider (timeout)", () => {
   let dir = "";
   let filePath = "";

@@ -35,8 +35,12 @@ import type { CategorizationContext } from "./context.js";
  * `null` when it cannot/should not answer. No SDK type leaks into this package.
  */
 export type AiCompletionClient = {
-  /** Return the model's text reply for a prompt, or null to abstain. */
-  complete(prompt: string): Promise<string | null>;
+  /**
+   * Return the model's text reply for a prompt, or null to abstain. `opts.label`
+   * is a caller tag (e.g. "categorizer" | "classifier" | "interpreter") used
+   * only for telemetry attribution; implementations may ignore it.
+   */
+  complete(prompt: string, opts?: { label?: string }): Promise<string | null>;
 };
 
 /** Zod schema for the JSON object we expect back from the model. */
@@ -114,9 +118,7 @@ function extractJsonObject(reply: string): string | null {
  * Create a concrete {@link AiCategorizer} backed by an injected completion
  * client. Returns `null` on any uncertainty/error so callers fall back safely.
  */
-export function createAiCategorizer(
-  client: AiCompletionClient,
-): AiCategorizer {
+export function createAiCategorizer(client: AiCompletionClient): AiCategorizer {
   return {
     async categorize(
       context: CategorizationContext,
@@ -126,6 +128,7 @@ export function createAiCategorizer(
       try {
         reply = await client.complete(
           buildCategorizationPrompt(context, catalog),
+          { label: "categorizer" },
         );
       } catch {
         // Provider failure is never fatal: degrade to deterministic fallback.
