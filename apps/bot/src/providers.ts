@@ -152,49 +152,79 @@ export function createAnthropicCompletionClient(args: {
  * On a network timeout the fetch is aborted and this throws a clear error so the
  * caller degrades to a "tente por texto" fallback (the temp file is still
  * cleaned up by `transcribeVoiceMessage`'s `finally`).
+ *
+ * Like the completion client, every call emits one {@link AiCallLogger} record
+ * (outcome, latency, status) through the same telemetry seam. There are no token
+ * counts to report — Whisper is billed by audio duration, not tokens — so those
+ * fields are omitted.
  */
 export function createOpenAiTranscriptionProvider(args: {
   apiKey: string;
   model: string;
   /** Per-request network timeout in ms. Defaults to {@link DEFAULT_PROVIDER_TIMEOUT_MS}. */
   timeoutMs?: number;
+  /** Telemetry sink; defaults to {@link logAiCall}. Injected in tests. */
+  logCall?: AiCallLogger;
 }): TranscriptionProvider {
   const timeoutMs = args.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  const logCall = args.logCall ?? logAiCall;
   return {
     async transcribe(filePath: string, mimeType?: string): Promise<string> {
-      const bytes = await readFile(filePath);
-      const form = new FormData();
-      const blob = new Blob([new Uint8Array(bytes)], {
-        type: mimeType ?? "audio/ogg",
-      });
-      form.append("file", blob, basename(filePath));
-      form.append("model", args.model);
-      let response: Response;
+      const startedAt = Date.now();
+      let outcome: AiCallOutcome = "error";
+      let status: number | undefined;
+      let error: string | undefined;
       try {
-        response = await withTimeout(timeoutMs, (signal) =>
-          fetch("https://api.openai.com/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { authorization: `Bearer ${args.apiKey}` },
-            body: form,
-            signal,
-          }),
-        );
-      } catch (error) {
-        // An abort surfaces as an AbortError; normalize it to a clear,
-        // caller-friendly timeout error (the deeper cause is preserved).
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new Error(`Transcription timed out after ${timeoutMs}ms`, {
-            cause: error,
-          });
+        const bytes = await readFile(filePath);
+        const form = new FormData();
+        const blob = new Blob([new Uint8Array(bytes)], {
+          type: mimeType ?? "audio/ogg",
+        });
+        form.append("file", blob, basename(filePath));
+        form.append("model", args.model);
+        let response: Response;
+        try {
+          response = await withTimeout(timeoutMs, (signal) =>
+            fetch("https://api.openai.com/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { authorization: `Bearer ${args.apiKey}` },
+              body: form,
+              signal,
+            }),
+          );
+        } catch (caught) {
+          // An abort surfaces as an AbortError; normalize it to a clear,
+          // caller-friendly timeout error (the deeper cause is preserved).
+          if (caught instanceof Error && caught.name === "AbortError") {
+            outcome = "timeout";
+            error = `Transcription timed out after ${timeoutMs}ms`;
+            throw new Error(error, { cause: caught });
+          }
+          throw caught;
         }
-        throw error;
+        if (!response.ok) {
+          outcome = "http_error";
+          status = response.status;
+          const body = await response.text().catch(() => "");
+          throw new Error(`Transcription failed: ${response.status} ${body}`);
+        }
+        const json = (await response.json()) as { text?: string };
+        outcome = "ok";
+        return json.text ?? "";
+      } catch (caught) {
+        // Fill the error message for any path that didn't already set it.
+        error ??= caught instanceof Error ? caught.message : String(caught);
+        throw caught;
+      } finally {
+        logCall({
+          label: "transcription",
+          model: args.model,
+          outcome,
+          latencyMs: Date.now() - startedAt,
+          status,
+          error,
+        });
       }
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`Transcription failed: ${response.status} ${body}`);
-      }
-      const json = (await response.json()) as { text?: string };
-      return json.text ?? "";
     },
   };
 }

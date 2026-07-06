@@ -192,4 +192,69 @@ describe("createOpenAiTranscriptionProvider (timeout)", () => {
       /timed out/i,
     );
   });
+
+  it("emits one ok record with the transcription label (no token counts)", async () => {
+    globalThis.fetch = jsonFetch(200, { text: "olá mundo" });
+    const logCall = vi.fn();
+    const provider = createOpenAiTranscriptionProvider({
+      apiKey: "sk-test",
+      model: "whisper-1",
+      logCall,
+    });
+    const path = await tempAudioFile();
+
+    const result = await provider.transcribe(path, "audio/ogg");
+
+    expect(result).toBe("olá mundo");
+    expect(logCall).toHaveBeenCalledTimes(1);
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "transcription",
+        model: "whisper-1",
+        outcome: "ok",
+        latencyMs: expect.any(Number),
+      }),
+    );
+    // No token counts for audio transcription (billed by duration).
+    const record = logCall.mock.calls.at(0)?.at(0);
+    expect(record).not.toHaveProperty("inputTokens");
+    expect(record).not.toHaveProperty("outputTokens");
+  });
+
+  it("records status on an http_error and still throws", async () => {
+    globalThis.fetch = jsonFetch(500, { error: "boom" });
+    const logCall = vi.fn();
+    const provider = createOpenAiTranscriptionProvider({
+      apiKey: "sk-test",
+      model: "whisper-1",
+      logCall,
+    });
+    const path = await tempAudioFile();
+
+    await expect(provider.transcribe(path, "audio/ogg")).rejects.toThrow(
+      /Transcription failed: 500/,
+    );
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "http_error", status: 500 }),
+    );
+  });
+
+  it("records a timeout outcome before rethrowing", async () => {
+    globalThis.fetch = hangingFetch();
+    const logCall = vi.fn();
+    const provider = createOpenAiTranscriptionProvider({
+      apiKey: "sk-test",
+      model: "whisper-1",
+      timeoutMs: 5,
+      logCall,
+    });
+    const path = await tempAudioFile();
+
+    await expect(provider.transcribe(path, "audio/ogg")).rejects.toThrow(
+      /timed out/i,
+    );
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "timeout", label: "transcription" }),
+    );
+  });
 });
