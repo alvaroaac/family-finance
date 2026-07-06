@@ -1122,6 +1122,64 @@ describe("handleWebhook: telegram identity", () => {
     const afterKarol = await store.load("555");
     expect(afterKarol?.draft.createdByUserId).toBe("user-karol");
   });
+
+  it("two CONCURRENT 'sim' messages insert exactly one transaction (per-chat serialization)", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+
+    // Telegram delivers updates over parallel connections: a double "sim" can
+    // be in flight at once. Without per-chat serialization both would load the
+    // same awaiting_confirmation state and both insert.
+    await Promise.all([
+      handleWebhook({ ...base, rawBody: textUpdate(777, "sim") }),
+      handleWebhook({ ...base, rawBody: textUpdate(777, "sim") }),
+    ]);
+
+    expect(tables.transactions).toHaveLength(1);
+    // The duplicate confirm must NOT clobber the saved state with a bogus
+    // fresh draft ("sim" parsed as a new entry with no amount).
+    expect((await store.load("555"))?.status).toBe("saved");
+  });
+
+  it("a duplicate typed 'sim' after save is a friendly no-op, not a new draft", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "sim") });
+    expect(tables.transactions).toHaveLength(1);
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "sim") });
+    expect(tables.transactions).toHaveLength(1);
+    expect((await store.load("555"))?.status).toBe("saved");
+    expect(sent.at(-1)?.text).toBe("Já salvo ✅");
+
+    // But confirm-word PREFIX with more content is a real new entry, not a
+    // no-op ("ok" swallowing "ok, mercado 50 reais" would lose a lançamento).
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "ok, mercado 50 reais") });
+    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -841,6 +841,19 @@ export async function startConversationFromAudio(
 const CONFIRM_RE = /^\s*(confirmar|confirma|confirmo|sim|ok|salvar|salva)\b/i;
 const CANCEL_RE = /^\s*(cancelar|cancela|nao|não|descartar|apagar)\b/i;
 
+/**
+ * True when the message is ONLY a confirmation word (optionally punctuated).
+ * Stricter than CONFIRM_RE on purpose: a duplicate "sim" on an already-saved
+ * draft is a no-op, but "ok, mercado 50 reais" is a NEW entry that must not
+ * be swallowed.
+ */
+const BARE_CONFIRM_RE =
+  /^\s*(confirmar|confirma|confirmo|sim|ok|salvar|salva)\s*[!.…]*\s*$/i;
+
+export function isBareConfirmation(message: string): boolean {
+  return BARE_CONFIRM_RE.test(message);
+}
+
 /** "nova categoria" [name] — manual category creation (spec §4). */
 const NEW_CATEGORY_RE = /^\s*nova\s+categoria\b\s*(.*)$/i;
 
