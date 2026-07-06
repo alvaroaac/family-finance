@@ -464,6 +464,15 @@ async function checkAnonCannotExecuteRpcs(householdId) {
     }],
     ["create_installment_purchase", { group_payload: {}, installments_payload: [] }],
     ["confirm_import", { batch_payload: {}, rows_payload: [] }],
+    ["settle_card_bill", {
+      target_household_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      target_credit_card_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      target_account_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      target_bill_month: "2026-01",
+      target_amount_cents: 100,
+      target_paid_on: "2026-01-01",
+      target_created_by_user_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    }],
   ];
   for (const [name, args] of rpcs) {
     const { error } = await anon.rpc(name, args);
@@ -541,6 +550,194 @@ async function checkObligationMaterialization(member, householdId) {
   await admin.from("obligations").delete().eq("id", ob.id);
 }
 
+/**
+ * (g) Card-bill settlement RPC: a member settles a card's bill for a month
+ * (idempotent repeat is a no-op), the bot's null-uid service-role path can
+ * settle too, an outsider is rejected as not-found, the narrowed instrument
+ * CHECK enforces the new matrix (transfer+bill_month needs BOTH instruments;
+ * everything else still needs exactly one), and the re-gated
+ * create_installment_purchase now accepts the bot's null-uid call.
+ */
+async function checkCardBillSettlement(member, householdId) {
+  // (g1) member settles the bill for the fixture card+account.
+  const first = await member.rpc("settle_card_bill", {
+    target_household_id: householdId,
+    target_credit_card_id: created.creditCardId,
+    target_account_id: created.accountId,
+    target_bill_month: "2026-04",
+    target_amount_cents: 123456,
+    target_paid_on: "2026-04-10",
+    target_created_by_user_id: created.memberUserId,
+  });
+  record(
+    "(g1) member settles a card bill (already_paid=false)",
+    !first.error && first.data && first.data.already_paid === false,
+    first.error ? first.error.message : `already_paid=${first.data?.already_paid}`,
+  );
+  record(
+    "(g1b) settle row carries BOTH instruments + bill_month",
+    !first.error &&
+      first.data?.transaction?.account_id === created.accountId &&
+      first.data?.transaction?.credit_card_id === created.creditCardId &&
+      first.data?.transaction?.bill_month === "2026-04" &&
+      first.data?.transaction?.kind === "transfer",
+  );
+
+  // (g2) repeat is idempotent.
+  const repeat = await member.rpc("settle_card_bill", {
+    target_household_id: householdId,
+    target_credit_card_id: created.creditCardId,
+    target_account_id: created.accountId,
+    target_bill_month: "2026-04",
+    target_amount_cents: 123456,
+    target_paid_on: "2026-04-10",
+    target_created_by_user_id: created.memberUserId,
+  });
+  record(
+    "(g2) repeat settle is idempotent (already_paid=true)",
+    !repeat.error && repeat.data && repeat.data.already_paid === true,
+    repeat.error ? repeat.error.message : `already_paid=${repeat.data?.already_paid}`,
+  );
+
+  // (g3) service-role (auth.uid() null — the bot path) settles another month.
+  const svc = await admin.rpc("settle_card_bill", {
+    target_household_id: householdId,
+    target_credit_card_id: created.creditCardId,
+    target_account_id: created.accountId,
+    target_bill_month: "2026-05",
+    target_amount_cents: 123456,
+    target_paid_on: "2026-05-10",
+    target_created_by_user_id: created.memberUserId,
+  });
+  record(
+    "(g3) service-role null-uid path settles (bot)",
+    !svc.error && svc.data && svc.data.already_paid === false,
+    svc.error ? svc.error.message : "",
+  );
+
+  // (g4) outsider gets 'not found' (0011-style probe resistance).
+  const outsider = await signIn(OUTSIDER_EMAIL, OUTSIDER_PASSWORD);
+  const foreign = await outsider.rpc("settle_card_bill", {
+    target_household_id: householdId,
+    target_credit_card_id: created.creditCardId,
+    target_account_id: created.accountId,
+    target_bill_month: "2026-06",
+    target_amount_cents: 123456,
+    target_paid_on: "2026-06-10",
+    target_created_by_user_id: created.memberUserId,
+  });
+  record("(g4) outsider settle rejected as not-found", Boolean(foreign.error));
+  await outsider.auth.signOut();
+
+  // (g5) constraint matrix via admin direct inserts.
+  const { error: bothOnExpenseError } = await admin.from("transactions").insert({
+    household_id: householdId,
+    kind: "expense",
+    amount_cents: 100,
+    occurred_on: "2026-04-01",
+    description: `${MARKER} g5 expense both instruments`,
+    account_id: created.accountId,
+    credit_card_id: created.creditCardId,
+    created_by_user_id: created.memberUserId,
+  });
+  record(
+    "(g5a) expense with BOTH instruments violates the CHECK",
+    Boolean(bothOnExpenseError),
+    bothOnExpenseError ? bothOnExpenseError.message : "insert unexpectedly succeeded",
+  );
+
+  const { error: transferBillMonthSingleError } = await admin.from("transactions").insert({
+    household_id: householdId,
+    kind: "transfer",
+    amount_cents: 100,
+    occurred_on: "2026-04-01",
+    description: `${MARKER} g5 transfer bill_month single instrument`,
+    account_id: created.accountId,
+    credit_card_id: null,
+    bill_month: "2026-07",
+    created_by_user_id: created.memberUserId,
+  });
+  record(
+    "(g5b) transfer with bill_month + only account_id violates the CHECK",
+    Boolean(transferBillMonthSingleError),
+    transferBillMonthSingleError
+      ? transferBillMonthSingleError.message
+      : "insert unexpectedly succeeded",
+  );
+
+  const { data: plainTransfer, error: plainTransferError } = await admin
+    .from("transactions")
+    .insert({
+      household_id: householdId,
+      kind: "transfer",
+      amount_cents: 100,
+      occurred_on: "2026-04-01",
+      description: `${MARKER} g5 plain transfer`,
+      account_id: created.accountId,
+      credit_card_id: null,
+      bill_month: null,
+      created_by_user_id: created.memberUserId,
+    })
+    .select("id")
+    .single();
+  record(
+    "(g5c) plain transfer (bill_month null) with only account_id is accepted",
+    !plainTransferError,
+    plainTransferError ? plainTransferError.message : "",
+  );
+  if (plainTransfer?.id) {
+    await admin.from("transactions").delete().eq("id", plainTransfer.id);
+  }
+
+  // (g6) service-role null-uid create_installment_purchase now passes the
+  // re-gated body.
+  const groupPayload = {
+    household_id: householdId,
+    credit_card_id: created.creditCardId,
+    description: `${MARKER} g6 parcelado`,
+    total_amount_cents: 10000,
+    installment_count: 1,
+    purchased_on: "2026-04-01",
+    category_id: null,
+    subcategory_id: null,
+    responsibility_scope: "household",
+    responsible_user_id: null,
+    created_by_user_id: created.memberUserId,
+  };
+  const installmentsPayload = [
+    {
+      household_id: householdId,
+      credit_card_id: created.creditCardId,
+      number: 1,
+      installment_count: 1,
+      amount_cents: 10000,
+      due_month: "2026-04",
+      description: `${MARKER} g6 parcelado`,
+      category_id: null,
+      subcategory_id: null,
+      responsibility_scope: "household",
+      responsible_user_id: null,
+      created_by_user_id: created.memberUserId,
+    },
+  ];
+  const g6 = await admin.rpc("create_installment_purchase", {
+    group_payload: groupPayload,
+    installments_payload: installmentsPayload,
+  });
+  record(
+    "(g6) service-role null-uid create_installment_purchase passes the re-gated body",
+    !g6.error,
+    g6.error ? g6.error.message : "",
+  );
+  if (g6.data?.group?.id) {
+    // Cascade removes the parcels.
+    await admin.from("installment_groups").delete().eq("id", g6.data.group.id);
+  }
+
+  // Cleanup: delete the settle transfers.
+  await admin.from("transactions").delete().not("bill_month", "is", null);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -568,6 +765,7 @@ async function main() {
     await checkInstallmentRollback(member, householdId);
     await checkAnonCannotExecuteRpcs(householdId);
     await checkObligationMaterialization(member, householdId);
+    await checkCardBillSettlement(member, householdId);
 
     await member.auth.signOut();
     await outsider.auth.signOut();
