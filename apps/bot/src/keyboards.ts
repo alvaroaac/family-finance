@@ -178,12 +178,8 @@ export function cancelOnlyKeyboard(): InlineKeyboardMarkup {
   };
 }
 
-/**
- * Confirm/Cancel keyboard for an obligation confirmation. Reuses the shared
- * `cf`/`cx` tokens; corrections (valor/dia/conta) still arrive as typed text,
- * so no field buttons here.
- */
-export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
+/** Shared Confirm/Cancel keyboard for obligation and card-bill confirmations. */
+export function confirmCancelKeyboard(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [
@@ -192,4 +188,8 @@ export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
       ],
     ],
   };
+}
+
+export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
+  return confirmCancelKeyboard();
 }

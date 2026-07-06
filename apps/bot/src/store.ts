@@ -39,6 +39,7 @@ const CONVERSATION_STATUSES = [
   "cancelled",
   "awaiting_obligation_confirmation",
   "awaiting_installment_confirmation",
+  "awaiting_card_bill_confirmation",
   "awaiting_mark_paid_choice",
   "awaiting_category_name",
 ] as const satisfies readonly ConversationStatus[];

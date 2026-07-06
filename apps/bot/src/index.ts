@@ -43,6 +43,8 @@ import {
   createCategory as dbCreateCategory,
   restoreCategory as dbRestoreCategory,
   createCategorizationMemory,
+  getCardPressureForCard,
+  settleCardBill as dbSettleCardBill,
   type AppSupabaseClient,
   type BotMemberIdentity,
 } from "@family-finance/db";
@@ -351,6 +353,21 @@ async function buildDeps(
     createInstallmentPurchase: async (plan) => {
       const result = await dbCreateInstallmentPurchase(client, plan);
       return { groupId: result.group.id };
+    },
+    // Card-bill payment (PR-2 / Task 6): computed monthly pressure + the
+    // settle_card_bill RPC (ONE transfer row, idempotent per card/month).
+    getCardBillAmount: async (creditCardId, month) => {
+      const pressure = await getCardPressureForCard(
+        client,
+        householdId,
+        creditCardId,
+        month,
+      );
+      return pressure.totalCents;
+    },
+    settleCardBill: async (draft) => {
+      const result = await dbSettleCardBill(client, draft);
+      return { alreadyPaid: result.already_paid };
     },
   };
 }
