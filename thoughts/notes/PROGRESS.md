@@ -438,9 +438,13 @@ applied, 0012 grants effective, bot container running merged code (obligations +
 
 ## Current state
 
-**Bot inline buttons + category creation: code DONE, awaiting merge + deploy.** Branch `feat/bot-inline-buttons`, PR #6 → `feat/family-finance-mvp` OPEN (user must merge). Two docs commits (`5c45bc5`, `b177bbc` — PR-2 spec) sit on that branch ahead of origin, unpushed. After merge: rsync-redeploy the bot to minesupply (commands in the 2026-07-04 block below; confirm with user first, never rsync `.env`) **and re-run setWebhook with `allowed_updates=["message","callback_query"]`** — buttons silently dead without it.
+**PR #6 (inline buttons) and PR #9 (webhook race fix) both MERGED into `feat/family-finance-mvp`.** PR #9 (`81444e8`, merged 2026-07-06): the typed-message and voice webhook paths are now serialized per chat via `withChatQueue` (same F2 race the callback path already had fixed — two concurrent "sim" double-inserted a transaction), plus a duplicate typed "sim" on an already-saved draft is a "Já salvo ✅" no-op instead of clobbering state with a bogus `needs_amount` draft (found by independent codex review, which then came back clean on the final diff). Local `feat/family-finance-mvp` fast-forwarded to `ab8b15c`; fix branch deleted. **Deploy still pending**: rsync-redeploy the bot to minesupply (commands in the 2026-07-04 block below; confirm with user first, never rsync `.env`) **and re-run setWebhook with `allowed_updates=["message","callback_query"]`** — buttons silently dead without it.
 
 **PR-2 (card installments + bill payment): spec approved** at `docs/superpowers/specs/2026-07-06-bot-card-installments-and-bill-payment-design.md` (post codex-review fixes). **Next move: invoke superpowers:writing-plans on that spec**, get plan approval + execution-mode choice, then execute.
+
+---
+
+**(prior current-state — 2026-07-06 earlier)** **Bot inline buttons + category creation: code DONE, awaiting merge + deploy.** Branch `feat/bot-inline-buttons`, PR #6 → `feat/family-finance-mvp` OPEN (user must merge). Two docs commits (`5c45bc5`, `b177bbc` — PR-2 spec) sit on that branch ahead of origin, unpushed.
 
 ---
 
