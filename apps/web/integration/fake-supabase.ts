@@ -581,6 +581,72 @@ function materializeObligationPaymentRpc(
 }
 
 /**
+ * JS stand-in for the `settle_card_bill` plpgsql function (migration 0015).
+ * Reproduces the happy-path DATA EFFECT: insert ONE kind='transfer' row
+ * (account = source, card = destination, bill_month = the settled marker) —
+ * or return the existing one with already_paid = true.
+ */
+function settleCardBillRpc(
+  store: FakeSupabaseStore,
+  args: {
+    target_household_id: string;
+    target_credit_card_id: string;
+    target_account_id: string;
+    target_bill_month: string;
+    target_amount_cents: number;
+    target_paid_on: string | null;
+    target_created_by_user_id: string;
+  },
+): Result<Row> {
+  const card = store
+    .table("credit_cards")
+    .find(
+      (r) =>
+        r.id === args.target_credit_card_id &&
+        r.household_id === args.target_household_id,
+    );
+  if (card === undefined) {
+    return {
+      data: null as unknown as Row,
+      error: { message: `card ${args.target_credit_card_id} not found` },
+    };
+  }
+  const existing = store
+    .table("transactions")
+    .find(
+      (r) =>
+        r.kind === "transfer" &&
+        r.credit_card_id === args.target_credit_card_id &&
+        r.bill_month === args.target_bill_month,
+    );
+  if (existing !== undefined) {
+    return { data: { transaction: existing, already_paid: true }, error: null };
+  }
+  const month = args.target_bill_month;
+  const tx = store.materialize({
+    household_id: args.target_household_id,
+    kind: "transfer",
+    amount_cents: args.target_amount_cents,
+    occurred_on: args.target_paid_on ?? `${month}-01`,
+    description: `Fatura ${String(card.name)} — ${month.slice(5, 7)}/${month.slice(0, 4)}`,
+    category_id: null,
+    subcategory_id: null,
+    account_id: args.target_account_id,
+    credit_card_id: args.target_credit_card_id,
+    installment_id: null,
+    responsibility_scope: "household",
+    responsible_user_id: null,
+    created_by_user_id: args.target_created_by_user_id,
+    import_batch_id: null,
+    obligation_id: null,
+    obligation_month: null,
+    bill_month: month,
+  });
+  store.table("transactions").push(tx);
+  return { data: { transaction: tx, already_paid: false }, error: null };
+}
+
+/**
  * Build a fake Supabase client. The returned object is structurally compatible
  * with the `AppSupabaseClient` surface the repositories use (`.from(table)...`
  * and `.rpc(name, args)`). We deliberately cast at the call site in the test to
@@ -637,6 +703,22 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
               target_household_id: string;
               source_category_id: string;
               target_category_id: string;
+            },
+          ),
+        );
+      }
+      if (name === "settle_card_bill") {
+        return Promise.resolve(
+          settleCardBillRpc(
+            store,
+            args as {
+              target_household_id: string;
+              target_credit_card_id: string;
+              target_account_id: string;
+              target_bill_month: string;
+              target_amount_cents: number;
+              target_paid_on: string | null;
+              target_created_by_user_id: string;
             },
           ),
         );

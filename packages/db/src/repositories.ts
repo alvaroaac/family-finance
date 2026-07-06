@@ -25,6 +25,7 @@ import {
   type ObligationDraft,
   type ProjectableObligation,
   type ProjectedEntry,
+  type CardBillSettlementDraft,
 } from "@family-finance/domain";
 import type {
   Database,
@@ -55,6 +56,7 @@ import type {
   ObligationInsert,
   ObligationStatus,
   MaterializeObligationPaymentResult,
+  SettleCardBillResult,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -1696,6 +1698,15 @@ export async function updateTransaction(
     }
     if (
       data !== null &&
+      data.kind === "transfer" &&
+      patch.payment !== undefined
+    ) {
+      throw new Error(
+        "Transferência tem conta e cartão fixos — para desfazer um pagamento de fatura, exclua a linha.",
+      );
+    }
+    if (
+      data !== null &&
       patch.payment !== undefined &&
       patch.payment.type === "card" &&
       data.kind === "income"
@@ -2302,6 +2313,57 @@ export async function materializeObligationPayment(
     throw new Error(`materializeObligationPayment failed: ${error.message}`);
   }
   return data as MaterializeObligationPaymentResult;
+}
+
+/** Settle a card's bill for a month via the settle_card_bill RPC (0015). */
+export async function settleCardBill(
+  client: AppSupabaseClient,
+  draft: CardBillSettlementDraft,
+): Promise<SettleCardBillResult> {
+  const { data, error } = await client.rpc("settle_card_bill", {
+    target_household_id: draft.householdId,
+    target_credit_card_id: draft.creditCardId,
+    target_account_id: draft.accountId,
+    target_bill_month: draft.billMonth,
+    target_amount_cents: draft.amountCents,
+    target_paid_on: draft.paidOn,
+    target_created_by_user_id: draft.createdByUserId,
+  });
+  if (error !== null) {
+    throw new Error(`settleCardBill failed: ${error.message}`);
+  }
+  return data as SettleCardBillResult;
+}
+
+export type CardBillSettlement = {
+  creditCardId: string;
+  amountCents: number;
+  paidOn: string;
+};
+
+/** Settled card bills for a month (the kind='transfer' rows with bill_month). */
+export async function findCardBillSettlements(
+  client: AppSupabaseClient,
+  householdId: string,
+  month: string,
+): Promise<CardBillSettlement[]> {
+  const { data, error } = await client
+    .from("transactions")
+    .select("credit_card_id, amount_cents, occurred_on")
+    .eq("household_id", householdId)
+    .eq("kind", "transfer")
+    .eq("bill_month", month);
+  if (error !== null) {
+    throw new Error(`findCardBillSettlements failed: ${error.message}`);
+  }
+  const rows = (data ?? []) as Array<
+    Pick<TransactionRow, "credit_card_id" | "amount_cents" | "occurred_on">
+  >;
+  return rows.map((row) => ({
+    creditCardId: row.credit_card_id as string,
+    amountCents: row.amount_cents,
+    paidOn: row.occurred_on,
+  }));
 }
 
 /** Pure: `obligation_month` date ("2026-10-01") -> `YYYY-MM` ("2026-10"). */

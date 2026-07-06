@@ -31,6 +31,8 @@ import {
   summarizeObligationsPressure,
   obligationUpdateFromChanges,
   createCategory,
+  settleCardBill,
+  findCardBillSettlements,
   type AppSupabaseClient,
 } from "./repositories.js";
 import { createServiceRoleClient } from "./index.js";
@@ -121,6 +123,7 @@ describe("mapTransactionRow", () => {
       import_batch_id: null,
       obligation_id: null,
       obligation_month: null,
+      bill_month: null,
       created_at: "2026-06-01T00:00:00Z",
       updated_at: "2026-06-01T00:00:00Z",
     };
@@ -665,6 +668,7 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
     import_batch_id: null,
     obligation_id: null,
     obligation_month: null,
+    bill_month: null,
     created_at: "2026-07-01T00:00:00Z",
     updated_at: "2026-07-01T00:00:00Z",
   };
@@ -752,6 +756,108 @@ describe("updateTransaction with income+card guard", () => {
         payment: { type: "card", creditCardId: "card-1" },
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("updateTransaction with transfer guard", () => {
+  it("rejects a payment patch on a transfer row (card-bill settlement), pt-BR", async () => {
+    const client = fakeClientWithRow({ installment_id: null, kind: "transfer" });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", {
+        payment: { type: "account", accountId: "a2" },
+      }),
+    ).rejects.toThrow(/Transferência tem conta e cartão fixos/);
+  });
+
+  it("still allows an amountCents-only edit on a transfer row", async () => {
+    const client = fakeClientWithRow({ installment_id: null, kind: "transfer" });
+    await expect(
+      updateTransaction(client, HOUSEHOLD, "tx-1", { amountCents: 5000 }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("settleCardBill", () => {
+  it("calls the RPC with snake_case target args and returns the result", async () => {
+    const result = {
+      transaction: { id: "tx-1", bill_month: "2026-07" },
+      already_paid: false,
+    };
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const client = {
+      rpc: async (name: string, args: unknown) => {
+        calls.push({ name, args });
+        return { data: result, error: null };
+      },
+    } as unknown as AppSupabaseClient;
+
+    const out = await settleCardBill(client, {
+      householdId: "house-1",
+      creditCardId: "card-1",
+      accountId: "acct-1",
+      billMonth: "2026-07",
+      amountCents: 235000,
+      paidOn: "2026-07-06",
+      createdByUserId: "user-1",
+    });
+    expect(out).toEqual(result);
+    expect(calls[0]).toEqual({
+      name: "settle_card_bill",
+      args: {
+        target_household_id: "house-1",
+        target_credit_card_id: "card-1",
+        target_account_id: "acct-1",
+        target_bill_month: "2026-07",
+        target_amount_cents: 235000,
+        target_paid_on: "2026-07-06",
+        target_created_by_user_id: "user-1",
+      },
+    });
+  });
+
+  it("throws on RPC error", async () => {
+    const client = {
+      rpc: async () => ({ data: null, error: { message: "boom" } }),
+    } as unknown as AppSupabaseClient;
+    await expect(
+      settleCardBill(client, {
+        householdId: "house-1",
+        creditCardId: "card-1",
+        accountId: "acct-1",
+        billMonth: "2026-07",
+        amountCents: 235000,
+        paidOn: "2026-07-06",
+        createdByUserId: "user-1",
+      }),
+    ).rejects.toThrow("settleCardBill failed: boom");
+  });
+});
+
+describe("findCardBillSettlements", () => {
+  it("queries transfer rows for the household + month and maps the result", async () => {
+    const { client, calls } = createRecordingClient({
+      data: [
+        { credit_card_id: "card-1", amount_cents: 235000, occurred_on: "2026-07-06" },
+      ],
+    });
+    const out = await findCardBillSettlements(client, HOUSEHOLD, "2026-07");
+    expect(calls.table).toBe("transactions");
+    expect(calls.select).toBe("credit_card_id, amount_cents, occurred_on");
+    expect(calls.eq).toEqual([
+      ["household_id", HOUSEHOLD],
+      ["kind", "transfer"],
+      ["bill_month", "2026-07"],
+    ]);
+    expect(out).toEqual([
+      { creditCardId: "card-1", amountCents: 235000, paidOn: "2026-07-06" },
+    ]);
+  });
+
+  it("throws on a database error", async () => {
+    const { client } = createRecordingClient({ error: { message: "boom" } });
+    await expect(
+      findCardBillSettlements(client, HOUSEHOLD, "2026-07"),
+    ).rejects.toThrow("findCardBillSettlements failed: boom");
   });
 });
 
