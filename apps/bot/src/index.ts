@@ -72,6 +72,7 @@ import {
   startConversationFromAudio,
   applyCallback,
   applyMessage,
+  isBareConfirmation,
   type ConversationDeps,
   type ConversationState,
 } from "./conversation.js";
@@ -96,7 +97,11 @@ import {
   createDbConversationStore,
   type ConversationStore,
 } from "./store.js";
-import { SESSION_EXPIRED_TOAST, DRAFT_NOT_YOURS_TOAST } from "./replies.js";
+import {
+  SESSION_EXPIRED_TOAST,
+  DRAFT_NOT_YOURS_TOAST,
+  ALREADY_SAVED_TOAST,
+} from "./replies.js";
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -525,7 +530,8 @@ export async function handleWebhook(args: {
 
   // 1. Voice/audio: transcribe, then run the SAME confirmation flow as text.
   if (voice !== null) {
-    if (args.transcribe === undefined) {
+    const transcribe = args.transcribe;
+    if (transcribe === undefined) {
       // Audio is unsupported without a transcription provider; ask for text.
       await args.telegram.sendMessage(
         voice.chatId,
@@ -533,51 +539,55 @@ export async function handleWebhook(args: {
       );
       return { status: 200, body: { ok: true } };
     }
-    let outcome;
-    try {
-      outcome = await startConversationFromAudio(
-        {
-          voice: { fileId: voice.fileId, mimeType: voice.mimeType },
-          fromUserId: identity.userId,
-        },
-        deps,
-        args.transcribe,
-        { today: todayIso() },
-      );
-    } catch (error) {
-      // Download/transcription failed (timeout, provider error, or an oversize
-      // note). Degrade gracefully: ask for text instead of failing the webhook.
-      const reply =
-        error instanceof VoiceNoteTooLargeError
-          ? "Esse áudio é muito longo. Envie o lançamento por texto, por favor."
-          : "Não consegui transcrever o áudio agora. Tente por texto, por favor.";
-      await args.telegram.sendMessage(voice.chatId, reply);
-      return { status: 200, body: { ok: true } };
-    }
-    // Persist FIRST: startConversationFromAudio may already have inserted a
-    // transaction (auto-confirm paths). If sendMessage below throws, the
-    // state must already reflect that so a retry/re-send can't double-insert.
-    await args.store.save(voice.chatId, outcome.state);
-
-    const sentVoice = await args.telegram.sendMessage(
-      voice.chatId,
-      outcome.reply,
-      outcome.keyboard !== undefined
-        ? { replyMarkup: outcome.keyboard }
-        : undefined,
-    );
-    // Only record promptMessageId when a keyboard was actually attached.
-    if (outcome.keyboard !== undefined) {
-      outcome.state.promptMessageId = sentVoice?.messageId;
-    } else {
-      outcome.state.promptMessageId = undefined;
-    }
-    try {
+    // Serialized per chat (same rule as callbacks/text): a concurrent voice +
+    // text confirm must not race load/save on the conversation store.
+    return withChatQueue(voice.chatId, async (): Promise<WebhookResult> => {
+      let outcome;
+      try {
+        outcome = await startConversationFromAudio(
+          {
+            voice: { fileId: voice.fileId, mimeType: voice.mimeType },
+            fromUserId: identity.userId,
+          },
+          deps,
+          transcribe,
+          { today: todayIso() },
+        );
+      } catch (error) {
+        // Download/transcription failed (timeout, provider error, or an oversize
+        // note). Degrade gracefully: ask for text instead of failing the webhook.
+        const reply =
+          error instanceof VoiceNoteTooLargeError
+            ? "Esse áudio é muito longo. Envie o lançamento por texto, por favor."
+            : "Não consegui transcrever o áudio agora. Tente por texto, por favor.";
+        await args.telegram.sendMessage(voice.chatId, reply);
+        return { status: 200, body: { ok: true } };
+      }
+      // Persist FIRST: startConversationFromAudio may already have inserted a
+      // transaction (auto-confirm paths). If sendMessage below throws, the
+      // state must already reflect that so a retry/re-send can't double-insert.
       await args.store.save(voice.chatId, outcome.state);
-    } catch (error) {
-      console.warn("[bot] re-save after send failed:", error);
-    }
-    return { status: 200, body: { ok: true } };
+
+      const sentVoice = await args.telegram.sendMessage(
+        voice.chatId,
+        outcome.reply,
+        outcome.keyboard !== undefined
+          ? { replyMarkup: outcome.keyboard }
+          : undefined,
+      );
+      // Only record promptMessageId when a keyboard was actually attached.
+      if (outcome.keyboard !== undefined) {
+        outcome.state.promptMessageId = sentVoice?.messageId;
+      } else {
+        outcome.state.promptMessageId = undefined;
+      }
+      try {
+        await args.store.save(voice.chatId, outcome.state);
+      } catch (error) {
+        console.warn("[bot] re-save after send failed:", error);
+      }
+      return { status: 200, body: { ok: true } };
+    });
   }
 
   // 2. Text (incoming is the parsed text message here).
@@ -585,93 +595,112 @@ export async function handleWebhook(args: {
     return { status: 200, body: { ok: true } };
   }
 
-  const existing = await args.store.load(message.chatId);
+  // Serialized per chat (same rule as callbacks): two "sim" messages in
+  // flight at once must not both load the same awaiting_confirmation state
+  // and both insert.
+  return withChatQueue(message.chatId, async (): Promise<WebhookResult> => {
+    const existing = await args.store.load(message.chatId);
 
-  // In a group chat the store is keyed by chat id, so a pending draft belongs
-  // to whoever started it. If a DIFFERENT member now writes, do NOT feed their
-  // message into the first member's draft — that would let B's "sim" confirm
-  // A's lançamento (saved with A as responsável) or misread B's expense as a
-  // correction to A's. Treat it as a fresh conversation for the new sender.
-  const belongsToSender =
-    existing !== undefined &&
-    existing.draft.createdByUserId === identity.userId;
+    // In a group chat the store is keyed by chat id, so a pending draft belongs
+    // to whoever started it. If a DIFFERENT member now writes, do NOT feed their
+    // message into the first member's draft — that would let B's "sim" confirm
+    // A's lançamento (saved with A as responsável) or misread B's expense as a
+    // correction to A's. Treat it as a fresh conversation for the new sender.
+    const belongsToSender =
+      existing !== undefined &&
+      existing.draft.createdByUserId === identity.userId;
 
-  let reply: string;
-  let nextState: ConversationState;
-  let keyboard: InlineKeyboardMarkup | undefined;
-  if (
-    existing === undefined ||
-    !belongsToSender ||
-    existing.status === "saved" ||
-    existing.status === "cancelled"
-  ) {
-    const outcome = await startConversation(
-      { text: message.text, fromUserId: identity.userId },
-      deps,
-      { today: todayIso() },
-    );
-    nextState = outcome.state;
-    reply = outcome.reply;
-    keyboard = outcome.keyboard;
-  } else {
-    const outcome = await applyMessage(existing, message.text, deps, {
-      today: todayIso(),
-    });
-    nextState = outcome.state;
-    reply = outcome.reply;
-    keyboard = outcome.keyboard;
-  }
-
-  // Persist FIRST: applyMessage/startConversation may already have inserted a
-  // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
-  // the state must already be saved so a re-send/retry can't double-insert.
-  await args.store.save(message.chatId, nextState);
-
-  const shouldStripPreviousPrompt =
-    existing !== undefined &&
-    existing.status !== "saved" &&
-    existing.status !== "cancelled" &&
-    existing.promptMessageId !== undefined &&
-    (keyboard !== undefined ||
-      nextState.status === "saved" ||
-      nextState.status === "cancelled" ||
-      nextState !== existing);
-
-  if (shouldStripPreviousPrompt && existing?.promptMessageId !== undefined) {
-    try {
-      await args.telegram.editMessageReplyMarkup(
-        message.chatId,
-        existing.promptMessageId,
-      );
-    } catch (error) {
-      console.warn("[bot] editMessageReplyMarkup failed:", error);
+    // Duplicate typed confirm on an already-saved draft: friendly no-op,
+    // parity with the callback path's ALREADY_SAVED_TOAST. Without this the
+    // fresh-conversation branch below would parse "sim" as a new entry and
+    // clobber the saved state with a bogus needs_amount draft. Only a BARE
+    // confirm word — "ok, mercado 50 reais" is a real new lançamento.
+    if (
+      belongsToSender &&
+      existing.status === "saved" &&
+      isBareConfirmation(message.text)
+    ) {
+      await args.telegram.sendMessage(message.chatId, ALREADY_SAVED_TOAST);
+      return { status: 200, body: { ok: true } };
     }
-  }
 
-  const sent = await args.telegram.sendMessage(
-    message.chatId,
-    reply,
-    keyboard !== undefined ? { replyMarkup: keyboard } : undefined,
-  );
-  // Only record promptMessageId when a keyboard was actually attached — the
-  // previous prompt was already stripped above, so a keyboard-less reply
-  // (e.g. needs_amount) must not leave a stale promptMessageId behind (that
-  // would cause editMessageReplyMarkup 400 + warn-noise on the next message).
-  if (keyboard !== undefined) {
-    nextState.promptMessageId = sent?.messageId;
-  } else if (shouldStripPreviousPrompt) {
-    nextState.promptMessageId = undefined;
-  } else if (existing?.promptMessageId !== undefined) {
-    nextState.promptMessageId = existing.promptMessageId;
-  } else {
-    nextState.promptMessageId = undefined;
-  }
-  try {
+    let reply: string;
+    let nextState: ConversationState;
+    let keyboard: InlineKeyboardMarkup | undefined;
+    if (
+      existing === undefined ||
+      !belongsToSender ||
+      existing.status === "saved" ||
+      existing.status === "cancelled"
+    ) {
+      const outcome = await startConversation(
+        { text: message.text, fromUserId: identity.userId },
+        deps,
+        { today: todayIso() },
+      );
+      nextState = outcome.state;
+      reply = outcome.reply;
+      keyboard = outcome.keyboard;
+    } else {
+      const outcome = await applyMessage(existing, message.text, deps, {
+        today: todayIso(),
+      });
+      nextState = outcome.state;
+      reply = outcome.reply;
+      keyboard = outcome.keyboard;
+    }
+
+    // Persist FIRST: applyMessage/startConversation may already have inserted a
+    // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
+    // the state must already be saved so a re-send/retry can't double-insert.
     await args.store.save(message.chatId, nextState);
-  } catch (error) {
-    console.warn("[bot] re-save after send failed:", error);
-  }
-  return { status: 200, body: { ok: true } };
+
+    const shouldStripPreviousPrompt =
+      existing !== undefined &&
+      existing.status !== "saved" &&
+      existing.status !== "cancelled" &&
+      existing.promptMessageId !== undefined &&
+      (keyboard !== undefined ||
+        nextState.status === "saved" ||
+        nextState.status === "cancelled" ||
+        nextState !== existing);
+
+    if (shouldStripPreviousPrompt && existing?.promptMessageId !== undefined) {
+      try {
+        await args.telegram.editMessageReplyMarkup(
+          message.chatId,
+          existing.promptMessageId,
+        );
+      } catch (error) {
+        console.warn("[bot] editMessageReplyMarkup failed:", error);
+      }
+    }
+
+    const sent = await args.telegram.sendMessage(
+      message.chatId,
+      reply,
+      keyboard !== undefined ? { replyMarkup: keyboard } : undefined,
+    );
+    // Only record promptMessageId when a keyboard was actually attached — the
+    // previous prompt was already stripped above, so a keyboard-less reply
+    // (e.g. needs_amount) must not leave a stale promptMessageId behind (that
+    // would cause editMessageReplyMarkup 400 + warn-noise on the next message).
+    if (keyboard !== undefined) {
+      nextState.promptMessageId = sent?.messageId;
+    } else if (shouldStripPreviousPrompt) {
+      nextState.promptMessageId = undefined;
+    } else if (existing?.promptMessageId !== undefined) {
+      nextState.promptMessageId = existing.promptMessageId;
+    } else {
+      nextState.promptMessageId = undefined;
+    }
+    try {
+      await args.store.save(message.chatId, nextState);
+    } catch (error) {
+      console.warn("[bot] re-save after send failed:", error);
+    }
+    return { status: 200, body: { ok: true } };
+  });
 }
 
 /**
