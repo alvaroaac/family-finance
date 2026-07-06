@@ -94,26 +94,46 @@ shaped like the obligation flow:
 - Buttons inherit the shipped callback safety net (stale → "Sessão expirada",
   double-tap → "Já salvo ✅", strip-on-act).
 
-No domain, db, or web changes in 2a.
+**RPC gate fix (required for 2a — found in review):** the bot's service-role
+client calls RPCs with `auth.uid()` null, and `create_installment_purchase`'s
+body gate (`0002`: `not is_household_member(...)`) rejects null-uid callers —
+migration 0012 granted service_role EXECUTE intending bot use, but the body
+gate still blocks it. Migration 0015 must ALTER the gate to the 0011 pattern:
+`target is null OR (auth.uid() is not null AND not is_household_member(...))`.
+Safe post-0012: anon/public EXECUTE is already revoked, so the only null-uid
+caller that can reach the body is service_role — exactly the bot. The web
+(authenticated) path is unchanged.
+
+No domain or web changes in 2a; db change = the gate fix above.
 
 ## 2. Card-bill payment (2b)
 
 **Migration `0015_card_bill_payments.sql`:**
 
-- Relax the transactions instrument check:
-  `expense`/`income` → exactly one of `account_id`/`credit_card_id` (as
-  today); `transfer` → BOTH non-null (`account_id` = source,
-  `credit_card_id` = destination).
 - Add `bill_month text` nullable, check `^[0-9]{4}-(0[1-9]|1[0-2])$` (same
   pattern as `installments.due_month`).
+- **Narrowed** instrument check (review finding: plain transfers already
+  exist — the caixinha "Aporte" fixture is account-only, and the domain
+  reserves `transfer` for caixinha movements):
+  - `expense`/`income` → exactly one of `account_id`/`credit_card_id` (as
+    today);
+  - `transfer` with `bill_month IS NOT NULL` (a bill payment) → BOTH non-null
+    (`account_id` = source, `credit_card_id` = destination);
+  - `transfer` with `bill_month IS NULL` (caixinha/other) → exactly one, as
+    today. Existing rows stay valid; no data migration.
 - Unique partial index on `(credit_card_id, bill_month)` where
   `kind = 'transfer' and bill_month is not null` — a repeated "pago" for the
   same card+month is an idempotent no-op (obligations pattern).
-- `settle_card_bill` RPC: SECURITY DEFINER, re-asserts `is_household_member`,
-  NO anon EXECUTE (0012 regression gate). Takes
-  `{household_id, credit_card_id, account_id, bill_month, amount_cents,
-  paid_on, created_by_user_id}`; inserts the transfer row
-  (description `Fatura <card> — <mês>/<ano>`), returns the row +
+- `settle_card_bill` RPC: SECURITY DEFINER with the **0011-pattern gate**
+  (`auth.uid() is not null AND not is_household_member(...)` → reject), so
+  the bot's null-uid service-role client passes while authenticated non-
+  members are rejected; plus the full 0012 hardening in the same migration —
+  REVOKE EXECUTE from anon/public, explicit GRANT to authenticated +
+  service_role. The RPC also validates `created_by_user_id` is an active
+  member of the target household (it cannot be derived from `auth.uid()` on
+  the bot path). Takes `{household_id, credit_card_id, account_id,
+  bill_month, amount_cents, paid_on, created_by_user_id}`; inserts the
+  transfer row (description `Fatura <card> — <mês>/<ano>`), returns the row +
   `already_paid` boolean when the unique index blocks the insert. The RPC
   does NOT compute the amount — the caller does.
 
@@ -122,9 +142,14 @@ No domain, db, or web changes in 2a.
 description non-empty) mirroring `createTransactionDraft` conventions.
 
 **Repository** (`packages/db`): `settleCardBill(client, draft)` wrapping the
-RPC; `getCardPressureForCard` reused for the default amount. Card-pressure
-readers gain the settled state: a card's month shows "paga ✅" when a
-transfer row exists for `(card, month)`.
+RPC; `getCardPressureForCard` reused for the default amount (unchanged —
+transfers don't enter pressure sums, which filter on kind). Settled state is
+an explicit new read, not an overload of `CardPressure`:
+`findCardBillSettlements(client, householdId, month)` →
+`Array<{ creditCardId, amountCents, paidOn }>` (transfer rows with
+`bill_month = month`). `TransactionRow` in `types.ts` gains `bill_month:
+string | null`. The dashboard maps settlements onto its per-card pressure
+line ("paga ✅").
 
 **Bot flow** (replaces `cardBillDeferredMessage`):
 
@@ -159,18 +184,28 @@ new form; dashboard/pressure read-side only.
 - Stale buttons / double-taps: inherited callback safety net.
 - The bot never invents amounts: computed default is shown in the
   confirmation and requires an explicit confirm.
-- `updateTransaction`/`deleteTransaction` on a transfer row via web: out of
-  scope beyond not crashing — the plan must verify the parcela-style guards
-  don't misfire on transfers.
+- **Web edit guard (review finding):** the transactions page's payment
+  select posts a single instrument and `transactionUpdateFromPatch` nulls
+  the other column — on a two-instrument bill transfer that would violate
+  the new check and surface a raw DB error. `updateTransaction` gains a
+  parcela-style guard: payment (and kind) edits are rejected on
+  `kind = 'transfer'` rows with a clear pt-BR message; the page hides the
+  payment select for them. Amount/date/description edits stay allowed.
+- **Delete = undo (intentional):** deleting the bill-payment transfer row in
+  the web un-settles that card+month — the idempotency marker goes with it,
+  so a later "nubank pago" records a fresh settlement. That is the undo
+  path; no extra guard.
 
 ## 4. Testing
 
 - **Domain:** `createCardBillSettlement` validation matrix; installment-plan
   reuse needs no new domain tests (covered).
 - **Migration/RLS:** extend `deploy/checks/rls-proof.mjs`: household
-  isolation on `settle_card_bill`, anon cannot EXECUTE, idempotent repeat,
-  constraint matrix (expense with both instruments still rejected; transfer
-  with one instrument rejected).
+  isolation on `settle_card_bill`, anon cannot EXECUTE (settle_card_bill AND
+  the re-gated create_installment_purchase), service-role null-uid path
+  succeeds for both RPCs, idempotent repeat, constraint matrix (expense with
+  both instruments rejected; bill transfer with one instrument rejected;
+  plain caixinha transfer with one instrument still accepted).
 - **Classifier:** extraction across phrasings — "3600 em 12x", "12x de 300",
   card keyword present/absent, count missing; `mark_paid{card}` with and
   without a trailing amount.
