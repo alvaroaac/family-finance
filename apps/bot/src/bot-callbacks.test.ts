@@ -518,3 +518,75 @@ describe("integration: the Petz flow (spec §6)", () => {
     expect(tables.transactions).toHaveLength(1);
   });
 });
+
+describe("callback ownership + concurrency (review findings F1-F3)", () => {
+  function harness() {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent, answered, stripped } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+    };
+    return { base, tables, sent, answered, stripped };
+  }
+
+  it("another member's tap on ✅ does NOT confirm the creator's draft (belongsToSender parity)", async () => {
+    const { base, tables, answered, stripped, sent } = harness();
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    const sentBefore = sent.length;
+
+    // Karol (888) taps confirm on Alvaro's (777) draft.
+    await handleWebhook({ ...base, rawBody: callbackUpdate(888, "cf") });
+
+    expect(tables.transactions).toHaveLength(0);
+    expect(answered.at(-1)?.text).toContain("outra pessoa");
+    // The creator still needs the buttons: nothing stripped, nothing sent.
+    expect(stripped).toHaveLength(0);
+    expect(sent).toHaveLength(sentBefore);
+
+    // The creator's own tap still works afterwards.
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
+    expect(tables.transactions).toHaveLength(1);
+  });
+
+  it("another member's tap cannot cancel or re-categorize the creator's draft", async () => {
+    const { base, tables } = harness();
+    const store = base.store;
+    tables.categories!.push({
+      id: "cat-food",
+      household_id: "house-1",
+      name: "Alimentação",
+      is_active: true,
+    });
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+
+    await handleWebhook({ ...base, rawBody: callbackUpdate(888, "cx") });
+    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+
+    await handleWebhook({ ...base, rawBody: callbackUpdate(888, "ct:cat-food") });
+    expect((await store.load("555"))?.draft.categoryId).not.toBe("cat-food");
+    expect(tables.transactions).toHaveLength(0);
+  });
+
+  it("two CONCURRENT deliveries of a double-tapped ✅ insert exactly one transaction", async () => {
+    const { base, tables, answered } = harness();
+
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+
+    await Promise.all([
+      handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") }),
+      handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") }),
+    ]);
+
+    expect(tables.transactions).toHaveLength(1);
+    // One of the two taps was the no-op double-tap.
+    expect(answered.some((a) => a.text === "Já salvo ✅")).toBe(true);
+  });
+});

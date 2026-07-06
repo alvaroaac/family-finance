@@ -96,7 +96,7 @@ import {
   createDbConversationStore,
   type ConversationStore,
 } from "./store.js";
-import { SESSION_EXPIRED_TOAST } from "./replies.js";
+import { SESSION_EXPIRED_TOAST, DRAFT_NOT_YOURS_TOAST } from "./replies.js";
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -104,6 +104,34 @@ const UNKNOWN_USER_REPLY =
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Telegram delivers webhook updates over parallel connections, so two taps in
+// quick succession (a physical double-tap on ✅) can be in flight at once. The
+// save-before-send ordering inside handleWebhook only protects SEQUENTIAL
+// requests; without serialization both would load the same
+// awaiting_confirmation state and both insert. This map chains processing per
+// chat so the second request observes the first one's saved state. In-process
+// only — the bot runs as a single process (see deploy/README.md).
+const chatQueues = new Map<string, Promise<void>>();
+
+async function withChatQueue<T>(
+  chatId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const prev = chatQueues.get(chatId) ?? Promise.resolve();
+  const run = prev.then(task, task);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  chatQueues.set(chatId, tail);
+  void tail.then(() => {
+    if (chatQueues.get(chatId) === tail) {
+      chatQueues.delete(chatId);
+    }
+  });
+  return run;
 }
 
 /** Case- and accent-insensitive normalization for display-name matching. */
@@ -381,69 +409,86 @@ export async function handleWebhook(args: {
       return { status: 200, body: { ok: true } };
     }
 
-    const existing = await args.store.load(callback.chatId);
-    if (existing === undefined) {
-      // Draft expired past the 24h TTL (or never existed on this chat).
-      await args.telegram.answerCallbackQuery(
-        callback.callbackQueryId,
-        SESSION_EXPIRED_TOAST,
+    const { chatId, messageId, data, callbackQueryId } = callback;
+
+    // Serialized per chat: two concurrent deliveries (physical double-tap)
+    // must not both load the same awaiting_confirmation state.
+    return withChatQueue(chatId, async (): Promise<WebhookResult> => {
+      const existing = await args.store.load(chatId);
+      if (existing === undefined) {
+        // Draft expired past the 24h TTL (or never existed on this chat).
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          SESSION_EXPIRED_TOAST,
+        );
+        await strip(chatId, messageId);
+        return { status: 200, body: { ok: true } };
+      }
+
+      // Same ownership rule as the typed path's belongsToSender: in a group
+      // chat the store is keyed by chat id, so without this check another
+      // member's tap on ✅ would confirm the creator's lançamento (or worse,
+      // a member of a DIFFERENT household would run the draft against their
+      // own catalog/household). Refuse the tap; keep the keyboard — the
+      // creator still needs it.
+      if (existing.draft.createdByUserId !== identity.userId) {
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          DRAFT_NOT_YOURS_TOAST,
+        );
+        return { status: 200, body: { ok: true } };
+      }
+
+      const deps = await buildDeps(
+        args.client,
+        identity.householdId,
+        args.ai,
+        args.interpretText,
+        args.classifyMessage,
       );
-      await strip(callback.chatId, callback.messageId);
+      const outcome = await applyCallback(existing, data, deps, {
+        today: todayIso(),
+      });
+
+      // Persist FIRST: applyCallback may already have inserted a transaction
+      // (e.g. cf/nca). If a later Telegram call throws (stale >15s callback,
+      // network hiccup), the webhook still returns 200 to Telegram (no retry),
+      // so the state MUST already be saved — otherwise a re-tap on a
+      // still-"awaiting_confirmation" state with an unstripped keyboard would
+      // insert a second transaction.
+      await args.store.save(chatId, outcome.state);
+
+      await args.telegram.answerCallbackQuery(callbackQueryId, outcome.toast);
+      // The tapped message's buttons are spent either way (acted on or stale).
+      await strip(chatId, messageId);
+
+      if (outcome.silent !== true && outcome.reply.length > 0) {
+        const sent = await args.telegram.sendMessage(
+          chatId,
+          outcome.reply,
+          outcome.keyboard !== undefined
+            ? { replyMarkup: outcome.keyboard }
+            : undefined,
+        );
+        // Only record promptMessageId when a keyboard was actually attached —
+        // a keyboard-less reply has nothing to strip later, and leaving a stale
+        // promptMessageId around would cause editMessageReplyMarkup to target
+        // the wrong (already-stripped) message on the next turn.
+        if (outcome.keyboard !== undefined) {
+          outcome.state.promptMessageId = sent?.messageId;
+        } else {
+          outcome.state.promptMessageId = undefined;
+        }
+        try {
+          await args.store.save(chatId, outcome.state);
+        } catch (error) {
+          // Best-effort only: losing promptMessageId just means a future stale
+          // tap won't get its keyboard stripped, which is already handled.
+          console.warn("[bot] re-save after send failed:", error);
+        }
+      }
       return { status: 200, body: { ok: true } };
-    }
-
-    const deps = await buildDeps(
-      args.client,
-      identity.householdId,
-      args.ai,
-      args.interpretText,
-      args.classifyMessage,
-    );
-    const outcome = await applyCallback(existing, callback.data, deps, {
-      today: todayIso(),
     });
-
-    // Persist FIRST: applyCallback may already have inserted a transaction
-    // (e.g. cf/nca). If a later Telegram call throws (stale >15s callback,
-    // network hiccup), the webhook still returns 200 to Telegram (no retry),
-    // so the state MUST already be saved — otherwise a re-tap on a
-    // still-"awaiting_confirmation" state with an unstripped keyboard would
-    // insert a second transaction.
-    await args.store.save(callback.chatId, outcome.state);
-
-    await args.telegram.answerCallbackQuery(
-      callback.callbackQueryId,
-      outcome.toast,
-    );
-    // The tapped message's buttons are spent either way (acted on or stale).
-    await strip(callback.chatId, callback.messageId);
-
-    if (outcome.silent !== true && outcome.reply.length > 0) {
-      const sent = await args.telegram.sendMessage(
-        callback.chatId,
-        outcome.reply,
-        outcome.keyboard !== undefined
-          ? { replyMarkup: outcome.keyboard }
-          : undefined,
-      );
-      // Only record promptMessageId when a keyboard was actually attached —
-      // a keyboard-less reply has nothing to strip later, and leaving a stale
-      // promptMessageId around would cause editMessageReplyMarkup to target
-      // the wrong (already-stripped) message on the next turn.
-      if (outcome.keyboard !== undefined) {
-        outcome.state.promptMessageId = sent?.messageId;
-      } else {
-        outcome.state.promptMessageId = undefined;
-      }
-      try {
-        await args.store.save(callback.chatId, outcome.state);
-      } catch (error) {
-        // Best-effort only: losing promptMessageId just means a future stale
-        // tap won't get its keyboard stripped, which is already handled.
-        console.warn("[bot] re-save after send failed:", error);
-      }
-    }
-    return { status: 200, body: { ok: true } };
   }
 
   const voice = parseTelegramVoice(args.rawBody);
