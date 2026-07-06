@@ -19,6 +19,11 @@ import { basename } from "node:path";
 
 import type { AiCompletionClient } from "@family-finance/categorization";
 
+import {
+  logAiCall,
+  type AiCallLogger,
+  type AiCallOutcome,
+} from "./ai-telemetry.js";
 import type { TranscriptionProvider } from "./audio.js";
 
 /**
@@ -54,16 +59,31 @@ async function withTimeout<T>(
  * API and returns the concatenated text reply. Returns `null` on any error
  * (including a network timeout) so the categorization engine falls back to its
  * deterministic path.
+ *
+ * Every call funnels through the one `complete` seam below, which emits a single
+ * {@link AiCallLogger} record — outcome, latency, and token usage — per call.
+ * Prompt caching is intentionally NOT used: the largest prompt prefix (~600
+ * tokens) is far below Haiku's ~4096-token cache minimum, so `cache_control`
+ * would silently no-op. Revisit only if a stable prefix grows past that floor.
  */
 export function createAnthropicCompletionClient(args: {
   apiKey: string;
   model: string;
   /** Per-request network timeout in ms. Defaults to {@link DEFAULT_PROVIDER_TIMEOUT_MS}. */
   timeoutMs?: number;
+  /** Telemetry sink; defaults to {@link logAiCall}. Injected in tests. */
+  logCall?: AiCallLogger;
 }): AiCompletionClient {
   const timeoutMs = args.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  const logCall = args.logCall ?? logAiCall;
   return {
-    async complete(prompt: string): Promise<string | null> {
+    async complete(prompt, opts): Promise<string | null> {
+      const startedAt = Date.now();
+      let outcome: AiCallOutcome = "error";
+      let status: number | undefined;
+      let inputTokens: number | undefined;
+      let outputTokens: number | undefined;
+      let error: string | undefined;
       try {
         const response = await withTimeout(timeoutMs, (signal) =>
           fetch("https://api.anthropic.com/v1/messages", {
@@ -82,18 +102,43 @@ export function createAnthropicCompletionClient(args: {
           }),
         );
         if (!response.ok) {
+          outcome = "http_error";
+          status = response.status;
           return null;
         }
         const json = (await response.json()) as {
           content?: Array<{ type: string; text?: string }>;
+          usage?: { input_tokens?: number; output_tokens?: number };
         };
+        inputTokens = json.usage?.input_tokens;
+        outputTokens = json.usage?.output_tokens;
         const text = (json.content ?? [])
           .filter((block) => block.type === "text" && block.text)
           .map((block) => block.text as string)
           .join("");
+        // A 200 with no text is the model abstaining, not a failure.
+        outcome = text.length > 0 ? "ok" : "abstain";
         return text.length > 0 ? text : null;
-      } catch {
+      } catch (caught) {
+        // An abort surfaces as an AbortError; everything else is a network/parse
+        // failure. Either way categorization degrades to its deterministic path.
+        outcome =
+          caught instanceof Error && caught.name === "AbortError"
+            ? "timeout"
+            : "error";
+        error = caught instanceof Error ? caught.message : String(caught);
         return null;
+      } finally {
+        logCall({
+          label: opts?.label ?? "unknown",
+          model: args.model,
+          outcome,
+          latencyMs: Date.now() - startedAt,
+          inputTokens,
+          outputTokens,
+          status,
+          error,
+        });
       }
     },
   };
@@ -107,50 +152,79 @@ export function createAnthropicCompletionClient(args: {
  * On a network timeout the fetch is aborted and this throws a clear error so the
  * caller degrades to a "tente por texto" fallback (the temp file is still
  * cleaned up by `transcribeVoiceMessage`'s `finally`).
+ *
+ * Like the completion client, every call emits one {@link AiCallLogger} record
+ * (outcome, latency, status) through the same telemetry seam. There are no token
+ * counts to report — Whisper is billed by audio duration, not tokens — so those
+ * fields are omitted.
  */
 export function createOpenAiTranscriptionProvider(args: {
   apiKey: string;
   model: string;
   /** Per-request network timeout in ms. Defaults to {@link DEFAULT_PROVIDER_TIMEOUT_MS}. */
   timeoutMs?: number;
+  /** Telemetry sink; defaults to {@link logAiCall}. Injected in tests. */
+  logCall?: AiCallLogger;
 }): TranscriptionProvider {
   const timeoutMs = args.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  const logCall = args.logCall ?? logAiCall;
   return {
     async transcribe(filePath: string, mimeType?: string): Promise<string> {
-      const bytes = await readFile(filePath);
-      const form = new FormData();
-      const blob = new Blob([new Uint8Array(bytes)], {
-        type: mimeType ?? "audio/ogg",
-      });
-      form.append("file", blob, basename(filePath));
-      form.append("model", args.model);
-      let response: Response;
+      const startedAt = Date.now();
+      let outcome: AiCallOutcome = "error";
+      let status: number | undefined;
+      let error: string | undefined;
       try {
-        response = await withTimeout(timeoutMs, (signal) =>
-          fetch("https://api.openai.com/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { authorization: `Bearer ${args.apiKey}` },
-            body: form,
-            signal,
-          }),
-        );
-      } catch (error) {
-        // An abort surfaces as an AbortError; normalize it to a clear,
-        // caller-friendly timeout error (the deeper cause is preserved).
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new Error(
-            `Transcription timed out after ${timeoutMs}ms`,
-            { cause: error },
+        const bytes = await readFile(filePath);
+        const form = new FormData();
+        const blob = new Blob([new Uint8Array(bytes)], {
+          type: mimeType ?? "audio/ogg",
+        });
+        form.append("file", blob, basename(filePath));
+        form.append("model", args.model);
+        let response: Response;
+        try {
+          response = await withTimeout(timeoutMs, (signal) =>
+            fetch("https://api.openai.com/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { authorization: `Bearer ${args.apiKey}` },
+              body: form,
+              signal,
+            }),
           );
+        } catch (caught) {
+          // An abort surfaces as an AbortError; normalize it to a clear,
+          // caller-friendly timeout error (the deeper cause is preserved).
+          if (caught instanceof Error && caught.name === "AbortError") {
+            outcome = "timeout";
+            error = `Transcription timed out after ${timeoutMs}ms`;
+            throw new Error(error, { cause: caught });
+          }
+          throw caught;
         }
-        throw error;
+        if (!response.ok) {
+          outcome = "http_error";
+          status = response.status;
+          const body = await response.text().catch(() => "");
+          throw new Error(`Transcription failed: ${response.status} ${body}`);
+        }
+        const json = (await response.json()) as { text?: string };
+        outcome = "ok";
+        return json.text ?? "";
+      } catch (caught) {
+        // Fill the error message for any path that didn't already set it.
+        error ??= caught instanceof Error ? caught.message : String(caught);
+        throw caught;
+      } finally {
+        logCall({
+          label: "transcription",
+          model: args.model,
+          outcome,
+          latencyMs: Date.now() - startedAt,
+          status,
+          error,
+        });
       }
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`Transcription failed: ${response.status} ${body}`);
-      }
-      const json = (await response.json()) as { text?: string };
-      return json.text ?? "";
     },
   };
 }

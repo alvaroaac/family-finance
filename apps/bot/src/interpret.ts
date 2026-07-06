@@ -206,7 +206,7 @@ export function buildClassifierPrompt(text: string, today: string): string {
     '- start_month resolve "a partir de 05/10" usando a data de hoje para inferir o ano (dia 05, mês 10 -> due_day 5 e start_month do próximo 10 do calendário); null se não houver início explícito.',
     "- due_day entre 1 e 28; se a mensagem indicar dia 29, 30 ou 31, use 28. null se não houver dia.",
     '- Em mark_paid, keyword é O QUE foi pago, sem a palavra "pago" (ex.: "placa solar pago" -> "placa solar"; "nubank pago" -> "nubank"). target é "card" quando a keyword é um cartão de crédito; senão "obligation".',
-    '- category_hint/responsible_hint são texto livre; null quando não estiver claro.',
+    "- category_hint/responsible_hint são texto livre; null quando não estiver claro.",
     "- Se a mensagem não for nada disso, responda exatamente: null",
   ].join("\n");
 }
@@ -223,6 +223,7 @@ export function createMessageClassifier(
     try {
       const reply = await client.complete(
         buildClassifierPrompt(text, options.today),
+        { label: "classifier" },
       );
       if (reply === null) {
         return null;
@@ -290,6 +291,7 @@ export function createTextInterpreter(
     try {
       const reply = await client.complete(
         buildInterpretationPrompt(text, options.today),
+        { label: "interpreter" },
       );
       if (reply === null) {
         return null;
