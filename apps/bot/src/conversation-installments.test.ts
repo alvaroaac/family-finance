@@ -145,6 +145,29 @@ describe("card installment start: card resolution", () => {
     expect(state.installmentDraft?.cardId).toBe("card-2");
   });
 
+  it('short card name "C6" resolves via keyword "c6" (whole-string fallback)', async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "C6" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          cardKeyword: "c6",
+        }),
+      ),
+    });
+    const { state } = await startConversation(
+      { text: "notebook 3600 em 12x no c6", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(state.status).toBe("awaiting_installment_confirmation");
+    expect(state.installmentDraft?.cardId).toBe("card-2");
+  });
+
   it("ambiguous (2+ cards, no keyword match) -> card grid, no cardId", async () => {
     const { deps } = buildDeps({
       listActiveCards: () => [
@@ -342,6 +365,26 @@ describe("card installment corrections", () => {
     const state = await startDraft(deps);
     const outcome = await applyMessage(state, "data 12/06", deps, { today: TODAY });
     expect(outcome.state.installmentDraft?.purchasedOn).toBe("2026-06-12");
+    expect(outcome.reply).toContain("Atualizei");
+  });
+
+  it('"cartão c6" switches to a short-named card (whole-string fallback)', async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "C6" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          cardKeyword: "nubank",
+        }),
+      ),
+    });
+    const state = await startDraft(deps);
+    const outcome = await applyMessage(state, "cartão c6", deps, { today: TODAY });
+    expect(outcome.state.installmentDraft?.cardId).toBe("card-2");
     expect(outcome.reply).toContain("Atualizei");
   });
 

@@ -491,6 +491,31 @@ function keywordMatch(keyword: string, name: string): boolean {
   return keywordTokens.some((token) => nameTokens.includes(token));
 }
 
+/**
+ * Card-name match: token overlap like `keywordMatch`, but with a whole-string
+ * fallback for short names ("C6", "XP") that `matchTokens` filters out (< 3
+ * chars). When either side yields no tokens, fall back to normalized
+ * equality/containment instead of failing outright. Used at all card-
+ * matching sites; obligation matching keeps the plain `keywordMatch` (3-char
+ * filter, no fallback) since obligation descriptions are free text.
+ */
+function cardKeywordMatch(keyword: string, name: string): boolean {
+  const keywordTokens = matchTokens(keyword);
+  const nameTokens = matchTokens(name);
+  if (keywordTokens.length > 0 && nameTokens.length > 0) {
+    return keywordTokens.some((token) => nameTokens.includes(token));
+  }
+  const normalizedKeyword = normalizeText(keyword);
+  const normalizedName = normalizeText(name);
+  if (normalizedKeyword.length === 0 || normalizedName.length === 0) {
+    return false;
+  }
+  return (
+    normalizedKeyword.includes(normalizedName) ||
+    normalizedName.includes(normalizedKeyword)
+  );
+}
+
 /** Minimal expense draft used as state ballast by non-expense flows. */
 function placeholderDraft(
   input: StartInput,
@@ -667,7 +692,9 @@ function resolveInstallmentCardId(
   cards: Array<{ id: string; name: string; closingDay?: number }>,
 ): string | undefined {
   if (purchase.cardKeyword !== undefined) {
-    const matches = cards.filter((c) => keywordMatch(purchase.cardKeyword as string, c.name));
+    const matches = cards.filter((c) =>
+      cardKeywordMatch(purchase.cardKeyword as string, c.name),
+    );
     return matches.length === 1 ? matches[0]?.id : undefined;
   }
   return cards.length === 1 ? cards[0]?.id : undefined;
@@ -826,9 +853,11 @@ async function resolveBillCard(
 
 /**
  * Build the initial card-bill draft + outcome for a `mark_paid{card}`
- * classified intent (flow requirement 1). 0 matches -> terminal (naming the
- * household's cards, or refusing entirely when it has none); no default
- * account -> terminal; exactly 1 match -> resolveBillCard; 2+ -> the picker.
+ * classified intent (flow requirement 1). No cards at all, or no default
+ * account -> terminal refusal. Otherwise the keyword is matched against the
+ * household's cards: exactly 1 match -> resolveBillCard; 0 or 2+ matches ->
+ * the picker grid (0 matches also shows the not-found message as context
+ * above the grid, so the user can just tap instead of retyping the name).
  */
 async function startCardBillIntent(
   keyword: string,
@@ -843,16 +872,6 @@ async function startCardBillIntent(
     return {
       state: { status: "cancelled", draft: ballast },
       reply: "A casa ainda não tem cartão cadastrado.",
-    };
-  }
-  const matches = cards.filter((c) => keywordMatch(keyword, c.name));
-  if (matches.length === 0) {
-    return {
-      state: { status: "cancelled", draft: ballast },
-      reply: cardBillNoMatchMessage(
-        keyword,
-        cards.map((c) => c.name),
-      ),
     };
   }
   if (deps.defaultAccountId === undefined) {
@@ -870,6 +889,22 @@ async function startCardBillIntent(
     month,
     createdByUserId: input.fromUserId,
   };
+
+  const matches = cards.filter((c) => cardKeywordMatch(keyword, c.name));
+  if (matches.length === 0) {
+    return {
+      state: {
+        status: "awaiting_card_bill_confirmation",
+        draft: ballast,
+        cardBillDraft: draft,
+      },
+      reply: cardBillNoMatchMessage(
+        keyword,
+        cards.map((c) => c.name),
+      ),
+      keyboard: cardGridKeyboard(cards),
+    };
+  }
 
   if (matches.length === 1) {
     return resolveBillCard(matches[0]?.id as string, draft, ballast, deps);
@@ -1881,7 +1916,7 @@ async function applyInstallmentMessage(
   if (cardMatch !== null) {
     const keyword = (cardMatch[1] as string).trim();
     const cards = deps.listActiveCards?.() ?? [];
-    const matches = cards.filter((c) => keywordMatch(keyword, c.name));
+    const matches = cards.filter((c) => cardKeywordMatch(keyword, c.name));
     if (matches.length !== 1) {
       return { state, reply: `Não encontrei o cartão "${keyword}".` };
     }
@@ -2050,7 +2085,7 @@ async function applyCardBillMessage(
   // name might otherwise look like an unrecognized correction).
   if (draft.cardId === undefined) {
     const cards = deps.listActiveCards?.() ?? [];
-    const matches = cards.filter((c) => keywordMatch(message, c.name));
+    const matches = cards.filter((c) => cardKeywordMatch(message, c.name));
     if (matches.length === 1) {
       return resolveBillCard(matches[0]?.id as string, draft, state.draft, deps);
     }

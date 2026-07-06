@@ -117,7 +117,7 @@ describe("card-bill start: card resolution", () => {
     expect(reply).toBe("A casa ainda não tem cartão cadastrado.");
   });
 
-  it("keyword matches no card -> terminal, lists card names", async () => {
+  it("keyword matches no card -> opens the picker grid (not terminal)", async () => {
     const { deps } = buildDeps({
       listActiveCards: () => [
         { id: "card-1", name: "Nubank" },
@@ -127,15 +127,43 @@ describe("card-bill start: card resolution", () => {
         markPaidCardIntent({ keyword: "santander" }),
       ),
     });
-    const { state, reply } = await startConversation(
+    const { state, reply, keyboard } = await startConversation(
       { text: "santander pago", fromUserId: "user-alvaro" },
       deps,
       { today: TODAY },
     );
-    expect(state.status).toBe("cancelled");
+    expect(state.status).toBe("awaiting_card_bill_confirmation");
+    expect(state.cardBillDraft?.cardId).toBeUndefined();
     expect(reply).toBe(
       'Não encontrei o cartão "santander". Cartões da casa: Itaú, Nubank — ou corrija o nome.',
     );
+    expect(keyboard).toEqual({
+      inline_keyboard: [
+        [
+          { text: "Itaú", callback_data: `${CARD_TOKEN_PREFIX}card-2` },
+          { text: "Nubank", callback_data: `${CARD_TOKEN_PREFIX}card-1` },
+        ],
+      ],
+    });
+  });
+
+  it('short card name "C6" resolves via keyword "c6" (whole-string fallback)', async () => {
+    const { deps, getCardBillAmount } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "C6" },
+      ],
+      classifyMessage: classifierReturning(markPaidCardIntent({ keyword: "c6" })),
+    });
+    const { state, reply } = await startConversation(
+      { text: "c6 pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-2", "2026-07");
+    expect(state.status).toBe("awaiting_card_bill_confirmation");
+    expect(state.cardBillDraft?.cardId).toBe("card-2");
+    expect(reply).toContain("C6");
   });
 
   it("no default account -> terminal refusal", async () => {
@@ -311,6 +339,25 @@ describe("card-bill picker: cd: tap and typed card name", () => {
     expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
     expect(outcome.state.cardBillDraft?.cardId).toBe("card-1");
     expect(outcome.reply).toContain("Nubank Roxo");
+  });
+
+  it('typing "c6" while the picker is open resolves via whole-string fallback', async () => {
+    const { deps, getCardBillAmount } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "C6" },
+      ],
+      classifyMessage: classifierReturning(
+        markPaidCardIntent({ keyword: "santander" }),
+      ),
+    });
+    const started = await openPicker(deps);
+    const outcome = await applyMessage(started.state, "c6", deps, {
+      today: TODAY,
+    });
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-2", "2026-07");
+    expect(outcome.state.cardBillDraft?.cardId).toBe("card-2");
+    expect(outcome.reply).toContain("C6");
   });
 
   it("typing a message matching 0 or 2+ cards re-asks with the grid", async () => {
