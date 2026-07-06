@@ -29,6 +29,7 @@ import {
   createTransaction as dbCreateTransaction,
   createBotInteraction,
   createObligation as dbCreateObligation,
+  createInstallmentPurchase as dbCreateInstallmentPurchase,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findAccountsByHousehold,
@@ -334,6 +335,23 @@ async function buildDeps(
       members
         .filter((m) => m.isActive && m.displayName !== null)
         .map((m) => ({ userId: m.userId, displayName: m.displayName as string })),
+    // Card installments (PR-2): cards are already loaded above for the
+    // resolveCardId hint; expose them + closingDay for the installment flow.
+    listActiveCards: () =>
+      cards.map((card) => ({
+        id: card.id,
+        name: card.name,
+        closingDay:
+          card.closing_day !== null &&
+          card.closing_day >= 1 &&
+          card.closing_day <= 28
+            ? card.closing_day
+            : undefined,
+      })),
+    createInstallmentPurchase: async (plan) => {
+      const result = await dbCreateInstallmentPurchase(client, plan);
+      return { groupId: result.group.id };
+    },
   };
 }
 

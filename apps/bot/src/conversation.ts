@@ -17,11 +17,13 @@
  */
 
 import {
+  createInstallmentPlan,
   createObligationDraft,
   createTransactionDraft,
   obligationEndMonth,
 } from "@family-finance/domain";
 import type {
+  InstallmentPlan,
   ObligationDraft,
   TransactionDraft,
   TransactionKind,
@@ -35,6 +37,7 @@ import type {
 
 import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
 import type {
+  InterpretedCardPurchase,
   InterpretedExpense,
   InterpretedIntent,
   MessageClassifier,
@@ -49,7 +52,6 @@ import {
   askCategoryNameMessage,
   cancelledMessage,
   cardBillDeferredMessage,
-  cardInstallmentDeferredMessage,
   categoryCreatedMessage,
   categoryReusedMessage,
   chooseCategoryMessage,
@@ -57,8 +59,11 @@ import {
   confirmationMessage,
   correctionAppliedMessage,
   formatBrl,
+  installmentConfirmationMessage,
+  installmentSavedMessage,
   invalidCategoryNameMessage,
   needsAmountMessage,
+  noActiveCardMessage,
   notUnderstoodMessage,
   obligationAlreadyPaidMessage,
   obligationAmbiguousMessage,
@@ -73,6 +78,7 @@ import {
   ALREADY_SAVED_TOAST,
   CATEGORY_NOT_FOUND_TOAST,
   SESSION_EXPIRED_TOAST,
+  type InstallmentSummaryView,
   type ObligationSummaryView,
   type SummaryView,
 } from "./replies.js";
@@ -80,9 +86,11 @@ import type { InlineKeyboardMarkup } from "./telegram.js";
 import {
   TOKENS,
   CATEGORY_TOKEN_PREFIX,
+  CARD_TOKEN_PREFIX,
   RESPONSIBLE_TOKEN_PREFIX,
   confirmationKeyboard,
   categoryGridKeyboard,
+  cardGridKeyboard,
   responsibleGridKeyboard,
   cancelOnlyKeyboard,
   obligationConfirmationKeyboard,
@@ -99,6 +107,8 @@ export type ConversationStatus =
   | "cancelled"
   /** An obligation template draft awaits its "confirmar" (PR-1). */
   | "awaiting_obligation_confirmation"
+  /** A card-installment purchase draft awaits its "confirmar" (PR-2). */
+  | "awaiting_installment_confirmation"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
   | "awaiting_mark_paid_choice"
   /** Waiting for the user to TYPE a new category's name (nc button / bare "nova categoria"). */
@@ -150,6 +160,22 @@ export type ObligationDraftInProgress = {
   createdByUserId: string;
 };
 
+/** The editable, in-progress CARD INSTALLMENT purchase draft (PR-2). */
+export type InstallmentDraftInProgress = {
+  description: string;
+  /** Total purchase amount in cents; undefined until "valor X" fills it. */
+  totalCents?: number;
+  installmentCount?: number;
+  /** ISO date (YYYY-MM-DD) of the original purchase. */
+  purchasedOn: string;
+  cardId?: string;
+  categoryId?: string;
+  subcategoryId?: string;
+  categoryExplanation?: string;
+  responsibleUserId?: string;
+  createdByUserId: string;
+};
+
 /** One obligation candidate stored while a mark-paid keyword is ambiguous. */
 export type MarkPaidCandidate = {
   id: string;
@@ -162,6 +188,8 @@ export type ConversationState = {
   draft: DraftInProgress;
   /** Set while status = awaiting_obligation_confirmation. */
   obligationDraft?: ObligationDraftInProgress;
+  /** Set while status = awaiting_installment_confirmation. */
+  installmentDraft?: InstallmentDraftInProgress;
   /** Set while status = awaiting_mark_paid_choice. */
   markPaidCandidates?: MarkPaidCandidate[];
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
@@ -277,6 +305,16 @@ export type ConversationDeps = {
   }) => Promise<void>;
   /** Active members for the responsável grid. */
   listActiveMembers?: () => Array<{ userId: string; displayName: string }>;
+  /** Active credit cards for the card-installment flow (PR-2). */
+  listActiveCards?: () => Array<{
+    id: string;
+    name: string;
+    closingDay?: number;
+  }>;
+  /** Persist a validated installment plan (db createInstallmentPurchase). */
+  createInstallmentPurchase?: (
+    plan: InstallmentPlan,
+  ) => Promise<{ groupId: string }>;
 };
 
 export type StartInput = {
@@ -324,15 +362,13 @@ function paymentLabel(draft: DraftInProgress): string {
 }
 
 function responsibleLabel(
-  draft: DraftInProgress,
+  responsibleUserId: string | undefined,
   deps: ConversationDeps,
 ): string {
-  if (draft.responsibleUserId === undefined) {
+  if (responsibleUserId === undefined) {
     return "Casa";
   }
-  return (
-    deps.memberDisplayName?.(draft.responsibleUserId) ?? "Pessoa específica"
-  );
+  return deps.memberDisplayName?.(responsibleUserId) ?? "Pessoa específica";
 }
 
 function summaryView(
@@ -351,7 +387,7 @@ function summaryView(
       draft.categoryNameFallback,
     ),
     paymentLabel: paymentLabel(draft),
-    responsibleLabel: responsibleLabel(draft, deps),
+    responsibleLabel: responsibleLabel(draft.responsibleUserId, deps),
     categoryExplanation: draft.categoryExplanation,
     proposedNewCategory,
     needsAttention: draft.needsAttention,
@@ -412,15 +448,16 @@ function matchTokens(value: string): string[] {
  * Keyword ↔ description match on TOKEN overlap, not whole-string containment:
  * the classifier extracts the keyword verbatim from the message ("placa
  * solar"), while the stored description may differ ("Parcela solar") — a
- * shared token like "solar" is what actually links them.
+ * shared token like "solar" is what actually links them. Shared by obligation
+ * mark-paid matching and card-name resolution (PR-2).
  */
-function obligationKeywordMatch(keyword: string, description: string): boolean {
+function keywordMatch(keyword: string, name: string): boolean {
   const keywordTokens = matchTokens(keyword);
-  const descriptionTokens = matchTokens(description);
-  if (keywordTokens.length === 0 || descriptionTokens.length === 0) {
+  const nameTokens = matchTokens(name);
+  if (keywordTokens.length === 0 || nameTokens.length === 0) {
     return false;
   }
-  return keywordTokens.some((token) => descriptionTokens.includes(token));
+  return keywordTokens.some((token) => nameTokens.includes(token));
 }
 
 /** Minimal expense draft used as state ballast by non-expense flows. */
@@ -457,6 +494,73 @@ function obligationSummaryView(
       draft.subcategoryId,
     ),
     categoryExplanation: draft.categoryExplanation,
+  };
+}
+
+/** Find an active card by id (installment flow — card resolution/corrections). */
+function findActiveCard(
+  deps: ConversationDeps,
+  cardId: string | undefined,
+): { id: string; name: string; closingDay?: number } | undefined {
+  if (cardId === undefined) {
+    return undefined;
+  }
+  return deps.listActiveCards?.().find((c) => c.id === cardId);
+}
+
+/**
+ * Resolve the first parcel's due month via the pure domain generator — only
+ * when the draft is complete enough (total, count, purchase date, card). A
+ * validation failure (e.g. an amount of 0 mid-correction) simply omits the
+ * parenthetical rather than surfacing a domain error in the summary.
+ */
+function firstDueMonthFor(
+  draft: InstallmentDraftInProgress,
+  deps: ConversationDeps,
+): string | undefined {
+  if (
+    draft.totalCents === undefined ||
+    draft.installmentCount === undefined ||
+    draft.cardId === undefined
+  ) {
+    return undefined;
+  }
+  const card = findActiveCard(deps, draft.cardId);
+  const built = createInstallmentPlan({
+    householdId: deps.householdId,
+    creditCardId: draft.cardId,
+    description: draft.description,
+    totalAmount: { currency: "BRL", cents: draft.totalCents },
+    installmentCount: draft.installmentCount,
+    purchasedOn: draft.purchasedOn,
+    createdByUserId: draft.createdByUserId,
+    responsibleUserId: draft.responsibleUserId,
+    category:
+      draft.categoryId !== undefined
+        ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
+        : undefined,
+    closingDay: card?.closingDay,
+  });
+  return built.ok ? built.value.installments[0]?.dueMonth : undefined;
+}
+
+function installmentSummaryView(
+  draft: InstallmentDraftInProgress,
+  deps: ConversationDeps,
+  proposedNewCategory?: string,
+): InstallmentSummaryView {
+  const card = findActiveCard(deps, draft.cardId);
+  return {
+    description: draft.description,
+    totalCents: draft.totalCents,
+    installmentCount: draft.installmentCount,
+    cardName: card?.name,
+    firstDueMonth: firstDueMonthFor(draft, deps),
+    categoryLabel: categoryLabel(deps.catalog, draft.categoryId, draft.subcategoryId),
+    categoryExplanation: draft.categoryExplanation,
+    proposedNewCategory,
+    responsibleLabel: responsibleLabel(draft.responsibleUserId, deps),
+    needsCard: draft.cardId === undefined,
   };
 }
 
@@ -521,6 +625,105 @@ async function settleObligation(
   };
 }
 
+/**
+ * Resolve the card for a new card-installment draft (flow requirement 1):
+ * a `cardKeyword` token-matched against exactly one active card wins; absent
+ * a keyword, exactly one active card auto-selects; anything else (0 or 2+
+ * candidates) leaves `cardId` unset so the confirmation asks "Qual cartão?".
+ */
+function resolveInstallmentCardId(
+  purchase: InterpretedCardPurchase,
+  cards: Array<{ id: string; name: string; closingDay?: number }>,
+): string | undefined {
+  if (purchase.cardKeyword !== undefined) {
+    const matches = cards.filter((c) => keywordMatch(purchase.cardKeyword as string, c.name));
+    return matches.length === 1 ? matches[0]?.id : undefined;
+  }
+  return cards.length === 1 ? cards[0]?.id : undefined;
+}
+
+/**
+ * Build the initial installment draft + confirmation outcome for a
+ * `card_installment` classified intent (flow requirements 1–2).
+ */
+async function startInstallmentIntent(
+  purchase: InterpretedCardPurchase,
+  input: StartInput,
+  deps: ConversationDeps,
+  options: StartOptions,
+  ballast: DraftInProgress,
+): Promise<ConversationOutcome> {
+  const cards = deps.listActiveCards?.() ?? [];
+  if (cards.length === 0) {
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: noActiveCardMessage(),
+    };
+  }
+
+  const totalCents =
+    purchase.totalCents ??
+    (purchase.perInstallmentCents !== undefined &&
+    purchase.installmentCount !== undefined
+      ? purchase.perInstallmentCents * purchase.installmentCount
+      : undefined);
+
+  const installmentDraft: InstallmentDraftInProgress = {
+    description: stripEdgePunctuation(purchase.description),
+    totalCents,
+    installmentCount: purchase.installmentCount,
+    purchasedOn: purchase.purchasedOn ?? options.today,
+    cardId: resolveInstallmentCardId(purchase, cards),
+    createdByUserId: input.fromUserId,
+    responsibleUserId: input.fromUserId || undefined,
+  };
+
+  // Same shared categorization engine as expenses/obligations; the hint is
+  // free TEXT appended to the context description — never trusted as an id.
+  const result = await deps.suggestCategory({
+    householdId: deps.householdId,
+    description:
+      purchase.categoryHint !== undefined
+        ? `${installmentDraft.description} (${purchase.categoryHint})`
+        : installmentDraft.description,
+    amountCents: installmentDraft.totalCents,
+    occurredOn: installmentDraft.purchasedOn,
+  });
+  if (result.suggestion?.macroCategoryId !== undefined) {
+    installmentDraft.categoryId = result.suggestion.macroCategoryId;
+    installmentDraft.subcategoryId = result.suggestion.subcategoryId;
+    installmentDraft.categoryExplanation = result.suggestion.explanation;
+  }
+
+  let proposedCategoryName: string | undefined;
+  if (
+    result.status === "pending_new_category" &&
+    result.pendingCategory !== undefined
+  ) {
+    proposedCategoryName = result.pendingCategory.categoryName;
+    installmentDraft.categoryExplanation = result.pendingCategory.explanation;
+  }
+
+  const state: ConversationState = {
+    status: "awaiting_installment_confirmation",
+    draft: ballast,
+    installmentDraft,
+    proposedCategoryName,
+  };
+  const view = installmentSummaryView(installmentDraft, deps, proposedCategoryName);
+  const reply =
+    installmentDraft.cardId === undefined
+      ? `${installmentConfirmationMessage(view)}\n\nQual cartão?`
+      : installmentConfirmationMessage(view);
+  const keyboard =
+    installmentDraft.cardId === undefined
+      ? cardGridKeyboard(cards)
+      : proposedCategoryName !== undefined
+        ? confirmationKeyboard(proposedCategoryName)
+        : confirmationKeyboard();
+  return { state, reply, keyboard };
+}
+
 /** Route a classified non-plain intent to its flow. */
 async function startClassifiedIntent(
   classified: Exclude<InterpretedIntent, { intent: "plain" }>,
@@ -531,13 +734,17 @@ async function startClassifiedIntent(
 ): Promise<ConversationOutcome> {
   const ballast = placeholderDraft(input, inputKind, options.today);
 
-  // PR-2 deferred card paths: recognized, answered "em breve", terminal.
   if (classified.intent === "card_installment") {
-    return {
-      state: { status: "cancelled", draft: ballast },
-      reply: cardInstallmentDeferredMessage(),
-    };
+    return startInstallmentIntent(
+      classified.purchase,
+      input,
+      deps,
+      options,
+      ballast,
+    );
   }
+
+  // PR-2 deferred: card-bill payment (mark_paid{card}).
   if (classified.intent === "mark_paid" && classified.target === "card") {
     return {
       state: { status: "cancelled", draft: ballast },
@@ -551,7 +758,7 @@ async function startClassifiedIntent(
         ? await deps.listActiveObligations()
         : [];
     const matches = obligations.filter((o) =>
-      obligationKeywordMatch(classified.keyword, o.description),
+      keywordMatch(classified.keyword, o.description),
     );
 
     if (matches.length === 0) {
@@ -1049,9 +1256,13 @@ function describeValidationError(error: ValidationError | undefined): string {
     case "payment.creditCardId":
       return "cartão não informado";
     case "amount.cents":
+    case "totalAmount.cents":
+    case "totalAmount":
       return "valor inválido";
     case "occurredOn":
       return "data inválida";
+    case "installmentCount":
+      return "número de parcelas inválido";
     case "description":
       return "descrição vazia";
     case "createdByUserId":
@@ -1187,7 +1398,7 @@ async function applyMarkPaidChoice(
   }
   const candidates = state.markPaidCandidates ?? [];
   const matches = candidates.filter((c) =>
-    obligationKeywordMatch(message, c.description),
+    keywordMatch(message, c.description),
   );
   if (matches.length !== 1) {
     return {
@@ -1340,6 +1551,208 @@ async function applyObligationMessage(
   };
 }
 
+/**
+ * Confirm a card-installment draft: build the plan via the pure domain
+ * generator and persist it. Shared by BOTH the typed "confirmar" and the
+ * `cf` callback (flow requirement 4) — no separate save path exists.
+ */
+async function confirmInstallment(
+  state: ConversationState,
+  deps: ConversationDeps,
+  today: string,
+  messageText: string,
+): Promise<ConversationOutcome> {
+  const draft = state.installmentDraft;
+  if (
+    draft === undefined ||
+    draft.totalCents === undefined ||
+    draft.installmentCount === undefined ||
+    draft.cardId === undefined
+  ) {
+    // Defensive: the CONFIRM_RE branch in applyInstallmentMessage already
+    // guards each missing field individually before reaching here.
+    return { state, reply: notUnderstoodMessage() };
+  }
+  if (deps.createInstallmentPurchase === undefined) {
+    return { state, reply: obligationUnavailableMessage() };
+  }
+
+  const card = findActiveCard(deps, draft.cardId);
+  const built = createInstallmentPlan({
+    householdId: deps.householdId,
+    creditCardId: draft.cardId,
+    description: draft.description,
+    totalAmount: { currency: "BRL", cents: draft.totalCents },
+    installmentCount: draft.installmentCount,
+    purchasedOn: draft.purchasedOn,
+    createdByUserId: draft.createdByUserId,
+    responsibleUserId: draft.responsibleUserId,
+    category:
+      draft.categoryId !== undefined
+        ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
+        : undefined,
+    closingDay: card?.closingDay,
+  });
+  if (!built.ok) {
+    return {
+      state,
+      reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
+    };
+  }
+
+  await deps.createInstallmentPurchase(built.value);
+  await deps.logInteraction({
+    fromUserId: draft.createdByUserId,
+    inputKind: state.draft.inputKind,
+    messageText,
+    explanation: draft.categoryExplanation,
+  });
+
+  const firstDueMonth = built.value.installments[0]?.dueMonth ?? draft.purchasedOn.slice(0, 7);
+  return {
+    state: { status: "saved", draft: state.draft },
+    reply: installmentSavedMessage({
+      description: draft.description,
+      totalCents: draft.totalCents,
+      installmentCount: draft.installmentCount,
+      cardName: card?.name ?? "cartão",
+      firstDueMonth,
+    }),
+  };
+}
+
+/**
+ * Advance an installment confirmation: confirm persists the plan (guarding
+ * each missing field with a specific prompt), cancel discards, and
+ * valor/parcelas/cartão/categoria/data corrections update the draft in
+ * place. Anything else re-shows the summary as help (flow requirement 3).
+ */
+async function applyInstallmentMessage(
+  state: ConversationState,
+  message: string,
+  deps: ConversationDeps,
+  today: string,
+): Promise<ConversationOutcome> {
+  const draft = state.installmentDraft;
+  if (draft === undefined) {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: notUnderstoodMessage(),
+    };
+  }
+
+  if (CANCEL_RE.test(message)) {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply: cancelledMessage(),
+    };
+  }
+
+  if (CONFIRM_RE.test(message)) {
+    if (draft.totalCents === undefined) {
+      return { state, reply: 'Ainda falta o valor. Informe com "valor 3.600".' };
+    }
+    if (draft.installmentCount === undefined) {
+      return {
+        state,
+        reply: 'Em quantas parcelas? Responda com "parcelas 12".',
+      };
+    }
+    if (draft.cardId === undefined) {
+      const cards = deps.listActiveCards?.() ?? [];
+      return { state, reply: "Qual cartão?", keyboard: cardGridKeyboard(cards) };
+    }
+    return confirmInstallment(state, deps, today, message);
+  }
+
+  const trimmed = message.trim();
+  const next: InstallmentDraftInProgress = { ...draft };
+  let fieldLabel: string | null = null;
+
+  const valueMatch = /^(valor|preço|preco)\b\s*(.+)$/i.exec(trimmed);
+  if (valueMatch !== null) {
+    const parsed = parseExpenseText(valueMatch[2] as string, { today });
+    if (parsed.amountCents === undefined) {
+      return { state, reply: notUnderstoodMessage() };
+    }
+    next.totalCents = parsed.amountCents;
+    fieldLabel = `o valor para R$ ${formatBrl(parsed.amountCents)}`;
+  }
+
+  const installmentMatch =
+    fieldLabel === null ? /^parcelas?\b\s*(\d{1,3})\s*$/i.exec(trimmed) : null;
+  if (installmentMatch !== null) {
+    const count = Number.parseInt(installmentMatch[1] as string, 10);
+    if (count < 2) {
+      return {
+        state,
+        reply: "O parcelamento precisa de pelo menos 2 parcelas.",
+      };
+    }
+    next.installmentCount = count;
+    fieldLabel = `o número de parcelas para ${count}`;
+  }
+
+  const cardMatch =
+    fieldLabel === null ? /^cart[aã]o\b\s*(.+)$/i.exec(trimmed) : null;
+  if (cardMatch !== null) {
+    const keyword = (cardMatch[1] as string).trim();
+    const cards = deps.listActiveCards?.() ?? [];
+    const matches = cards.filter((c) => keywordMatch(keyword, c.name));
+    if (matches.length !== 1) {
+      return { state, reply: `Não encontrei o cartão "${keyword}".` };
+    }
+    next.cardId = matches[0]?.id;
+    fieldLabel = "o cartão";
+  }
+
+  const catMatch = fieldLabel === null ? /^(categoria|cat)\b\s*(.+)$/i.exec(trimmed) : null;
+  if (catMatch !== null) {
+    const name = (catMatch[2] as string).trim().toLowerCase();
+    const category = deps.catalog.categories.find(
+      (c) => c.name.trim().toLowerCase() === name,
+    );
+    if (category === undefined) {
+      return { state, reply: notUnderstoodMessage() };
+    }
+    next.categoryId = category.id;
+    next.subcategoryId = undefined;
+    next.categoryExplanation = "Categoria escolhida manualmente.";
+    fieldLabel = "a categoria";
+  }
+
+  const dateMatch = fieldLabel === null ? /^(data|dia)\b\s*(.+)$/i.exec(trimmed) : null;
+  if (dateMatch !== null) {
+    const parsed = parseExpenseText(dateMatch[2] as string, { today });
+    if (parsed.occurredOn === undefined || parsed.uncertainFields.includes("date")) {
+      return { state, reply: notUnderstoodMessage() };
+    }
+    next.purchasedOn = parsed.occurredOn;
+    fieldLabel = "a data";
+  }
+
+  if (fieldLabel === null) {
+    return {
+      state,
+      reply: installmentConfirmationMessage(
+        installmentSummaryView(draft, deps, state.proposedCategoryName),
+      ),
+    };
+  }
+
+  const nextState: ConversationState = {
+    status: "awaiting_installment_confirmation",
+    draft: state.draft,
+    installmentDraft: next,
+    proposedCategoryName:
+      catMatch !== null ? undefined : state.proposedCategoryName,
+  };
+  return {
+    state: nextState,
+    reply: `${correctionAppliedMessage(fieldLabel)}\n\n${installmentConfirmationMessage(installmentSummaryView(next, deps, nextState.proposedCategoryName))}`,
+  };
+}
+
 export async function applyMessage(
   state: ConversationState,
   message: string,
@@ -1361,6 +1774,9 @@ export async function applyMessage(
   }
   if (state.status === "awaiting_obligation_confirmation") {
     return applyObligationMessage(state, message, deps, today);
+  }
+  if (state.status === "awaiting_installment_confirmation") {
+    return applyInstallmentMessage(state, message, deps, today);
   }
 
   const newCategoryMatch = NEW_CATEGORY_RE.exec(message);
@@ -1618,6 +2034,123 @@ export async function applyCallback(
     return expiredOutcome(state);
   }
   if (state.status === "cancelled") {
+    return expiredOutcome(state);
+  }
+
+  // Card-installment confirmation: cf/cx parity with typed confirm/cancel,
+  // cd:<uuid> picks the card, cats/ct:/nca/nocat mirror the plain-expense
+  // category flow but return to THIS summary (never persisting on their own).
+  if (state.status === "awaiting_installment_confirmation") {
+    const draft = state.installmentDraft;
+    if (draft === undefined) {
+      return expiredOutcome(state);
+    }
+    if (token === TOKENS.confirm) {
+      const depsValue = await getDeps();
+      const outcome = await confirmInstallment(
+        state,
+        depsValue,
+        today,
+        "confirmar (botão)",
+      );
+      return outcome;
+    }
+    if (token === TOKENS.cancel) {
+      return {
+        state: { status: "cancelled", draft: state.draft },
+        reply: cancelledMessage(),
+      };
+    }
+    if (token.startsWith(CARD_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const cardId = token.slice(CARD_TOKEN_PREFIX.length);
+      const card = findActiveCard(depsValue, cardId);
+      if (card === undefined) {
+        return expiredOutcome(state);
+      }
+      const next: InstallmentDraftInProgress = { ...draft, cardId };
+      const nextState: ConversationState = { ...state, installmentDraft: next };
+      return {
+        state: nextState,
+        reply: installmentConfirmationMessage(
+          installmentSummaryView(next, depsValue, state.proposedCategoryName),
+        ),
+        keyboard:
+          state.proposedCategoryName !== undefined
+            ? confirmationKeyboard(state.proposedCategoryName)
+            : confirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.categories) {
+      const depsValue = await getDeps();
+      return {
+        state,
+        reply: chooseCategoryMessage(),
+        keyboard: categoryGridKeyboard(depsValue.catalog.categories),
+      };
+    }
+    if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
+      const category = depsValue.catalog.categories.find((c) => c.id === categoryId);
+      if (category === undefined) {
+        return { state, reply: "", silent: true, toast: CATEGORY_NOT_FOUND_TOAST };
+      }
+      const next: InstallmentDraftInProgress = {
+        ...draft,
+        categoryId: category.id,
+        subcategoryId: undefined,
+        categoryExplanation: "Categoria escolhida manualmente.",
+      };
+      const nextState: ConversationState = {
+        ...state,
+        installmentDraft: next,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: `${correctionAppliedMessage("a categoria")}\n\n${installmentConfirmationMessage(installmentSummaryView(next, depsValue))}`,
+        keyboard: confirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.acceptProposal) {
+      if (state.proposedCategoryName === undefined) {
+        return expiredOutcome(state);
+      }
+      const depsValue = await getDeps();
+      const resolved = await createOrReuseCategory(state.proposedCategoryName, depsValue);
+      if (resolved === null) {
+        return { state, reply: notUnderstoodMessage() };
+      }
+      const next: InstallmentDraftInProgress = {
+        ...draft,
+        categoryId: resolved.categoryId,
+        subcategoryId: undefined,
+        categoryExplanation: "Categoria criada pelo usuário.",
+      };
+      const nextState: ConversationState = {
+        ...state,
+        installmentDraft: next,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: installmentConfirmationMessage(installmentSummaryView(next, depsValue)),
+        keyboard: confirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.dropProposal) {
+      if (state.proposedCategoryName === undefined) {
+        return expiredOutcome(state);
+      }
+      const depsValue = await getDeps();
+      const nextState: ConversationState = { ...state, proposedCategoryName: undefined };
+      return {
+        state: nextState,
+        reply: installmentConfirmationMessage(installmentSummaryView(draft, depsValue)),
+        keyboard: confirmationKeyboard(),
+      };
+    }
     return expiredOutcome(state);
   }
 

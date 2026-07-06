@@ -3,10 +3,12 @@ import { describe, it, expect } from "vitest";
 import {
   TOKENS,
   CATEGORY_TOKEN_PREFIX,
+  CARD_TOKEN_PREFIX,
   confirmationKeyboard,
   categoryGridKeyboard,
   responsibleGridKeyboard,
   cancelOnlyKeyboard,
+  cardGridKeyboard,
 } from "./keyboards.js";
 
 describe("confirmationKeyboard", () => {
@@ -91,6 +93,39 @@ describe("responsibleGridKeyboard", () => {
         ],
       ],
     });
+  });
+});
+
+describe("cardGridKeyboard", () => {
+  it("lists cards alphabetically, 2 per row, no trailing button", () => {
+    const grid = cardGridKeyboard([
+      { id: "card-n", name: "Nubank" },
+      { id: "card-i", name: "Inter" },
+      { id: "card-x", name: "XP" },
+    ]);
+    expect(grid).toEqual({
+      inline_keyboard: [
+        [
+          { text: "Inter", callback_data: "cd:card-i" },
+          { text: "Nubank", callback_data: "cd:card-n" },
+        ],
+        [{ text: "XP", callback_data: "cd:card-x" }],
+      ],
+    });
+  });
+
+  it("never embeds names in callback_data (64-byte cap)", () => {
+    const grid = cardGridKeyboard([
+      { id: "11111111-2222-3333-4444-555555555555", name: "Nome enorme de cartão" },
+    ]);
+    for (const row of grid.inline_keyboard) {
+      for (const button of row) {
+        expect(Buffer.byteLength(button.callback_data, "utf8")).toBeLessThanOrEqual(64);
+      }
+    }
+    expect(grid.inline_keyboard[0]?.[0]?.callback_data).toBe(
+      `${CARD_TOKEN_PREFIX}11111111-2222-3333-4444-555555555555`,
+    );
   });
 });
 

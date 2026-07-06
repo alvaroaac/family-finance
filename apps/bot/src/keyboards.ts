@@ -26,6 +26,8 @@ export const TOKENS = {
 export const CATEGORY_TOKEN_PREFIX = "ct:";
 /** `rs:<uuid>` assigns a responsável (`rs:house` = the house). */
 export const RESPONSIBLE_TOKEN_PREFIX = "rs:";
+/** `cd:<uuid>` assigns a credit card (card installment flow). */
+export const CARD_TOKEN_PREFIX = "cd:";
 
 /** Chunk buttons into rows of two (household-scale grids, no pagination). */
 function twoPerRow(buttons: InlineKeyboardButton[]): InlineKeyboardButton[][] {
@@ -94,6 +96,25 @@ export function categoryGridKeyboard(
   );
   rows.push([{ text: "➕ Nova categoria", callback_data: TOKENS.newCategory }]);
   return { inline_keyboard: rows };
+}
+
+/**
+ * Card-pick grid: active cards alphabetically (pt-BR collation), 2 per row —
+ * mirrors `categoryGridKeyboard` without the trailing new-category button
+ * (cards are managed in the panel, not from the bot).
+ */
+export function cardGridKeyboard(
+  cards: ReadonlyArray<{ id: string; name: string }>,
+): InlineKeyboardMarkup {
+  const sorted = [...cards].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return {
+    inline_keyboard: twoPerRow(
+      sorted.map((c) => ({
+        text: c.name,
+        callback_data: `${CARD_TOKEN_PREFIX}${c.id}`,
+      })),
+    ),
+  };
 }
 
 /** Responsável grid: the house first, then one button per active member. */

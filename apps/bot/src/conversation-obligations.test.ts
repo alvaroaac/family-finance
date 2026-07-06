@@ -394,25 +394,6 @@ describe("mark_paid{obligation} flow", () => {
 });
 
 describe("deferred card intents (PR-2)", () => {
-  it("card_installment replies the exact em-breve copy", async () => {
-    const { deps, createTransaction } = buildDeps({
-      classifyMessage: classifierReturning({
-        intent: "card_installment",
-        purchase: { description: "Notebook", totalCents: 360000 },
-      }),
-    });
-    const { state, reply } = await startConversation(
-      { text: "notebook 3600 em 12x no nubank", fromUserId: "user-alvaro" },
-      deps,
-      { today: TODAY },
-    );
-    expect(state.status).toBe("cancelled");
-    expect(createTransaction).not.toHaveBeenCalled();
-    expect(reply).toBe(
-      "Compra parcelada no cartão ainda não dá pra registrar por aqui — em breve. Por ora, cadastre em Cartões no painel.",
-    );
-  });
-
   it("mark_paid{card} replies the exact em-breve copy", async () => {
     const { deps } = buildDeps({
       classifyMessage: classifierReturning({
