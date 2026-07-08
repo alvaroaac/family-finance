@@ -85,6 +85,7 @@ import {
   categoryGridKeyboard,
   responsibleGridKeyboard,
   cancelOnlyKeyboard,
+  obligationConfirmationKeyboard,
 } from "./keyboards.js";
 
 // ---------------------------------------------------------------------------
@@ -329,7 +330,9 @@ function responsibleLabel(
   if (draft.responsibleUserId === undefined) {
     return "Casa";
   }
-  return deps.memberDisplayName?.(draft.responsibleUserId) ?? "Pessoa específica";
+  return (
+    deps.memberDisplayName?.(draft.responsibleUserId) ?? "Pessoa específica"
+  );
 }
 
 function summaryView(
@@ -361,7 +364,10 @@ function statusForDraft(draft: DraftInProgress): ConversationStatus {
     : "awaiting_confirmation";
 }
 
-function replyForState(state: ConversationState, deps: ConversationDeps): string {
+function replyForState(
+  state: ConversationState,
+  deps: ConversationDeps,
+): string {
   if (state.draft.amountCents === undefined) {
     return needsAmountMessage(state.draft.description);
   }
@@ -380,6 +386,9 @@ function keyboardForState(
   if (state.status === "awaiting_category_name") {
     return cancelOnlyKeyboard();
   }
+  if (state.status === "awaiting_obligation_confirmation") {
+    return obligationConfirmationKeyboard();
+  }
   return undefined;
 }
 
@@ -389,11 +398,7 @@ function keyboardForState(
 
 /** Case- and accent-insensitive normalization for keyword matching. */
 function normalizeText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .trim()
-    .toLowerCase();
+  return value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 }
 
 /** Meaningful tokens of a keyword/description (normalized, short words out). */
@@ -628,6 +633,7 @@ async function startClassifiedIntent(
     reply: obligationConfirmationMessage(
       obligationSummaryView(obligationDraft, deps),
     ),
+    keyboard: obligationConfirmationKeyboard(),
   };
 }
 
@@ -797,7 +803,11 @@ export async function startConversation(
     draft,
     proposedCategoryName,
   };
-  return { state, reply: replyForState(state, deps), keyboard: keyboardForState(state) };
+  return {
+    state,
+    reply: replyForState(state, deps),
+    keyboard: keyboardForState(state),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -987,7 +997,10 @@ function parseCorrection(
   const dateMatch = /^(data|dia)\b\s*(.+)$/i.exec(text);
   if (dateMatch !== null) {
     const parsed = parseExpenseText(dateMatch[2] as string, { today });
-    if (parsed.occurredOn !== undefined && !parsed.uncertainFields.includes("date")) {
+    if (
+      parsed.occurredOn !== undefined &&
+      !parsed.uncertainFields.includes("date")
+    ) {
       return { field: "date", iso: parsed.occurredOn };
     }
     return { field: "unknown" };
@@ -1077,7 +1090,11 @@ async function persist(
   } else {
     const accountId = draft.accountId ?? deps.defaultAccountId;
     if (accountId === undefined || accountId.length === 0) {
-      const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
+      const next: ConversationState = {
+        ...state,
+        status: statusForDraft(draft),
+        draft,
+      };
       return {
         state: next,
         reply:
@@ -1297,9 +1314,7 @@ async function applyObligationMessage(
 
   const accountMatch = /^conta\b\s*(.+)$/i.exec(message.trim());
   if (fieldLabel === null && accountMatch !== null) {
-    const accountId = deps.resolveAccountIdByName?.(
-      accountMatch[1] as string,
-    );
+    const accountId = deps.resolveAccountIdByName?.(accountMatch[1] as string);
     if (accountId === undefined) {
       return {
         state,
@@ -1417,7 +1432,9 @@ export async function applyMessage(
     draft,
     // A typed category correction replaces any pending AI proposal — mirrors
     // the ct: tapped path so the UI never lies about which category is set.
-    ...(correction.field === "category" ? { proposedCategoryName: undefined } : {}),
+    ...(correction.field === "category"
+      ? { proposedCategoryName: undefined }
+      : {}),
   };
   const fieldLabel =
     correction.field === "amount"
@@ -1441,7 +1458,10 @@ async function createOrReuseCategory(
   name: string,
   deps: ConversationDeps,
 ): Promise<{ categoryId: string; reused: boolean } | null> {
-  if (deps.listAllCategories === undefined || deps.createCategory === undefined) {
+  if (
+    deps.listAllCategories === undefined ||
+    deps.createCategory === undefined
+  ) {
     return null;
   }
   const wanted = normalizeText(name);
@@ -1563,7 +1583,9 @@ function summaryOutcome(
   };
 }
 
-type ConversationDepsInput = ConversationDeps | (() => Promise<ConversationDeps>);
+type ConversationDepsInput =
+  | ConversationDeps
+  | (() => Promise<ConversationDeps>);
 
 function isDepsGetter(
   deps: ConversationDepsInput,
@@ -1599,12 +1621,27 @@ export async function applyCallback(
     return expiredOutcome(state);
   }
 
-  // Obligation flows and mark-paid choices never get keyboards (out of scope),
-  // so any token landing there is stale.
-  if (
-    state.status === "awaiting_obligation_confirmation" ||
-    state.status === "awaiting_mark_paid_choice"
-  ) {
+  // Obligation confirmation carries a Confirmar/Cancelar keyboard: route the tap
+  // through the same text handler so a button does exactly what typing the word
+  // does (validate + createObligation, or cancel). Corrections stay typed-only.
+  if (state.status === "awaiting_obligation_confirmation") {
+    if (token === TOKENS.confirm || token === TOKENS.cancel) {
+      const word =
+        token === TOKENS.confirm ? "confirmar (botão)" : "cancelar (botão)";
+      const outcome = await applyObligationMessage(
+        state,
+        word,
+        await getDeps(),
+        today,
+      );
+      return { ...outcome, keyboard: keyboardForState(outcome.state) };
+    }
+    return expiredOutcome(state);
+  }
+
+  // Mark-paid choice is a candidate list, not a confirm — no keyboard yet, so
+  // any token landing there is stale.
+  if (state.status === "awaiting_mark_paid_choice") {
     return expiredOutcome(state);
   }
 
@@ -1620,7 +1657,12 @@ export async function applyCallback(
   // awaiting_confirmation / needs_amount.
   if (token === TOKENS.confirm) {
     const depsValue = await getDeps();
-    const outcome = await confirmDraft(state, depsValue, "confirmar (botão)", today);
+    const outcome = await confirmDraft(
+      state,
+      depsValue,
+      "confirmar (botão)",
+      today,
+    );
     return { ...outcome, keyboard: keyboardForState(outcome.state) };
   }
   if (token === TOKENS.cancel) {
@@ -1640,9 +1682,16 @@ export async function applyCallback(
   if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
     const depsValue = await getDeps();
     const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
-    const category = depsValue.catalog.categories.find((c) => c.id === categoryId);
+    const category = depsValue.catalog.categories.find(
+      (c) => c.id === categoryId,
+    );
     if (category === undefined) {
-      return { state, reply: "", silent: true, toast: CATEGORY_NOT_FOUND_TOAST };
+      return {
+        state,
+        reply: "",
+        silent: true,
+        toast: CATEGORY_NOT_FOUND_TOAST,
+      };
     }
     const draft: DraftInProgress = {
       ...state.draft,
@@ -1657,7 +1706,11 @@ export async function applyCallback(
       draft,
       proposedCategoryName: undefined,
     };
-    return summaryOutcome(next, depsValue, correctionAppliedMessage("a categoria"));
+    return summaryOutcome(
+      next,
+      depsValue,
+      correctionAppliedMessage("a categoria"),
+    );
   }
   if (token === TOKENS.responsible) {
     const depsValue = await getDeps();
@@ -1669,20 +1722,44 @@ export async function applyCallback(
   }
   if (token === TOKENS.responsibleHouse) {
     const depsValue = await getDeps();
-    const draft: DraftInProgress = { ...state.draft, responsibleUserId: undefined };
-    const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
-    return summaryOutcome(next, depsValue, correctionAppliedMessage("o responsável"));
+    const draft: DraftInProgress = {
+      ...state.draft,
+      responsibleUserId: undefined,
+    };
+    const next: ConversationState = {
+      ...state,
+      status: statusForDraft(draft),
+      draft,
+    };
+    return summaryOutcome(
+      next,
+      depsValue,
+      correctionAppliedMessage("o responsável"),
+    );
   }
   if (token.startsWith(RESPONSIBLE_TOKEN_PREFIX)) {
     const depsValue = await getDeps();
     const userId = token.slice(RESPONSIBLE_TOKEN_PREFIX.length);
-    const member = depsValue.listActiveMembers?.().find((m) => m.userId === userId);
+    const member = depsValue
+      .listActiveMembers?.()
+      .find((m) => m.userId === userId);
     if (member === undefined) {
       return expiredOutcome(state);
     }
-    const draft: DraftInProgress = { ...state.draft, responsibleUserId: userId };
-    const next: ConversationState = { ...state, status: statusForDraft(draft), draft };
-    return summaryOutcome(next, depsValue, correctionAppliedMessage("o responsável"));
+    const draft: DraftInProgress = {
+      ...state.draft,
+      responsibleUserId: userId,
+    };
+    const next: ConversationState = {
+      ...state,
+      status: statusForDraft(draft),
+      draft,
+    };
+    return summaryOutcome(
+      next,
+      depsValue,
+      correctionAppliedMessage("o responsável"),
+    );
   }
 
   if (token === TOKENS.acceptProposal) {
@@ -1703,12 +1780,18 @@ export async function applyCallback(
       return expiredOutcome(state);
     }
     const depsValue = await getDeps();
-    const next: ConversationState = { ...state, proposedCategoryName: undefined };
+    const next: ConversationState = {
+      ...state,
+      proposedCategoryName: undefined,
+    };
     return summaryOutcome(next, depsValue);
   }
 
   if (token === TOKENS.newCategory) {
-    const next: ConversationState = { ...state, status: "awaiting_category_name" };
+    const next: ConversationState = {
+      ...state,
+      status: "awaiting_category_name",
+    };
     return {
       state: next,
       reply: askCategoryNameMessage(),

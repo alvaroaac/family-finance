@@ -119,3 +119,19 @@ export function cancelOnlyKeyboard(): InlineKeyboardMarkup {
     inline_keyboard: [[{ text: "❌ Cancelar", callback_data: TOKENS.cancel }]],
   };
 }
+
+/**
+ * Confirm/Cancel keyboard for an obligation confirmation. Reuses the shared
+ * `cf`/`cx` tokens; corrections (valor/dia/conta) still arrive as typed text,
+ * so no field buttons here.
+ */
+export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Confirmar", callback_data: TOKENS.confirm },
+        { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+      ],
+    ],
+  };
+}

@@ -16,8 +16,10 @@ import type { CategoryCatalog } from "@family-finance/categorization";
 import {
   startConversation,
   applyMessage,
+  applyCallback,
   type ConversationDeps,
 } from "./conversation.js";
+import { TOKENS } from "./keyboards.js";
 import type { InterpretedIntent, MessageClassifier } from "./interpret.js";
 
 const TODAY = "2026-07-03";
@@ -28,7 +30,9 @@ const CATALOG: CategoryCatalog = {
   subcategories: [],
 };
 
-function classifierReturning(result: InterpretedIntent | null): MessageClassifier {
+function classifierReturning(
+  result: InterpretedIntent | null,
+): MessageClassifier {
   return async () => result;
 }
 
@@ -62,7 +66,11 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
     logInteraction,
     listActiveObligations: async () => [
       { id: "ob-solar", description: "Parcela solar", amountCents: 71044 },
-      { id: "ob-carro", description: "Financiamento carro", amountCents: 90000 },
+      {
+        id: "ob-carro",
+        description: "Financiamento carro",
+        amountCents: 90000,
+      },
       { id: "ob-rent", description: "Aluguel", amountCents: 120000 },
     ],
     createObligation,
@@ -70,7 +78,11 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
     resolveAccountIdByName: (name: string) =>
       name.trim().toLowerCase() === "nubank" ? "acct-nubank" : undefined,
     accountNameById: (id: string) =>
-      id === "acct-1" ? "Conta corrente" : id === "acct-nubank" ? "Nubank" : undefined,
+      id === "acct-1"
+        ? "Conta corrente"
+        : id === "acct-nubank"
+          ? "Nubank"
+          : undefined,
     ...overrides,
   };
   return {
@@ -99,7 +111,10 @@ describe("obligation create flow", () => {
       classifyMessage: classifierReturning(SOLAR_INTENT),
     });
     const { state, reply } = await startConversation(
-      { text: "Parcela solar 710,44 72x a partir de 05/10", fromUserId: "user-alvaro" },
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10",
+        fromUserId: "user-alvaro",
+      },
       deps,
       { today: TODAY },
     );
@@ -121,7 +136,10 @@ describe("obligation create flow", () => {
       classifyMessage: classifierReturning(SOLAR_INTENT),
     });
     const started = await startConversation(
-      { text: "Parcela solar 710,44 72x a partir de 05/10", fromUserId: "user-alvaro" },
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10",
+        fromUserId: "user-alvaro",
+      },
       deps,
       { today: TODAY },
     );
@@ -131,7 +149,10 @@ describe("obligation create flow", () => {
 
     expect(confirmed.state.status).toBe("saved");
     expect(createObligation).toHaveBeenCalledTimes(1);
-    const draft = createObligation.mock.calls[0]?.[0] as Record<string, unknown>;
+    const draft = createObligation.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(draft).toMatchObject({
       householdId: "house-1",
       description: "Solar",
@@ -159,7 +180,10 @@ describe("obligation create flow", () => {
       { today: TODAY },
     );
     await applyMessage(started.state, "confirmar", deps, { today: TODAY });
-    const draft = createObligation.mock.calls[0]?.[0] as Record<string, unknown>;
+    const draft = createObligation.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(draft).toMatchObject({
       startMonth: "2026-07",
       dueDay: 1,
@@ -182,9 +206,14 @@ describe("obligation create flow", () => {
     expect(started.state.status).toBe("awaiting_obligation_confirmation");
     expect(started.reply).toMatch(/valor/i);
 
-    const corrected = await applyMessage(started.state, "valor 1.200,00", deps, {
-      today: TODAY,
-    });
+    const corrected = await applyMessage(
+      started.state,
+      "valor 1.200,00",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(corrected.reply).toContain("R$ 1.200,00/mês");
 
     const confirmed = await applyMessage(corrected.state, "confirmar", deps, {
@@ -229,9 +258,14 @@ describe("obligation create flow", () => {
       today: TODAY,
     });
     expect(withDay.reply).toContain("Vence dia 7");
-    const withAccount = await applyMessage(withDay.state, "conta Nubank", deps, {
-      today: TODAY,
-    });
+    const withAccount = await applyMessage(
+      withDay.state,
+      "conta Nubank",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(withAccount.reply).toContain("Nubank");
 
     await applyMessage(withAccount.state, "confirmar", deps, { today: TODAY });
@@ -307,8 +341,16 @@ describe("mark_paid{obligation} flow", () => {
         keyword: "financiamento",
       }),
       listActiveObligations: async () => [
-        { id: "ob-solar", description: "Financiamento solar", amountCents: 71044 },
-        { id: "ob-carro", description: "Financiamento carro", amountCents: 90000 },
+        {
+          id: "ob-solar",
+          description: "Financiamento solar",
+          amountCents: 71044,
+        },
+        {
+          id: "ob-carro",
+          description: "Financiamento carro",
+          amountCents: 90000,
+        },
       ],
     });
     const asked = await startConversation(
@@ -598,9 +640,14 @@ describe("obligation correction failure paths", () => {
       classifyMessage: classifierReturning(SOLAR_INTENT),
     });
     const started = await startedSolar(deps);
-    const outcome = await applyMessage(started.state, "conta Inexistente", deps, {
-      today: TODAY,
-    });
+    const outcome = await applyMessage(
+      started.state,
+      "conta Inexistente",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(outcome.state.status).toBe("awaiting_obligation_confirmation");
     expect(outcome.reply).toMatch(/não encontrei a conta/i);
   });
@@ -617,5 +664,60 @@ describe("obligation correction failure paths", () => {
       expect(outcome.state.status).toBe("awaiting_obligation_confirmation");
       expect(outcome.reply).toMatch(/não entendi/i);
     }
+  });
+});
+
+describe("obligation confirmation buttons", () => {
+  async function startedObligation(deps: ConversationDeps) {
+    return startConversation(
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+  }
+
+  it("attaches Confirmar/Cancelar buttons to the confirmation prompt", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(SOLAR_INTENT),
+    });
+    const started = await startedObligation(deps);
+
+    expect(started.state.status).toBe("awaiting_obligation_confirmation");
+    const tokens = started.keyboard?.inline_keyboard
+      .flat()
+      .map((b) => b.callback_data);
+    expect(tokens).toContain(TOKENS.confirm);
+    expect(tokens).toContain(TOKENS.cancel);
+  });
+
+  it("a Confirmar tap persists the obligation, exactly like typing confirmar", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(SOLAR_INTENT),
+    });
+    const started = await startedObligation(deps);
+
+    const tapped = await applyCallback(started.state, TOKENS.confirm, deps, {
+      today: TODAY,
+    });
+
+    expect(createObligation).toHaveBeenCalledTimes(1);
+    expect(tapped.state.status).toBe("saved");
+  });
+
+  it("a Cancelar tap discards without persisting", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(SOLAR_INTENT),
+    });
+    const started = await startedObligation(deps);
+
+    const tapped = await applyCallback(started.state, TOKENS.cancel, deps, {
+      today: TODAY,
+    });
+
+    expect(createObligation).not.toHaveBeenCalled();
+    expect(tapped.state.status).toBe("cancelled");
   });
 });
