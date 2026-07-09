@@ -19,6 +19,7 @@ import {
   getObligationsPressure,
   findRecentTransactions,
   findPendingReviewTransactions,
+  findCardBillSettlements,
   listCreditCards,
   currentMonth,
   type AppSupabaseClient,
@@ -42,7 +43,13 @@ export type ResumoData = {
   /** previous composite - current composite; positive = spending less. */
   deltaVsPreviousCents: number;
   /** Projected invoice per card this month (direct + parcelas due). */
-  cards: Array<{ id: string; name: string; projectedCents: number }>;
+  cards: Array<{
+    id: string;
+    name: string;
+    projectedCents: number;
+    /** True when a card-bill payment (kind='transfer') exists for this month. */
+    settled: boolean;
+  }>;
   /**
    * This month's fixed-obligation total: projected-unpaid + materialized
    * actuals. Display-only next to card pressure — paid obligation
@@ -131,6 +138,7 @@ export async function buildResumoData(
     obligationsPressure,
     pending,
     recent,
+    settlements,
   ] = await Promise.all([
     getMonthlySummary(client, householdId, month),
     getMonthlySummary(client, householdId, previousMonth),
@@ -148,6 +156,7 @@ export async function buildResumoData(
     })),
     findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
     findRecentTransactions(client, householdId, 5),
+    findCardBillSettlements(client, householdId, month),
   ]);
 
   const cards = await Promise.all(
@@ -158,7 +167,12 @@ export async function buildResumoData(
         card.id,
         month,
       );
-      return { id: card.id, name: card.name, projectedCents: pressure.totalCents };
+      return {
+        id: card.id,
+        name: card.name,
+        projectedCents: pressure.totalCents,
+        settled: settlements.some((s) => s.creditCardId === card.id),
+      };
     }),
   );
 

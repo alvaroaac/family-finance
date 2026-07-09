@@ -121,6 +121,8 @@ export type TransactionRow = {
   obligation_id: string | null;
   /** First day of the satisfied month (date), when obligation_id is set. */
   obligation_month: string | null;
+  /** Set on the kind='transfer' card-bill settle row (migration 0015). */
+  bill_month: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -289,6 +291,7 @@ export type TransactionInsert = Insertable<
   | "import_batch_id"
   | "obligation_id"
   | "obligation_month"
+  | "bill_month"
 >;
 
 export type ObligationInsert = Insertable<
@@ -307,6 +310,16 @@ export type ObligationInsert = Insertable<
  * already been paid (idempotent no-op).
  */
 export type MaterializeObligationPaymentResult = {
+  transaction: TransactionRow;
+  already_paid: boolean;
+};
+
+/**
+ * Shape returned by `settle_card_bill` (migration 0015): the settled (or
+ * pre-existing) kind='transfer' transactions row plus whether the bill month
+ * had already been paid (idempotent no-op).
+ */
+export type SettleCardBillResult = {
   transaction: TransactionRow;
   already_paid: boolean;
 };
@@ -543,6 +556,22 @@ export type Database = {
           paid_on?: string | null;
         };
         Returns: MaterializeObligationPaymentResult;
+      };
+      // Atomic, idempotent card-bill settlement: insert ONE kind='transfer'
+      // transaction (account = source, card = destination, bill_month = the
+      // settled marker), or return the existing one (already_paid = true).
+      // See supabase/migrations/0015_settle_card_bill.sql.
+      settle_card_bill: {
+        Args: {
+          target_household_id: string;
+          target_credit_card_id: string;
+          target_account_id: string;
+          target_bill_month: string;
+          target_amount_cents: number;
+          target_paid_on: string;
+          target_created_by_user_id: string;
+        };
+        Returns: unknown;
       };
     };
     Enums: {

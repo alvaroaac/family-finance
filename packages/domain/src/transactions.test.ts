@@ -3,6 +3,7 @@ import { brl } from "./money.js";
 import {
   createTransactionDraft,
   isCardPayment,
+  createCardBillSettlement,
   type CreateTransactionInput,
 } from "./transactions.js";
 
@@ -141,5 +142,39 @@ describe("createTransactionDraft", () => {
         code: "description_required",
       }),
     );
+  });
+});
+
+describe("createCardBillSettlement", () => {
+  const valid = {
+    householdId: "house-1",
+    creditCardId: "card-1",
+    accountId: "acct-1",
+    billMonth: "2026-07",
+    amountCents: 235000,
+    paidOn: "2026-07-06",
+    createdByUserId: "user-1",
+  };
+
+  it("accepts a valid settlement", () => {
+    const result = createCardBillSettlement(valid);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toEqual(valid);
+  });
+
+  it.each([
+    ["amountCents", { ...valid, amountCents: 0 }],
+    ["amountCents", { ...valid, amountCents: -100 }],
+    ["billMonth", { ...valid, billMonth: "2026-13" }],
+    ["billMonth", { ...valid, billMonth: "07/2026" }],
+    ["creditCardId", { ...valid, creditCardId: "" }],
+    ["accountId", { ...valid, accountId: "" }],
+    ["householdId", { ...valid, householdId: "" }],
+    ["createdByUserId", { ...valid, createdByUserId: "" }],
+    ["paidOn", { ...valid, paidOn: "06/07/2026" }],
+  ])("rejects invalid %s", (field, input) => {
+    const result = createCardBillSettlement(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]?.field).toContain(field);
   });
 });

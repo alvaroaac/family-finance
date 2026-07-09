@@ -211,3 +211,33 @@ export function createTransactionDraft(
 export function isCardPayment(draft: TransactionDraft): boolean {
   return draft.payment.type === "card";
 }
+
+const cardBillSettlementSchema = z.object({
+  householdId: z.string().min(1),
+  creditCardId: z.string().min(1),
+  accountId: z.string().min(1),
+  billMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  amountCents: z.number().int().positive(),
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  createdByUserId: z.string().min(1),
+});
+
+export type CardBillSettlementInput = z.input<typeof cardBillSettlementSchema>;
+
+/**
+ * A validated card-bill settlement: ONE kind='transfer' row with BOTH
+ * instruments (account = source, card = destination) + bill_month as the
+ * settled marker. The settle_card_bill RPC derives the row's description
+ * from the card name — the draft intentionally has none.
+ */
+export type CardBillSettlementDraft = z.output<typeof cardBillSettlementSchema>;
+
+export function createCardBillSettlement(
+  input: CardBillSettlementInput,
+): DomainResult<CardBillSettlementDraft> {
+  const parsed = cardBillSettlementSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, errors: zodToValidationErrors(parsed.error) };
+  }
+  return { ok: true, value: parsed.data };
+}

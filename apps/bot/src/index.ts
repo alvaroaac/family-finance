@@ -29,6 +29,7 @@ import {
   createTransaction as dbCreateTransaction,
   createBotInteraction,
   createObligation as dbCreateObligation,
+  createInstallmentPurchase as dbCreateInstallmentPurchase,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findAccountsByHousehold,
@@ -42,6 +43,8 @@ import {
   createCategory as dbCreateCategory,
   restoreCategory as dbRestoreCategory,
   createCategorizationMemory,
+  getCardPressureForCard,
+  settleCardBill as dbSettleCardBill,
   type AppSupabaseClient,
   type BotMemberIdentity,
 } from "@family-finance/db";
@@ -334,6 +337,38 @@ async function buildDeps(
       members
         .filter((m) => m.isActive && m.displayName !== null)
         .map((m) => ({ userId: m.userId, displayName: m.displayName as string })),
+    // Card installments (PR-2): cards are already loaded above for the
+    // resolveCardId hint; expose them + closingDay for the installment flow.
+    listActiveCards: () =>
+      cards.map((card) => ({
+        id: card.id,
+        name: card.name,
+        closingDay:
+          card.closing_day !== null &&
+          card.closing_day >= 1 &&
+          card.closing_day <= 28
+            ? card.closing_day
+            : undefined,
+      })),
+    createInstallmentPurchase: async (plan) => {
+      const result = await dbCreateInstallmentPurchase(client, plan);
+      return { groupId: result.group.id };
+    },
+    // Card-bill payment (PR-2 / Task 6): computed monthly pressure + the
+    // settle_card_bill RPC (ONE transfer row, idempotent per card/month).
+    getCardBillAmount: async (creditCardId, month) => {
+      const pressure = await getCardPressureForCard(
+        client,
+        householdId,
+        creditCardId,
+        month,
+      );
+      return pressure.totalCents;
+    },
+    settleCardBill: async (draft) => {
+      const result = await dbSettleCardBill(client, draft);
+      return { alreadyPaid: result.already_paid };
+    },
   };
 }
 

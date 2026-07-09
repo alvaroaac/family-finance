@@ -249,16 +249,6 @@ export function obligationNotUnderstoodMessage(): string {
   ].join("\n");
 }
 
-/** PR-2 deferred: card installments are recognized but not yet persisted. */
-export function cardInstallmentDeferredMessage(): string {
-  return "Compra parcelada no cartão ainda não dá pra registrar por aqui — em breve. Por ora, cadastre em Cartões no painel.";
-}
-
-/** PR-2 deferred: card-bill payment ("nubank pago"). */
-export function cardBillDeferredMessage(): string {
-  return "Baixa de fatura do cartão ainda não está disponível por aqui — em breve.";
-}
-
 /** Mark-paid failed at materialization (e.g. month outside the term window). */
 export function obligationSettleFailedMessage(description: string): string {
   return [
@@ -270,6 +260,166 @@ export function obligationSettleFailedMessage(description: string): string {
 /** Mark-paid recognized but the settle capability is not wired here. */
 export function obligationUnavailableMessage(): string {
   return "Dar baixa em obrigações não está disponível por aqui agora. Use o painel, em Obrigações.";
+}
+
+// ---------------------------------------------------------------------------
+// Card installments (PR-2 / Task 5).
+// ---------------------------------------------------------------------------
+
+/** What an installment confirmation summary needs to render. */
+export type InstallmentSummaryView = {
+  description: string;
+  totalCents?: number;
+  installmentCount?: number;
+  cardName?: string;
+  /** `YYYY-MM` of the first parcel, when the draft is complete enough to compute it. */
+  firstDueMonth?: string;
+  categoryLabel: string;
+  categoryExplanation?: string;
+  proposedNewCategory?: string;
+  responsibleLabel: string;
+  /** True when no card is resolved yet — the reply asks "Qual cartão?". */
+  needsCard: boolean;
+};
+
+/**
+ * Installment confirmation SUMMARY (design: never one line per parcel).
+ * `Compra parcelada: <desc> — R$ <total> em <N>× de R$ <per> no <Card> (1ª parcela <mmm/yyyy>)`.
+ */
+export function installmentConfirmationMessage(
+  view: InstallmentSummaryView,
+): string {
+  const lines: string[] = [];
+  lines.push("Confirme a compra parcelada:");
+  lines.push("");
+
+  if (
+    view.totalCents !== undefined &&
+    view.installmentCount !== undefined &&
+    view.cardName !== undefined
+  ) {
+    const perFragment =
+      view.totalCents % view.installmentCount === 0
+        ? ` de R$ ${formatBrl(view.totalCents / view.installmentCount)}`
+        : "";
+    const firstParcel =
+      view.firstDueMonth !== undefined
+        ? ` (1ª parcela ${monthAbbrPtBr(view.firstDueMonth)})`
+        : "";
+    lines.push(
+      `Compra parcelada: ${view.description} — R$ ${formatBrl(view.totalCents)} em ${view.installmentCount}×${perFragment} no ${view.cardName}${firstParcel}`,
+    );
+  } else {
+    lines.push(`Compra parcelada: ${view.description}`);
+    if (view.totalCents === undefined) {
+      lines.push('• valor? (informe com "valor 3.700")');
+    }
+    if (view.installmentCount === undefined) {
+      lines.push('• parcelas? (informe com "parcelas 12")');
+    }
+    if (view.needsCard) {
+      lines.push("• cartão?");
+    }
+  }
+
+  if (view.proposedNewCategory !== undefined) {
+    lines.push(`• Categoria: "${view.proposedNewCategory}" (nova — sugerida)`);
+  } else {
+    lines.push(`• Categoria: ${view.categoryLabel}`);
+  }
+  lines.push(`• Responsável: ${view.responsibleLabel}`);
+  if (view.categoryExplanation) {
+    lines.push("");
+    lines.push(`Sugestão: ${view.categoryExplanation}`);
+  }
+  lines.push("");
+  lines.push(
+    'Confirma? Corrija com "valor 3.700", "parcelas 10", "cartão X", "categoria Y", "data 12/06", ou "cancelar".',
+  );
+  return lines.join("\n");
+}
+
+/** Success message after a card installment purchase is saved. */
+export function installmentSavedMessage(view: {
+  description: string;
+  totalCents: number;
+  installmentCount: number;
+  cardName: string;
+  firstDueMonth: string;
+}): string {
+  return (
+    `Compra parcelada salva! ✅ ${view.description} — R$ ${formatBrl(view.totalCents)} ` +
+    `em ${view.installmentCount}× no ${view.cardName} (1ª parcela ${monthAbbrPtBr(view.firstDueMonth)})`
+  );
+}
+
+/** No active card at all — installments cannot be registered by the bot. */
+export function noActiveCardMessage(): string {
+  return "Compra parcelada é no cartão — a casa ainda não tem cartão cadastrado. Cadastre um em Cartões no painel.";
+}
+
+// ---------------------------------------------------------------------------
+// Card-bill payment ("nubank pago", PR-2 / Task 6).
+// ---------------------------------------------------------------------------
+
+/** No card matched the mark_paid{card} keyword (household has cards, though). */
+export function cardBillNoMatchMessage(keyword: string, cardNames: string[]): string {
+  const sorted = [...cardNames].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return `Não encontrei o cartão "${keyword}". Cartões da casa: ${sorted.join(", ")} — ou corrija o nome.`;
+}
+
+/** The mark_paid{card} keyword needs a confirmation state prompting "which card?". */
+export function chooseCardBillMessage(): string {
+  return "Qual cartão é a fatura?";
+}
+
+/** The resolved bill is zero this month — nothing to pay, nothing written. */
+export function cardBillZeroMessage(cardName: string): string {
+  return `Fatura do ${cardName} está zerada este mês — nada pra pagar. 👍`;
+}
+
+/**
+ * Card-bill confirmation SUMMARY: `Fatura <Card> de <mmm/yyyy> — R$ <amount>.
+ * Pagar da conta <Account>?` plus the correction hint.
+ */
+export function cardBillConfirmationMessage(view: {
+  cardName: string;
+  month: string;
+  amountCents: number;
+  accountLabel: string;
+}): string {
+  return [
+    `Fatura ${view.cardName} de ${monthAbbrPtBr(view.month)} — R$ ${formatBrl(view.amountCents)}. Pagar da conta ${view.accountLabel}?`,
+    "",
+    'Responda "confirmar", corrija com "valor 2.350" ou "conta X", ou "cancelar".',
+  ].join("\n");
+}
+
+/** Success message after a card bill is settled. */
+export function cardBillPaidMessage(view: {
+  cardName: string;
+  amountCents: number;
+  month: string;
+}): string {
+  return `Fatura paga! ✅ ${view.cardName} — R$ ${formatBrl(view.amountCents)} (${monthAbbrPtBr(view.month)})`;
+}
+
+/** Friendly no-op when the bill month was already settled (idempotent repeat). */
+export function cardBillAlreadyPaidMessage(view: {
+  cardName: string;
+  month: string;
+}): string {
+  return `A fatura do ${view.cardName} de ${monthAbbrPtBr(view.month)} já estava paga — nada mudou. 👍`;
+}
+
+/** Settle failed (RPC threw) — mirrors `obligationSettleFailedMessage`. */
+export function cardBillSettleFailedMessage(cardName: string): string {
+  return `Não consegui registrar o pagamento da fatura do ${cardName} — tenta de novo em instantes.`;
+}
+
+/** Installment persist failed (RPC threw) — same recovery contract as above. */
+export function installmentSaveFailedMessage(description: string): string {
+  return `Não consegui salvar a compra parcelada "${description}" — tenta de novo em instantes.`;
 }
 
 // ---------------------------------------------------------------------------

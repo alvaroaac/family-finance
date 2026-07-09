@@ -125,11 +125,32 @@ export type InterpretedObligation = {
   responsibleHint?: string;
 };
 
+/** What the model extracted for a `card_installment` intent. */
+export type InterpretedCardPurchase = {
+  description: string;
+  /** TOTAL price in BRL cents ("3600 em 12x"); exactly one of total/per-installment is set. */
+  totalCents?: number;
+  /** PER-INSTALLMENT price in BRL cents ("12x de 300"). */
+  perInstallmentCents?: number;
+  /** Number of installments (12x -> 12). */
+  installmentCount?: number;
+  /** ISO date (YYYY-MM-DD) the purchase happened on, when mentioned. */
+  purchasedOn?: string;
+  /** Free-text credit card name ("no nubank" -> "nubank"). */
+  cardKeyword?: string;
+  categoryHint?: string;
+};
+
 export type InterpretedIntent =
   | { intent: "plain"; expense: InterpretedExpense }
   | { intent: "obligation"; obligation: InterpretedObligation }
-  | { intent: "card_installment" }
-  | { intent: "mark_paid"; target: "obligation" | "card"; keyword: string };
+  | { intent: "card_installment"; purchase: InterpretedCardPurchase }
+  | {
+      intent: "mark_paid";
+      target: "obligation" | "card";
+      keyword: string;
+      amountCents?: number;
+    };
 
 export type MessageClassifier = (
   text: string,
@@ -160,6 +181,19 @@ const obligationPayloadSchema = z.object({
   responsible_hint: z.string().min(1).nullish(),
 });
 
+const cardInstallmentPayloadSchema = z.object({
+  description: z.string().min(1),
+  total_cents: z.number().int().positive().nullish(),
+  per_installment_cents: z.number().int().positive().nullish(),
+  installment_count: z.number().int().positive().nullish(),
+  purchased_on: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+  card_keyword: z.string().min(1).nullish(),
+  category_hint: z.string().min(1).nullish(),
+});
+
 /** Strict schema for the classifier's JSON reply, discriminated on intent. */
 const classifiedReplySchema = z.discriminatedUnion("intent", [
   z.object({ intent: z.literal("plain"), expense: expensePayloadSchema }),
@@ -167,11 +201,15 @@ const classifiedReplySchema = z.discriminatedUnion("intent", [
     intent: z.literal("obligation"),
     obligation: obligationPayloadSchema,
   }),
-  z.object({ intent: z.literal("card_installment") }),
+  z.object({
+    intent: z.literal("card_installment"),
+    purchase: cardInstallmentPayloadSchema,
+  }),
   z.object({
     intent: z.literal("mark_paid"),
     target: z.enum(["obligation", "card"]),
     keyword: z.string().min(1),
+    amount_cents: z.number().int().positive().nullish(),
   }),
 ]);
 
@@ -196,8 +234,8 @@ export function buildClassifierPrompt(text: string, today: string): string {
     "Responda APENAS com um objeto JSON, sem texto extra, em UM dos formatos:",
     '{"intent": "plain", "expense": {"amount_cents": number | null, "description": string, "occurred_on": "YYYY-MM-DD" | null, "category_hint": string | null, "responsible_hint": string | null}}',
     '{"intent": "obligation", "obligation": {"description": string, "monthly_amount_cents": number | null, "term_months": number | null, "start_month": "YYYY-MM" | null, "due_day": number | null, "category_hint": string | null, "responsible_hint": string | null}}',
-    '{"intent": "card_installment"}',
-    '{"intent": "mark_paid", "target": "obligation" | "card", "keyword": string}',
+    '{"intent": "card_installment", "purchase": {"description": string, "total_cents": number | null, "per_installment_cents": number | null, "installment_count": number | null, "purchased_on": "YYYY-MM-DD" | null, "card_keyword": string | null, "category_hint": string | null}}',
+    '{"intent": "mark_paid", "target": "obligation" | "card", "keyword": string, "amount_cents": number | null}',
     "",
     "Regras:",
     "- Valores sempre em CENTAVOS de real (R$ 710,44 -> 71044).",
@@ -207,6 +245,8 @@ export function buildClassifierPrompt(text: string, today: string): string {
     "- due_day entre 1 e 28; se a mensagem indicar dia 29, 30 ou 31, use 28. null se não houver dia.",
     '- Em mark_paid, keyword é O QUE foi pago, sem a palavra "pago" (ex.: "placa solar pago" -> "placa solar"; "nubank pago" -> "nubank"). target é "card" quando a keyword é um cartão de crédito; senão "obligation".',
     "- category_hint/responsible_hint são texto livre; null quando não estiver claro.",
+    '- Em card_installment: "12x de 300" e "300 12x" são POR PARCELA (per_installment_cents); "3600 em 12x" é o TOTAL (total_cents). Preencha EXATAMENTE UM dos dois; installment_count é o número de parcelas (12x -> 12), null se não aparecer. card_keyword é o nome do cartão ("no nubank" -> "nubank"); description é só o nome do produto/serviço.',
+    '- Em mark_paid com target "card", um número no fim ("nubank pago 2350") vira amount_cents em centavos (235000); null se não houver.',
     "- Se a mensagem não for nada disso, responda exatamente: null",
   ].join("\n");
 }
@@ -264,12 +304,25 @@ export function createMessageClassifier(
             },
           };
         case "card_installment":
-          return { intent: "card_installment" };
+          return {
+            intent: "card_installment",
+            purchase: {
+              description: data.purchase.description,
+              totalCents: data.purchase.total_cents ?? undefined,
+              perInstallmentCents:
+                data.purchase.per_installment_cents ?? undefined,
+              installmentCount: data.purchase.installment_count ?? undefined,
+              purchasedOn: data.purchase.purchased_on ?? undefined,
+              cardKeyword: data.purchase.card_keyword ?? undefined,
+              categoryHint: data.purchase.category_hint ?? undefined,
+            },
+          };
         case "mark_paid":
           return {
             intent: "mark_paid",
             target: data.target,
             keyword: data.keyword,
+            amountCents: data.amount_cents ?? undefined,
           };
       }
     } catch {

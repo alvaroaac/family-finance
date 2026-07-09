@@ -78,6 +78,8 @@ type TxSeed = {
   description: string;
   category_id?: string | null;
   credit_card_id?: string | null;
+  account_id?: string | null;
+  bill_month?: string;
   created_at?: string;
 };
 
@@ -268,9 +270,34 @@ describe("buildResumoData", () => {
     const data = await buildResumoData(client, HOUSEHOLD, NOW);
     // listCreditCards orders by name: Azulzinho first.
     expect(data.cards).toEqual([
-      { id: CARD_AZUL, name: "Azulzinho", projectedCents: 10000 },
+      { id: CARD_AZUL, name: "Azulzinho", projectedCents: 10000, settled: false },
       // 5000 direct (refund ignored) + 3334 July parcela; August parcela out.
-      { id: CARD_ROX, name: "Roxinho", projectedCents: 8334 },
+      { id: CARD_ROX, name: "Roxinho", projectedCents: 8334, settled: false },
+    ]);
+  });
+
+  it("marks a card settled when a kind='transfer' bill payment exists for the month", async () => {
+    const store = seedStore();
+    store.table("transactions").push(
+      tx({
+        id: "tx-jul-pagamento-rox",
+        kind: "transfer",
+        occurred_on: "2026-07-10",
+        description: "Pagamento fatura Roxinho",
+        amount_cents: 8334,
+        credit_card_id: CARD_ROX,
+        account_id: "acc-corrente",
+        category_id: null,
+        bill_month: "2026-07",
+      }),
+    );
+    const settledClient = createFakeSupabaseClient(
+      store,
+    ) as unknown as AppSupabaseClient;
+    const data = await buildResumoData(settledClient, HOUSEHOLD, NOW);
+    expect(data.cards).toEqual([
+      { id: CARD_AZUL, name: "Azulzinho", projectedCents: 10000, settled: false },
+      { id: CARD_ROX, name: "Roxinho", projectedCents: 8334, settled: true },
     ]);
   });
 

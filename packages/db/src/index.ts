@@ -86,6 +86,7 @@ export type {
   ObligationRow,
   ObligationInsert,
   MaterializeObligationPaymentResult,
+  SettleCardBillResult,
 } from "./types.js";
 
 // Repository functions and pure mappers.
@@ -107,6 +108,7 @@ export type {
   ObligationChanges,
   ObligationPaymentKey,
   ObligationsPressure,
+  CardBillSettlement,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -200,4 +202,6 @@ export {
   materializeObligationPayment,
   listObligationPayments,
   getObligationsPressure,
+  settleCardBill,
+  findCardBillSettlements,
 } from "./repositories.js";

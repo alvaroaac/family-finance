@@ -5,7 +5,6 @@
  *    via deps.createObligation (never before), with valor/dia/conta corrections
  *  - mark_paid{obligation}: keyword match (single/ambiguous/none), send-date
  *    paidOn, idempotent repeat
- *  - deferred card intents reply "em breve" verbatim and stay terminal
  *  - a null classifier result falls back to the legacy plain-expense path
  */
 
@@ -390,43 +389,6 @@ describe("mark_paid{obligation} flow", () => {
     expect(state.status).toBe("cancelled");
     expect(materializeObligationPayment).not.toHaveBeenCalled();
     expect(reply).toMatch(/não encontrei|nao encontrei/i);
-  });
-});
-
-describe("deferred card intents (PR-2)", () => {
-  it("card_installment replies the exact em-breve copy", async () => {
-    const { deps, createTransaction } = buildDeps({
-      classifyMessage: classifierReturning({ intent: "card_installment" }),
-    });
-    const { state, reply } = await startConversation(
-      { text: "notebook 3600 em 12x no nubank", fromUserId: "user-alvaro" },
-      deps,
-      { today: TODAY },
-    );
-    expect(state.status).toBe("cancelled");
-    expect(createTransaction).not.toHaveBeenCalled();
-    expect(reply).toBe(
-      "Compra parcelada no cartão ainda não dá pra registrar por aqui — em breve. Por ora, cadastre em Cartões no painel.",
-    );
-  });
-
-  it("mark_paid{card} replies the exact em-breve copy", async () => {
-    const { deps } = buildDeps({
-      classifyMessage: classifierReturning({
-        intent: "mark_paid",
-        target: "card",
-        keyword: "nubank",
-      }),
-    });
-    const { state, reply } = await startConversation(
-      { text: "nubank pago", fromUserId: "user-alvaro" },
-      deps,
-      { today: TODAY },
-    );
-    expect(state.status).toBe("cancelled");
-    expect(reply).toBe(
-      "Baixa de fatura do cartão ainda não está disponível por aqui — em breve.",
-    );
   });
 });
 

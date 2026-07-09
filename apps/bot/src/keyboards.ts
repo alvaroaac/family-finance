@@ -26,6 +26,8 @@ export const TOKENS = {
 export const CATEGORY_TOKEN_PREFIX = "ct:";
 /** `rs:<uuid>` assigns a responsável (`rs:house` = the house). */
 export const RESPONSIBLE_TOKEN_PREFIX = "rs:";
+/** `cd:<uuid>` assigns a credit card (card installment flow). */
+export const CARD_TOKEN_PREFIX = "cd:";
 
 /** Chunk buttons into rows of two (household-scale grids, no pagination). */
 function twoPerRow(buttons: InlineKeyboardButton[]): InlineKeyboardButton[][] {
@@ -76,12 +78,54 @@ export function confirmationKeyboard(
 }
 
 /**
+ * Card-installment confirmation keyboard: same shape as
+ * `confirmationKeyboard`, minus the "👤 Responsável" button — the
+ * installment flow always attributes to whoever typed the purchase, so
+ * there is no responsável state to hand this button to.
+ */
+export function installmentConfirmationKeyboard(
+  proposedCategoryName?: string,
+): InlineKeyboardMarkup {
+  if (proposedCategoryName !== undefined) {
+    return {
+      inline_keyboard: [
+        [
+          {
+            text: `✅ Confirmar (cria "${proposedCategoryName}")`,
+            callback_data: TOKENS.acceptProposal,
+          },
+          { text: "📂 Outra categoria", callback_data: TOKENS.categories },
+        ],
+        [
+          { text: "🚫 Sem categoria", callback_data: TOKENS.dropProposal },
+          { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+        ],
+      ],
+    };
+  }
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Confirmar", callback_data: TOKENS.confirm },
+        { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+      ],
+      [{ text: "📂 Categoria", callback_data: TOKENS.categories }],
+    ],
+  };
+}
+
+/**
  * Category-pick grid: active categories alphabetically (pt-BR collation),
  * 2 per row, ending with the new-category button. Household scale — tens of
  * categories, far below Telegram's 100-button cap.
+ *
+ * `includeNewCategory` defaults to true; the installment flow passes `false`
+ * because its callback branch has no handler for `nc` — the button would
+ * otherwise show but expire the draft with a bogus "Sessão expirada" toast.
  */
 export function categoryGridKeyboard(
   categories: ReadonlyArray<{ id: string; name: string }>,
+  includeNewCategory = true,
 ): InlineKeyboardMarkup {
   const sorted = [...categories].sort((a, b) =>
     a.name.localeCompare(b.name, "pt-BR"),
@@ -92,8 +136,29 @@ export function categoryGridKeyboard(
       callback_data: `${CATEGORY_TOKEN_PREFIX}${c.id}`,
     })),
   );
-  rows.push([{ text: "➕ Nova categoria", callback_data: TOKENS.newCategory }]);
+  if (includeNewCategory) {
+    rows.push([{ text: "➕ Nova categoria", callback_data: TOKENS.newCategory }]);
+  }
   return { inline_keyboard: rows };
+}
+
+/**
+ * Card-pick grid: active cards alphabetically (pt-BR collation), 2 per row —
+ * mirrors `categoryGridKeyboard` without the trailing new-category button
+ * (cards are managed in the panel, not from the bot).
+ */
+export function cardGridKeyboard(
+  cards: ReadonlyArray<{ id: string; name: string }>,
+): InlineKeyboardMarkup {
+  const sorted = [...cards].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return {
+    inline_keyboard: twoPerRow(
+      sorted.map((c) => ({
+        text: c.name,
+        callback_data: `${CARD_TOKEN_PREFIX}${c.id}`,
+      })),
+    ),
+  };
 }
 
 /** Responsável grid: the house first, then one button per active member. */
@@ -120,12 +185,8 @@ export function cancelOnlyKeyboard(): InlineKeyboardMarkup {
   };
 }
 
-/**
- * Confirm/Cancel keyboard for an obligation confirmation. Reuses the shared
- * `cf`/`cx` tokens; corrections (valor/dia/conta) still arrive as typed text,
- * so no field buttons here.
- */
-export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
+/** Shared Confirm/Cancel keyboard for obligation and card-bill confirmations. */
+export function confirmCancelKeyboard(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [
@@ -134,4 +195,8 @@ export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
       ],
     ],
   };
+}
+
+export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
+  return confirmCancelKeyboard();
 }
