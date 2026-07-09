@@ -97,9 +97,11 @@ import {
   type TextInterpreter,
 } from "./interpret.js";
 import {
-  createDbConversationStore,
-  type ConversationStore,
-} from "./store.js";
+  createCodexMessageClassifier,
+  withClassifierFallback,
+} from "./codex.js";
+import { STARTER_MERCHANT_ALIASES } from "./merchant-aliases.js";
+import { createDbConversationStore, type ConversationStore } from "./store.js";
 import {
   SESSION_EXPIRED_TOAST,
   DRAFT_NOT_YOURS_TOAST,
@@ -144,17 +146,11 @@ async function withChatQueue<T>(
 
 /** Case- and accent-insensitive normalization for display-name matching. */
 function normalizeName(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .trim()
-    .toLowerCase();
+  return name.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 }
 
 /** Build a categorization memory store backed by the db, for one household. */
-function memoryStoreFor(
-  client: AppSupabaseClient,
-): CategorizationMemoryStore {
+function memoryStoreFor(client: AppSupabaseClient): CategorizationMemoryStore {
   return {
     async findActiveByHousehold(
       householdId: string,
@@ -188,7 +184,9 @@ async function buildDeps(
 ): Promise<ConversationDeps> {
   const categories = await findCategoriesByHousehold(client, householdId);
   const subcategoryLists = await Promise.all(
-    categories.map((c) => findSubcategoriesByCategory(client, householdId, c.id)),
+    categories.map((c) =>
+      findSubcategoriesByCategory(client, householdId, c.id),
+    ),
   );
   const catalog: CategoryCatalog = {
     householdId,
@@ -201,8 +199,7 @@ async function buildDeps(
   };
 
   const accounts = await findAccountsByHousehold(client, householdId);
-  const checking =
-    accounts.find((a) => a.kind === "checking") ?? accounts[0];
+  const checking = accounts.find((a) => a.kind === "checking") ?? accounts[0];
   const cards = await listCreditCards(client, householdId);
   const members = await listHouseholdMembers(client, householdId);
   const memoryStore = memoryStoreFor(client);
@@ -210,6 +207,7 @@ async function buildDeps(
   return {
     householdId,
     catalog,
+    merchantAliases: STARTER_MERCHANT_ALIASES,
     // undefined (not "") when the household has no account — `persist` then
     // refuses a non-card lançamento with a clear message instead of building
     // an invalid empty accountId.
@@ -336,7 +334,10 @@ async function buildDeps(
     listActiveMembers: () =>
       members
         .filter((m) => m.isActive && m.displayName !== null)
-        .map((m) => ({ userId: m.userId, displayName: m.displayName as string })),
+        .map((m) => ({
+          userId: m.userId,
+          displayName: m.displayName as string,
+        })),
     // Card installments (PR-2): cards are already loaded above for the
     // resolveCardId hint; expose them + closingDay for the installment flow.
     listActiveCards: () =>
@@ -744,7 +745,10 @@ export async function handleWebhook(args: {
  * configuration is missing (call this at server start, not at import time).
  */
 export async function startBot(): Promise<{
-  handle: (rawBody: unknown, secretHeader: string | undefined) => Promise<WebhookResult>;
+  handle: (
+    rawBody: unknown,
+    secretHeader: string | undefined,
+  ) => Promise<WebhookResult>;
 }> {
   // Bot-scoped env parse: the container carries only the spec §3.5 vars, so
   // web-only settings (NEXT_PUBLIC_*, AUTHORIZED_EMAILS) must not be required.
@@ -805,6 +809,7 @@ export async function startBot(): Promise<{
       ? createAnthropicCompletionClient({
           apiKey: llm.apiKey,
           model: llm.model,
+          timeoutMs: env.CODEX_ENABLED === "true" ? 8000 : undefined,
         })
       : undefined;
   const ai: AiCategorizer | undefined =
@@ -815,10 +820,24 @@ export async function startBot(): Promise<{
     completionClient !== undefined
       ? createTextInterpreter(completionClient)
       : undefined;
-  const classifyMessage: MessageClassifier | undefined =
+  const anthropicClassifier: MessageClassifier | undefined =
     completionClient !== undefined
       ? createMessageClassifier(completionClient)
       : undefined;
+  const codexClassifier: MessageClassifier | undefined =
+    env.CODEX_ENABLED === "true"
+      ? createCodexMessageClassifier({
+          enabled: true,
+          model: env.CODEX_MODEL ?? "gpt-5.5",
+          timeoutMs: env.CODEX_TIMEOUT_MS ?? 12000,
+          codexHome: "/var/lib/family-finance-codex",
+          telemetry: (event) => console.log(JSON.stringify(event)),
+        })
+      : undefined;
+  const classifyMessage = withClassifierFallback(
+    codexClassifier,
+    anthropicClassifier,
+  );
 
   // Voice transcription — only when both a bot token (to fetch the file) and a
   // transcription (OpenAI) key are configured. Raw audio is never persisted:
@@ -858,10 +877,7 @@ export async function startBot(): Promise<{
   };
 }
 
-export {
-  parseExpenseText,
-  type ParsedExpense,
-} from "./parser.js";
+export { parseExpenseText, type ParsedExpense } from "./parser.js";
 export {
   verifyWebhookSecret,
   parseTelegramUpdate,
@@ -914,3 +930,11 @@ export {
   type InterpretedObligation,
   type MessageClassifier,
 } from "./interpret.js";
+export {
+  createCodexMessageClassifier,
+  createNodeCodexRunner,
+  withClassifierFallback,
+  buildCodexPrompt,
+  CODEX_OUTPUT_SCHEMA,
+  type CodexProcessRunner,
+} from "./codex.js";
