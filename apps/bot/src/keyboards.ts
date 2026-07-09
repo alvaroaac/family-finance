@@ -225,6 +225,44 @@ export function confirmCancelKeyboard(): InlineKeyboardMarkup {
   };
 }
 
-export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
-  return confirmCancelKeyboard();
+export function obligationConfirmationKeyboard(
+  proposedCategoryName?: string,
+  categoryCandidates: ReadonlyArray<{
+    categoryName: string;
+    subcategoryName?: string;
+  }> = [],
+): InlineKeyboardMarkup {
+  if (proposedCategoryName !== undefined) {
+    return {
+      inline_keyboard: [
+        [
+          {
+            text: `✅ Confirmar (cria "${proposedCategoryName}")`,
+            callback_data: TOKENS.acceptProposal,
+          },
+          { text: "📂 Outra categoria", callback_data: TOKENS.categories },
+        ],
+        [
+          { text: "🚫 Sem categoria", callback_data: TOKENS.dropProposal },
+          { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+        ],
+      ],
+    };
+  }
+  const candidateRows = twoPerRow(
+    categoryCandidates.slice(0, 3).map((category, index) => ({
+      text: `📂 ${category.categoryName}${category.subcategoryName ? ` › ${category.subcategoryName}` : ""}`,
+      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}${index}`,
+    })),
+  );
+  return {
+    inline_keyboard: [
+      ...candidateRows,
+      [
+        { text: "✅ Confirmar", callback_data: TOKENS.confirm },
+        { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+      ],
+      [{ text: "📂 Categoria", callback_data: TOKENS.categories }],
+    ],
+  };
 }

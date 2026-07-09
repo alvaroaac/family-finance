@@ -468,7 +468,10 @@ function keyboardForState(
     return cancelOnlyKeyboard();
   }
   if (state.status === "awaiting_obligation_confirmation") {
-    return obligationConfirmationKeyboard();
+    return obligationConfirmationKeyboard(
+      state.proposedCategoryName,
+      state.categoryCandidates ?? [],
+    );
   }
   return undefined;
 }
@@ -1122,12 +1125,16 @@ async function startClassifiedIntent(
       status: "awaiting_obligation_confirmation",
       draft: ballast,
       obligationDraft,
+      proposedCategoryName: extracted.proposedCategoryName,
       categoryCandidates: unifiedCandidates,
     },
     reply: obligationConfirmationMessage(
       obligationSummaryView(obligationDraft, deps),
     ),
-    keyboard: obligationConfirmationKeyboard(),
+    keyboard: obligationConfirmationKeyboard(
+      extracted.proposedCategoryName,
+      unifiedCandidates,
+    ),
   };
 }
 
@@ -2794,8 +2801,11 @@ export async function applyCallback(
 
   // Obligation confirmation carries a Confirmar/Cancelar keyboard: route the tap
   // through the same text handler so a button does exactly what typing the word
-  // does (validate + createObligation, or cancel). Corrections stay typed-only.
+  // does (validate + createObligation, or cancel). Category choices update the
+  // obligation draft without persisting it.
   if (state.status === "awaiting_obligation_confirmation") {
+    const obligationDraft = state.obligationDraft;
+    if (obligationDraft === undefined) return expiredOutcome(state);
     if (token === TOKENS.confirm || token === TOKENS.cancel) {
       const word =
         token === TOKENS.confirm ? "confirmar (botão)" : "cancelar (botão)";
@@ -2806,6 +2816,124 @@ export async function applyCallback(
         today,
       );
       return { ...outcome, keyboard: keyboardForState(outcome.state) };
+    }
+    if (token === TOKENS.categories) {
+      const depsValue = await getDeps();
+      return {
+        state,
+        reply: chooseCategoryMessage(),
+        keyboard: categoryGridKeyboard(depsValue.catalog.categories),
+      };
+    }
+    if (token.startsWith(CATEGORY_SUGGESTION_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const index = Number(
+        token.slice(CATEGORY_SUGGESTION_TOKEN_PREFIX.length),
+      );
+      const candidate = state.categoryCandidates?.[index];
+      if (!candidate) return expiredOutcome(state);
+      const category = depsValue.catalog.categories.find(
+        (item) => item.id === candidate.categoryId,
+      );
+      const subcategory = candidate.subcategoryId
+        ? depsValue.catalog.subcategories.find(
+            (item) =>
+              item.id === candidate.subcategoryId &&
+              item.categoryId === candidate.categoryId,
+          )
+        : undefined;
+      if (!category || (candidate.subcategoryId && !subcategory)) {
+        return expiredOutcome(state);
+      }
+      const nextDraft = {
+        ...obligationDraft,
+        categoryId: candidate.categoryId,
+        subcategoryId: candidate.subcategoryId,
+        categoryExplanation: candidate.explanation,
+      };
+      const nextState: ConversationState = {
+        ...state,
+        obligationDraft: nextDraft,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: `${correctionAppliedMessage("a categoria")}\n\n${obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue))}`,
+        keyboard: obligationConfirmationKeyboard(),
+      };
+    }
+    if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
+      const category = depsValue.catalog.categories.find(
+        (item) => item.id === categoryId,
+      );
+      if (!category) return expiredOutcome(state);
+      const nextDraft = {
+        ...obligationDraft,
+        categoryId: category.id,
+        subcategoryId: undefined,
+        categoryExplanation: "Categoria escolhida manualmente.",
+      };
+      const nextState: ConversationState = {
+        ...state,
+        obligationDraft: nextDraft,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: `${correctionAppliedMessage("a categoria")}\n\n${obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue))}`,
+        keyboard: obligationConfirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.acceptProposal) {
+      if (state.proposedCategoryName === undefined) {
+        return expiredOutcome(state);
+      }
+      const depsValue = await getDeps();
+      const resolved = await createOrReuseCategory(
+        state.proposedCategoryName,
+        depsValue,
+      );
+      if (!resolved) return { state, reply: notUnderstoodMessage() };
+      const nextDraft = {
+        ...obligationDraft,
+        categoryId: resolved.categoryId,
+        subcategoryId: undefined,
+        categoryExplanation: "Categoria criada pelo usuário.",
+      };
+      const nextState: ConversationState = {
+        ...state,
+        obligationDraft: nextDraft,
+        proposedCategoryName: undefined,
+        categoryCandidates: undefined,
+      };
+      return {
+        state: nextState,
+        reply: obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue)),
+        keyboard: obligationConfirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.dropProposal) {
+      if (state.proposedCategoryName === undefined) {
+        return expiredOutcome(state);
+      }
+      const nextState: ConversationState = {
+        ...state,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: obligationConfirmationMessage(
+          obligationSummaryView(obligationDraft, await getDeps()),
+        ),
+        keyboard: obligationConfirmationKeyboard(
+          undefined,
+          state.categoryCandidates,
+        ),
+      };
     }
     return expiredOutcome(state);
   }
