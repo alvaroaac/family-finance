@@ -1111,12 +1111,7 @@ async function startClassifiedIntent(
     extracted.categoryCandidates ?? [],
     deps.catalog,
   );
-  if (extracted.unifiedPrimary === true && unifiedCandidates[0]) {
-    const top = unifiedCandidates[0];
-    obligationDraft.categoryId = top.categoryId;
-    obligationDraft.subcategoryId = top.subcategoryId;
-    obligationDraft.categoryExplanation = top.explanation;
-  } else if (extracted.proposedCategoryName) {
+  if (extracted.proposedCategoryName) {
     obligationDraft.categoryExplanation = `Nova categoria sugerida (pendente; não será criada automaticamente): ${extracted.proposedCategoryName}.`;
   }
 
