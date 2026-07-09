@@ -509,6 +509,7 @@ export function createCodexMessageClassifier(args: {
         });
         return null;
       }
+      const mapped = mapResult(parsed.data, options);
       args.telemetry?.({
         type: "ai_call",
         provider: "codex",
@@ -518,7 +519,7 @@ export function createCodexMessageClassifier(args: {
       });
       consecutiveFailures = 0;
       circuitOpenUntil = 0;
-      return mapResult(parsed.data, options);
+      return mapped;
     } catch {
       noteFailure();
       args.telemetry?.({
