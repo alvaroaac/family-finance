@@ -165,6 +165,7 @@ export type InterpretedCardPurchase = {
 };
 
 export type InterpretedIntent =
+  | { intent: "non_financial" }
   | { intent: "plain"; expense: InterpretedExpense }
   | { intent: "obligation"; obligation: InterpretedObligation }
   | { intent: "card_installment"; purchase: InterpretedCardPurchase }

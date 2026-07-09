@@ -34,9 +34,10 @@ happen before treating the test split as sealed gold.
 
 ## Run models
 
-The default matrix is `claude-haiku-4-5`, `claude-sonnet-5`, `gpt-5.4-mini`,
-and `gpt-5.5`. Model IDs remain overridable so pinned successors can run under
-identical prompt/schema settings:
+The default matrix is `codex:gpt-5.5`, `anthropic:claude-haiku-4-5`,
+`anthropic:claude-sonnet-5`, `openai:gpt-5.4-mini`, and `openai:gpt-5.5`.
+Model IDs remain overridable so pinned successors can run under identical
+prompt/schema settings:
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -57,10 +58,15 @@ entry records its introductory price and the later list price in a note. Pass
 `--pricing PATH` with another compatible table when rates change; unknown model
 IDs still run but their estimated cost is `null`.
 
-The runner intentionally does not enable provider-specific structured-output
-features. It sends plain text to Anthropic Messages and OpenAI Responses, then
-extracts the JSON object. This makes schema-valid rate a meaningful comparison
-metric. OpenAI requests set `store: false`.
+The Codex CLI target receives the exact same `buildEvaluationPrompt` text and
+strict `EvalPrediction` task as the API targets. Codex CLI does not expose
+per-request token usage through this subprocess contract, so its usage and
+estimated API-style cost remain `null`; compare its observed latency and
+quality, and treat subscription/runtime cost separately.
+
+The runner sends the same plain single-turn prompt to every provider. Codex uses
+its required strict output-schema file; Anthropic and OpenAI are locally parsed
+and scored against the same shape. OpenAI requests set `store: false`.
 
 Each model gets its own append-only JSONL file. Errors are recorded per case so
 a partial provider failure does not erase the rest of the run. To rescore an

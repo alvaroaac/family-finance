@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -6,6 +7,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 
 import type { InterpretedIntent, MessageClassifier } from "./interpret.js";
+import type { AiCompletionClient } from "@family-finance/categorization";
 
 export type CodexRunRequest = {
   prompt: string;
@@ -182,29 +184,76 @@ export function buildCodexPrompt(
   ].join("\n");
 }
 
+export function buildCodexExecArgs(request: CodexRunRequest): string[] {
+  return [
+    "exec",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--skip-git-repo-check",
+    "-c",
+    'web_search="disabled"',
+    ...[
+      "shell_tool",
+      "unified_exec",
+      "code_mode_host",
+      "apps",
+      "browser_use",
+      "browser_use_external",
+      "browser_use_full_cdp_access",
+      "computer_use",
+      "in_app_browser",
+      "multi_agent",
+      "image_generation",
+      "shell_zsh_fork",
+      "unified_exec_zsh_fork",
+      "js_repl",
+      "js_repl_tools_only",
+      "enable_mcp_apps",
+      "tool_call_mcp_elicitation",
+      "request_permissions_tool",
+      "remote_plugin",
+      "plugin_sharing",
+      "skill_mcp_dependency_install",
+      "network_proxy",
+      "plugins",
+      "auth_elicitation",
+      "artifact",
+      "chronicle",
+      "code_mode",
+      "code_mode_only",
+      "deferred_executor",
+      "enable_fanout",
+      "goals",
+      "hooks",
+      "memories",
+      "shell_snapshot",
+      "tool_suggest",
+      "workspace_dependencies",
+      "multi_agent_v2",
+    ].flatMap((feature) => ["--disable", feature]),
+    "--sandbox",
+    "read-only",
+    "--model",
+    request.model,
+    "--cd",
+    request.cwd,
+    "--output-schema",
+    request.schemaPath,
+    "--output-last-message",
+    request.outputPath,
+    "--color",
+    "never",
+    "--json",
+    "-",
+  ];
+}
+
 export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
   return async (request) =>
     new Promise((resolve) => {
-      const args = [
-        "exec",
-        "--ephemeral",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--model",
-        request.model,
-        "--cd",
-        request.cwd,
-        "--output-schema",
-        request.schemaPath,
-        "--output-last-message",
-        request.outputPath,
-        "--color",
-        "never",
-        "-",
-      ];
+      const args = buildCodexExecArgs(request);
       const child = spawn(binary, args, {
         cwd: request.cwd,
         env: {
@@ -213,10 +262,11 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
           HOME: request.codexHome,
           LANG: "C.UTF-8",
         },
-        stdio: ["pipe", "ignore", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",
       });
       let stderr = "";
+      let stdout = "";
       let exceeded = false;
       child.stderr.on("data", (chunk: Buffer) => {
         if (stderr.length < request.maxOutputBytes) stderr += chunk.toString();
@@ -229,6 +279,13 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
               child.kill("SIGKILL");
             }
           } else child.kill("SIGKILL");
+        }
+      });
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (stdout.length < request.maxOutputBytes) stdout += chunk.toString();
+        if (stdout.length >= request.maxOutputBytes) {
+          exceeded = true;
+          killGroup();
         }
       });
       const killGroup = () => {
@@ -250,12 +307,40 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
           errorCode: error.code,
         });
       });
+      child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        killGroup();
+        resolve({
+          exitCode: null,
+          timedOut: false,
+          stderr,
+          errorCode: error.code ?? "STDIN_ERROR",
+        });
+      });
       child.on("close", (code, signal) => {
         clearTimeout(timer);
+        let auditError: string | undefined;
+        try {
+          for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+            const event = JSON.parse(line) as {
+              type?: string;
+              item?: { type?: string };
+            };
+            const allowed =
+              event.type === "thread.started" ||
+              event.type === "turn.started" ||
+              event.type === "turn.completed" ||
+              (event.type === "item.completed" &&
+                event.item?.type === "agent_message");
+            if (!allowed) throw new Error("unexpected Codex event");
+          }
+        } catch {
+          auditError = "UNEXPECTED_CODEX_EVENT";
+        }
         resolve({
           exitCode: code,
           timedOut: signal === "SIGKILL" && !exceeded,
           stderr: exceeded ? "bounded_output_exceeded" : stderr,
+          errorCode: auditError,
         });
       });
       child.stdin.end(request.prompt);
@@ -280,7 +365,8 @@ function mapResult(
   data: z.infer<typeof resultSchema>,
   options: Parameters<MessageClassifier>[1],
 ): InterpretedIntent | null {
-  if (data.intent === "non_financial" || data.description === null) return null;
+  if (data.intent === "non_financial") return { intent: "non_financial" };
+  if (data.description === null) return null;
   const knownCard =
     data.card_id === null
       ? undefined
@@ -463,12 +549,13 @@ export function createCodexMessageClassifier(args: {
       return null;
     }
     active += 1;
-    const temp = await mkdtemp(join(tmpdir(), "family-finance-codex-"));
-    const cwd = join(temp, "empty");
-    const schemaPath = join(temp, "schema.json");
-    const outputPath = join(temp, "output.json");
+    let temp: string | undefined;
     const started = Date.now();
     try {
+      temp = await mkdtemp(join(tmpdir(), "family-finance-codex-"));
+      const cwd = join(temp, "empty");
+      const schemaPath = join(temp, "schema.json");
+      const outputPath = join(temp, "output.json");
       await Promise.all([
         mkdir(cwd),
         mkdir(args.codexHome, { recursive: true }),
@@ -494,6 +581,9 @@ export function createCodexMessageClassifier(args: {
           latencyMs: Date.now() - started,
         });
         return null;
+      }
+      if ((await stat(outputPath)).size > 64 * 1024) {
+        throw new Error("Codex output file exceeded limit");
       }
       const parsed = resultSchema.safeParse(
         JSON.parse(await readFile(outputPath, "utf8")),
@@ -532,7 +622,32 @@ export function createCodexMessageClassifier(args: {
       return null;
     } finally {
       active -= 1;
-      await rm(temp, { recursive: true, force: true }).catch(() => undefined);
+      if (temp) {
+        await rm(temp, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
+  };
+}
+
+/** One unified Anthropic completion used only after a Codex failure. */
+export function createUnifiedAnthropicMessageClassifier(
+  client: AiCompletionClient,
+): MessageClassifier {
+  return async (text, options) => {
+    try {
+      const reply = await client.complete(buildCodexPrompt(text, options), {
+        label: "codex_fallback",
+      });
+      if (!reply) return null;
+      const start = reply.indexOf("{");
+      const end = reply.lastIndexOf("}");
+      if (start < 0 || end < start) return null;
+      const parsed = resultSchema.safeParse(
+        JSON.parse(reply.slice(start, end + 1)),
+      );
+      return parsed.success ? mapResult(parsed.data, options) : null;
+    } catch {
+      return null;
     }
   };
 }

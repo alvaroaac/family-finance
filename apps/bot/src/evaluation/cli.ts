@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { loadDataset, loadPredictions, readJsonFile } from "./dataset.js";
 import { buildEvaluationPrompt, promptHash } from "./prompt.js";
 import {
-  completeCodexRuntimeEvaluation,
+  completeCodexEvaluation,
   completeEvaluation,
   parseModelTargets,
 } from "./provider.js";
@@ -109,9 +109,8 @@ async function main(): Promise<void> {
         try {
           const completed =
             target.provider === "codex"
-              ? await completeCodexRuntimeEvaluation({
-                  entry,
-                  taxonomy: dataset.taxonomy,
+              ? await completeCodexEvaluation({
+                  prompt,
                   model: target.model,
                   timeoutMs,
                 })

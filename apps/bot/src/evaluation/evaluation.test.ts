@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
 import { loadDataset } from "./dataset.js";
 import { buildEvaluationPrompt, promptHash } from "./prompt.js";
+import { completeCodexEvaluation } from "./provider.js";
 import {
   aggregateScores,
   currentContractGapReport,
@@ -40,8 +42,14 @@ function perfectPrediction(entry: EvalCase): EvalPrediction {
     categorization: {
       decision: entry.gold.categorization.decision,
       candidates:
-        entry.gold.categorization.required_candidates ??
-        entry.gold.categorization.acceptable,
+        entry.gold.categorization.required_candidates?.map((candidate) => ({
+          ...candidate,
+          confidence: candidate.confidence ?? 0.95,
+        })) ??
+        entry.gold.categorization.acceptable.map((candidate) => ({
+          ...candidate,
+          confidence: candidate.confidence ?? 0.95,
+        })),
       proposal: entry.gold.categorization.proposal
         ? { ...entry.gold.categorization.proposal, reason: "gold fixture" }
         : null,
@@ -156,4 +164,31 @@ describe("AI evaluation dataset v1", () => {
     expect(aggregate["fixture:perfect:run-1"]?.estimated_cost_usd).toBe(0.001);
     expect(aggregate["fixture:perfect:run-1"]?.catastrophic_errors).toEqual([]);
   });
+
+  it.each(["obligation", "card_installment", "investment_transfer"])(
+    "Codex benchmark receives the exact provider-neutral prompt for %s",
+    async (intent) => {
+      const { cases, taxonomy } = await dataset();
+      const entry = cases.find(
+        (candidate) => candidate.gold.intent === intent,
+      ) as EvalCase;
+      const prompt = buildEvaluationPrompt(entry, taxonomy);
+      const prediction = perfectPrediction(entry);
+      let receivedPrompt = "";
+      const result = await completeCodexEvaluation({
+        prompt,
+        model: "gpt-5.5",
+        timeoutMs: 1000,
+        codexHome: "/tmp/family-finance-eval-test-home",
+        runner: async (request) => {
+          receivedPrompt = request.prompt;
+          await writeFile(request.outputPath, JSON.stringify(prediction));
+          return { exitCode: 0, timedOut: false, stderr: "" };
+        },
+      });
+      expect(receivedPrompt).toBe(prompt);
+      expect(result.prediction).toEqual(prediction);
+      expect(result.usage).toBeNull();
+    },
+  );
 });

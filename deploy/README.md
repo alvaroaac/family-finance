@@ -129,6 +129,10 @@ persists device credentials across container replacement. This CLI login is
 operationally more fragile than a service API: monitor the structured Codex
 fallback telemetry and repeat device login if credentials expire. Claude/Haiku
 remains fully usable when Codex is disabled or fails; Whisper is unchanged.
+The CLI still holds a reusable device credential in-process; the deny list,
+event audit, non-root user, read-only filesystem, empty cwd, and secret-free
+child environment reduce exposure but do not eliminate credential risk. A
+separate sidecar/broker remains a defense-in-depth follow-up.
 Codex can surface a pending new subcategory in the confirmation explanation,
 but creating/persisting that subcategory from Telegram is intentionally a
 follow-up; it is never silently dropped into or written as an existing category.

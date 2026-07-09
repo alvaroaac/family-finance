@@ -1,9 +1,11 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { z } from "zod";
+
 import type { EvalPrediction, PredictionRecord } from "./types.js";
-import type { EvalCase, Taxonomy } from "./types.js";
-import { createCodexMessageClassifier } from "../codex.js";
+import { createNodeCodexRunner, type CodexProcessRunner } from "../codex.js";
 
 export type ModelTarget = {
   provider: "anthropic" | "openai" | "codex";
@@ -151,89 +153,199 @@ export async function completeEvaluation(
   };
 }
 
-export async function completeCodexRuntimeEvaluation(args: {
-  entry: EvalCase;
-  taxonomy: Taxonomy;
+const candidateSchema = z
+  .object({
+    purpose: z.string().nullable(),
+    category: z.string().min(1),
+    subcategory: z.string().nullable(),
+    confidence: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+const evalPredictionSchema = z
+  .object({
+    intent: z.string().min(1),
+    fields: z
+      .object({
+        merchant: z.string().nullable(),
+        item: z.string().nullable(),
+        description: z.string().nullable(),
+        amount_kind: z.string().nullable(),
+        amount_cents: z.number().nullable(),
+        monthly_amount_cents: z.number().nullable(),
+        installment_count: z.number().nullable(),
+        card: z.string().nullable(),
+        occurred_on: z.string().nullable(),
+        due_day: z.number().nullable(),
+        term_months: z.number().nullable(),
+      })
+      .strict(),
+    categorization: z
+      .object({
+        decision: z.enum(["single", "choose", "propose_new", "abstain"]),
+        candidates: z.array(candidateSchema).max(3),
+        proposal: z
+          .object({
+            kind: z.enum(["category", "subcategory"]),
+            category: z.string().min(1),
+            subcategory: z.string().nullable(),
+            reason: z.string(),
+          })
+          .strict()
+          .nullable(),
+      })
+      .strict(),
+    accounting: z
+      .object({
+        cash_flow: z.enum(["outflow", "inflow", "neutral"]),
+        available_balance: z.enum(["subtract", "add", "unchanged"]),
+        accounting_expense: z.enum(["include", "exclude"]),
+        consumption_spend: z.enum(["include", "exclude"]),
+        destination: z.string().nullable(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export const CODEX_EVAL_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["intent", "fields", "categorization", "accounting"],
+  properties: {
+    intent: { type: "string" },
+    fields: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "merchant",
+        "item",
+        "description",
+        "amount_kind",
+        "amount_cents",
+        "monthly_amount_cents",
+        "installment_count",
+        "card",
+        "occurred_on",
+        "due_day",
+        "term_months",
+      ],
+      properties: {
+        merchant: { type: ["string", "null"] },
+        item: { type: ["string", "null"] },
+        description: { type: ["string", "null"] },
+        amount_kind: { type: ["string", "null"] },
+        amount_cents: { type: ["number", "null"] },
+        monthly_amount_cents: { type: ["number", "null"] },
+        installment_count: { type: ["number", "null"] },
+        card: { type: ["string", "null"] },
+        occurred_on: { type: ["string", "null"] },
+        due_day: { type: ["number", "null"] },
+        term_months: { type: ["number", "null"] },
+      },
+    },
+    categorization: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision", "candidates", "proposal"],
+      properties: {
+        decision: { enum: ["single", "choose", "propose_new", "abstain"] },
+        candidates: {
+          type: "array",
+          maxItems: 3,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["purpose", "category", "subcategory", "confidence"],
+            properties: {
+              purpose: { type: ["string", "null"] },
+              category: { type: "string" },
+              subcategory: { type: ["string", "null"] },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
+            },
+          },
+        },
+        proposal: {
+          anyOf: [
+            { type: "null" },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "category", "subcategory", "reason"],
+              properties: {
+                kind: { enum: ["category", "subcategory"] },
+                category: { type: "string" },
+                subcategory: { type: ["string", "null"] },
+                reason: { type: "string" },
+              },
+            },
+          ],
+        },
+      },
+    },
+    accounting: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "cash_flow",
+            "available_balance",
+            "accounting_expense",
+            "consumption_spend",
+            "destination",
+          ],
+          properties: {
+            cash_flow: { enum: ["outflow", "inflow", "neutral"] },
+            available_balance: { enum: ["subtract", "add", "unchanged"] },
+            accounting_expense: { enum: ["include", "exclude"] },
+            consumption_spend: { enum: ["include", "exclude"] },
+            destination: { type: ["string", "null"] },
+          },
+        },
+      ],
+    },
+  },
+} as const;
+
+export async function completeCodexEvaluation(args: {
+  prompt: string;
   model: string;
   timeoutMs: number;
+  codexHome?: string;
+  runner?: CodexProcessRunner;
 }): Promise<{ prediction: EvalPrediction; usage: null }> {
-  const categories = args.taxonomy.categories.map((category, index) => ({
-    id: `category-${index}`,
-    name: category.name,
-  }));
-  const subcategories = args.taxonomy.categories.flatMap(
-    (category, categoryIndex) =>
-      category.subcategories.map((name, subIndex) => ({
-        id: `subcategory-${categoryIndex}-${subIndex}`,
-        categoryId: `category-${categoryIndex}`,
-        name,
-      })),
-  );
-  const knownCards = (args.entry.context?.cards ?? []).map((name, index) => ({
-    id: `card-${index}`,
-    name,
-  }));
-  const classify = createCodexMessageClassifier({
-    enabled: true,
-    model: args.model,
-    timeoutMs: args.timeoutMs,
-    codexHome:
-      process.env.CODEX_HOME ??
-      join(tmpdir(), "family-finance-eval-codex-home"),
-  });
-  const result = await classify(args.entry.input.text, {
-    today: args.entry.input.today,
-    parserHints: {},
-    knownCards,
-    catalog: { categories, subcategories },
-  });
-  if (result === null)
-    throw new Error("Codex runtime path abstained or failed");
-  const fields: EvalPrediction["fields"] = {
-    merchant: null,
-    item: null,
-    description: null,
-    amount_kind: null,
-    amount_cents: null,
-    monthly_amount_cents: null,
-    installment_count: null,
-    card: null,
-    occurred_on: null,
-    due_day: null,
-    term_months: null,
-  };
-  let candidates: EvalPrediction["categorization"]["candidates"] = [];
-  if (result.intent === "plain") {
-    fields.description = result.expense.description;
-    fields.amount_cents = result.expense.amountCents ?? null;
-    fields.card = result.expense.cardKeyword ?? null;
-    fields.occurred_on = result.expense.occurredOn ?? null;
-    candidates = (result.expense.categoryCandidates ?? []).map((candidate) => ({
-      purpose: null,
-      category: candidate.categoryName,
-      subcategory: candidate.subcategoryName ?? null,
-      confidence: candidate.confidence,
-    }));
+  const temp = await mkdtemp(join(tmpdir(), "family-finance-eval-codex-"));
+  const cwd = join(temp, "empty");
+  const schemaPath = join(temp, "schema.json");
+  const outputPath = join(temp, "output.json");
+  try {
+    await Promise.all([
+      mkdir(cwd),
+      writeFile(schemaPath, JSON.stringify(CODEX_EVAL_OUTPUT_SCHEMA), "utf8"),
+    ]);
+    const result = await (args.runner ?? createNodeCodexRunner())({
+      prompt: args.prompt,
+      schemaPath,
+      outputPath,
+      cwd,
+      codexHome:
+        args.codexHome ??
+        process.env.CODEX_HOME ??
+        join(tmpdir(), "family-finance-eval-codex-home"),
+      model: args.model,
+      timeoutMs: args.timeoutMs,
+      maxOutputBytes: 64 * 1024,
+    });
+    if (result.exitCode !== 0 || result.timedOut || result.errorCode) {
+      throw new Error("Codex evaluation invocation failed");
+    }
+    const parsed = evalPredictionSchema.safeParse(
+      JSON.parse(await readFile(outputPath, "utf8")),
+    );
+    if (!parsed.success) throw new Error("Codex evaluation schema invalid");
+    return { prediction: parsed.data, usage: null };
+  } finally {
+    await rm(temp, { recursive: true, force: true }).catch(() => undefined);
   }
-  return {
-    prediction: {
-      intent:
-        result.intent === "plain" && fields.card
-          ? "plain_card_expense"
-          : result.intent,
-      fields,
-      categorization: {
-        decision:
-          candidates.length > 1
-            ? "choose"
-            : candidates.length === 1
-              ? "single"
-              : "abstain",
-        candidates,
-        proposal: null,
-      },
-      accounting: null,
-    },
-    usage: null,
-  };
 }

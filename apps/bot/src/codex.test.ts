@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createCodexMessageClassifier,
+  createUnifiedAnthropicMessageClassifier,
+  buildCodexExecArgs,
   withClassifierFallback,
   type CodexProcessRunner,
 } from "./codex.js";
@@ -65,6 +67,70 @@ function classifier(runner: CodexProcessRunner) {
 }
 
 describe("Codex unified primary", () => {
+  it("uses fail-closed CLI argv with every tool surface disabled", () => {
+    const argv = buildCodexExecArgs({
+      prompt: "x",
+      schemaPath: "/tmp/schema",
+      outputPath: "/tmp/output",
+      cwd: "/tmp/empty",
+      codexHome: "/tmp/home",
+      model: "gpt-5.5",
+      timeoutMs: 1000,
+      maxOutputBytes: 1024,
+    });
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--strict-config",
+        "--skip-git-repo-check",
+        "--json",
+        "--sandbox",
+        "read-only",
+      ]),
+    );
+    for (const feature of [
+      "shell_tool",
+      "unified_exec",
+      "code_mode_host",
+      "apps",
+      "browser_use",
+      "computer_use",
+      "multi_agent",
+      "image_generation",
+      "shell_zsh_fork",
+      "unified_exec_zsh_fork",
+      "js_repl",
+      "enable_mcp_apps",
+      "tool_call_mcp_elicitation",
+      "request_permissions_tool",
+      "remote_plugin",
+      "plugin_sharing",
+      "skill_mcp_dependency_install",
+      "network_proxy",
+      "plugins",
+      "auth_elicitation",
+      "artifact",
+      "chronicle",
+      "code_mode",
+      "code_mode_only",
+      "deferred_executor",
+      "enable_fanout",
+      "goals",
+      "hooks",
+      "memories",
+      "shell_snapshot",
+      "tool_suggest",
+      "workspace_dependencies",
+      "multi_agent_v2",
+    ]) {
+      const index = argv.indexOf(feature);
+      expect(index).toBeGreaterThan(0);
+      expect(argv[index - 1]).toBe("--disable");
+    }
+    expect(argv).toContain('web_search="disabled"');
+  });
   it("makes one schema-constrained call with parser/card/catalog context", async () => {
     const runner = vi.fn<CodexProcessRunner>(async (request) => {
       await writeFile(request.outputPath, JSON.stringify(VALID));
@@ -187,6 +253,50 @@ describe("Codex unified primary", () => {
       () => undefined,
     )?.("giassi 123,45", OPTIONS);
     expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("treats a valid non-financial result as success without Anthropic fallback", async () => {
+    const primary = classifier(async (request) => {
+      await writeFile(
+        request.outputPath,
+        JSON.stringify({
+          ...VALID,
+          intent: "non_financial",
+          description: null,
+          amount_cents: null,
+          card_id: null,
+          card_name: null,
+          category_hint: null,
+          category_candidates: [],
+        }),
+      );
+      return { exitCode: 0, timedOut: false, stderr: "" };
+    });
+    const fallback = vi.fn(async () => null);
+    const result = await withClassifierFallback(
+      primary,
+      fallback,
+      () => undefined,
+    )?.("bom dia", OPTIONS);
+    expect(result).toEqual({ intent: "non_financial" });
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("uses at most one unified Anthropic completion after Codex failure", async () => {
+    const complete = vi.fn(async () => JSON.stringify(VALID));
+    const primary = classifier(async () => ({
+      exitCode: null,
+      timedOut: true,
+      stderr: "",
+    }));
+    const fallback = createUnifiedAnthropicMessageClassifier({ complete });
+    const result = await withClassifierFallback(
+      primary,
+      fallback,
+      () => undefined,
+    )?.("giassi", OPTIONS);
+    expect(result?.intent).toBe("plain");
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 
   it.each([

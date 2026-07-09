@@ -990,7 +990,10 @@ async function startCardBillIntent(
 
 /** Route a classified non-plain intent to its flow. */
 async function startClassifiedIntent(
-  classified: Exclude<InterpretedIntent, { intent: "plain" }>,
+  classified: Exclude<
+    InterpretedIntent,
+    { intent: "plain" } | { intent: "non_financial" }
+  >,
   input: StartInput,
   deps: ConversationDeps,
   options: StartOptions,
@@ -1101,17 +1104,25 @@ async function startClassifiedIntent(
     obligationDraft.subcategoryId = result.suggestion.subcategoryId;
     obligationDraft.categoryExplanation = result.suggestion.explanation;
   }
+  const unifiedCandidates = resolveCategoryCandidates(
+    extracted.categoryCandidates ?? [],
+    deps.catalog,
+  );
+  if (extracted.unifiedPrimary === true && unifiedCandidates[0]) {
+    const top = unifiedCandidates[0];
+    obligationDraft.categoryId = top.categoryId;
+    obligationDraft.subcategoryId = top.subcategoryId;
+    obligationDraft.categoryExplanation = top.explanation;
+  } else if (extracted.proposedCategoryName) {
+    obligationDraft.categoryExplanation = `Nova categoria sugerida (pendente; não será criada automaticamente): ${extracted.proposedCategoryName}.`;
+  }
 
   return {
     state: {
       status: "awaiting_obligation_confirmation",
       draft: ballast,
       obligationDraft,
-      proposedCategoryName: extracted.proposedCategoryName,
-      categoryCandidates: resolveCategoryCandidates(
-        extracted.categoryCandidates ?? [],
-        deps.catalog,
-      ),
+      categoryCandidates: unifiedCandidates,
     },
     reply: obligationConfirmationMessage(
       obligationSummaryView(obligationDraft, deps),
@@ -1192,10 +1203,28 @@ export async function startConversation(
         merchantAliases: deps.merchantAliases,
       })
       .catch(() => null);
-    if (classified !== null && classified.intent !== "plain") {
-      return startClassifiedIntent(classified, input, deps, options, inputKind);
+    if (classified?.intent === "non_financial") {
+      // Successful unified abstention: do not call Anthropic interpretation or
+      // categorization. The deterministic parser still owns the safe fallback
+      // draft/reply behavior.
+      classifiedExpense = {
+        description: parsed.description,
+        unifiedPrimary: true,
+        categoryCandidates: [],
+      };
     }
-    if (classified !== null) {
+    if (classified !== null && classified.intent !== "plain") {
+      if (classified.intent !== "non_financial") {
+        return startClassifiedIntent(
+          classified,
+          input,
+          deps,
+          options,
+          inputKind,
+        );
+      }
+    }
+    if (classified?.intent === "plain") {
       classifiedExpense = classified.expense;
     }
   }
@@ -2604,7 +2633,10 @@ export async function applyCallback(
         keyboard:
           state.proposedCategoryName !== undefined
             ? installmentConfirmationKeyboard(state.proposedCategoryName)
-            : installmentConfirmationKeyboard(),
+            : installmentConfirmationKeyboard(
+                undefined,
+                state.categoryCandidates,
+              ),
       };
     }
     if (token === TOKENS.categories) {
@@ -2672,6 +2704,7 @@ export async function applyCallback(
         ...state,
         installmentDraft: next,
         proposedCategoryName: undefined,
+        categoryCandidates: undefined,
       };
       return {
         state: nextState,

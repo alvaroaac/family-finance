@@ -98,6 +98,7 @@ import {
 } from "./interpret.js";
 import {
   createCodexMessageClassifier,
+  createUnifiedAnthropicMessageClassifier,
   withClassifierFallback,
 } from "./codex.js";
 import { STARTER_MERCHANT_ALIASES } from "./merchant-aliases.js";
@@ -812,28 +813,30 @@ export async function startBot(): Promise<{
           timeoutMs: env.CODEX_ENABLED === "true" ? 8000 : undefined,
         })
       : undefined;
+  const codexEnabled = env.CODEX_ENABLED === "true";
   const ai: AiCategorizer | undefined =
-    completionClient !== undefined
+    completionClient !== undefined && !codexEnabled
       ? createAiCategorizer(completionClient)
       : undefined;
   const interpretText: TextInterpreter | undefined =
-    completionClient !== undefined
+    completionClient !== undefined && !codexEnabled
       ? createTextInterpreter(completionClient)
       : undefined;
   const anthropicClassifier: MessageClassifier | undefined =
     completionClient !== undefined
-      ? createMessageClassifier(completionClient)
+      ? codexEnabled
+        ? createUnifiedAnthropicMessageClassifier(completionClient)
+        : createMessageClassifier(completionClient)
       : undefined;
-  const codexClassifier: MessageClassifier | undefined =
-    env.CODEX_ENABLED === "true"
-      ? createCodexMessageClassifier({
-          enabled: true,
-          model: env.CODEX_MODEL ?? "gpt-5.5",
-          timeoutMs: env.CODEX_TIMEOUT_MS ?? 12000,
-          codexHome: "/var/lib/family-finance-codex",
-          telemetry: (event) => console.log(JSON.stringify(event)),
-        })
-      : undefined;
+  const codexClassifier: MessageClassifier | undefined = codexEnabled
+    ? createCodexMessageClassifier({
+        enabled: true,
+        model: env.CODEX_MODEL ?? "gpt-5.5",
+        timeoutMs: env.CODEX_TIMEOUT_MS ?? 12000,
+        codexHome: "/var/lib/family-finance-codex",
+        telemetry: (event) => console.log(JSON.stringify(event)),
+      })
+    : undefined;
   const classifyMessage = withClassifierFallback(
     codexClassifier,
     anthropicClassifier,
@@ -933,6 +936,7 @@ export {
 export {
   createCodexMessageClassifier,
   createNodeCodexRunner,
+  createUnifiedAnthropicMessageClassifier,
   withClassifierFallback,
   buildCodexPrompt,
   CODEX_OUTPUT_SCHEMA,
