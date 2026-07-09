@@ -1,4 +1,4 @@
-import type { EvalPrediction } from "./types.js";
+import type { EvalPrediction, PredictionRecord } from "./types.js";
 
 export type ModelTarget = {
   provider: "anthropic" | "openai";
@@ -45,10 +45,16 @@ function requiredEnv(name: string): string {
 export async function completeEvaluation(
   target: ModelTarget,
   prompt: string,
-): Promise<EvalPrediction> {
+  timeoutMs: number,
+): Promise<{
+  prediction: EvalPrediction;
+  usage: NonNullable<PredictionRecord["usage"]>;
+}> {
+  const signal = AbortSignal.timeout(timeoutMs);
   if (target.provider === "anthropic") {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal,
       headers: {
         "content-type": "application/json",
         "x-api-key": requiredEnv("ANTHROPIC_API_KEY"),
@@ -67,18 +73,29 @@ export async function completeEvaluation(
     }
     const body = (await response.json()) as {
       content?: Array<{ type?: string; text?: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
     const text = body.content?.find((part) => part.type === "text")?.text;
     if (!text) {
       throw new Error("Anthropic response contained no text");
     }
-    return extractJson(text);
+    const inputTokens = body.usage?.input_tokens ?? 0;
+    const outputTokens = body.usage?.output_tokens ?? 0;
+    return {
+      prediction: extractJson(text),
+      usage: {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+      },
+    };
   }
 
   // Intentionally use plain single-turn text on both providers. Provider-
   // specific structured-output features would make the comparison unfair.
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
+    signal,
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}`,
@@ -98,6 +115,11 @@ export async function completeEvaluation(
       type?: string;
       content?: Array<{ type?: string; text?: string }>;
     }>;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      total_tokens?: number;
+    };
   };
   const text = body.output
     ?.flatMap((item) => item.content ?? [])
@@ -105,5 +127,14 @@ export async function completeEvaluation(
   if (!text) {
     throw new Error("OpenAI response contained no output_text");
   }
-  return extractJson(text);
+  const inputTokens = body.usage?.input_tokens ?? 0;
+  const outputTokens = body.usage?.output_tokens ?? 0;
+  return {
+    prediction: extractJson(text),
+    usage: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: body.usage?.total_tokens ?? inputTokens + outputTokens,
+    },
+  };
 }

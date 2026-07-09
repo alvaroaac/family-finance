@@ -82,6 +82,13 @@ export type PredictionRecord = {
   repetition: number;
   latency_ms: number;
   prompt_hash: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  } | null;
+  pricing_version: string;
+  estimated_cost_usd: number | null;
   prediction: EvalPrediction | null;
   error?: string;
 };
@@ -91,4 +98,18 @@ export type Taxonomy = {
   purposes: string[];
   categories: Array<{ name: string; subcategories: string[] }>;
   investment_buckets: string[];
+};
+
+export type PricingTable = {
+  version: string;
+  effective_date: string;
+  currency: "USD";
+  models: Record<
+    string,
+    {
+      input_usd_per_million_tokens: number;
+      output_usd_per_million_tokens: number;
+      note?: string;
+    }
+  >;
 };

@@ -45,6 +45,17 @@ pnpm --filter @family-finance/bot eval:models -- --repetitions 3 --output ./eval
 ```
 
 Set `EVAL_MODELS` or pass `--models` to override the default matrix.
+Each request times out after 30 seconds by default; override with
+`--timeout-ms`. The runner prints one concise progress line per request so a
+sequential 42-case run does not look stalled. It does not force a
+provider-specific reasoning mode: unsupported settings would make the matrix
+less comparable, and timeout/output-budget failures are recorded honestly.
+
+Token usage is captured from both provider responses. Estimated cost uses
+[`v1/pricing.json`](./v1/pricing.json), versioned for 2026-07-09. The Sonnet 5
+entry records its introductory price and the later list price in a note. Pass
+`--pricing PATH` with another compatible table when rates change; unknown model
+IDs still run but their estimated cost is `null`.
 
 The runner intentionally does not enable provider-specific structured-output
 features. It sends plain text to Anthropic Messages and OpenAI Responses, then
@@ -63,7 +74,8 @@ pnpm --filter @family-finance/bot eval:score -- --predictions ./eval-results/pro
 
 The report includes schema validity, intent accuracy, exact gold-field accuracy,
 top-1 category accuracy, mean Recall@3, category-decision accuracy, accounting
-accuracy, and a list of catastrophic errors. Critical failures include confusing
+accuracy, p50/p95 latency, input/output tokens, estimated USD cost, and a list of
+catastrophic errors. Critical failures include confusing
 an obligation, installment, or investment transfer; getting amount semantics,
 installment count, or card wrong; and counting an investment transfer as
 consumption.

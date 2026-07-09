@@ -251,6 +251,27 @@ export function aggregateScores(
             Math.max(0, Math.ceil(sortedLatency.length * fraction) - 1),
           )
         ] ?? 0;
+      const groupRecords = records.filter(
+        (record) =>
+          `${record.provider}:${record.model}:run-${record.repetition}` === key,
+      );
+      const totalInputTokens = groupRecords.reduce(
+        (sum, record) => sum + (record.usage?.input_tokens ?? 0),
+        0,
+      );
+      const totalOutputTokens = groupRecords.reduce(
+        (sum, record) => sum + (record.usage?.output_tokens ?? 0),
+        0,
+      );
+      const allCostsKnown = groupRecords.every(
+        (record) => record.estimated_cost_usd !== null,
+      );
+      const estimatedCost = allCostsKnown
+        ? groupRecords.reduce(
+            (sum, record) => sum + (record.estimated_cost_usd ?? 0),
+            0,
+          )
+        : null;
       return [
         key,
         {
@@ -283,6 +304,10 @@ export function aggregateScores(
           ),
           latency_ms_p50: percentile(0.5),
           latency_ms_p95: percentile(0.95),
+          input_tokens: totalInputTokens,
+          output_tokens: totalOutputTokens,
+          estimated_cost_usd:
+            estimatedCost === null ? null : Number(estimatedCost.toFixed(6)),
           catastrophic_errors: scores.flatMap((score) =>
             score.catastrophic.map((failure) => `${score.id}:${failure}`),
           ),

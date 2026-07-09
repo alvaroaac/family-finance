@@ -135,13 +135,25 @@ describe("AI evaluation dataset v1", () => {
       repetition: 1,
       latency_ms: 0,
       prompt_hash: "fixture",
+      usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      pricing_version: "fixture",
+      estimated_cost_usd: 0.001,
       prediction: perfectPrediction(entry),
     };
     const aggregate = aggregateScores([entry], [record]) as Record<
       string,
-      { intent_accuracy: number; catastrophic_errors: string[] }
+      {
+        intent_accuracy: number;
+        input_tokens: number;
+        output_tokens: number;
+        estimated_cost_usd: number;
+        catastrophic_errors: string[];
+      }
     >;
     expect(aggregate["fixture:perfect:run-1"]?.intent_accuracy).toBe(1);
+    expect(aggregate["fixture:perfect:run-1"]?.input_tokens).toBe(100);
+    expect(aggregate["fixture:perfect:run-1"]?.output_tokens).toBe(20);
+    expect(aggregate["fixture:perfect:run-1"]?.estimated_cost_usd).toBe(0.001);
     expect(aggregate["fixture:perfect:run-1"]?.catastrophic_errors).toEqual([]);
   });
 });
