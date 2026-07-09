@@ -1,0 +1,31 @@
+{
+  "version": "family-taxonomy-v1-draft",
+  "purposes": [
+    "Custos fixos",
+    "Metas",
+    "Independência financeira",
+    "Lazer",
+    "Conforto"
+  ],
+  "categories": [
+    {
+      "name": "Alimentação",
+      "subcategories": ["Mercado", "Restaurante", "Delivery"]
+    },
+    {
+      "name": "Moradia",
+      "subcategories": ["Contas", "Reforma", "Eletrodomésticos", "Manutenção"]
+    },
+    { "name": "Comprinhas/Mimos", "subcategories": [] },
+    { "name": "Lazer", "subcategories": ["Rolezinhos", "Viagens"] },
+    {
+      "name": "Transporte",
+      "subcategories": ["Combustível", "Aplicativos", "Manutenção"]
+    },
+    { "name": "Saúde", "subcategories": ["Farmácia", "Consultas"] },
+    { "name": "Educação", "subcategories": [] },
+    { "name": "Pets", "subcategories": [] },
+    { "name": "Outros", "subcategories": [] }
+  ],
+  "investment_buckets": ["Filhos", "Casa", "Independência Financeira"]
+}

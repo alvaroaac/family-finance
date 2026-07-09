@@ -8,6 +8,9 @@
     "dev": "tsx src/index.ts",
     "lint": "tsc --noEmit",
     "start": "tsx src/server.ts",
+    "eval:models": "node --import tsx src/evaluation/cli.ts run",
+    "eval:score": "node --import tsx src/evaluation/cli.ts score",
+    "eval:gaps": "node --import tsx src/evaluation/cli.ts gaps",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
