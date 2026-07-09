@@ -6,13 +6,13 @@ behind the same Caddy at `bot.alvaroekarol.com.br`.
 
 Artifacts in this tree:
 
-| Path | What |
-| --- | --- |
-| `supabase/` | Self-host config template + pinning/backup instructions |
-| `caddy/Caddyfile` | HTTPS reverse proxy for Kong (:8000) and the bot (:8787) |
-| `bot/` | Bot compose file + env template (image from `apps/bot/Dockerfile`) |
-| `checks/rls-proof.mjs` | RLS/RPC verification gate — must pass 100% before cut-over |
-| `vercel.md` | Web env checklist + Google OAuth prod redirect |
+| Path                   | What                                                               |
+| ---------------------- | ------------------------------------------------------------------ |
+| `supabase/`            | Self-host config template + pinning/backup instructions            |
+| `caddy/Caddyfile`      | HTTPS reverse proxy for Kong (:8000) and the bot (:8787)           |
+| `bot/`                 | Bot compose file + env template (image from `apps/bot/Dockerfile`) |
+| `checks/rls-proof.mjs` | RLS/RPC verification gate — must pass 100% before cut-over         |
+| `vercel.md`            | Web env checklist + Google OAuth prod redirect                     |
 
 Execute the steps IN ORDER. Do not cut the web/bot over before step 4 passes.
 
@@ -110,6 +110,29 @@ On the VPS, with the repo checked out and `deploy/bot/.env` filled from
 [`bot/.env.example`](./bot/.env.example) (chmod 600 — this is the ONLY place
 the service-role key lives outside the Supabase stack):
 
+The image pins `@openai/codex@0.144.0`. Before enabling the Codex primary,
+authenticate once into its named volume (never copy auth files into the repo or
+image):
+
+```bash
+cd deploy/bot
+docker compose build bot
+docker compose run --rm bot codex login --device-auth
+```
+
+Then set `CODEX_ENABLED=true`, `CODEX_MODEL=gpt-5.5`, and
+`CODEX_TIMEOUT_MS=12000` in the VPS-only `.env`. With Codex enabled the
+Anthropic fallback uses an 8-second request timeout, bounding the normal chain
+near 20 seconds; Anthropic keeps its existing timeout when Codex is disabled.
+The `codex-auth` volume
+persists device credentials across container replacement. This CLI login is
+operationally more fragile than a service API: monitor the structured Codex
+fallback telemetry and repeat device login if credentials expire. Claude/Haiku
+remains fully usable when Codex is disabled or fails; Whisper is unchanged.
+Codex can surface a pending new subcategory in the confirmation explanation,
+but creating/persisting that subcategory from Telegram is intentionally a
+follow-up; it is never silently dropped into or written as an existing category.
+
 ```bash
 cd deploy/bot
 docker compose build
@@ -146,7 +169,7 @@ Done. Record the deployed Supabase tag and date in `supabase/README.md`.
 
 ## Ongoing operations
 
-- **Backups**: nightly `pg_dump` cron (documented in `supabase/README.md`) — 
+- **Backups**: nightly `pg_dump` cron (documented in `supabase/README.md`) —
   verify the first night's file exists and periodically test a restore.
 - **Bot logs**: `docker logs -f family-finance-bot`.
 - **Restart policy**: bot is `unless-stopped`; the Supabase stack restarts with
