@@ -2,7 +2,8 @@
 
 Durable, append-only record of the MVP build. Newest sessions at the bottom; read the
 trailing **Current state** block first. Per-task detail lives in `memory/tasks/task-01..11.md`;
-tech debt in `memory/project-tech-debt.md`. This log captures cross-session *why*, not the diff.
+tech debt in `thoughts/tech-debt.md` (`memory/project-tech-debt.md` is only a pointer).
+This log captures cross-session *why*, not the diff.
 
 ## 2026-06-27 — Implement the 11-task MVP plan via phased workflows
 
@@ -418,6 +419,32 @@ applied, 0012 grants effective, bot container running merged code (obligations +
 ---
 
 ## Current state
+
+As of 2026-07-09, `origin/main` contains the v1.0 web application and production bot,
+recurring obligations, the cozy UI, persistent bot conversations, member identity,
+inline confirmation/category controls, per-chat serialization, AI call telemetry, and
+Confirmar/Cancelar buttons for obligation drafts. The web, Telegram webhook, self-hosted
+Supabase, Google login, and Whisper path have all been exercised in production.
+
+The configured text model defaults to `claude-haiku-4-5`. When AI is configured, the
+interpreter runs for every new message; deterministic parsing retains precedence for
+reliable amount/date fields, category memory and rules run before the AI categorizer,
+and all writes remain behind an editable confirmation. Live telemetry proves that
+Anthropic and Whisper response parsing works, but semantic quality is not yet measured.
+The next quality step is a versioned evaluation set comparing Claude and GPT candidates,
+with Codex reviewing the prompt and dataset.
+
+Card-installment creation and card-bill settlement are not part of `main` at this snapshot;
+they remain a separate feature integration. When that work lands, migration `0015` must be
+applied before the updated bot is restarted. Production deployment state should always be
+verified independently of Git history before a redeploy.
+
+The next product-design input is
+`thoughts/product/category-taxonomy-and-planning-purposes.md`: planning purposes are
+separate from category/subcategory, ambiguous merchants may offer up to three choices,
+and financial-independence allocations remain transfers rather than consumption expense.
+
+## Historical state snapshots (superseded)
 
 **v1.0 is LIVE.** Web on Vercel prod (`https://casa.alvaroekarol.com.br`), bot container running on the VPS (mine-ops), Supabase self-hosted, Telegram webhook healthy, audio (Whisper) working. Model = Haiku 4.5. Everything pushed to `feat/family-finance-mvp` (PR #2), working tree clean (thoughts/ local-only).
 

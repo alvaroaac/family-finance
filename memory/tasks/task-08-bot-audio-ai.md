@@ -12,6 +12,13 @@
 
 **Completed:** 2026-06-22
 
+> Historical task record. Current state (2026-07-09): the default model is
+> `claude-haiku-4-5`; text interpretation runs on every new message when AI is
+> configured; provider timeouts and voice size/duration guards are implemented;
+> and production telemetry has verified successful Anthropic and Whisper HTTP
+> responses. The historical scope and acceptance criteria below describe the
+> original Task 08 delivery, not today's complete bot behavior.
+
 ## Scope
 
 - Telegram VOICE/AUDIO entry: download to a TEMP path, transcribe behind an
@@ -21,7 +28,8 @@
   existing categorization interface, behind an injected completion-client
   interface (package stays PURE).
 - Provider-agnostic, lazy, build-safe AI config (`packages/config/src/ai.ts`):
-  default LLM = Anthropic Claude (`claude-opus-4-8`); transcription = OpenAI.
+  original default LLM = Anthropic Claude (`claude-opus-4-8`, later changed to
+  `claude-haiku-4-5`); transcription = OpenAI.
 - Out of scope: direct-save toggle; persisting conversation state; a real
   webhook HTTP entry point; exercising real Telegram/Anthropic/OpenAI round trips.
 
@@ -29,7 +37,8 @@
 
 - [x] `packages/config/src/ai.ts` — `getLlmConfig` (Anthropic default, model
       override via `ANTHROPIC_MODEL`), `getTranscriptionConfig` (OpenAI/Whisper),
-      `DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"`. Lazy, never throws.
+      original `DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"` (historical; now
+      `claude-haiku-4-5`). Lazy, never throws.
       Re-exported from config `index.ts`. `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`
       added to `envSchema` (optional) and documented in `.env.example`.
 - [x] `packages/categorization/src/ai.ts` — `createAiCategorizer(client)` returns
@@ -101,7 +110,8 @@ approved (self-verified)
   (`categorization`, `config`) never import an AI SDK; concrete clients live at
   the bot edge (`apps/bot/src/providers.ts`) and use the global `fetch` (no new
   runtime deps). `categorization/ai.ts` depends only on zod + siblings.
-- Default LLM provider = Anthropic Claude, model id `claude-opus-4-8`
+- Original LLM provider = Anthropic Claude, model id `claude-opus-4-8`
+  (historical; current default is `claude-haiku-4-5`)
   (overridable via `ANTHROPIC_MODEL`). Transcription reuses `OPENAI_API_KEY`
   (Whisper). All AI keys are OPTIONAL in `envSchema`; absence disables the
   feature gracefully (AI fallback off; voice notes politely rejected).
@@ -119,28 +129,21 @@ approved (self-verified)
 
 ### Tech Debt
 
-- Provider clients (`apps/bot/src/providers.ts`) are not unit-tested against the
-  real Anthropic/OpenAI HTTP shapes (would require network/secrets). Only the
-  interfaces they implement are tested via mocks. Verify response parsing when
-  keys/network are available.
-- `transcribeVoiceMessage` does not enforce a max file size / duration; a very
-  large voice note would be downloaded to temp before transcription. Add a size
-  guard before deploy.
-- No retry/timeout on provider `fetch` calls; a slow provider blocks the webhook
-  response. Consider a timeout + graceful "tente por texto" fallback.
+- Resolved after this task: live provider response parsing, request timeouts,
+  and voice size/duration guards are now exercised or implemented.
+- Still open: measure semantic correctness and user-correction rate across a
+  representative pt-BR evaluation set before choosing the production model.
 
 ### Ideas
 
-- Interpret complex/incomplete TEXT messages via the LLM too (spec mentions
-  "interpretação de mensagens complexas ou incompletas"), not just categorization
-  — currently the LLM is wired for categorization fallback + audio transcription.
+- Implemented after this task: complex and ordinary text messages now pass
+  through the configured interpreter before the confirmation flow.
 
 ### Risks Or Blockers
 
 - Same as Task 7: no real Telegram + Supabase webhook round trip exercised here.
-  Additionally, Anthropic (categorization fallback) and OpenAI (transcription)
-  HTTP calls were not run against the real providers (no network/secrets). See
-  risks-and-blockers.md.
+  Historical note: real-provider verification happened after this task. See
+  `memory/risks-and-blockers.md` for the current quality risk.
 
 ## Handoff Notes
 
@@ -150,5 +153,5 @@ approved (self-verified)
 - To enable AI/audio locally: set `ANTHROPIC_API_KEY` (+ optional
   `ANTHROPIC_MODEL`), `OPENAI_API_KEY`, and `TELEGRAM_BOT_TOKEN`. With keys
   absent, the bot runs deterministic-only and rejects audio politely.
-- The HTTP webhook entry point wrapping `handleWebhook`/`startBot` is still
-  pending (carried over from Task 7).
+- Historical note: the standalone HTTP webhook server and production deployment
+  were implemented after this task.

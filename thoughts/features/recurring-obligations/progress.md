@@ -1,5 +1,10 @@
 # Recurring obligations — progress log
 
+> Superseded status note (2026-07-09): recurring obligations are merged on
+> `main`, migration `0011` has been applied in production, and the web/bot paths
+> are live. The entries below are retained as implementation history. Card
+> installment and bill-settlement integration is tracked separately.
+
 ## 2026-07-03 — Spec: from "parse 72x" to a full obligations design, through plan-review
 
 ### Tried that worked
@@ -78,7 +83,7 @@
 
 ---
 
-## Current state
+## Historical completion snapshot (superseded)
 
 **PR-1 is fully implemented and green** on `feat/recurring-obligations`
 (worktree `../family-finance-obligations`, based on `feat/family-finance-v1`,
