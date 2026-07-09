@@ -1,7 +1,12 @@
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
 import type { EvalPrediction, PredictionRecord } from "./types.js";
+import type { EvalCase, Taxonomy } from "./types.js";
+import { createCodexMessageClassifier } from "../codex.js";
 
 export type ModelTarget = {
-  provider: "anthropic" | "openai";
+  provider: "anthropic" | "openai" | "codex";
   model: string;
 };
 
@@ -18,7 +23,11 @@ export function parseModelTargets(value: string): ModelTarget[] {
         );
       }
       const provider = part.slice(0, separator);
-      if (provider !== "anthropic" && provider !== "openai") {
+      if (
+        provider !== "anthropic" &&
+        provider !== "openai" &&
+        provider !== "codex"
+      ) {
         throw new Error(`Unsupported provider: ${provider}`);
       }
       return { provider, model: part.slice(separator + 1) };
@@ -51,6 +60,9 @@ export async function completeEvaluation(
   usage: NonNullable<PredictionRecord["usage"]>;
 }> {
   const signal = AbortSignal.timeout(timeoutMs);
+  if (target.provider === "codex") {
+    throw new Error("Codex evaluation uses completeCodexRuntimeEvaluation");
+  }
   if (target.provider === "anthropic") {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -136,5 +148,92 @@ export async function completeEvaluation(
       output_tokens: outputTokens,
       total_tokens: body.usage?.total_tokens ?? inputTokens + outputTokens,
     },
+  };
+}
+
+export async function completeCodexRuntimeEvaluation(args: {
+  entry: EvalCase;
+  taxonomy: Taxonomy;
+  model: string;
+  timeoutMs: number;
+}): Promise<{ prediction: EvalPrediction; usage: null }> {
+  const categories = args.taxonomy.categories.map((category, index) => ({
+    id: `category-${index}`,
+    name: category.name,
+  }));
+  const subcategories = args.taxonomy.categories.flatMap(
+    (category, categoryIndex) =>
+      category.subcategories.map((name, subIndex) => ({
+        id: `subcategory-${categoryIndex}-${subIndex}`,
+        categoryId: `category-${categoryIndex}`,
+        name,
+      })),
+  );
+  const knownCards = (args.entry.context?.cards ?? []).map((name, index) => ({
+    id: `card-${index}`,
+    name,
+  }));
+  const classify = createCodexMessageClassifier({
+    enabled: true,
+    model: args.model,
+    timeoutMs: args.timeoutMs,
+    codexHome:
+      process.env.CODEX_HOME ??
+      join(tmpdir(), "family-finance-eval-codex-home"),
+  });
+  const result = await classify(args.entry.input.text, {
+    today: args.entry.input.today,
+    parserHints: {},
+    knownCards,
+    catalog: { categories, subcategories },
+  });
+  if (result === null)
+    throw new Error("Codex runtime path abstained or failed");
+  const fields: EvalPrediction["fields"] = {
+    merchant: null,
+    item: null,
+    description: null,
+    amount_kind: null,
+    amount_cents: null,
+    monthly_amount_cents: null,
+    installment_count: null,
+    card: null,
+    occurred_on: null,
+    due_day: null,
+    term_months: null,
+  };
+  let candidates: EvalPrediction["categorization"]["candidates"] = [];
+  if (result.intent === "plain") {
+    fields.description = result.expense.description;
+    fields.amount_cents = result.expense.amountCents ?? null;
+    fields.card = result.expense.cardKeyword ?? null;
+    fields.occurred_on = result.expense.occurredOn ?? null;
+    candidates = (result.expense.categoryCandidates ?? []).map((candidate) => ({
+      purpose: null,
+      category: candidate.categoryName,
+      subcategory: candidate.subcategoryName ?? null,
+      confidence: candidate.confidence,
+    }));
+  }
+  return {
+    prediction: {
+      intent:
+        result.intent === "plain" && fields.card
+          ? "plain_card_expense"
+          : result.intent,
+      fields,
+      categorization: {
+        decision:
+          candidates.length > 1
+            ? "choose"
+            : candidates.length === 1
+              ? "single"
+              : "abstain",
+        candidates,
+        proposal: null,
+      },
+      accounting: null,
+    },
+    usage: null,
   };
 }

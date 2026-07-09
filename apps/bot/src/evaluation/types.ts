@@ -77,7 +77,7 @@ export type EvalCase = {
 
 export type PredictionRecord = {
   id: string;
-  provider: "anthropic" | "openai" | "fixture";
+  provider: "anthropic" | "openai" | "codex" | "fixture";
   model: string;
   repetition: number;
   latency_ms: number;

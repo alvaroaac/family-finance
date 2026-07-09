@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 
 import { loadDataset, loadPredictions, readJsonFile } from "./dataset.js";
 import { buildEvaluationPrompt, promptHash } from "./prompt.js";
-import { completeEvaluation, parseModelTargets } from "./provider.js";
+import {
+  completeCodexRuntimeEvaluation,
+  completeEvaluation,
+  parseModelTargets,
+} from "./provider.js";
 import { aggregateScores, currentContractGapReport } from "./scorer.js";
 import type { PredictionRecord, PricingTable } from "./types.js";
 
@@ -12,6 +16,7 @@ const DEFAULT_CASES = resolve(BOT_ROOT, "evals/v1/cases.jsonl");
 const DEFAULT_TAXONOMY = resolve(BOT_ROOT, "evals/v1/taxonomy.json");
 const DEFAULT_PRICING = resolve(BOT_ROOT, "evals/v1/pricing.json");
 const DEFAULT_MODELS = [
+  "codex:gpt-5.5",
   "anthropic:claude-haiku-4-5",
   "anthropic:claude-sonnet-5",
   "openai:gpt-5.4-mini",
@@ -102,7 +107,15 @@ async function main(): Promise<void> {
           `[${requestNumber}/${totalRequests}] ${target.provider}:${target.model} run ${repetition} ${entry.id} ... `,
         );
         try {
-          const completed = await completeEvaluation(target, prompt, timeoutMs);
+          const completed =
+            target.provider === "codex"
+              ? await completeCodexRuntimeEvaluation({
+                  entry,
+                  taxonomy: dataset.taxonomy,
+                  model: target.model,
+                  timeoutMs,
+                })
+              : await completeEvaluation(target, prompt, timeoutMs);
           prediction = completed.prediction;
           usage = completed.usage;
         } catch (caught) {
