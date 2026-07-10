@@ -33,6 +33,7 @@ import {
   createCategory,
   settleCardBill,
   findCardBillSettlements,
+  confirmImportV2,
   type AppSupabaseClient,
 } from "./repositories.js";
 import { createServiceRoleClient } from "./index.js";
@@ -830,6 +831,87 @@ describe("settleCardBill", () => {
         createdByUserId: "user-1",
       }),
     ).rejects.toThrow("settleCardBill failed: boom");
+  });
+});
+
+describe("confirmImportV2", () => {
+  const batch = {
+    household_id: HOUSEHOLD,
+    source: "mercado_pago_pdf" as const,
+    request_key: "22222222-2222-4222-8222-222222222222",
+    payload_fingerprint: "a".repeat(64),
+    created_by_user_id: USER,
+    parser_version: "mercado-pago-pdf@1",
+  };
+
+  const items = [
+    {
+      household_id: HOUSEHOLD,
+      disposition: "imported" as const,
+      source_line: 2,
+      occurred_on: "2026-07-02",
+      amount_cents: -1990,
+      description: "Padaria",
+      fingerprint_version: 1,
+      base_fingerprint: "b".repeat(64),
+      occurrence_no: 1,
+      card_last4: "1234",
+      transaction: {
+        household_id: HOUSEHOLD,
+        kind: "expense" as const,
+        amount_cents: 1990,
+        occurred_on: "2026-07-02",
+        description: "Padaria",
+        category_id: null,
+        subcategory_id: null,
+        account_id: null,
+        credit_card_id: "33333333-3333-4333-8333-333333333333",
+        installment_id: null,
+        responsibility_scope: "household" as const,
+        responsible_user_id: null,
+        created_by_user_id: USER,
+        obligation_id: null,
+        obligation_month: null,
+        bill_month: null,
+      },
+    },
+  ];
+
+  it("passes the immutable batch and item payloads to the atomic v2 RPC", async () => {
+    const result = {
+      batch: { id: "batch-1" },
+      imported_rows: 1,
+      duplicate_rows: 0,
+      error_rows: 0,
+      excluded_rows: 0,
+      transactions_created: 1,
+      installment_groups_created: 0,
+      replayed: false,
+    };
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const client = {
+      rpc: async (name: string, args: unknown) => {
+        calls.push({ name, args });
+        return { data: result, error: null };
+      },
+    } as unknown as AppSupabaseClient;
+
+    await expect(confirmImportV2(client, batch, items)).resolves.toEqual(result);
+    expect(calls).toEqual([
+      {
+        name: "confirm_import_v2",
+        args: { batch_payload: batch, items_payload: items },
+      },
+    ]);
+  });
+
+  it("names RPC failures at the repository boundary", async () => {
+    const client = {
+      rpc: async () => ({ data: null, error: { message: "claim failed" } }),
+    } as unknown as AppSupabaseClient;
+    await expect(confirmImportV2(client, batch, items)).rejects.toThrow(
+      "confirmImportV2 failed: claim failed",
+    );
   });
 });
 

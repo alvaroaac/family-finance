@@ -42,6 +42,9 @@ import type {
   ConfirmImportBatchPayload,
   ConfirmImportRowPayload,
   ConfirmImportResult,
+  ConfirmImportV2BatchPayload,
+  ConfirmImportV2Item,
+  ConfirmImportV2Result,
   AccountRow,
   InvestmentBucketRow,
   CreditCardRow,
@@ -57,6 +60,9 @@ import type {
   ObligationStatus,
   MaterializeObligationPaymentResult,
   SettleCardBillResult,
+  ImportSource,
+  SourceCategoryMappingRow,
+  ImportItemClaimRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -526,6 +532,52 @@ export async function confirmImport(
   };
 }
 
+/**
+ * Atomically confirm a retry-safe import containing flat transactions and/or
+ * reconstructed installment purchases. The database owns claim acquisition,
+ * duplicate disposition, artifact linkage, and all persisted counts.
+ *
+ * Reusing the same `(household_id, request_key)` with the same payload hash
+ * returns the original result. Reusing it with another hash is rejected.
+ */
+export async function confirmImportV2(
+  client: AppSupabaseClient,
+  batch: ConfirmImportV2BatchPayload,
+  items: ConfirmImportV2Item[],
+): Promise<ConfirmImportV2Result> {
+  const { data, error } = await client.rpc("confirm_import_v2", {
+    batch_payload: batch,
+    items_payload: items,
+  });
+  if (error !== null) {
+    throw new Error(`confirmImportV2 failed: ${error.message}`);
+  }
+  return data as ConfirmImportV2Result;
+}
+
+/** Exact active claims used to mark already-imported rows during preview. */
+export async function findImportItemClaims(
+  client: AppSupabaseClient,
+  householdId: string,
+  source: ImportSource,
+  fingerprintVersion: number,
+  baseFingerprints: string[],
+): Promise<ImportItemClaimRow[]> {
+  const unique = [...new Set(baseFingerprints)];
+  if (unique.length === 0) return [];
+  const { data, error } = await client
+    .from("import_item_claims")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("source", source)
+    .eq("fingerprint_version", fingerprintVersion)
+    .in("base_fingerprint", unique);
+  if (error !== null) {
+    throw new Error(`findImportItemClaims failed: ${error.message}`);
+  }
+  return (data ?? []) as ImportItemClaimRow[];
+}
+
 // ---------------------------------------------------------------------------
 // Category cleanup + categorization memory (Task 6).
 //
@@ -714,6 +766,31 @@ export async function listActiveCategorizationMemory(
     throw new Error(`listActiveCategorizationMemory failed: ${error.message}`);
   }
   return (data ?? []) as CategorizationMemoryRow[];
+}
+
+/** Active, explicitly learned source-label mappings for import preview. */
+export async function listSourceCategoryMappings(
+  client: AppSupabaseClient,
+  householdId: string,
+  source: ImportSource,
+  rowKind?: "expense" | "income",
+): Promise<SourceCategoryMappingRow[]> {
+  let query = client
+    .from("source_category_mappings")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("source", source)
+    .eq("is_active", true);
+  if (rowKind !== undefined) {
+    query = query.eq("row_kind", rowKind);
+  }
+  const { data, error } = await query.order("normalized_label", {
+    ascending: true,
+  });
+  if (error !== null) {
+    throw new Error(`listSourceCategoryMappings failed: ${error.message}`);
+  }
+  return (data ?? []) as SourceCategoryMappingRow[];
 }
 
 /**
