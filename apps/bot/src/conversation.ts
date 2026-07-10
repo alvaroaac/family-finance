@@ -95,6 +95,7 @@ import type { InlineKeyboardMarkup } from "./telegram.js";
 import {
   TOKENS,
   CATEGORY_TOKEN_PREFIX,
+  CATEGORY_SUGGESTION_TOKEN_PREFIX,
   CARD_TOKEN_PREFIX,
   RESPONSIBLE_TOKEN_PREFIX,
   confirmationKeyboard,
@@ -219,6 +220,15 @@ export type ConversationState = {
   markPaidCandidates?: MarkPaidCandidate[];
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
   proposedCategoryName?: string;
+  /** Ranked existing categories returned by the unified interpreter. */
+  categoryCandidates?: Array<{
+    categoryId: string;
+    categoryName: string;
+    subcategoryId?: string;
+    subcategoryName?: string;
+    confidence: number;
+    explanation: string;
+  }>;
   /** message_id of the last keyboard-bearing prompt (to strip stale buttons). */
   promptMessageId?: number;
   /** True when awaiting_category_name was entered with NO expense draft. */
@@ -255,6 +265,7 @@ export type BotInteractionLog = {
 export type ConversationDeps = {
   householdId: string;
   catalog: CategoryCatalog;
+  merchantAliases?: Record<string, readonly string[]>;
   /**
    * Account used when the user did not specify card/account. `undefined` when
    * the household has no account at all — `persist` then refuses a non-card
@@ -448,13 +459,19 @@ function keyboardForState(
   state: ConversationState,
 ): InlineKeyboardMarkup | undefined {
   if (state.status === "awaiting_confirmation") {
-    return confirmationKeyboard(state.proposedCategoryName);
+    return confirmationKeyboard(
+      state.proposedCategoryName,
+      state.categoryCandidates ?? [],
+    );
   }
   if (state.status === "awaiting_category_name") {
     return cancelOnlyKeyboard();
   }
   if (state.status === "awaiting_obligation_confirmation") {
-    return obligationConfirmationKeyboard();
+    return obligationConfirmationKeyboard(
+      state.proposedCategoryName,
+      state.categoryCandidates ?? [],
+    );
   }
   return undefined;
 }
@@ -466,6 +483,40 @@ function keyboardForState(
 /** Case- and accent-insensitive normalization for keyword matching. */
 function normalizeText(value: string): string {
   return value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+}
+
+function resolveCategoryCandidates(
+  candidates: NonNullable<InterpretedExpense["categoryCandidates"]>,
+  catalog: CategoryCatalog,
+): NonNullable<ConversationState["categoryCandidates"]> {
+  return candidates
+    .flatMap((candidate) => {
+      const category = catalog.categories.find(
+        (item) =>
+          normalizeText(item.name) === normalizeText(candidate.categoryName),
+      );
+      if (!category) return [];
+      const subcategory = candidate.subcategoryName
+        ? catalog.subcategories.find(
+            (item) =>
+              item.categoryId === category.id &&
+              normalizeText(item.name) ===
+                normalizeText(candidate.subcategoryName as string),
+          )
+        : undefined;
+      if (candidate.subcategoryName && !subcategory) return [];
+      return [
+        {
+          categoryId: category.id,
+          categoryName: category.name,
+          subcategoryId: subcategory?.id,
+          subcategoryName: subcategory?.name,
+          confidence: candidate.confidence,
+          explanation: candidate.explanation,
+        },
+      ];
+    })
+    .slice(0, 3);
 }
 
 /** Meaningful tokens of a keyword/description (normalized, short words out). */
@@ -612,7 +663,11 @@ function installmentSummaryView(
     installmentCount: draft.installmentCount,
     cardName: card?.name,
     firstDueMonth: firstDueMonthFor(draft, deps),
-    categoryLabel: categoryLabel(deps.catalog, draft.categoryId, draft.subcategoryId),
+    categoryLabel: categoryLabel(
+      deps.catalog,
+      draft.categoryId,
+      draft.subcategoryId,
+    ),
     categoryExplanation: draft.categoryExplanation,
     proposedNewCategory,
     responsibleLabel: responsibleLabel(draft.responsibleUserId, deps),
@@ -738,28 +793,38 @@ async function startInstallmentIntent(
 
   // Same shared categorization engine as expenses/obligations; the hint is
   // free TEXT appended to the context description — never trusted as an id.
-  const result = await deps.suggestCategory({
-    householdId: deps.householdId,
-    description:
-      purchase.categoryHint !== undefined
-        ? `${installmentDraft.description} (${purchase.categoryHint})`
-        : installmentDraft.description,
-    amountCents: installmentDraft.totalCents,
-    occurredOn: installmentDraft.purchasedOn,
-  });
-  if (result.suggestion?.macroCategoryId !== undefined) {
-    installmentDraft.categoryId = result.suggestion.macroCategoryId;
-    installmentDraft.subcategoryId = result.suggestion.subcategoryId;
-    installmentDraft.categoryExplanation = result.suggestion.explanation;
-  }
-
-  let proposedCategoryName: string | undefined;
-  if (
-    result.status === "pending_new_category" &&
-    result.pendingCategory !== undefined
-  ) {
-    proposedCategoryName = result.pendingCategory.categoryName;
-    installmentDraft.categoryExplanation = result.pendingCategory.explanation;
+  let proposedCategoryName = purchase.proposedCategoryName;
+  let categoryCandidates: ConversationState["categoryCandidates"];
+  if (purchase.unifiedPrimary === true) {
+    categoryCandidates = resolveCategoryCandidates(
+      purchase.categoryCandidates ?? [],
+      deps.catalog,
+    );
+    if (purchase.proposedSubcategory) {
+      installmentDraft.categoryExplanation = `Subcategoria sugerida (pendente): ${purchase.proposedSubcategory.categoryName} > ${purchase.proposedSubcategory.subcategoryName}.`;
+    }
+  } else {
+    const result = await deps.suggestCategory({
+      householdId: deps.householdId,
+      description:
+        purchase.categoryHint !== undefined
+          ? `${installmentDraft.description} (${purchase.categoryHint})`
+          : installmentDraft.description,
+      amountCents: installmentDraft.totalCents,
+      occurredOn: installmentDraft.purchasedOn,
+    });
+    if (result.suggestion?.macroCategoryId !== undefined) {
+      installmentDraft.categoryId = result.suggestion.macroCategoryId;
+      installmentDraft.subcategoryId = result.suggestion.subcategoryId;
+      installmentDraft.categoryExplanation = result.suggestion.explanation;
+    }
+    if (
+      result.status === "pending_new_category" &&
+      result.pendingCategory !== undefined
+    ) {
+      proposedCategoryName = result.pendingCategory.categoryName;
+      installmentDraft.categoryExplanation = result.pendingCategory.explanation;
+    }
   }
 
   const state: ConversationState = {
@@ -767,8 +832,13 @@ async function startInstallmentIntent(
     draft: ballast,
     installmentDraft,
     proposedCategoryName,
+    categoryCandidates,
   };
-  const view = installmentSummaryView(installmentDraft, deps, proposedCategoryName);
+  const view = installmentSummaryView(
+    installmentDraft,
+    deps,
+    proposedCategoryName,
+  );
   const reply =
     installmentDraft.cardId === undefined
       ? `${installmentConfirmationMessage(view)}\n\nQual cartão?`
@@ -778,7 +848,7 @@ async function startInstallmentIntent(
       ? cardGridKeyboard(cards)
       : proposedCategoryName !== undefined
         ? installmentConfirmationKeyboard(proposedCategoryName)
-        : installmentConfirmationKeyboard();
+        : installmentConfirmationKeyboard(undefined, categoryCandidates);
   return { state, reply, keyboard };
 }
 
@@ -923,7 +993,10 @@ async function startCardBillIntent(
 
 /** Route a classified non-plain intent to its flow. */
 async function startClassifiedIntent(
-  classified: Exclude<InterpretedIntent, { intent: "plain" }>,
+  classified: Exclude<
+    InterpretedIntent,
+    { intent: "plain" } | { intent: "non_financial" }
+  >,
   input: StartInput,
   deps: ConversationDeps,
   options: StartOptions,
@@ -1017,19 +1090,29 @@ async function startClassifiedIntent(
   }
 
   // Same shared categorization engine as expenses; the hint is free TEXT.
-  const result = await deps.suggestCategory({
-    householdId: deps.householdId,
-    description:
-      extracted.categoryHint !== undefined
-        ? `${extracted.description} (${extracted.categoryHint})`
-        : extracted.description,
-    amountCents: obligationDraft.monthlyAmountCents,
-    occurredOn: options.today,
-  });
-  if (result.suggestion?.macroCategoryId !== undefined) {
+  const result =
+    extracted.unifiedPrimary === true
+      ? null
+      : await deps.suggestCategory({
+          householdId: deps.householdId,
+          description:
+            extracted.categoryHint !== undefined
+              ? `${extracted.description} (${extracted.categoryHint})`
+              : extracted.description,
+          amountCents: obligationDraft.monthlyAmountCents,
+          occurredOn: options.today,
+        });
+  if (result?.suggestion?.macroCategoryId !== undefined) {
     obligationDraft.categoryId = result.suggestion.macroCategoryId;
     obligationDraft.subcategoryId = result.suggestion.subcategoryId;
     obligationDraft.categoryExplanation = result.suggestion.explanation;
+  }
+  const unifiedCandidates = resolveCategoryCandidates(
+    extracted.categoryCandidates ?? [],
+    deps.catalog,
+  );
+  if (extracted.proposedCategoryName) {
+    obligationDraft.categoryExplanation = `Nova categoria sugerida (pendente; não será criada automaticamente): ${extracted.proposedCategoryName}.`;
   }
 
   return {
@@ -1037,11 +1120,16 @@ async function startClassifiedIntent(
       status: "awaiting_obligation_confirmation",
       draft: ballast,
       obligationDraft,
+      proposedCategoryName: extracted.proposedCategoryName,
+      categoryCandidates: unifiedCandidates,
     },
     reply: obligationConfirmationMessage(
       obligationSummaryView(obligationDraft, deps),
     ),
-    keyboard: obligationConfirmationKeyboard(),
+    keyboard: obligationConfirmationKeyboard(
+      extracted.proposedCategoryName,
+      unifiedCandidates,
+    ),
   };
 }
 
@@ -1095,6 +1183,10 @@ export async function startConversation(
     };
   }
 
+  // Deterministic parsing runs first. Rich interpreters receive these hints,
+  // but parser-owned amount/date fields still win in the plain-expense path.
+  const parsed = parseExpenseText(input.text, { today: options.today });
+
   // Unified intent classification (recurring-obligations design): when
   // configured it sees every NEW message first. A null result — or a plain
   // expense — falls through to the deterministic parser path below, so the
@@ -1102,17 +1194,42 @@ export async function startConversation(
   let classifiedExpense: InterpretedExpense | null = null;
   if (deps.classifyMessage !== undefined) {
     const classified = await deps
-      .classifyMessage(input.text, { today: options.today })
+      .classifyMessage(input.text, {
+        today: options.today,
+        parserHints: parsed,
+        knownCards: (deps.listActiveCards?.() ?? []).map(({ id, name }) => ({
+          id,
+          name,
+        })),
+        catalog: deps.catalog,
+        merchantAliases: deps.merchantAliases,
+      })
       .catch(() => null);
-    if (classified !== null && classified.intent !== "plain") {
-      return startClassifiedIntent(classified, input, deps, options, inputKind);
+    if (classified?.intent === "non_financial") {
+      // Successful unified abstention: do not call Anthropic interpretation or
+      // categorization. The deterministic parser still owns the safe fallback
+      // draft/reply behavior.
+      classifiedExpense = {
+        description: parsed.description,
+        unifiedPrimary: true,
+        categoryCandidates: [],
+      };
     }
-    if (classified !== null) {
+    if (classified !== null && classified.intent !== "plain") {
+      if (classified.intent !== "non_financial") {
+        return startClassifiedIntent(
+          classified,
+          input,
+          deps,
+          options,
+          inputKind,
+        );
+      }
+    }
+    if (classified?.intent === "plain") {
       classifiedExpense = classified.expense;
     }
   }
-
-  const parsed = parseExpenseText(input.text, { today: options.today });
 
   // LLM interpretation (spec §3.4): ALWAYS consulted when configured — its
   // clean description + category hint beat the parser's crude leftovers. The
@@ -1166,6 +1283,14 @@ export async function startConversation(
   if (parsed.cardHint) {
     draft.cardId = deps.resolveCardId() ?? undefined;
   }
+  if (interpreted?.cardKeyword !== undefined) {
+    const matches = (deps.listActiveCards?.() ?? []).filter(
+      (card) =>
+        normalizeText(card.name) ===
+        normalizeText(interpreted.cardKeyword as string),
+    );
+    if (matches.length === 1) draft.cardId = matches[0]?.id;
+  }
   if (draft.cardId === undefined) {
     draft.accountId =
       (parsed.accountHint ? deps.resolveAccountId() : undefined) ??
@@ -1175,41 +1300,50 @@ export async function startConversation(
   // Ask the categorization engine for a suggestion (shared engine, both
   // channels). A category hint from the interpreter is free TEXT appended to
   // the context description — never trusted as a category id.
-  const result = await deps.suggestCategory({
-    householdId: deps.householdId,
-    description:
-      interpreted?.categoryHint !== undefined
-        ? `${description} (${interpreted.categoryHint})`
-        : description,
-    amountCents: draft.amountCents,
-    occurredOn: draft.occurredOn,
-  });
-  if (result.suggestion?.macroCategoryId !== undefined) {
-    draft.categoryId = result.suggestion.macroCategoryId;
-    draft.subcategoryId = result.suggestion.subcategoryId;
-    draft.categoryExplanation = result.suggestion.explanation;
-  }
-  if (result.requiresConfirmation) {
+  let proposedCategoryName = interpreted?.proposedCategoryName;
+  let categoryCandidates: ConversationState["categoryCandidates"];
+  if (interpreted?.unifiedPrimary === true) {
+    // A successful unified primary already categorized this message. Do not
+    // make a second model call through suggestCategory. Resolve only real ids.
+    categoryCandidates = resolveCategoryCandidates(
+      interpreted.categoryCandidates ?? [],
+      deps.catalog,
+    );
     draft.needsAttention = true;
-  }
-
-  // AI new-category proposal (spec §3): the engine returns pending_new_category
-  // with a proposed NAME; it lives in conversation state (never callback data)
-  // until the user accepts, picks another, or drops it.
-  let proposedCategoryName: string | undefined;
-  if (
-    result.status === "pending_new_category" &&
-    result.pendingCategory !== undefined
-  ) {
-    proposedCategoryName = result.pendingCategory.categoryName;
-    draft.categoryExplanation = result.pendingCategory.explanation;
-    draft.needsAttention = true;
+    if (interpreted.proposedSubcategory !== undefined) {
+      draft.categoryExplanation = `Subcategoria sugerida (pendente): ${interpreted.proposedSubcategory.categoryName} > ${interpreted.proposedSubcategory.subcategoryName}.`;
+    }
+  } else {
+    const result = await deps.suggestCategory({
+      householdId: deps.householdId,
+      description:
+        interpreted?.categoryHint !== undefined
+          ? `${description} (${interpreted.categoryHint})`
+          : description,
+      amountCents: draft.amountCents,
+      occurredOn: draft.occurredOn,
+    });
+    if (result.suggestion?.macroCategoryId !== undefined) {
+      draft.categoryId = result.suggestion.macroCategoryId;
+      draft.subcategoryId = result.suggestion.subcategoryId;
+      draft.categoryExplanation = result.suggestion.explanation;
+    }
+    if (result.requiresConfirmation) draft.needsAttention = true;
+    if (
+      result.status === "pending_new_category" &&
+      result.pendingCategory !== undefined
+    ) {
+      proposedCategoryName = result.pendingCategory.categoryName;
+      draft.categoryExplanation = result.pendingCategory.explanation;
+      draft.needsAttention = true;
+    }
   }
 
   const state: ConversationState = {
     status: statusForDraft(draft),
     draft,
     proposedCategoryName,
+    categoryCandidates,
   };
   return {
     state,
@@ -1826,7 +1960,8 @@ async function confirmInstallment(
     explanation: draft.categoryExplanation,
   });
 
-  const firstDueMonth = built.value.installments[0]?.dueMonth ?? draft.purchasedOn.slice(0, 7);
+  const firstDueMonth =
+    built.value.installments[0]?.dueMonth ?? draft.purchasedOn.slice(0, 7);
   return {
     state: { status: "saved", draft: state.draft },
     reply: installmentSavedMessage({
@@ -1868,7 +2003,10 @@ async function applyInstallmentMessage(
 
   if (CONFIRM_RE.test(message)) {
     if (draft.totalCents === undefined) {
-      return { state, reply: 'Ainda falta o valor. Informe com "valor 3.600".' };
+      return {
+        state,
+        reply: 'Ainda falta o valor. Informe com "valor 3.600".',
+      };
     }
     if (draft.installmentCount === undefined) {
       return {
@@ -1878,7 +2016,11 @@ async function applyInstallmentMessage(
     }
     if (draft.cardId === undefined) {
       const cards = deps.listActiveCards?.() ?? [];
-      return { state, reply: "Qual cartão?", keyboard: cardGridKeyboard(cards) };
+      return {
+        state,
+        reply: "Qual cartão?",
+        keyboard: cardGridKeyboard(cards),
+      };
     }
     return confirmInstallment(state, deps, today, message);
   }
@@ -1924,7 +2066,8 @@ async function applyInstallmentMessage(
     fieldLabel = "o cartão";
   }
 
-  const catMatch = fieldLabel === null ? /^(categoria|cat)\b\s*(.+)$/i.exec(trimmed) : null;
+  const catMatch =
+    fieldLabel === null ? /^(categoria|cat)\b\s*(.+)$/i.exec(trimmed) : null;
   if (catMatch !== null) {
     const name = (catMatch[2] as string).trim().toLowerCase();
     const category = deps.catalog.categories.find(
@@ -1939,10 +2082,14 @@ async function applyInstallmentMessage(
     fieldLabel = "a categoria";
   }
 
-  const dateMatch = fieldLabel === null ? /^(data|dia)\b\s*(.+)$/i.exec(trimmed) : null;
+  const dateMatch =
+    fieldLabel === null ? /^(data|dia)\b\s*(.+)$/i.exec(trimmed) : null;
   if (dateMatch !== null) {
     const parsed = parseExpenseText(dateMatch[2] as string, { today });
-    if (parsed.occurredOn === undefined || parsed.uncertainFields.includes("date")) {
+    if (
+      parsed.occurredOn === undefined ||
+      parsed.uncertainFields.includes("date")
+    ) {
       return { state, reply: notUnderstoodMessage() };
     }
     next.purchasedOn = parsed.occurredOn;
@@ -2087,7 +2234,12 @@ async function applyCardBillMessage(
     const cards = deps.listActiveCards?.() ?? [];
     const matches = cards.filter((c) => cardKeywordMatch(message, c.name));
     if (matches.length === 1) {
-      return resolveBillCard(matches[0]?.id as string, draft, state.draft, deps);
+      return resolveBillCard(
+        matches[0]?.id as string,
+        draft,
+        state.draft,
+        deps,
+      );
     }
     return {
       state,
@@ -2483,7 +2635,10 @@ export async function applyCallback(
         keyboard:
           state.proposedCategoryName !== undefined
             ? installmentConfirmationKeyboard(state.proposedCategoryName)
-            : installmentConfirmationKeyboard(),
+            : installmentConfirmationKeyboard(
+                undefined,
+                state.categoryCandidates,
+              ),
       };
     }
     if (token === TOKENS.categories) {
@@ -2494,12 +2649,52 @@ export async function applyCallback(
         keyboard: categoryGridKeyboard(depsValue.catalog.categories, false),
       };
     }
+    if (token.startsWith(CATEGORY_SUGGESTION_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const index = Number(
+        token.slice(CATEGORY_SUGGESTION_TOKEN_PREFIX.length),
+      );
+      const candidate = state.categoryCandidates?.[index];
+      if (!candidate) return expiredOutcome(state);
+      const validParent = depsValue.catalog.subcategories.find(
+        (subcategory) =>
+          subcategory.id === candidate.subcategoryId &&
+          subcategory.categoryId === candidate.categoryId,
+      );
+      if (candidate.subcategoryId && !validParent) return expiredOutcome(state);
+      const next = {
+        ...draft,
+        categoryId: candidate.categoryId,
+        subcategoryId: candidate.subcategoryId,
+        categoryExplanation: candidate.explanation,
+      };
+      const nextState = {
+        ...state,
+        installmentDraft: next,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: installmentConfirmationMessage(
+          installmentSummaryView(next, depsValue),
+        ),
+        keyboard: installmentConfirmationKeyboard(),
+      };
+    }
     if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
       const depsValue = await getDeps();
       const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
-      const category = depsValue.catalog.categories.find((c) => c.id === categoryId);
+      const category = depsValue.catalog.categories.find(
+        (c) => c.id === categoryId,
+      );
       if (category === undefined) {
-        return { state, reply: "", silent: true, toast: CATEGORY_NOT_FOUND_TOAST };
+        return {
+          state,
+          reply: "",
+          silent: true,
+          toast: CATEGORY_NOT_FOUND_TOAST,
+        };
       }
       const next: InstallmentDraftInProgress = {
         ...draft,
@@ -2511,6 +2706,7 @@ export async function applyCallback(
         ...state,
         installmentDraft: next,
         proposedCategoryName: undefined,
+        categoryCandidates: undefined,
       };
       return {
         state: nextState,
@@ -2523,7 +2719,10 @@ export async function applyCallback(
         return expiredOutcome(state);
       }
       const depsValue = await getDeps();
-      const resolved = await createOrReuseCategory(state.proposedCategoryName, depsValue);
+      const resolved = await createOrReuseCategory(
+        state.proposedCategoryName,
+        depsValue,
+      );
       if (resolved === null) {
         return { state, reply: notUnderstoodMessage() };
       }
@@ -2540,7 +2739,9 @@ export async function applyCallback(
       };
       return {
         state: nextState,
-        reply: installmentConfirmationMessage(installmentSummaryView(next, depsValue)),
+        reply: installmentConfirmationMessage(
+          installmentSummaryView(next, depsValue),
+        ),
         keyboard: installmentConfirmationKeyboard(),
       };
     }
@@ -2549,10 +2750,15 @@ export async function applyCallback(
         return expiredOutcome(state);
       }
       const depsValue = await getDeps();
-      const nextState: ConversationState = { ...state, proposedCategoryName: undefined };
+      const nextState: ConversationState = {
+        ...state,
+        proposedCategoryName: undefined,
+      };
       return {
         state: nextState,
-        reply: installmentConfirmationMessage(installmentSummaryView(draft, depsValue)),
+        reply: installmentConfirmationMessage(
+          installmentSummaryView(draft, depsValue),
+        ),
         keyboard: installmentConfirmationKeyboard(),
       };
     }
@@ -2590,8 +2796,11 @@ export async function applyCallback(
 
   // Obligation confirmation carries a Confirmar/Cancelar keyboard: route the tap
   // through the same text handler so a button does exactly what typing the word
-  // does (validate + createObligation, or cancel). Corrections stay typed-only.
+  // does (validate + createObligation, or cancel). Category choices update the
+  // obligation draft without persisting it.
   if (state.status === "awaiting_obligation_confirmation") {
+    const obligationDraft = state.obligationDraft;
+    if (obligationDraft === undefined) return expiredOutcome(state);
     if (token === TOKENS.confirm || token === TOKENS.cancel) {
       const word =
         token === TOKENS.confirm ? "confirmar (botão)" : "cancelar (botão)";
@@ -2602,6 +2811,124 @@ export async function applyCallback(
         today,
       );
       return { ...outcome, keyboard: keyboardForState(outcome.state) };
+    }
+    if (token === TOKENS.categories) {
+      const depsValue = await getDeps();
+      return {
+        state,
+        reply: chooseCategoryMessage(),
+        keyboard: categoryGridKeyboard(depsValue.catalog.categories),
+      };
+    }
+    if (token.startsWith(CATEGORY_SUGGESTION_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const index = Number(
+        token.slice(CATEGORY_SUGGESTION_TOKEN_PREFIX.length),
+      );
+      const candidate = state.categoryCandidates?.[index];
+      if (!candidate) return expiredOutcome(state);
+      const category = depsValue.catalog.categories.find(
+        (item) => item.id === candidate.categoryId,
+      );
+      const subcategory = candidate.subcategoryId
+        ? depsValue.catalog.subcategories.find(
+            (item) =>
+              item.id === candidate.subcategoryId &&
+              item.categoryId === candidate.categoryId,
+          )
+        : undefined;
+      if (!category || (candidate.subcategoryId && !subcategory)) {
+        return expiredOutcome(state);
+      }
+      const nextDraft = {
+        ...obligationDraft,
+        categoryId: candidate.categoryId,
+        subcategoryId: candidate.subcategoryId,
+        categoryExplanation: candidate.explanation,
+      };
+      const nextState: ConversationState = {
+        ...state,
+        obligationDraft: nextDraft,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: `${correctionAppliedMessage("a categoria")}\n\n${obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue))}`,
+        keyboard: obligationConfirmationKeyboard(),
+      };
+    }
+    if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
+      const depsValue = await getDeps();
+      const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
+      const category = depsValue.catalog.categories.find(
+        (item) => item.id === categoryId,
+      );
+      if (!category) return expiredOutcome(state);
+      const nextDraft = {
+        ...obligationDraft,
+        categoryId: category.id,
+        subcategoryId: undefined,
+        categoryExplanation: "Categoria escolhida manualmente.",
+      };
+      const nextState: ConversationState = {
+        ...state,
+        obligationDraft: nextDraft,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: `${correctionAppliedMessage("a categoria")}\n\n${obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue))}`,
+        keyboard: obligationConfirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.acceptProposal) {
+      if (state.proposedCategoryName === undefined) {
+        return expiredOutcome(state);
+      }
+      const depsValue = await getDeps();
+      const resolved = await createOrReuseCategory(
+        state.proposedCategoryName,
+        depsValue,
+      );
+      if (!resolved) return { state, reply: notUnderstoodMessage() };
+      const nextDraft = {
+        ...obligationDraft,
+        categoryId: resolved.categoryId,
+        subcategoryId: undefined,
+        categoryExplanation: "Categoria criada pelo usuário.",
+      };
+      const nextState: ConversationState = {
+        ...state,
+        obligationDraft: nextDraft,
+        proposedCategoryName: undefined,
+        categoryCandidates: undefined,
+      };
+      return {
+        state: nextState,
+        reply: obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue)),
+        keyboard: obligationConfirmationKeyboard(),
+      };
+    }
+    if (token === TOKENS.dropProposal) {
+      if (state.proposedCategoryName === undefined) {
+        return expiredOutcome(state);
+      }
+      const nextState: ConversationState = {
+        ...state,
+        proposedCategoryName: undefined,
+      };
+      return {
+        state: nextState,
+        reply: obligationConfirmationMessage(
+          obligationSummaryView(obligationDraft, await getDeps()),
+        ),
+        keyboard: obligationConfirmationKeyboard(
+          undefined,
+          state.categoryCandidates,
+        ),
+      };
     }
     return expiredOutcome(state);
   }
@@ -2646,6 +2973,43 @@ export async function applyCallback(
       keyboard: categoryGridKeyboard(depsValue.catalog.categories),
     };
   }
+  if (token.startsWith(CATEGORY_SUGGESTION_TOKEN_PREFIX)) {
+    const depsValue = await getDeps();
+    const index = Number(token.slice(CATEGORY_SUGGESTION_TOKEN_PREFIX.length));
+    const candidate = state.categoryCandidates?.[index];
+    if (!candidate) return expiredOutcome(state);
+    const category = depsValue.catalog.categories.find(
+      (item) => item.id === candidate.categoryId,
+    );
+    const subcategory = candidate.subcategoryId
+      ? depsValue.catalog.subcategories.find(
+          (item) =>
+            item.id === candidate.subcategoryId &&
+            item.categoryId === candidate.categoryId,
+        )
+      : undefined;
+    if (!category || (candidate.subcategoryId && !subcategory)) {
+      return expiredOutcome(state);
+    }
+    const draft = {
+      ...state.draft,
+      categoryId: candidate.categoryId,
+      subcategoryId: candidate.subcategoryId,
+      categoryNameFallback: candidate.categoryName,
+      categoryExplanation: candidate.explanation,
+    };
+    return summaryOutcome(
+      {
+        ...state,
+        status: statusForDraft(draft),
+        draft,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+      },
+      depsValue,
+      correctionAppliedMessage("a categoria"),
+    );
+  }
   if (token.startsWith(CATEGORY_TOKEN_PREFIX)) {
     const depsValue = await getDeps();
     const categoryId = token.slice(CATEGORY_TOKEN_PREFIX.length);
@@ -2672,6 +3036,7 @@ export async function applyCallback(
       status: statusForDraft(draft),
       draft,
       proposedCategoryName: undefined,
+      categoryCandidates: undefined,
     };
     return summaryOutcome(
       next,

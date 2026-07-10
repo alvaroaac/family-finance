@@ -149,8 +149,8 @@ OAuth code exchange + session refresh). Remove the manual cookie adapter.
 `createServerClient` from `@supabase/ssr` with the App Router `getAll`/`setAll` cookie
 adapter; the hand-rolled `SupportedStorage` adapter is gone. Added `app/auth/callback/route.ts`
 (OAuth code exchange) and `middleware.ts` (session refresh); allowlist `evaluateAccess` flow
-intact. Build + auth unit tests green. NOTE: the OAuth round-trip is still NOT exercised
-against a live Supabase (no secrets) — see the risks-and-blockers web-auth entry.
+intact. Build + auth unit tests green. The OAuth round-trip and session flow were later
+exercised successfully against the self-hosted production Supabase deployment.
 
 ## 2026-06-22: `@supabase/supabase-js` symlinked manually into apps/web
 
@@ -316,7 +316,7 @@ ready for a real resolver.
 `display_name` (migration `0007`, editable in /settings); `resolveResponsibleUserId`
 does a case/accent-insensitive match against active members' display names.
 
-## 2026-06-22: AI provider HTTP clients are untested + lack timeout/size limits (Task 8)
+## 2026-06-22: AI provider resilience and response parsing (Task 8)
 
 **Area:** apps/bot (`providers.ts`, `audio.ts`)
 
@@ -330,16 +330,32 @@ no max size/duration guard before a voice note is downloaded to a temp file and 
 (`createAiCategorizer` returns `null`; transcription errors still delete the temp file).
 Family-MVP volumes and single-user usage keep risk low.
 
-**Revisit trigger:** Before real deployment — verify provider response parsing with live
-keys, add a `fetch` timeout + graceful "tente por texto" fallback, and a voice-note size
-guard in `transcribeVoiceMessage`.
+**Revisit trigger:** Reopen only if a provider changes its response contract or production
+telemetry shows parsing/timeout regressions.
 
-**Status:** open (partially addressed 2026-06-28, commit 85cd13e) — the resilience half is
-DONE: AbortController-based `fetch` timeout added to both providers (Anthropic completion +
-OpenAI transcription) with graceful degradation, plus a max voice-note size guard in
-`transcribeVoiceMessage` (temp file still deleted in `finally`); unit tests cover timeout→fallback
-and oversize→reject+cleanup. STILL OPEN: the provider HTTP response parsing is not verified against
-the LIVE Anthropic/OpenAI APIs (no network/secrets). Close this when verified with real keys.
+**Status:** resolved (2026-07-09). AbortController-based timeouts cover Anthropic and
+OpenAI calls, voice notes have size/duration guards, and failures degrade safely. Production
+telemetry has recorded successful Anthropic completion and Whisper transcription calls,
+which verifies that both live HTTP response shapes cross the parsing seam. Model correctness
+is a separate open quality item below; a successful API call does not prove a good answer.
+
+## 2026-07-09: AI semantic quality is not measured
+
+**Area:** apps/bot, packages/categorization, evaluation tooling
+
+**Impact:** Telemetry records provider success, latency, tokens, status, and errors, but it
+does not show whether intent, merchant cleanup, amounts, installment semantics, or categories
+were correct. Haiku can be operationally healthy while still creating correction-heavy drafts.
+
+**Current workaround:** Every draft requires confirmation and users can correct fields or
+categories before persistence. Deterministic parsing remains authoritative where reliable.
+
+**Revisit trigger:** Before changing the production model or prompts, run a versioned pt-BR
+evaluation set across Claude and GPT candidates. Track exact intent/field accuracy, ranked
+category usefulness, abstention quality, latency/cost, and the corrections a user would make.
+Use Codex to review the prompt and dataset for contradictory labels, leakage, and missing cases.
+
+**Status:** open
 
 ## 2026-06-22: LLM not used for complex/incomplete TEXT interpretation (Task 8)
 
@@ -357,10 +373,10 @@ flow lets the user correct them; the categorization AI fallback covers ambiguous
 text-interpretation step (reuse `AiCompletionClient`) behind the same confirmation flow.
 
 **Status:** resolved (2026-07-01, v1.0 phases run, commit 4c18afb) —
-`apps/bot/src/interpret.ts` `createTextInterpreter(AiCompletionClient)`: fires only when
-the deterministic parser yields no amount; strict-JSON zod-validated extraction; result
-feeds the SAME confirmation flow (never saves directly); any failure degrades to the
-old rephrase reply. Live-API parsing still unverified (see the providers entry).
+`apps/bot/src/interpret.ts` `createTextInterpreter(AiCompletionClient)` was later widened
+to run for every new message when configured. Strict JSON/Zod validation feeds the SAME
+confirmation flow (never saves directly); deterministic parsing retains reliable
+amount/date precedence and any AI failure degrades safely.
 
 ## 2026-07-01: allowed_emails.household_slug is written but never read
 
@@ -396,7 +412,7 @@ by category, join names) + a simple bar/donut on /resumo using the design-system
 
 **Status:** open (deferred by user, 2026-07-02)
 
-## 2026-07-04: account_id/credit_card_id FKs not household-scoped at the DB layer
+## 2026-07-04: account/card/category FKs were not household-scoped at the DB layer
 
 **Area:** supabase schema (transactions), packages/db write paths
 
@@ -410,15 +426,16 @@ the instrument's household). Flagged by the 2026-07-04 final whole-branch review
 of the manual-entry feature; pre-existing — applies equally to the bot, import,
 and card-purchase paths, not introduced by that branch.
 
-**Current workaround:** All UI/action paths only offer instruments loaded from
-the caller's own household, and the family-scale threat model is benign.
+**Current workaround:** n/a — fixed.
 
-**Revisit trigger:** Any multi-household deployment, or adding an API surface
-that accepts instrument ids directly — then add a composite FK
-(`(household_id, account_id)` referencing a unique key on accounts, same for
-cards) or a CHECK trigger.
+**Revisit trigger:** When adding another household-owned foreign key, include a
+same-household composite constraint in the same migration.
 
-**Status:** open
+**Status:** resolved (2026-07-04). Migration `0013_composite_household_fks.sql`
+adds `UNIQUE (household_id, id)` parent keys and composite foreign keys for
+accounts, cards, categories, and subcategories across transactions,
+installments, categorization memory, and obligations. Same-household references
+are now enforced for every write path, including service-role RPCs.
 
 ## Entry Format
 
@@ -435,4 +452,3 @@ cards) or a CHECK trigger.
 
 **Status:** open | in-progress | resolved
 ```
-

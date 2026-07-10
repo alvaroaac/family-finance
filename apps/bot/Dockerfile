@@ -11,6 +11,11 @@ WORKDIR /app
 # pnpm via corepack, pinned by the "packageManager" field in package.json.
 RUN corepack enable
 
+# Production text interpreter. Pin exactly; auth is mounted at runtime and is
+# never baked into the image.
+RUN npm install --global @openai/codex@0.144.0
+RUN codex --version | grep -F "codex-cli 0.144.0"
+
 # Workspace manifests first so dependency layers cache across source edits.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/bot/package.json apps/bot/
@@ -30,6 +35,9 @@ COPY apps/bot apps/bot
 
 ENV NODE_ENV=production
 ENV PORT=8787
+ENV CODEX_HOME=/var/lib/family-finance-codex
+RUN mkdir -p /var/lib/family-finance-codex && chown -R node:node /var/lib/family-finance-codex /app
+USER node
 EXPOSE 8787
 
 CMD ["pnpm", "--filter", "@family-finance/bot", "start"]

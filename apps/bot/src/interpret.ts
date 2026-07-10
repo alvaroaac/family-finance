@@ -34,6 +34,21 @@ export type InterpretedExpense = {
   categoryHint?: string;
   /** Free-text responsible-person name — resolved by the conversation layer. */
   responsibleHint?: string;
+  /** Known-card keyword selected by a unified interpreter. */
+  cardKeyword?: string;
+  /** True only when one unified primary call produced this whole result. */
+  unifiedPrimary?: boolean;
+  /** Ranked EXISTING catalog category names (never ids), max 3. */
+  categoryCandidates?: Array<{
+    categoryName: string;
+    subcategoryName?: string;
+    confidence: number;
+    explanation: string;
+  }>;
+  /** Pending new macro proposal; never auto-created. */
+  proposedCategoryName?: string;
+  /** Pending subcategory proposal is informational until persistence exists. */
+  proposedSubcategory?: { categoryName: string; subcategoryName: string };
 };
 
 export type TextInterpreter = (
@@ -123,6 +138,10 @@ export type InterpretedObligation = {
   dueDay?: number;
   categoryHint?: string;
   responsibleHint?: string;
+  unifiedPrimary?: boolean;
+  categoryCandidates?: InterpretedExpense["categoryCandidates"];
+  proposedCategoryName?: string;
+  proposedSubcategory?: InterpretedExpense["proposedSubcategory"];
 };
 
 /** What the model extracted for a `card_installment` intent. */
@@ -139,9 +158,14 @@ export type InterpretedCardPurchase = {
   /** Free-text credit card name ("no nubank" -> "nubank"). */
   cardKeyword?: string;
   categoryHint?: string;
+  unifiedPrimary?: boolean;
+  categoryCandidates?: InterpretedExpense["categoryCandidates"];
+  proposedCategoryName?: string;
+  proposedSubcategory?: InterpretedExpense["proposedSubcategory"];
 };
 
 export type InterpretedIntent =
+  | { intent: "non_financial" }
   | { intent: "plain"; expense: InterpretedExpense }
   | { intent: "obligation"; obligation: InterpretedObligation }
   | { intent: "card_installment"; purchase: InterpretedCardPurchase }
@@ -154,7 +178,20 @@ export type InterpretedIntent =
 
 export type MessageClassifier = (
   text: string,
-  options: { today: string },
+  options: {
+    today: string;
+    parserHints?: Record<string, unknown>;
+    knownCards?: Array<{ id: string; name: string }>;
+    catalog?: {
+      categories: ReadonlyArray<{ id: string; name: string }>;
+      subcategories: ReadonlyArray<{
+        id: string;
+        categoryId: string;
+        name: string;
+      }>;
+    };
+    merchantAliases?: Record<string, readonly string[]>;
+  },
 ) => Promise<InterpretedIntent | null>;
 
 const expensePayloadSchema = z.object({

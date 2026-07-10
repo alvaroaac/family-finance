@@ -36,9 +36,12 @@ export const envSchema = z.object({
   //   (Anthropic Claude); OPENAI_API_KEY powers audio transcription (e.g. Whisper).
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_MODEL: z.string().min(1).optional(),
+  CODEX_ENABLED: z.enum(["true", "false"]).optional(),
+  CODEX_MODEL: z.string().min(1).optional(),
+  CODEX_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   AUTHORIZED_EMAILS: z.string().min(1),
-  HOUSEHOLD_SLUG: z.string().min(1).default("casa")
+  HOUSEHOLD_SLUG: z.string().min(1).default("casa"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -52,7 +55,7 @@ export type AppEnv = z.infer<typeof envSchema>;
 export const botEnvSchema = envSchema.extend({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
-  AUTHORIZED_EMAILS: z.string().min(1).optional()
+  AUTHORIZED_EMAILS: z.string().min(1).optional(),
 });
 
 export type BotEnv = z.infer<typeof botEnvSchema>;
@@ -84,7 +87,7 @@ export function getSupabasePublicConfig(env: NodeJS.ProcessEnv = process.env): {
 } {
   return {
     supabaseUrl: env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    supabaseAnonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""
+    supabaseAnonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
   };
 }
 
@@ -100,7 +103,9 @@ export function getHouseholdSlug(env: NodeJS.ProcessEnv = process.env): string {
  * separated) into a deduplicated, lowercased list of allowed emails. Returns an
  * empty array when unset; this never throws so it is safe to call at build time.
  */
-export function parseAuthorizedEmails(raw: string | undefined | null): string[] {
+export function parseAuthorizedEmails(
+  raw: string | undefined | null,
+): string[] {
   if (!raw) {
     return [];
   }
@@ -117,7 +122,9 @@ export function parseAuthorizedEmails(raw: string | undefined | null): string[] 
 /**
  * Lazily read the authorized-email allowlist from the environment.
  */
-export function getAuthorizedEmails(env: NodeJS.ProcessEnv = process.env): string[] {
+export function getAuthorizedEmails(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   return parseAuthorizedEmails(env.AUTHORIZED_EMAILS);
 }
 
@@ -127,7 +134,7 @@ export function getAuthorizedEmails(env: NodeJS.ProcessEnv = process.env): strin
  */
 export function isEmailAuthorized(
   email: string | undefined | null,
-  allowlist: readonly string[]
+  allowlist: readonly string[],
 ): boolean {
   if (!email) {
     return false;
@@ -136,5 +143,7 @@ export function isEmailAuthorized(
   if (normalized.length === 0) {
     return false;
   }
-  return allowlist.some((allowed) => allowed.trim().toLowerCase() === normalized);
+  return allowlist.some(
+    (allowed) => allowed.trim().toLowerCase() === normalized,
+  );
 }

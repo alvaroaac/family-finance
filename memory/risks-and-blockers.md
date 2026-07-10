@@ -41,7 +41,10 @@ SECURITY DEFINER RPCs (`create_installment_purchase`, `merge_category`, `confirm
 force-rolled-back with real constraint violations leaving no partial state. This pass also
 uncovered + fixed a real bug: 0001 shipped no table GRANTs → migration `0005_api_grants.sql`
 (see project-tech-debt 2026-06-29). REMAINING EXPOSURE: not yet run against a HOSTED Supabase
-project, and Google OAuth login round-trip still untested (see the web-auth risk below).
+project, and Google OAuth login round-trip still untested (both later resolved below).
+
+**2026-07-03:** The full migration chain, RLS-backed application, and Google login were
+subsequently deployed and exercised against the self-hosted production Supabase stack.
 
 ### AI confidence and explainability
 
@@ -54,20 +57,21 @@ project, and Google OAuth login round-trip still untested (see the web-auth risk
 `explanation`, and `source`; low confidence (< `CONFIDENCE.HIGH` 0.85) sets
 `requiresConfirmation`; novel categories return `pending_new_category` (never
 auto-created); memory patterns are listed/disabled/explained in the web Categorias UI.
-Remaining exposure is only the actual AI provider quality (Task 8) and that the web UI
-was not exercised against real Supabase.
+Remaining exposure is actual model quality: confirmation limits damage but does not
+measure whether the first suggestion is useful.
 
 **2026-06-22 (Task 8):** The concrete AI fallback (`createAiCategorizer`) now also
 carries confidence + explanation, fires only as a last resort (after memory + rules),
 keeps novel categories pending, and degrades to `null` on any provider failure. The
 AI completion client (Anthropic) and transcription provider (OpenAI) are injected
-interfaces; their REAL HTTP response parsing was NOT exercised against the live
-providers (no network/secrets). Remaining exposure: actual provider quality + the
-untested edge `providers.ts` parsing.
+interfaces. Production telemetry later verified successful live Anthropic and Whisper
+responses through `providers.ts`; timeouts and audio limits cover failure cases.
+Remaining exposure is semantic accuracy across real household language. Evaluate Claude
+and GPT candidates on a versioned dataset, with Codex reviewing prompt and dataset quality.
 
-**Status:** watching
+**Status:** watching (semantic quality only; live response parsing resolved 2026-07-09)
 
-### Web auth wiring not exercised against real Supabase
+### Web auth production verification
 
 **Risk:** The web auth shell (Task 4) builds and the allowlist policy is unit-tested, but
 the Supabase session/cookie flow and Google OAuth round-trip were NOT run against a real
@@ -85,9 +89,13 @@ cookie adapter, and OAuth is handled by `app/auth/callback/route.ts` (code excha
 live Supabase project (no secrets/network) — the Google OAuth round-trip and real session refresh are
 unverified. Verify when secrets are available.
 
-**Status:** open
+**2026-07-01:** Resolved in production. The maintained `@supabase/ssr` flow,
+Google OAuth callback, session refresh, allowlist, and self-hosted Supabase were exercised
+by real sign-in and daily app use.
 
-### Telegram webhook not exercised against real Telegram + Supabase
+**Status:** resolved
+
+### Telegram webhook production verification
 
 **Type:** risk
 
@@ -114,9 +122,14 @@ verifying the webhook, also send a real voice note (confirm temp audio is delete
 transcription becomes a confirmed transaction) and a message that should trigger the AI
 fallback.
 
-**Status:** open
+**2026-07-03:** Resolved in production. The standalone HTTP server, service-role member
+resolution, Telegram secret/webhook, text messages, voice transcription, confirmation,
+and database persistence were exercised end to end. Continue monitoring semantic quality
+under the AI risk above.
 
-### Dashboard reads not exercised against real Supabase (Task 10)
+**Status:** resolved
+
+### Dashboard production verification (Task 10)
 
 **Type:** risk
 
@@ -148,7 +161,12 @@ correcting + a bot entry + a parcelado purchase, and ASSERTS the totals reconcil
 (`apps/web/e2e/mvp-flow.spec.ts`) and the runbook cover that real-infra step; it has not been
 executed here.
 
-**Status:** watching
+**2026-07-03:** Dashboard and resumo were deployed against the self-hosted production
+Supabase and used with real household data. The infrastructure-verification risk is closed.
+The separate UX risk remains that query failures collapse into a zeroed state plus alert,
+which can resemble an empty month.
+
+**Status:** resolved (live data path); zero-state error presentation remains product debt
 
 ## Blockers
 
@@ -169,4 +187,3 @@ No active blockers recorded yet.
 
 **Status:** open | watching | resolved
 ```
-

@@ -24,6 +24,8 @@ export const TOKENS = {
 
 /** `ct:<uuid>` assigns an existing category. */
 export const CATEGORY_TOKEN_PREFIX = "ct:";
+/** `cs:<index>` selects a persisted ranked suggestion (keeps subcategory). */
+export const CATEGORY_SUGGESTION_TOKEN_PREFIX = "cs:";
 /** `rs:<uuid>` assigns a responsável (`rs:house` = the house). */
 export const RESPONSIBLE_TOKEN_PREFIX = "rs:";
 /** `cd:<uuid>` assigns a credit card (card installment flow). */
@@ -45,6 +47,10 @@ function twoPerRow(buttons: InlineKeyboardButton[]): InlineKeyboardButton[][] {
  */
 export function confirmationKeyboard(
   proposedCategoryName?: string,
+  categoryCandidates: ReadonlyArray<{
+    categoryName: string;
+    subcategoryName?: string;
+  }> = [],
 ): InlineKeyboardMarkup {
   if (proposedCategoryName !== undefined) {
     return {
@@ -63,8 +69,15 @@ export function confirmationKeyboard(
       ],
     };
   }
+  const candidateRows = twoPerRow(
+    categoryCandidates.slice(0, 3).map((category, index) => ({
+      text: `📂 ${category.categoryName}${category.subcategoryName ? ` › ${category.subcategoryName}` : ""}`,
+      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}${index}`,
+    })),
+  );
   return {
     inline_keyboard: [
+      ...candidateRows,
       [
         { text: "✅ Confirmar", callback_data: TOKENS.confirm },
         { text: "❌ Cancelar", callback_data: TOKENS.cancel },
@@ -85,6 +98,10 @@ export function confirmationKeyboard(
  */
 export function installmentConfirmationKeyboard(
   proposedCategoryName?: string,
+  categoryCandidates: ReadonlyArray<{
+    categoryName: string;
+    subcategoryName?: string;
+  }> = [],
 ): InlineKeyboardMarkup {
   if (proposedCategoryName !== undefined) {
     return {
@@ -103,8 +120,15 @@ export function installmentConfirmationKeyboard(
       ],
     };
   }
+  const candidateRows = twoPerRow(
+    categoryCandidates.slice(0, 3).map((category, index) => ({
+      text: `📂 ${category.categoryName}${category.subcategoryName ? ` › ${category.subcategoryName}` : ""}`,
+      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}${index}`,
+    })),
+  );
   return {
     inline_keyboard: [
+      ...candidateRows,
       [
         { text: "✅ Confirmar", callback_data: TOKENS.confirm },
         { text: "❌ Cancelar", callback_data: TOKENS.cancel },
@@ -137,7 +161,9 @@ export function categoryGridKeyboard(
     })),
   );
   if (includeNewCategory) {
-    rows.push([{ text: "➕ Nova categoria", callback_data: TOKENS.newCategory }]);
+    rows.push([
+      { text: "➕ Nova categoria", callback_data: TOKENS.newCategory },
+    ]);
   }
   return { inline_keyboard: rows };
 }
@@ -150,7 +176,9 @@ export function categoryGridKeyboard(
 export function cardGridKeyboard(
   cards: ReadonlyArray<{ id: string; name: string }>,
 ): InlineKeyboardMarkup {
-  const sorted = [...cards].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const sorted = [...cards].sort((a, b) =>
+    a.name.localeCompare(b.name, "pt-BR"),
+  );
   return {
     inline_keyboard: twoPerRow(
       sorted.map((c) => ({
@@ -197,6 +225,44 @@ export function confirmCancelKeyboard(): InlineKeyboardMarkup {
   };
 }
 
-export function obligationConfirmationKeyboard(): InlineKeyboardMarkup {
-  return confirmCancelKeyboard();
+export function obligationConfirmationKeyboard(
+  proposedCategoryName?: string,
+  categoryCandidates: ReadonlyArray<{
+    categoryName: string;
+    subcategoryName?: string;
+  }> = [],
+): InlineKeyboardMarkup {
+  if (proposedCategoryName !== undefined) {
+    return {
+      inline_keyboard: [
+        [
+          {
+            text: `✅ Confirmar (cria "${proposedCategoryName}")`,
+            callback_data: TOKENS.acceptProposal,
+          },
+          { text: "📂 Outra categoria", callback_data: TOKENS.categories },
+        ],
+        [
+          { text: "🚫 Sem categoria", callback_data: TOKENS.dropProposal },
+          { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+        ],
+      ],
+    };
+  }
+  const candidateRows = twoPerRow(
+    categoryCandidates.slice(0, 3).map((category, index) => ({
+      text: `📂 ${category.categoryName}${category.subcategoryName ? ` › ${category.subcategoryName}` : ""}`,
+      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}${index}`,
+    })),
+  );
+  return {
+    inline_keyboard: [
+      ...candidateRows,
+      [
+        { text: "✅ Confirmar", callback_data: TOKENS.confirm },
+        { text: "❌ Cancelar", callback_data: TOKENS.cancel },
+      ],
+      [{ text: "📂 Categoria", callback_data: TOKENS.categories }],
+    ],
+  };
 }

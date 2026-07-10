@@ -222,7 +222,8 @@ deterministic rules miss); every AI suggestion carries confidence + explanation,
 categories stay `pending_new_category` (never auto-created), and any AI failure
 (throw/empty/non-JSON/missing fields) degrades to `null` (deterministic safe fallback).
 AI config is provider-agnostic, lazy, and build-safe (`packages/config/src/ai.ts`):
-default LLM = Anthropic Claude (`DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"`, overridable
+original default LLM = Anthropic Claude (`claude-opus-4-8`, later changed to
+`DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"`, overridable
 via `ANTHROPIC_MODEL`, key `ANTHROPIC_API_KEY`); transcription = OpenAI Whisper reusing
 `OPENAI_API_KEY`. All AI keys are OPTIONAL — absent keys disable AI fallback / reject voice
 notes politely while the deterministic bot stays fully functional. Concrete provider HTTP
@@ -234,9 +235,17 @@ runtime deps); keys come only from `@family-finance/config` (never hardcoded).
 that raw audio is not retained — while keeping the financial/categorization logic in the
 shared pure packages and preserving package boundaries (AI behind interfaces).
 
-**Revisit if:** Complex/incomplete TEXT messages should also be LLM-interpreted (currently
-LLM is wired for categorization fallback + transcription); a different AI provider is
-chosen; or provider calls need timeouts/retries/size limits (see tech debt).
+**Current implementation (updated 2026-07-09):** The default is now
+`claude-haiku-4-5`. When configured, the LLM interpreter runs for every new text
+message to classify intent and clean descriptions/category hints. Deterministic
+parsing remains authoritative for reliable amount/date fields, categorization
+still uses memory -> rules -> AI, and every write remains behind confirmation.
+Provider calls have timeouts and voice size/duration limits. Real production
+Anthropic and Whisper calls have successfully crossed the HTTP parsing seam;
+the remaining concern is semantic quality, measured with an evaluation set.
+
+**Revisit if:** Evaluation results justify a stronger or routed model, the
+category result needs several ranked candidates, or a different provider is chosen.
 
 ## 2026-06-22: Monthly Dashboard Prototype (Task 10)
 
@@ -301,4 +310,3 @@ browser path.
 **Revisit if:** A real local Supabase run replaces the fake (then the browser
 spec can fully assert numbers); new repository query shapes need fake support;
 or the bot gets an HTTP entry point that the browser/online E2E should exercise.
-

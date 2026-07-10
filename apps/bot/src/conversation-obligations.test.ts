@@ -655,6 +655,52 @@ describe("obligation confirmation buttons", () => {
     expect(tokens).toContain(TOKENS.cancel);
   });
 
+  it("shows ranked category choices and applies one before confirmation", async () => {
+    const { deps } = buildDeps({
+      catalog: {
+        householdId: "house-1",
+        categories: [{ id: "cat-moradia", name: "Moradia" }],
+        subcategories: [
+          { id: "sub-contas", categoryId: "cat-moradia", name: "Contas" },
+        ],
+      },
+      classifyMessage: classifierReturning({
+        intent: "obligation",
+        obligation: {
+          description: "Internet",
+          monthlyAmountCents: 12990,
+          categoryCandidates: [
+            {
+              categoryName: "Moradia",
+              subcategoryName: "Contas",
+              confidence: 0.9,
+              explanation: "Conta recorrente da casa.",
+            },
+          ],
+          unifiedPrimary: true,
+        },
+      }),
+    });
+    const started = await startConversation(
+      { text: "internet 129,90 todo mês", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(started.keyboard?.inline_keyboard.flat()).toContainEqual({
+      text: "📂 Moradia › Contas",
+      callback_data: "cs:0",
+    });
+
+    const selected = await applyCallback(started.state, "cs:0", deps, {
+      today: TODAY,
+    });
+    expect(selected.state.obligationDraft).toMatchObject({
+      categoryId: "cat-moradia",
+      subcategoryId: "sub-contas",
+    });
+    expect(selected.state.categoryCandidates).toBeUndefined();
+  });
+
   it("a Confirmar tap persists the obligation, exactly like typing confirmar", async () => {
     const { deps, createObligation } = buildDeps({
       classifyMessage: classifierReturning(SOLAR_INTENT),
