@@ -16,6 +16,26 @@ insert into accounts(id,household_id,kind,name)
 values ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','checking','Conta');
 insert into credit_cards(id,household_id,name,closing_day,due_day)
 values ('21000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','Cartão',10,17);
+insert into household_members(household_id,user_id)
+values ('10000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002');
+insert into credit_cards(id,household_id,name,closing_day,due_day)
+values ('21000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002','Outro cartão',10,17);
+insert into installment_groups(
+  id,household_id,credit_card_id,description,total_amount_cents,
+  installment_count,purchased_on,created_by_user_id
+) values (
+  '22000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002',
+  '21000000-0000-0000-0000-000000000002','Foreign group',1000,1,'2026-07-01',
+  '00000000-0000-0000-0000-000000000002'
+);
+insert into installments(
+  id,household_id,installment_group_id,credit_card_id,number,installment_count,
+  amount_cents,due_month,description,created_by_user_id
+) values (
+  '23000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002',
+  '22000000-0000-0000-0000-000000000002','21000000-0000-0000-0000-000000000002',
+  1,1,1000,'2026-07','Foreign installment','00000000-0000-0000-0000-000000000002'
+);
 
 do $$
 declare
@@ -139,6 +159,90 @@ end;
 $$;
 
 do $$
+declare
+  merge_result jsonb;
+begin
+  insert into categories(id,household_id,name) values
+    ('24000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','Old category'),
+    ('24000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','New category');
+  insert into source_category_mappings(
+    household_id,source,normalized_label,row_kind,category_id,
+    suppress,created_by_user_id
+  ) values (
+    '10000000-0000-0000-0000-000000000001','nubank_csv','old label',
+    'expense','24000000-0000-0000-0000-000000000001',false,
+    '00000000-0000-0000-0000-000000000001'
+  );
+  merge_result := merge_category(
+    '10000000-0000-0000-0000-000000000001',
+    '24000000-0000-0000-0000-000000000001',
+    '24000000-0000-0000-0000-000000000002'
+  );
+  if (merge_result #>> '{moved,source_category_mappings}')::integer <> 1
+     or not exists (
+       select 1 from source_category_mappings
+       where normalized_label = 'old label'
+         and category_id = '24000000-0000-0000-0000-000000000002'
+     ) then
+    raise exception 'category merge stranded source mapping';
+  end if;
+end;
+$$;
+
+-- A SECURITY DEFINER caller must not attach an imported household-A row to an
+-- installment belonging to household B.
+do $$
+begin
+  begin
+    perform confirm_import_v2(
+      jsonb_build_object(
+        'household_id','10000000-0000-0000-0000-000000000001',
+        'source','nubank_csv','request_key','30000000-0000-0000-0000-000000000007',
+        'payload_fingerprint',repeat('7',64),
+        'created_by_user_id','00000000-0000-0000-0000-000000000001'
+      ),
+      jsonb_build_array(jsonb_build_object(
+        'household_id','10000000-0000-0000-0000-000000000001',
+        'disposition','imported','fingerprint_version',1,
+        'base_fingerprint',repeat('7',64),'occurrence_no',1,
+        'transaction',jsonb_build_object(
+          'household_id','10000000-0000-0000-0000-000000000001',
+          'kind','expense','amount_cents',700,'occurred_on','2026-07-10',
+          'description','Cross installment attack','category_id',null,'subcategory_id',null,
+          'account_id','20000000-0000-0000-0000-000000000001','credit_card_id',null,
+          'installment_id','23000000-0000-0000-0000-000000000002',
+          'responsibility_scope','household','responsible_user_id',null,
+          'created_by_user_id','00000000-0000-0000-0000-000000000001'
+        )
+      ))
+    );
+    raise exception 'cross-household installment link unexpectedly succeeded';
+  exception when insufficient_privilege then null;
+  end;
+  if exists (select 1 from transactions where description = 'Cross installment attack') then
+    raise exception 'cross-household installment attack left a transaction';
+  end if;
+end;
+$$;
+
+-- Shared nonce claims are atomic and direct mapping DML is not available to
+-- browser roles even though the table was created under default privileges.
+do $$
+begin
+  if not claim_import_suggestion_nonce('nonce-1234567890abcdef', now() + interval '2 minutes')
+     or claim_import_suggestion_nonce('nonce-1234567890abcdef', now() + interval '2 minutes') then
+    raise exception 'shared nonce replay assertion failed';
+  end if;
+  if has_table_privilege('authenticated', 'source_category_mappings', 'INSERT')
+     or has_table_privilege('authenticated', 'source_category_mappings', 'UPDATE')
+     or has_table_privilege('authenticated', 'source_category_mappings', 'DELETE')
+     or has_table_privilege('anon', 'source_category_mappings', 'INSERT') then
+    raise exception 'source mapping DML grants are too broad';
+  end if;
+end;
+$$;
+
+do $$
 begin
   begin
     perform confirm_import_v2(
@@ -166,6 +270,66 @@ begin
     raise exception 'cross-household import unexpectedly succeeded';
   exception when insufficient_privilege then null;
   end;
+end;
+$$;
+
+-- A late installment failure must roll back the preceding flat row, claim, and
+-- batch from the same RPC invocation.
+do $$
+declare
+  group_payload jsonb := jsonb_build_object(
+    'household_id','10000000-0000-0000-0000-000000000001',
+    'credit_card_id','21000000-0000-0000-0000-000000000002',
+    'description','Invalid foreign card group','total_amount_cents',1000,
+    'installment_count',1,'purchased_on','2026-07-10',
+    'category_id',null,'subcategory_id',null,'responsibility_scope','household',
+    'responsible_user_id',null,
+    'created_by_user_id','00000000-0000-0000-0000-000000000001'
+  );
+begin
+  begin
+    perform confirm_import_v2(
+      jsonb_build_object(
+        'household_id','10000000-0000-0000-0000-000000000001',
+        'source','mercado_pago_pdf','request_key','30000000-0000-0000-0000-000000000008',
+        'payload_fingerprint',repeat('8',64),
+        'created_by_user_id','00000000-0000-0000-0000-000000000001'
+      ),
+      jsonb_build_array(
+        jsonb_build_object(
+          'household_id','10000000-0000-0000-0000-000000000001',
+          'disposition','imported','fingerprint_version',1,
+          'base_fingerprint',repeat('8',64),'occurrence_no',1,
+          'transaction',jsonb_build_object(
+            'household_id','10000000-0000-0000-0000-000000000001',
+            'kind','expense','amount_cents',800,'occurred_on','2026-07-10',
+            'description','Must roll back','category_id',null,'subcategory_id',null,
+            'account_id','20000000-0000-0000-0000-000000000001','credit_card_id',null,
+            'installment_id',null,'responsibility_scope','household',
+            'responsible_user_id',null,
+            'created_by_user_id','00000000-0000-0000-0000-000000000001'
+          )
+        ),
+        jsonb_build_object(
+          'household_id','10000000-0000-0000-0000-000000000001',
+          'disposition','imported','fingerprint_version',1,
+          'base_fingerprint',repeat('9',64),'occurrence_no',1,
+          'installment_group',group_payload,
+          'installments',jsonb_build_array(
+            group_payload - 'total_amount_cents' - 'purchased_on' ||
+              jsonb_build_object('number',1,'amount_cents',1000,'due_month','2026-07')
+          )
+        )
+      )
+    );
+    raise exception 'mixed invalid import unexpectedly succeeded';
+  exception when foreign_key_violation then null;
+  end;
+  if exists (select 1 from transactions where description = 'Must roll back')
+     or exists (select 1 from import_batches where request_key = '30000000-0000-0000-0000-000000000008')
+     or exists (select 1 from import_item_claims where base_fingerprint = repeat('8',64)) then
+    raise exception 'mixed failure did not roll back atomically';
+  end if;
 end;
 $$;
 
@@ -221,8 +385,10 @@ begin
   );
   if (result ->> 'transactions_created')::integer <> 1
      or (result ->> 'installment_groups_created')::integer <> 1
-     or (select count(*) from installment_groups) <> 1
-     or (select count(*) from installments) <> 2 then
+     or (select count(*) from installment_groups
+         where household_id = '10000000-0000-0000-0000-000000000001') <> 1
+     or (select count(*) from installments
+         where household_id = '10000000-0000-0000-0000-000000000001') <> 2 then
     raise exception 'mixed flat/installment atomic assertion failed';
   end if;
 end;

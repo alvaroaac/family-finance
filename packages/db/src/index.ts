@@ -140,6 +140,7 @@ export {
   confirmImport,
   confirmImportV2,
   reserveImportAiPaidItems,
+  claimImportSuggestionNonce,
   findImportRowsByFileFingerprint,
   findImportBatchById,
   listImportRowsByBatchId,

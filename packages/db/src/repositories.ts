@@ -434,16 +434,16 @@ export async function getMonthlySummary(
   month: string,
 ): Promise<MonthlySummary> {
   const { start, end } = monthDateRange(month);
-  const rows = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
-    "getMonthlySummary",
-    (from, to) =>
-      client
-        .from("transactions")
-        .select("kind, amount_cents")
-        .eq("household_id", householdId)
-        .gte("occurred_on", start)
-        .lte("occurred_on", end)
-        .range(from, to),
+  const rows = await fetchAllRows<
+    Pick<TransactionRow, "kind" | "amount_cents">
+  >("getMonthlySummary", (from, to) =>
+    client
+      .from("transactions")
+      .select("kind, amount_cents")
+      .eq("household_id", householdId)
+      .gte("occurred_on", start)
+      .lte("occurred_on", end)
+      .range(from, to),
   );
   return summarizeMonth(month, rows);
 }
@@ -574,6 +574,22 @@ export async function reserveImportAiPaidItems(
   return Number(data ?? 0);
 }
 
+/** Atomically claim a short-lived internal-request nonce across bot replicas. */
+export async function claimImportSuggestionNonce(
+  client: AppSupabaseClient,
+  nonce: string,
+  expiresAt: Date,
+): Promise<boolean> {
+  const { data, error } = await client.rpc("claim_import_suggestion_nonce", {
+    target_nonce: nonce,
+    target_expires_at: expiresAt.toISOString(),
+  });
+  if (error !== null) {
+    throw new Error(`claimImportSuggestionNonce failed: ${error.message}`);
+  }
+  return data === true;
+}
+
 /** Exact active claims used to mark already-imported rows during preview. */
 export async function findImportItemClaims(
   client: AppSupabaseClient,
@@ -611,7 +627,9 @@ export async function findImportRowsByFileFingerprint(
     .eq("source", source)
     .eq("file_fingerprint", fileFingerprint);
   if (batchError !== null) {
-    throw new Error(`findImportRowsByFileFingerprint failed: ${batchError.message}`);
+    throw new Error(
+      `findImportRowsByFileFingerprint failed: ${batchError.message}`,
+    );
   }
   const batchIds = (batches ?? []).map((batch) => batch.id);
   if (batchIds.length === 0) return [];
@@ -638,7 +656,8 @@ export async function findImportBatchById(
     .eq("household_id", householdId)
     .eq("id", batchId)
     .maybeSingle();
-  if (error !== null) throw new Error(`findImportBatchById failed: ${error.message}`);
+  if (error !== null)
+    throw new Error(`findImportBatchById failed: ${error.message}`);
   return (data as ImportBatchRow | null) ?? null;
 }
 
@@ -662,7 +681,9 @@ export async function findTransactionsForInstrumentBetween(
       : query.eq("credit_card_id", instrument.id);
   const { data, error } = await query;
   if (error !== null) {
-    throw new Error(`findTransactionsForInstrumentBetween failed: ${error.message}`);
+    throw new Error(
+      `findTransactionsForInstrumentBetween failed: ${error.message}`,
+    );
   }
   return (data ?? []) as TransactionRow[];
 }
@@ -678,7 +699,8 @@ export async function listImportRowsByBatchId(
     .eq("household_id", householdId)
     .eq("import_batch_id", batchId)
     .order("source_line", { ascending: true });
-  if (error !== null) throw new Error(`listImportRowsByBatchId failed: ${error.message}`);
+  if (error !== null)
+    throw new Error(`listImportRowsByBatchId failed: ${error.message}`);
   return (data ?? []) as ImportRowRow[];
 }
 
@@ -1005,10 +1027,7 @@ export function creditCardInsert(input: {
   name: string;
   closingDay?: number;
   dueDay?: number;
-}): Pick<
-  CreditCardRow,
-  "household_id" | "name" | "closing_day" | "due_day"
-> {
+}): Pick<CreditCardRow, "household_id" | "name" | "closing_day" | "due_day"> {
   return {
     household_id: input.householdId,
     name: input.name.trim(),
@@ -1296,7 +1315,9 @@ export async function listInstallmentGroupsByHousehold(
     .select("*")
     .eq("household_id", householdId);
   if (error !== null) {
-    throw new Error(`listInstallmentGroupsByHousehold failed: ${error.message}`);
+    throw new Error(
+      `listInstallmentGroupsByHousehold failed: ${error.message}`,
+    );
   }
   return (data ?? []) as InstallmentGroupRow[];
 }
@@ -1443,17 +1464,17 @@ export async function getCardPressure(
 ): Promise<CardPressure> {
   const { start, end } = monthDateRange(month);
 
-  const txData = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
-    "getCardPressure(transactions)",
-    (from, to) =>
-      client
-        .from("transactions")
-        .select("kind, amount_cents")
-        .eq("household_id", householdId)
-        .not("credit_card_id", "is", null)
-        .gte("occurred_on", start)
-        .lte("occurred_on", end)
-        .range(from, to),
+  const txData = await fetchAllRows<
+    Pick<TransactionRow, "kind" | "amount_cents">
+  >("getCardPressure(transactions)", (from, to) =>
+    client
+      .from("transactions")
+      .select("kind, amount_cents")
+      .eq("household_id", householdId)
+      .not("credit_card_id", "is", null)
+      .gte("occurred_on", start)
+      .lte("occurred_on", end)
+      .range(from, to),
   );
 
   const instData = await fetchAllRows<Pick<InstallmentRow, "amount_cents">>(
@@ -1484,17 +1505,17 @@ export async function getCardPressureForCard(
 ): Promise<CardPressure> {
   const { start, end } = monthDateRange(month);
 
-  const txData = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
-    "getCardPressureForCard(transactions)",
-    (from, to) =>
-      client
-        .from("transactions")
-        .select("kind, amount_cents")
-        .eq("household_id", householdId)
-        .eq("credit_card_id", creditCardId)
-        .gte("occurred_on", start)
-        .lte("occurred_on", end)
-        .range(from, to),
+  const txData = await fetchAllRows<
+    Pick<TransactionRow, "kind" | "amount_cents">
+  >("getCardPressureForCard(transactions)", (from, to) =>
+    client
+      .from("transactions")
+      .select("kind, amount_cents")
+      .eq("household_id", householdId)
+      .eq("credit_card_id", creditCardId)
+      .gte("occurred_on", start)
+      .lte("occurred_on", end)
+      .range(from, to),
   );
 
   const instData = await fetchAllRows<Pick<InstallmentRow, "amount_cents">>(
@@ -1670,7 +1691,9 @@ export type TransactionListItem = PersistedTransaction & {
 };
 
 /** Map a raw row to a `TransactionListItem`. Pure. */
-export function mapTransactionListItem(row: TransactionRow): TransactionListItem {
+export function mapTransactionListItem(
+  row: TransactionRow,
+): TransactionListItem {
   return {
     ...mapTransactionRow(row),
     accountId: row.account_id,
@@ -1870,7 +1893,9 @@ export async function updateTransaction(
       .eq("id", transactionId)
       .maybeSingle();
     if (lookupError !== null) {
-      throw new Error(`updateTransaction lookup failed: ${lookupError.message}`);
+      throw new Error(
+        `updateTransaction lookup failed: ${lookupError.message}`,
+      );
     }
     if (data !== null && data.installment_id !== null) {
       throw new Error(
@@ -2087,9 +2112,10 @@ export async function updateInvestmentBucketBalance(
 export async function findLastBotInteraction(
   client: AppSupabaseClient,
   householdId: string,
-): Promise<
-  Pick<BotInteractionRow, "created_at" | "input_kind" | "transaction_id"> | null
-> {
+): Promise<Pick<
+  BotInteractionRow,
+  "created_at" | "input_kind" | "transaction_id"
+> | null> {
   const { data, error } = await client
     .from("bot_interactions")
     .select("created_at, input_kind, transaction_id")
@@ -2418,7 +2444,9 @@ export function obligationUpdateFromChanges(
   }
   if (changes.amountCents !== undefined) {
     if (!Number.isInteger(changes.amountCents) || changes.amountCents <= 0) {
-      throw new Error("O valor mensal precisa ser positivo, em centavos inteiros.");
+      throw new Error(
+        "O valor mensal precisa ser positivo, em centavos inteiros.",
+      );
     }
     update.amount_cents = changes.amountCents;
   }
@@ -2440,7 +2468,9 @@ export function obligationUpdateFromChanges(
       changes.termMonths !== null &&
       (!Number.isInteger(changes.termMonths) || changes.termMonths < 1)
     ) {
-      throw new Error("O prazo precisa ser um número de meses positivo (ou vazio).");
+      throw new Error(
+        "O prazo precisa ser um número de meses positivo (ou vazio).",
+      );
     }
     update.term_months = changes.termMonths;
   }

@@ -559,16 +559,20 @@ export type ImportCategoryLearning = {
 };
 
 export type ConfirmImportV2Learning = {
-  source_category?: (ImportCategoryLearning & {
-    normalized_label: string;
-  }) | null;
-  merchant_memory?: (ImportCategoryLearning & {
-    pattern: string;
-    confidence: number;
-    explanation: string;
-    match_kind?: Exclude<CategorizationMemoryMatchKind, "suppress">;
-    normalizer_version?: string | null;
-  }) | null;
+  source_category?:
+    | (ImportCategoryLearning & {
+        normalized_label: string;
+      })
+    | null;
+  merchant_memory?:
+    | (ImportCategoryLearning & {
+        pattern: string;
+        confidence: number;
+        explanation: string;
+        match_kind?: Exclude<CategorizationMemoryMatchKind, "suppress">;
+        normalizer_version?: string | null;
+      })
+    | null;
 };
 
 type ConfirmImportV2AuditFields = {
@@ -662,6 +666,7 @@ export type MergeCategoryResult = {
     installments: number;
     subcategories: number;
     categorization_memory: number;
+    source_category_mappings: number;
   };
 };
 
@@ -760,6 +765,10 @@ export type Database = {
           requested_items: number;
         };
         Returns: number;
+      };
+      claim_import_suggestion_nonce: {
+        Args: { target_nonce: string; target_expires_at: string };
+        Returns: boolean;
       };
       // Atomic category merge: re-point transactions / installment groups /
       // installments / subcategories / categorization_memory off the source

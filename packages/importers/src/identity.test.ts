@@ -14,7 +14,9 @@ import {
   type RowIdentityInput,
 } from "./index.js";
 
-function row(overrides: Partial<NormalizedImportRow> = {}): NormalizedImportRow {
+function row(
+  overrides: Partial<NormalizedImportRow> = {},
+): NormalizedImportRow {
   return {
     sourceLine: 2,
     occurredOn: "2026-07-01",
@@ -62,7 +64,11 @@ describe("stable import identity", () => {
     const b = rowBaseIdentityHash(
       input({
         providerTransactionId: "tx-42",
-        row: row({ occurredOn: "2026-07-09", description: "Changed", amount: { currency: "BRL", cents: 1 } }),
+        row: row({
+          occurredOn: "2026-07-09",
+          description: "Changed",
+          amount: { currency: "BRL", cents: 1 },
+        }),
       }),
     );
     expect(a).toBe(b);
@@ -84,7 +90,11 @@ describe("stable import identity", () => {
   });
 
   it("assigns deterministic occurrence slots to legitimate identical rows", () => {
-    const identities = assignRowIdentities([input(), input(), input({ row: row({ amount: { currency: "BRL", cents: 500 } }) })]);
+    const identities = assignRowIdentities([
+      input(),
+      input(),
+      input({ row: row({ amount: { currency: "BRL", cents: 500 } }) }),
+    ]);
     expect(identities.map((item) => item.occurrenceNo)).toEqual([1, 2, 1]);
     expect(identities[0]?.identityVersion).toBe(IMPORT_IDENTITY_VERSION);
     expect(normalizedRowsFingerprint(identities)).toMatch(/^[a-f0-9]{64}$/);
@@ -92,7 +102,10 @@ describe("stable import identity", () => {
 
   it("scopes claim fingerprints to target instrument without changing row identity", () => {
     const identity = assignRowIdentities([input()])[0]!;
-    const account = claimIdentity(identity, { type: "account", id: "account-1" });
+    const account = claimIdentity(identity, {
+      type: "account",
+      id: "account-1",
+    });
     const card = claimIdentity(identity, { type: "credit_card", id: "card-1" });
     expect(account.baseIdentityHash).toBe(card.baseIdentityHash);
     expect(account.claimFingerprint).not.toBe(card.claimFingerprint);
@@ -114,5 +127,29 @@ describe("stable import identity", () => {
         (identity) => identity.occurrenceNo,
       ),
     ).toEqual([1, 2]);
+  });
+
+  it("scopes the same inferred installment purchase to its selected card", () => {
+    const identity = assignInstallmentGroupIdentities([
+      {
+        source: "mercado-pago",
+        description: "Notebook",
+        installmentCount: 10,
+        purchasedOn: "2026-06-01",
+      },
+    ])[0]!;
+    const cardA = claimIdentity(identity, {
+      type: "credit_card",
+      id: "card-a",
+    });
+    const cardB = claimIdentity(identity, {
+      type: "credit_card",
+      id: "card-b",
+    });
+    expect(cardA.claimFingerprint).not.toBe(cardB.claimFingerprint);
+    expect(
+      claimIdentity(identity, { type: "credit_card", id: "card-a" })
+        .claimFingerprint,
+    ).toBe(cardA.claimFingerprint);
   });
 });

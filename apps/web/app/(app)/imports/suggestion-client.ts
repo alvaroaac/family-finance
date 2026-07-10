@@ -1,6 +1,35 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 
 const PATH = "/internal/v1/import-category-suggestions";
+const MAX_RESPONSE_BYTES = 256 * 1024;
+
+async function readBoundedJson(response: Response): Promise<unknown> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new Error("Resposta do serviço de sugestões excedeu o limite.");
+  }
+  if (response.body === null) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("Resposta do serviço de sugestões excedeu o limite.");
+    }
+    chunks.push(value);
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(joined));
+}
 
 export function signImportSuggestionRequest(args: {
   body: string;
@@ -53,13 +82,15 @@ export async function requestImportSuggestions(args: {
       body,
       signal: controller.signal,
       cache: "no-store",
+      // Never forward financial data or HMAC headers to another origin.
+      redirect: "error",
     });
     if (!response.ok) {
       throw new Error(
         `Serviço de sugestões indisponível (${response.status}).`,
       );
     }
-    return await response.json();
+    return await readBoundedJson(response);
   } finally {
     clearTimeout(timer);
   }

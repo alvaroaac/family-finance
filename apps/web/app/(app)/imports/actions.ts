@@ -7,7 +7,6 @@ import {
   getImportAdapter,
   buildImportPreview,
   splitFlatAndInstallmentRows,
-  matchExistingGroup,
   normalizeDescription,
   assignRowIdentities,
   normalizedRowsFingerprint,
@@ -35,7 +34,11 @@ import {
   chunkAiSuggestionItems,
 } from "@family-finance/categorization";
 import { getServerEnv } from "@family-finance/config";
-import { createTransactionDraft, createInstallmentPlan, brl } from "@family-finance/domain";
+import {
+  createTransactionDraft,
+  createInstallmentPlan,
+  brl,
+} from "@family-finance/domain";
 import {
   confirmImportV2 as confirmImportBatchV2,
   transactionInsertFromDraft,
@@ -67,6 +70,7 @@ import {
   verifyImportPreviewToken,
 } from "./preview-token";
 import { requestImportSuggestions } from "./suggestion-client";
+import { hasLegacyInstallmentGroupOnCard } from "./group-duplicates";
 
 /**
  * Server actions for the import pipeline.
@@ -99,7 +103,11 @@ const PARSER_VERSION: Record<ImportSource, string> = {
 };
 
 function parseSource(value: FormDataEntryValue | null): ImportSource {
-  if (value === "minhas-financas" || value === "nubank" || value === "mercado-pago") {
+  if (
+    value === "minhas-financas" ||
+    value === "nubank" ||
+    value === "mercado-pago"
+  ) {
     return value;
   }
   throw new Error("Fonte de importação inválida.");
@@ -157,6 +165,7 @@ export type ImportPreviewSnapshot = {
   referenceMonth?: string;
   groupIdentities?: RowIdentity[];
   groupSourceRowIndices?: number[];
+  installmentGroups?: InferredInstallmentGroup[];
 };
 
 export type PreviewState = {
@@ -194,31 +203,39 @@ const suggestionResponseSchema = z
     requestId: z.string().uuid(),
     outcome: z.enum(["success", "partial", "unavailable"]),
     providerRuns: z.array(z.unknown()).max(2),
-    items: z.array(
-      z.object({
-        key: z.string(),
-        candidates: z.array(
-          z.object({
-            categoryId: z.string(),
-            subcategoryId: z.string().nullable(),
-            confidence: z.number().min(0).max(1),
-            explanation: z.string(),
-            provider: z.enum(["codex", "haiku"]),
-          }).strict(),
-        ).max(3),
-        proposedTaxonomyChange: z
+    items: z
+      .array(
+        z
           .object({
-            kind: z.enum(["category", "subcategory"]),
-            categoryName: z.string(),
-            subcategoryName: z.string().nullable(),
-            explanation: z.string(),
-            provider: z.enum(["codex", "haiku"]),
+            key: z.string().min(1).max(200),
+            candidates: z
+              .array(
+                z
+                  .object({
+                    categoryId: z.string(),
+                    subcategoryId: z.string().nullable(),
+                    confidence: z.number().min(0).max(1),
+                    explanation: z.string().max(500),
+                    provider: z.enum(["codex", "haiku"]),
+                  })
+                  .strict(),
+              )
+              .max(3),
+            proposedTaxonomyChange: z
+              .object({
+                kind: z.enum(["category", "subcategory"]),
+                categoryName: z.string().min(1).max(100),
+                subcategoryName: z.string().max(100).nullable(),
+                explanation: z.string().max(500),
+                provider: z.enum(["codex", "haiku"]),
+              })
+              .strict()
+              .nullable(),
           })
-          .strict()
-          .nullable(),
-      }).strict(),
-    ).max(50),
-    unresolvedKeys: z.array(z.string()).max(50),
+          .strict(),
+      )
+      .max(50),
+    unresolvedKeys: z.array(z.string().min(1).max(200)).max(50),
   })
   .strict();
 
@@ -248,7 +265,13 @@ export type SuggestImportResult =
   | { ok: false; message: string };
 
 export type ResolveImportTargetsResult =
-  | { ok: true; duplicateIndices: number[]; claimIdsByIndex: Record<number, string> }
+  | {
+      ok: true;
+      duplicateIndices: number[];
+      claimIdsByIndex: Record<number, string>;
+      groupDuplicateIndices: number[];
+      groupClaimIdsByIndex: Record<number, string>;
+    }
   | { ok: false; message: string };
 
 /**
@@ -290,11 +313,20 @@ export async function previewImport(
       }
     } else if (
       !lowerName.endsWith(".csv") ||
-      !["", "text/csv", "text/plain", "application/csv", "application/vnd.ms-excel"].includes(file.type) ||
+      ![
+        "",
+        "text/csv",
+        "text/plain",
+        "application/csv",
+        "application/vnd.ms-excel",
+      ].includes(file.type) ||
       new TextDecoder("ascii").decode(bytes.slice(0, 5)) === "%PDF-" ||
       bytes.includes(0)
     ) {
-      return { ok: false, message: "O arquivo precisa ser um CSV de texto válido." };
+      return {
+        ok: false,
+        message: "O arquivo precisa ser um CSV de texto válido.",
+      };
     }
 
     // PRIVACY: for the PDF fatura the bytes are extracted to text in-memory and
@@ -303,7 +335,10 @@ export async function previewImport(
     if (source === "mercado-pago") {
       const { extractText } = await import("unpdf");
       const extracted = await extractText(bytes, { mergePages: true });
-      if (typeof extracted.totalPages === "number" && extracted.totalPages > MAX_PDF_PAGES) {
+      if (
+        typeof extracted.totalPages === "number" &&
+        extracted.totalPages > MAX_PDF_PAGES
+      ) {
         return {
           ok: false,
           message: `PDF com mais de ${MAX_PDF_PAGES} páginas. Divida a fatura antes de importar.`,
@@ -367,32 +402,38 @@ export async function previewImport(
 
     const catalog: CategoryCatalog = {
       householdId,
-      categories: categories.map((category) => ({ id: category.id, name: category.name })),
+      categories: categories.map((category) => ({
+        id: category.id,
+        name: category.name,
+      })),
       subcategories: subcategories.map((subcategory) => ({
         id: subcategory.id,
         categoryId: subcategory.category_id,
         name: subcategory.name,
       })),
     };
-    const memoryEntries: CategorizationMemoryEntry[] = memoryRows.map((row) => ({
-      id: row.id,
-      householdId: row.household_id,
-      pattern: row.pattern,
-      categoryId: row.category_id,
-      subcategoryId: row.subcategory_id,
-      confidence: row.confidence ?? 0.95,
-      explanation: row.explanation ?? "Correção confirmada anteriormente.",
-      isActive: row.is_active,
-      ...(row.row_kind === undefined || row.row_kind === null
-        ? {}
-        : { rowKind: row.row_kind }),
-      ...(row.match_kind === undefined || row.match_kind === null
-        ? {}
-        : { matchKind: row.match_kind }),
-      ...(row.normalizer_version === undefined || row.normalizer_version === null
-        ? {}
-        : { normalizerVersion: row.normalizer_version }),
-    }));
+    const memoryEntries: CategorizationMemoryEntry[] = memoryRows.map(
+      (row) => ({
+        id: row.id,
+        householdId: row.household_id,
+        pattern: row.pattern,
+        categoryId: row.category_id,
+        subcategoryId: row.subcategory_id,
+        confidence: row.confidence ?? 0.95,
+        explanation: row.explanation ?? "Correção confirmada anteriormente.",
+        isActive: row.is_active,
+        ...(row.row_kind === undefined || row.row_kind === null
+          ? {}
+          : { rowKind: row.row_kind }),
+        ...(row.match_kind === undefined || row.match_kind === null
+          ? {}
+          : { matchKind: row.match_kind }),
+        ...(row.normalizer_version === undefined ||
+        row.normalizer_version === null
+          ? {}
+          : { normalizerVersion: row.normalizer_version }),
+      }),
+    );
     const identities = assignRowIdentities(
       rows.map((row) => ({
         source,
@@ -405,7 +446,8 @@ export async function previewImport(
       })),
     );
     const normalizedFingerprint = normalizedRowsFingerprint(identities);
-    const sourceMappings: SourceCategoryMapping[] = sourceMappingRows.map((row) => ({
+    const sourceMappings: SourceCategoryMapping[] = sourceMappingRows.map(
+      (row) => ({
         id: row.id,
         householdId: row.household_id,
         source,
@@ -416,7 +458,8 @@ export async function previewImport(
         subcategoryId: row.subcategory_id,
         suppress: row.suppress,
         isActive: row.is_active,
-      }));
+      }),
+    );
     const categorizationPlan = planCategorizationBatch(
       rows.map((row, index) => ({
         rowKey: `${identities[index]?.baseIdentityHash}:${identities[index]?.occurrenceNo}`,
@@ -434,6 +477,7 @@ export async function previewImport(
     let mp: MpPreviewExtras | undefined;
     let groupIdentities: RowIdentity[] | undefined;
     let groupSourceRowIndices: number[] | undefined;
+    let installmentGroups: InferredInstallmentGroup[] | undefined;
     if (source === "mercado-pago") {
       const referenceMonth = parsed.statement?.referenceMonth;
       if (referenceMonth === undefined) {
@@ -447,23 +491,16 @@ export async function previewImport(
         rows,
         referenceMonth,
       );
+      installmentGroups = groups;
       const installmentRowIndices = rows
         .map((_, i) => i)
         .filter((i) => !flatRowIndices.includes(i));
 
-      // §4 dedupe — installment groups already in the DB.
-      const existingGroups = await listInstallmentGroupsByHousehold(
-        client,
-        householdId,
-      );
-      const summaries = existingGroups.map((g) => ({
-        description: g.description,
-        installmentCount: g.installment_count,
-        purchasedOn: g.purchased_on,
-      }));
       const groupPreviews: InferredGroupPreview[] = groups.map((g) => ({
         ...g,
-        status: matchExistingGroup(g, summaries) === null ? "new" : "exists",
+        // Exact group dedupe depends on the selected target card and is resolved
+        // by resolveImportTargets after destination mapping.
+        status: "new",
       }));
       groupIdentities = assignInstallmentGroupIdentities(
         groups.map((group) => ({
@@ -482,7 +519,8 @@ export async function previewImport(
             row.installment?.count === group.installmentCount &&
             normalizeDescription(row.description).toLowerCase() ===
               normalizeDescription(group.description).toLowerCase() &&
-            (group.cardLast4 === undefined || row.cardLast4 === group.cardLast4),
+            (group.cardLast4 === undefined ||
+              row.cardLast4 === group.cardLast4),
         );
         if (index >= 0) usedGroupRows.add(index);
         return index;
@@ -536,6 +574,7 @@ export async function previewImport(
       identities,
       ...(groupIdentities === undefined ? {} : { groupIdentities }),
       ...(groupSourceRowIndices === undefined ? {} : { groupSourceRowIndices }),
+      ...(installmentGroups === undefined ? {} : { installmentGroups }),
       ...(parsed.statement?.referenceMonth === undefined
         ? {}
         : { referenceMonth: parsed.statement.referenceMonth }),
@@ -618,8 +657,14 @@ export async function resolveImportTargets(input: {
       secret: getServerEnv().IMPORT_PREVIEW_SIGNING_SECRET ?? "",
       snapshot: input.snapshot,
     });
-    if (previewClaims.householdId !== householdId || previewClaims.userId !== userId) {
-      return { ok: false, message: "Este preview pertence a outra sessão ou casa." };
+    if (
+      previewClaims.householdId !== householdId ||
+      previewClaims.userId !== userId
+    ) {
+      return {
+        ok: false,
+        message: "Este preview pertence a outra sessão ou casa.",
+      };
     }
     const [accounts, cards] = await Promise.all([
       findAccountsByHousehold(client, householdId),
@@ -642,15 +687,33 @@ export async function resolveImportTargets(input: {
         ? claimIdentity(identity, { type: "account", id: input.accountId })
         : null;
     });
+    const groupClaims = (input.snapshot.groupIdentities ?? []).map(
+      (identity, groupIndex) => {
+        const rowIndex = input.snapshot.groupSourceRowIndices?.[groupIndex];
+        const row =
+          rowIndex === undefined ? undefined : input.snapshot.rows[rowIndex];
+        const cardId =
+          row?.cardLast4 === undefined
+            ? input.creditCardId
+            : input.creditCardByLast4?.[row.cardLast4];
+        return cardId !== undefined && cardIds.has(cardId)
+          ? claimIdentity(identity, { type: "credit_card", id: cardId })
+          : null;
+      },
+    );
     const persisted = await findImportItemClaims(
       client,
       householdId,
       SOURCE_TO_DB[input.snapshot.source],
       1,
-      claims.flatMap((claim) => (claim === null ? [] : [claim.claimFingerprint])),
+      [...claims, ...groupClaims].flatMap((claim) =>
+        claim === null ? [] : [claim.claimFingerprint],
+      ),
     );
     const exact = new Set(
-      persisted.map((claim) => `${claim.base_fingerprint}:${claim.occurrence_no}`),
+      persisted.map(
+        (claim) => `${claim.base_fingerprint}:${claim.occurrence_no}`,
+      ),
     );
     const claimIdByIdentity = new Map(
       persisted.map((claim) => [
@@ -663,9 +726,16 @@ export async function resolveImportTargets(input: {
     const lastDate = dates.at(-1);
     const legacyKeys = new Set<string>();
     if (firstDate !== undefined && lastDate !== undefined) {
-      const instruments = new Map<string, { type: "account" | "credit_card"; id: string }>();
+      const instruments = new Map<
+        string,
+        { type: "account" | "credit_card"; id: string }
+      >();
       claims.forEach((claim) => {
-        if (claim !== null) instruments.set(`${claim.target.type}:${claim.target.id}`, claim.target);
+        if (claim !== null)
+          instruments.set(
+            `${claim.target.type}:${claim.target.id}`,
+            claim.target,
+          );
       });
       const legacyRows = (
         await Promise.all(
@@ -697,18 +767,61 @@ export async function resolveImportTargets(input: {
         row === undefined
           ? ""
           : `${row.occurredOn}|${row.kind}|${row.amount.cents}|${normalizeDescription(row.description).toLowerCase()}|${claim.target.id}`;
-      if (exact.has(identityKey) || legacyKeys.has(legacyKey)) duplicateIndices.push(index);
+      if (exact.has(identityKey) || legacyKeys.has(legacyKey))
+        duplicateIndices.push(index);
       if (claimId !== undefined) claimIdsByIndex[index] = claimId;
     });
+    const groupDuplicateIndices: number[] = [];
+    const groupClaimIdsByIndex: Record<number, string> = {};
+    groupClaims.forEach((claim, index) => {
+      if (claim === null) return;
+      const identityKey = `${claim.claimFingerprint}:${claim.occurrenceNo}`;
+      const claimId = claimIdByIdentity.get(identityKey);
+      if (exact.has(identityKey)) groupDuplicateIndices.push(index);
+      if (claimId !== undefined) groupClaimIdsByIndex[index] = claimId;
+    });
+    if ((input.snapshot.installmentGroups?.length ?? 0) > 0) {
+      const legacyGroups = await listInstallmentGroupsByHousehold(
+        client,
+        householdId,
+      );
+      const legacySummaries = legacyGroups.map((candidate) => ({
+        creditCardId: candidate.credit_card_id,
+        description: candidate.description,
+        installmentCount: candidate.installment_count,
+        purchasedOn: candidate.purchased_on,
+      }));
+      input.snapshot.installmentGroups?.forEach((group, index) => {
+        const rowIndex = input.snapshot.groupSourceRowIndices?.[index];
+        const row =
+          rowIndex === undefined ? undefined : input.snapshot.rows[rowIndex];
+        const cardId =
+          row?.cardLast4 === undefined
+            ? input.creditCardId
+            : input.creditCardByLast4?.[row.cardLast4];
+        if (cardId === undefined) return;
+        if (
+          hasLegacyInstallmentGroupOnCard(group, cardId, legacySummaries) &&
+          !groupDuplicateIndices.includes(index)
+        ) {
+          groupDuplicateIndices.push(index);
+        }
+      });
+    }
     return {
       ok: true,
       duplicateIndices,
       claimIdsByIndex,
+      groupDuplicateIndices,
+      groupClaimIdsByIndex,
     };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Não foi possível atualizar duplicatas.",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível atualizar duplicatas.",
     };
   }
 }
@@ -727,14 +840,23 @@ export async function suggestImportCategories(input: {
       secret,
       snapshot: input.snapshot,
     });
-    if (previewClaims.householdId !== householdId || previewClaims.userId !== userId) {
-      return { ok: false, message: "Este preview pertence a outra sessão ou casa." };
+    if (
+      previewClaims.householdId !== householdId ||
+      previewClaims.userId !== userId
+    ) {
+      return {
+        ok: false,
+        message: "Este preview pertence a outra sessão ou casa.",
+      };
     }
     if (
       env.IMPORT_SUGGESTION_URL === undefined ||
       env.IMPORT_SUGGESTION_SHARED_SECRET === undefined
     ) {
-      return { ok: false, message: "Sugestões por Codex não estão configuradas." };
+      return {
+        ok: false,
+        message: "Sugestões por Codex não estão configuradas.",
+      };
     }
     const [categories, memoryRows, sourceMappingRows] = await Promise.all([
       findCategoriesByHousehold(client, householdId),
@@ -761,21 +883,23 @@ export async function suggestImportCategories(input: {
         name: item.name,
       })),
     };
-    const memoryEntries: CategorizationMemoryEntry[] = memoryRows.map((row) => ({
-      id: row.id,
-      householdId: row.household_id,
-      pattern: row.pattern,
-      categoryId: row.category_id,
-      subcategoryId: row.subcategory_id,
-      confidence: row.confidence ?? 0.95,
-      explanation: row.explanation ?? "Correção confirmada anteriormente.",
-      isActive: row.is_active,
-      ...(row.row_kind == null ? {} : { rowKind: row.row_kind }),
-      ...(row.match_kind == null ? {} : { matchKind: row.match_kind }),
-      ...(row.normalizer_version == null
-        ? {}
-        : { normalizerVersion: row.normalizer_version }),
-    }));
+    const memoryEntries: CategorizationMemoryEntry[] = memoryRows.map(
+      (row) => ({
+        id: row.id,
+        householdId: row.household_id,
+        pattern: row.pattern,
+        categoryId: row.category_id,
+        subcategoryId: row.subcategory_id,
+        confidence: row.confidence ?? 0.95,
+        explanation: row.explanation ?? "Correção confirmada anteriormente.",
+        isActive: row.is_active,
+        ...(row.row_kind == null ? {} : { rowKind: row.row_kind }),
+        ...(row.match_kind == null ? {} : { matchKind: row.match_kind }),
+        ...(row.normalizer_version == null
+          ? {}
+          : { normalizerVersion: row.normalizer_version }),
+      }),
+    );
     const plan = planCategorizationBatch(
       input.snapshot.rows.map((row, index) => ({
         rowKey: `${input.snapshot.identities[index]?.baseIdentityHash}:${input.snapshot.identities[index]?.occurrenceNo}`,
@@ -791,17 +915,17 @@ export async function suggestImportCategories(input: {
         catalog,
         memoryEntries,
         sourceMappings: sourceMappingRows.map((row) => ({
-            id: row.id,
-            householdId: row.household_id,
-            source: input.snapshot.source,
-            sourceLabel: row.normalized_label,
-            normalizedSourceLabel: row.normalized_label,
-            rowKind: row.row_kind,
-            categoryId: row.category_id,
-            subcategoryId: row.subcategory_id,
-            suppress: row.suppress,
-            isActive: row.is_active,
-          })),
+          id: row.id,
+          householdId: row.household_id,
+          source: input.snapshot.source,
+          sourceLabel: row.normalized_label,
+          normalizedSourceLabel: row.normalized_label,
+          rowKind: row.row_kind,
+          categoryId: row.category_id,
+          subcategoryId: row.subcategory_id,
+          suppress: row.suppress,
+          isActive: row.is_active,
+        })),
         rulesVersion: "default-v1",
       },
     );
@@ -820,8 +944,12 @@ export async function suggestImportCategories(input: {
       previewClaims.requestKey,
       env.IMPORT_HAIKU_MAX_ITEMS ?? 10,
     );
-    const responses = await Promise.all(
-      chunkAiSuggestionItems(plan.aiItems).map(async (chunk, chunkIndex) => {
+    const responses: z.infer<typeof suggestionResponseSchema>[] = [];
+    let failedUnresolvedCount = 0;
+    for (const [chunkIndex, chunk] of chunkAiSuggestionItems(
+      plan.aiItems,
+    ).entries()) {
+      try {
         const raw = await requestImportSuggestions({
           baseUrl: env.IMPORT_SUGGESTION_URL as string,
           secret: env.IMPORT_SUGGESTION_SHARED_SECRET as string,
@@ -837,7 +965,8 @@ export async function suggestImportCategories(input: {
               key: item.requestKey,
               description: item.description,
               amountCents: item.amountCents ?? 1,
-              occurredOn: item.occurredOn ?? new Date().toISOString().slice(0, 10),
+              occurredOn:
+                item.occurredOn ?? new Date().toISOString().slice(0, 10),
               merchantKey: item.merchantKey || undefined,
             })),
             fallback: {
@@ -849,9 +978,13 @@ export async function suggestImportCategories(input: {
             },
           },
         });
-        return suggestionResponseSchema.parse(raw);
-      }),
-    );
+        responses.push(suggestionResponseSchema.parse(raw));
+      } catch {
+        // Preserve successful chunks. Suggestions are best-effort and must not
+        // turn saturation or one malformed response into an all-or-nothing UI.
+        failedUnresolvedCount += chunk.length;
+      }
+    }
     const rowsByRequest = new Map<string, string[]>();
     for (const row of plan.rows) {
       if (row.aiRequestKey === undefined) continue;
@@ -860,7 +993,8 @@ export async function suggestImportCategories(input: {
       rowsByRequest.set(row.aiRequestKey, list);
     }
     const suggestions: ImportAiSuggestion[] = [];
-    const proposals: Extract<SuggestImportResult, { ok: true }>["proposals"] = [];
+    const proposals: Extract<SuggestImportResult, { ok: true }>["proposals"] =
+      [];
     for (const item of responses.flatMap((response) => response.items)) {
       for (const rowKey of rowsByRequest.get(item.key) ?? []) {
         const best = item.candidates[0];
@@ -868,7 +1002,9 @@ export async function suggestImportCategories(input: {
           suggestions.push({
             rowKey,
             categoryId: best.categoryId,
-            ...(best.subcategoryId === null ? {} : { subcategoryId: best.subcategoryId }),
+            ...(best.subcategoryId === null
+              ? {}
+              : { subcategoryId: best.subcategoryId }),
             confidence: best.confidence,
             explanation: best.explanation,
             provider: best.provider,
@@ -891,7 +1027,7 @@ export async function suggestImportCategories(input: {
       proposals,
       unresolvedCount: responses.reduce(
         (total, response) => total + response.unresolvedKeys.length,
-        0,
+        failedUnresolvedCount,
       ),
       providerRuns: responses.flatMap((response) => response.providerRuns),
     };
@@ -916,6 +1052,7 @@ export type ConfirmGroupInput = {
   subcategoryId?: string;
   creditCardId: string;
   cardLast4?: string;
+  override?: { token?: string; claimId?: string; reason: string };
 };
 
 export type ConfirmInput = {
@@ -946,7 +1083,12 @@ export type ConfirmInput = {
   >;
   edits?: Record<
     number,
-    { occurredOn?: string; description?: string; amountCents?: number; kind?: "expense" | "income" }
+    {
+      occurredOn?: string;
+      description?: string;
+      amountCents?: number;
+      kind?: "expense" | "income";
+    }
   >;
   overrides?: Record<
     number,
@@ -986,7 +1128,9 @@ export type ConfirmResult = {
  * audit trail (counts only — never the raw file). RLS / household isolation is
  * re-asserted inside the SECURITY DEFINER function.
  */
-export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult> {
+export async function confirmImport(
+  input: ConfirmInput,
+): Promise<ConfirmResult> {
   try {
     const { client, householdId, userId } = await authed();
     const env = getServerEnv();
@@ -1004,9 +1148,13 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       input.snapshot.source !== input.source ||
       claims.householdId !== householdId ||
       claims.userId !== userId ||
-      normalizedRowsFingerprint(input.snapshot.identities) !== input.normalizedFingerprint
+      normalizedRowsFingerprint(input.snapshot.identities) !==
+        input.normalizedFingerprint
     ) {
-      return { ok: false, message: "O preview mudou. Envie o arquivo novamente." };
+      return {
+        ok: false,
+        message: "O preview mudou. Envie o arquivo novamente.",
+      };
     }
     const isMp = input.source === "mercado-pago";
     const createdByUserId = userId;
@@ -1017,7 +1165,10 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
     ]);
     const accountIds = new Set(accounts.map((account) => account.id));
     const cardById = new Map(cards.map((card) => [card.id, card]));
-    if (!isMp && (input.accountId === undefined || !accountIds.has(input.accountId))) {
+    if (
+      !isMp &&
+      (input.accountId === undefined || !accountIds.has(input.accountId))
+    ) {
       return { ok: false, message: "Escolha uma conta de destino ativa." };
     }
     const targetCardFor = (last4?: string): string | undefined =>
@@ -1030,7 +1181,10 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         return target === undefined || !cardById.has(target);
       })
     ) {
-      return { ok: false, message: "Mapeie cada final de cartão para um cartão ativo." };
+      return {
+        ok: false,
+        message: "Mapeie cada final de cartão para um cartão ativo.",
+      };
     }
     const subcategories = (
       await Promise.all(
@@ -1041,23 +1195,36 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
     ).flat();
     const categoryIds = new Set(categories.map((category) => category.id));
     const subcategoryParent = new Map(
-      subcategories.map((subcategory) => [subcategory.id, subcategory.category_id]),
+      subcategories.map((subcategory) => [
+        subcategory.id,
+        subcategory.category_id,
+      ]),
     );
-    const validCategory = (categoryId?: string, subcategoryId?: string): boolean =>
+    const validCategory = (
+      categoryId?: string,
+      subcategoryId?: string,
+    ): boolean =>
       (categoryId === undefined && subcategoryId === undefined) ||
       (categoryId !== undefined &&
         categoryIds.has(categoryId) &&
-        (subcategoryId === undefined || subcategoryParent.get(subcategoryId) === categoryId));
+        (subcategoryId === undefined ||
+          subcategoryParent.get(subcategoryId) === categoryId));
 
     const selected = new Set(
       input.selectedIndices.filter(
-        (index) => Number.isInteger(index) && index >= 0 && index < input.snapshot.rows.length,
+        (index) =>
+          Number.isInteger(index) &&
+          index >= 0 &&
+          index < input.snapshot.rows.length,
       ),
     );
     if (selected.size !== new Set(input.selectedIndices).size) {
       return { ok: false, message: "Seleção de linhas inválida." };
     }
-    const editedRow = (row: NormalizedImportRow, index: number): NormalizedImportRow => {
+    const editedRow = (
+      row: NormalizedImportRow,
+      index: number,
+    ): NormalizedImportRow => {
       const edit = input.edits?.[index];
       if (edit === undefined) return row;
       const description = edit.description?.trim() ?? row.description;
@@ -1073,7 +1240,13 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       ) {
         throw new Error(`Edição inválida na linha ${row.sourceLine}.`);
       }
-      return { ...row, description, occurredOn, amount: brl(amountCents), kind };
+      return {
+        ...row,
+        description,
+        occurredOn,
+        amount: brl(amountCents),
+        kind,
+      };
     };
     const duplicateIndices = new Set(
       buildImportPreview({
@@ -1083,7 +1256,9 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       }).duplicates.map((duplicate) => duplicate.rowIndex),
     );
     const legacyDuplicateIndices = new Set<number>();
-    const confirmationDates = input.snapshot.rows.map((row) => row.occurredOn).sort();
+    const confirmationDates = input.snapshot.rows
+      .map((row) => row.occurredOn)
+      .sort();
     const confirmationFirst = confirmationDates[0];
     const confirmationLast = confirmationDates.at(-1);
     if (confirmationFirst !== undefined && confirmationLast !== undefined) {
@@ -1093,7 +1268,10 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       >();
       input.snapshot.rows.forEach((row) => {
         const instrument = isMp
-          ? ({ type: "credit_card", id: targetCardFor(row.cardLast4) as string } as const)
+          ? ({
+              type: "credit_card",
+              id: targetCardFor(row.cardLast4) as string,
+            } as const)
           : ({ type: "account", id: input.accountId as string } as const);
         instruments.set(`${instrument.type}:${instrument.id}`, instrument);
       });
@@ -1117,9 +1295,7 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         ),
       );
       input.snapshot.rows.forEach((row, index) => {
-        const targetId = isMp
-          ? targetCardFor(row.cardLast4)
-          : input.accountId;
+        const targetId = isMp ? targetCardFor(row.cardLast4) : input.accountId;
         const key = `${row.occurredOn}|${row.kind}|${row.amount.cents}|${normalizeDescription(row.description).toLowerCase()}|${targetId ?? ""}`;
         if (existingKeys.has(key)) legacyDuplicateIndices.add(index);
       });
@@ -1127,6 +1303,16 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
     const groupRowIndices = new Set<number>();
     const items: ConfirmImportV2Item[] = [];
     const errors: string[] = [];
+    const legacyInstallmentGroups = isMp
+      ? (await listInstallmentGroupsByHousehold(client, householdId)).map(
+          (candidate) => ({
+            creditCardId: candidate.credit_card_id,
+            description: candidate.description,
+            installmentCount: candidate.installment_count,
+            purchasedOn: candidate.purchased_on,
+          }),
+        )
+      : [];
 
     for (const group of input.groups ?? []) {
       if (
@@ -1140,7 +1326,10 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         };
       }
       if (!isMp || !cardById.has(group.creditCardId)) {
-        return { ok: false, message: "Parcelamento com cartão de destino inválido." };
+        return {
+          ok: false,
+          message: "Parcelamento com cartão de destino inválido.",
+        };
       }
       if (!validCategory(group.categoryId, group.subcategoryId)) {
         return { ok: false, message: "Categoria inválida em um parcelamento." };
@@ -1149,13 +1338,33 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         input.snapshot.groupSourceRowIndices?.[group.sourceGroupIndex] ?? -1;
       const identity = input.snapshot.identities[rowIndex];
       const sourceRow = input.snapshot.rows[rowIndex];
+      const inferredGroup =
+        input.snapshot.installmentGroups?.[group.sourceGroupIndex];
       if (
         rowIndex < 0 ||
         groupRowIndices.has(rowIndex) ||
         identity === undefined ||
         sourceRow === undefined
       ) {
-        return { ok: false, message: `Não foi possível vincular ${group.description} à fatura.` };
+        return {
+          ok: false,
+          message: `Não foi possível vincular ${group.description} à fatura.`,
+        };
+      }
+      if (
+        inferredGroup !== undefined &&
+        hasLegacyInstallmentGroupOnCard(
+          inferredGroup,
+          group.creditCardId,
+          legacyInstallmentGroups,
+        ) &&
+        (group.override?.reason.trim().length ?? 0) < 5
+      ) {
+        return {
+          ok: false,
+          message:
+            "Este parcelamento já existe no cartão escolhido. Revise a duplicata e informe o motivo para reimportar.",
+        };
       }
       groupRowIndices.add(rowIndex);
       const card = cardById.get(group.creditCardId);
@@ -1175,10 +1384,15 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         category:
           group.categoryId === undefined
             ? undefined
-            : { categoryId: group.categoryId, subcategoryId: group.subcategoryId },
+            : {
+                categoryId: group.categoryId,
+                subcategoryId: group.subcategoryId,
+              },
       });
       if (!plan.ok) {
-        errors.push(`${group.description}: ${plan.errors.map((error) => error.message).join("; ")}`);
+        errors.push(
+          `${group.description}: ${plan.errors.map((error) => error.message).join("; ")}`,
+        );
         items.push({
           household_id: householdId,
           disposition: "validation_error",
@@ -1193,7 +1407,8 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         });
         continue;
       }
-      const groupIdentity = input.snapshot.groupIdentities?.[group.sourceGroupIndex];
+      const groupIdentity =
+        input.snapshot.groupIdentities?.[group.sourceGroupIndex];
       if (groupIdentity === undefined) {
         return { ok: false, message: "Identidade de parcelamento inválida." };
       }
@@ -1216,6 +1431,17 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         card_last4: sourceRow.cardLast4,
         installment_group: installmentGroupInsertFromPlan(plan.value),
         installments: installmentInsertPayloadsFromPlan(plan.value),
+        ...(group.override === undefined
+          ? {}
+          : {
+              override_reason: group.override.reason,
+              ...(group.override.token === undefined
+                ? {}
+                : { override_token: group.override.token }),
+              ...(group.override.claimId === undefined
+                ? {}
+                : { override_of_claim_id: group.override.claimId }),
+            }),
       });
     }
 
@@ -1225,13 +1451,21 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       const identity = input.snapshot.identities[index];
       if (sourceRow === undefined || identity === undefined) continue;
       const row = editedRow(sourceRow, index);
-      if (!selected.has(index) || (isMp && sourceRow.installment !== undefined)) {
+      if (
+        !selected.has(index) ||
+        (isMp && sourceRow.installment !== undefined)
+      ) {
         items.push({
           household_id: householdId,
-          disposition: duplicateIndices.has(index) ? "duplicate_in_file" : "excluded",
+          disposition: duplicateIndices.has(index)
+            ? "duplicate_in_file"
+            : "excluded",
           source_line: sourceRow.sourceLine,
           occurred_on: sourceRow.occurredOn,
-          amount_cents: sourceRow.kind === "expense" ? -sourceRow.amount.cents : sourceRow.amount.cents,
+          amount_cents:
+            sourceRow.kind === "expense"
+              ? -sourceRow.amount.cents
+              : sourceRow.amount.cents,
           description: sourceRow.description,
           fingerprint_version: 1,
           base_fingerprint: identity.baseIdentityHash,
@@ -1253,9 +1487,14 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         };
       }
       if (!validCategory(mapping.categoryId, mapping.subcategoryId)) {
-        return { ok: false, message: `Categoria inválida na linha ${row.sourceLine}.` };
+        return {
+          ok: false,
+          message: `Categoria inválida na linha ${row.sourceLine}.`,
+        };
       }
-      const targetCardId = isMp ? targetCardFor(sourceRow.cardLast4) : undefined;
+      const targetCardId = isMp
+        ? targetCardFor(sourceRow.cardLast4)
+        : undefined;
       const payment = isMp
         ? ({ type: "card", creditCardId: targetCardId as string } as const)
         : ({ type: "account", accountId: input.accountId as string } as const);
@@ -1277,7 +1516,8 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
           disposition: "validation_error",
           source_line: row.sourceLine,
           occurred_on: row.occurredOn,
-          amount_cents: row.kind === "expense" ? -row.amount.cents : row.amount.cents,
+          amount_cents:
+            row.kind === "expense" ? -row.amount.cents : row.amount.cents,
           description: row.description,
           error_message: message,
         });
@@ -1294,11 +1534,16 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
       if (
         override !== undefined &&
         (override.reason.trim().length < 5 ||
-          ((override.token === undefined) !== (override.claimId === undefined)) ||
-          (override.token !== undefined && !/^[0-9a-f-]{36}$/i.test(override.token)) ||
-          (override.claimId !== undefined && !/^[0-9a-f-]{36}$/i.test(override.claimId)))
+          (override.token === undefined) !== (override.claimId === undefined) ||
+          (override.token !== undefined &&
+            !/^[0-9a-f-]{36}$/i.test(override.token)) ||
+          (override.claimId !== undefined &&
+            !/^[0-9a-f-]{36}$/i.test(override.claimId)))
       ) {
-        return { ok: false, message: `Justificativa de duplicata inválida na linha ${row.sourceLine}.` };
+        return {
+          ok: false,
+          message: `Justificativa de duplicata inválida na linha ${row.sourceLine}.`,
+        };
       }
       const suppress = teaching?.suppress === true;
       const learning =
@@ -1309,10 +1554,16 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
               ...(teaching.sourceCategory && row.sourceCategory
                 ? {
                     source_category: {
-                      normalized_label: normalizeSourceCategoryLabel(row.sourceCategory),
+                      normalized_label: normalizeSourceCategoryLabel(
+                        row.sourceCategory,
+                      ),
                       row_kind: row.kind,
-                      category_id: suppress ? null : (mapping.categoryId ?? null),
-                      subcategory_id: suppress ? null : (mapping.subcategoryId ?? null),
+                      category_id: suppress
+                        ? null
+                        : (mapping.categoryId ?? null),
+                      subcategory_id: suppress
+                        ? null
+                        : (mapping.subcategoryId ?? null),
                       suppress,
                     },
                   }
@@ -1322,8 +1573,12 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
                     merchant_memory: {
                       pattern: normalizeMerchantKey(row.description),
                       row_kind: row.kind,
-                      category_id: suppress ? null : (mapping.categoryId ?? null),
-                      subcategory_id: suppress ? null : (mapping.subcategoryId ?? null),
+                      category_id: suppress
+                        ? null
+                        : (mapping.categoryId ?? null),
+                      subcategory_id: suppress
+                        ? null
+                        : (mapping.subcategoryId ?? null),
                       suppress,
                       confidence: 0.99,
                       explanation: "Escolha confirmada durante importação.",
@@ -1338,7 +1593,10 @@ export async function confirmImport(input: ConfirmInput): Promise<ConfirmResult>
         disposition: "imported",
         source_line: sourceRow.sourceLine,
         occurred_on: sourceRow.occurredOn,
-        amount_cents: sourceRow.kind === "expense" ? -sourceRow.amount.cents : sourceRow.amount.cents,
+        amount_cents:
+          sourceRow.kind === "expense"
+            ? -sourceRow.amount.cents
+            : sourceRow.amount.cents,
         description: sourceRow.description,
         fingerprint_version: 1,
         base_fingerprint: claim.claimFingerprint,

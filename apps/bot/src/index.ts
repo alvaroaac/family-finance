@@ -750,6 +750,7 @@ export async function startBot(): Promise<{
     rawBody: unknown,
     secretHeader: string | undefined,
   ) => Promise<WebhookResult>;
+  client: AppSupabaseClient;
 }> {
   // Bot-scoped env parse: the container carries only the spec §3.5 vars, so
   // web-only settings (NEXT_PUBLIC_*, AUTHORIZED_EMAILS) must not be required.
@@ -863,6 +864,7 @@ export async function startBot(): Promise<{
   }
 
   return {
+    client,
     handle: (rawBody, secretHeader) =>
       handleWebhook({
         rawBody,

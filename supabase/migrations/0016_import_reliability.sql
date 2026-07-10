@@ -101,10 +101,142 @@ exception when duplicate_object then null; end $$;
 alter table source_category_mappings enable row level security;
 drop policy if exists source_category_mappings_member_all on source_category_mappings;
 create policy source_category_mappings_member_all on source_category_mappings
-  for all using (is_household_member(household_id))
-  with check (is_household_member(household_id));
+  for select using (is_household_member(household_id));
 do $$ begin
-  grant select on source_category_mappings to authenticated, service_role;
+  revoke all on source_category_mappings from public, anon, authenticated;
+  grant select on source_category_mappings to authenticated;
+  grant all on source_category_mappings to service_role;
+exception when undefined_object then null; end $$;
+
+-- Migration 0003 predates source mappings. Replace its merge function so a
+-- category merge cannot strand learned mappings on the archived category.
+create or replace function merge_category(
+  target_household_id uuid,
+  source_category_id uuid,
+  target_category_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  archived_source categories;
+  moved_transactions integer;
+  moved_installment_groups integer;
+  moved_installments integer;
+  moved_subcategories integer;
+  moved_memory integer;
+  moved_source_mappings integer;
+begin
+  if source_category_id = target_category_id then
+    raise exception 'merge_category: source and target must differ'
+      using errcode = '22023';
+  end if;
+  if target_household_id is null
+     or not is_household_member(target_household_id) then
+    raise exception 'merge_category: not a member of household %', target_household_id
+      using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from categories
+    where household_id = target_household_id
+      and id = target_category_id and is_active
+  ) then
+    raise exception 'merge_category: active target category not found'
+      using errcode = '22023';
+  end if;
+
+  update transactions set category_id = target_category_id
+    where household_id = target_household_id and category_id = source_category_id;
+  get diagnostics moved_transactions = row_count;
+  update installment_groups set category_id = target_category_id
+    where household_id = target_household_id and category_id = source_category_id;
+  get diagnostics moved_installment_groups = row_count;
+  update installments set category_id = target_category_id
+    where household_id = target_household_id and category_id = source_category_id;
+  get diagnostics moved_installments = row_count;
+  update subcategories set category_id = target_category_id
+    where household_id = target_household_id and category_id = source_category_id;
+  get diagnostics moved_subcategories = row_count;
+  update categorization_memory set category_id = target_category_id
+    where household_id = target_household_id and category_id = source_category_id;
+  get diagnostics moved_memory = row_count;
+  update source_category_mappings set category_id = target_category_id
+    where household_id = target_household_id and category_id = source_category_id;
+  get diagnostics moved_source_mappings = row_count;
+  update categories set is_active = false
+    where household_id = target_household_id and id = source_category_id
+    returning * into archived_source;
+  if archived_source.id is null then
+    raise exception 'merge_category: source category not found'
+      using errcode = '22023';
+  end if;
+
+  return jsonb_build_object(
+    'source', to_jsonb(archived_source),
+    'moved', jsonb_build_object(
+      'transactions', moved_transactions,
+      'installment_groups', moved_installment_groups,
+      'installments', moved_installments,
+      'subcategories', moved_subcategories,
+      'categorization_memory', moved_memory,
+      'source_category_mappings', moved_source_mappings
+    )
+  );
+end;
+$$;
+revoke all on function merge_category(uuid, uuid, uuid) from public;
+do $$ begin
+  revoke all on function merge_category(uuid, uuid, uuid) from anon;
+  grant execute on function merge_category(uuid, uuid, uuid) to authenticated;
+exception when undefined_object then null; end $$;
+
+-- Shared replay protection for the internal web -> bot suggestion endpoint.
+-- A primary-key insert is atomic across bot processes and survives restarts.
+create table if not exists import_suggestion_nonces (
+  nonce text primary key check (nonce ~ '^[A-Za-z0-9_-]{16,128}$'),
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+alter table import_suggestion_nonces enable row level security;
+do $$ begin
+  revoke all on import_suggestion_nonces from public, anon, authenticated;
+  grant all on import_suggestion_nonces to service_role;
+exception when undefined_object then null; end $$;
+
+create or replace function claim_import_suggestion_nonce(
+  target_nonce text,
+  target_expires_at timestamptz
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  inserted_count integer;
+begin
+  if target_nonce !~ '^[A-Za-z0-9_-]{16,128}$'
+     or target_expires_at <= now()
+     or target_expires_at > now() + interval '5 minutes' then
+    raise exception 'claim_import_suggestion_nonce: invalid claim'
+      using errcode = '22023';
+  end if;
+  delete from import_suggestion_nonces where expires_at <= now();
+  insert into import_suggestion_nonces (nonce, expires_at)
+    values (target_nonce, target_expires_at)
+    on conflict do nothing;
+  get diagnostics inserted_count = row_count;
+  return inserted_count = 1;
+end;
+$$;
+revoke all on function claim_import_suggestion_nonce(text, timestamptz) from public;
+do $$ begin
+  revoke all on function claim_import_suggestion_nonce(text, timestamptz)
+    from anon, authenticated;
+  grant execute on function claim_import_suggestion_nonce(text, timestamptz)
+    to service_role;
 exception when undefined_object then null; end $$;
 
 alter table import_batches add column if not exists request_key uuid;
@@ -661,6 +793,16 @@ begin
           select * into existing_claim from import_item_claims
           where household_id = target_household_id
             and override_token = (item ->> 'override_token')::uuid;
+          if existing_claim.id is null
+             or existing_claim.source is distinct from target_source
+             or existing_claim.fingerprint_version is distinct from (item ->> 'fingerprint_version')::smallint
+             or existing_claim.base_fingerprint is distinct from item ->> 'base_fingerprint'
+             or existing_claim.occurrence_no is distinct from (item ->> 'occurrence_no')::integer
+             or existing_claim.artifact_kind is distinct from artifact_kind
+             or existing_claim.override_of_claim_id is distinct from (item ->> 'override_of_claim_id')::uuid then
+            raise exception 'confirm_import_v2: override token belongs to another item'
+              using errcode = '22023';
+          end if;
         else
           select * into existing_claim from import_item_claims
           where household_id = target_household_id
@@ -677,6 +819,7 @@ begin
             using errcode = '22023';
         end if;
         if (tx ->> 'created_by_user_id') is distinct from target_created_by_user_id::text
+           or (tx ->> 'installment_id') is not null
            or ((tx ->> 'responsible_user_id') is not null and not exists (
              select 1 from household_members
              where household_id = target_household_id

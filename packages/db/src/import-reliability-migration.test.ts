@@ -92,4 +92,29 @@ describe("import reliability migration contract", () => {
       "confirm_import_v2: conflicting learning commands",
     );
   });
+
+  it("blocks cross-household installment links and mismatched override-token reuse", () => {
+    expect(migration).toContain("or (tx ->> 'installment_id') is not null");
+    expect(migration).toContain("override token belongs to another item");
+    expect(migration).toContain(
+      "existing_claim.artifact_kind is distinct from artifact_kind",
+    );
+  });
+
+  it("keeps source mappings read-only outside confirmation and updates them on merge", () => {
+    expect(migration).toContain(
+      "revoke all on source_category_mappings from public, anon, authenticated",
+    );
+    expect(migration).toContain(
+      "update source_category_mappings set category_id = target_category_id",
+    );
+  });
+
+  it("claims internal request nonces atomically in shared storage", () => {
+    expect(migration).toContain(
+      "create table if not exists import_suggestion_nonces",
+    );
+    expect(migration).toContain("claim_import_suggestion_nonce");
+    expect(migration).toContain("on conflict do nothing");
+  });
 });

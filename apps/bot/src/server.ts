@@ -19,6 +19,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import { getBotServerEnv, getLlmConfig } from "@family-finance/config";
+import { claimImportSuggestionNonce } from "@family-finance/db";
 
 import { startBot, type WebhookResult } from "./index.js";
 import { createImportSuggestionHandler } from "./import-suggestions.js";
@@ -46,6 +47,7 @@ export type ImportSuggestionHandle = (
 export type ImportSuggestionRoute = {
   secret: string;
   handle: ImportSuggestionHandle;
+  claimNonce: (nonce: string, expiresAt: Date) => Promise<boolean>;
   now?: () => number;
 };
 
@@ -91,15 +93,8 @@ export function createBotServer(
   handle: WebhookHandle,
   options?: { importSuggestions?: ImportSuggestionRoute },
 ): http.Server {
-  const usedNonces = new Map<string, number>();
   return http.createServer((request, response) => {
-    void routeRequest(
-      handle,
-      request,
-      response,
-      options?.importSuggestions,
-      usedNonces,
-    );
+    void routeRequest(handle, request, response, options?.importSuggestions);
   });
 }
 
@@ -108,7 +103,6 @@ async function routeRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   importSuggestions?: ImportSuggestionRoute,
-  usedNonces: Map<string, number> = new Map(),
 ): Promise<void> {
   const url = request.url ?? "/";
   const path = url.split("?")[0] ?? url;
@@ -192,13 +186,6 @@ async function routeRequest(
       sendJson(response, 401, { ok: false, error: "invalid signature" });
       return;
     }
-    for (const [key, expiresAt] of usedNonces) {
-      if (expiresAt <= now) usedNonces.delete(key);
-    }
-    if (usedNonces.has(nonce)) {
-      sendJson(response, 409, { ok: false, error: "replayed request" });
-      return;
-    }
     const bodyHash = createHash("sha256").update(raw).digest("hex");
     const canonical = `${timestamp}\n${nonce}\nPOST\n${IMPORT_SUGGESTION_PATH}\n${bodyHash}`;
     const expected = `v1=${createHmac("sha256", importSuggestions.secret)
@@ -206,11 +193,28 @@ async function routeRequest(
       .digest("hex")}`;
     const supplied = Buffer.from(signature);
     const wanted = Buffer.from(expected);
-    if (supplied.length !== wanted.length || !timingSafeEqual(supplied, wanted)) {
+    if (
+      supplied.length !== wanted.length ||
+      !timingSafeEqual(supplied, wanted)
+    ) {
       sendJson(response, 401, { ok: false, error: "invalid signature" });
       return;
     }
-    usedNonces.set(nonce, now + 120_000);
+    try {
+      if (
+        !(await importSuggestions.claimNonce(nonce, new Date(now + 120_000)))
+      ) {
+        sendJson(response, 409, { ok: false, error: "replayed request" });
+        return;
+      }
+    } catch (error) {
+      console.error("[bot:server] nonce claim failed:", error);
+      sendJson(response, 503, {
+        ok: false,
+        error: "replay protection unavailable",
+      });
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -233,7 +237,7 @@ async function routeRequest(
 
 /** Production entry point: real bot wiring + listen on PORT. */
 async function main(): Promise<void> {
-  const { handle } = await startBot();
+  const { handle, client } = await startBot();
   const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const llm = getLlmConfig();
@@ -250,6 +254,8 @@ async function main(): Promise<void> {
       ? undefined
       : {
           secret: env.IMPORT_SUGGESTION_SHARED_SECRET,
+          claimNonce: (nonce: string, expiresAt: Date) =>
+            claimImportSuggestionNonce(client, nonce, expiresAt),
           handle: createImportSuggestionHandler({
             codexEnabled: env.CODEX_ENABLED === "true",
             codexModel: env.CODEX_MODEL ?? "gpt-5.5",

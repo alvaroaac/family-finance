@@ -3,10 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
-import type {
-  ImportSource,
-  ImportPreview,
-} from "@family-finance/importers";
+import type { ImportSource, ImportPreview } from "@family-finance/importers";
 
 import {
   Badge,
@@ -151,12 +148,25 @@ export default function ImportsPage() {
       }
     >
   >({});
+  const [persistedGroupDuplicates, setPersistedGroupDuplicates] = useState<
+    Set<number>
+  >(new Set());
+  const [persistedGroupClaimIds, setPersistedGroupClaimIds] = useState<
+    Record<number, string>
+  >({});
+  const [groupOverrides, setGroupOverrides] = useState<
+    Record<number, { token?: string; claimId?: string; reason: string }>
+  >({});
   const [mapping, setMapping] = useState<
     Record<number, { categoryId?: string; subcategoryId?: string }>
   >({});
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
-  const [confirmResult, setConfirmResult] = useState<ConfirmResult | null>(null);
-  const [aiSuggestions, setAiSuggestions] = useState<Record<number, ImportAiSuggestion>>({});
+  const [confirmResult, setConfirmResult] = useState<ConfirmResult | null>(
+    null,
+  );
+  const [aiSuggestions, setAiSuggestions] = useState<
+    Record<number, ImportAiSuggestion>
+  >({});
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [taxonomyProposals, setTaxonomyProposals] = useState<
     Array<{
@@ -167,22 +177,40 @@ export default function ImportsPage() {
       provider: "codex" | "haiku";
     }>
   >([]);
-  const [persistedDuplicates, setPersistedDuplicates] = useState<Set<number>>(new Set());
+  const [persistedDuplicates, setPersistedDuplicates] = useState<Set<number>>(
+    new Set(),
+  );
   const [learning, setLearning] = useState<
     Record<number, { sourceCategory?: boolean; merchant?: boolean }>
   >({});
   const [rowEdits, setRowEdits] = useState<
-    Record<number, { occurredOn?: string; description?: string; amountCents?: number; kind?: "expense" | "income" }>
+    Record<
+      number,
+      {
+        occurredOn?: string;
+        description?: string;
+        amountCents?: number;
+        kind?: "expense" | "income";
+      }
+    >
   >({});
   const [overrides, setOverrides] = useState<
     Record<number, { token?: string; claimId?: string; reason: string }>
   >({});
-  const [persistedClaimIds, setPersistedClaimIds] = useState<Record<number, string>>({});
+  const [persistedClaimIds, setPersistedClaimIds] = useState<
+    Record<number, string>
+  >({});
   const [provenance, setProvenance] = useState<
     Record<
       number,
       {
-        source: "memory" | "source_mapping" | "rule" | "codex" | "haiku" | "user";
+        source:
+          | "memory"
+          | "source_mapping"
+          | "rule"
+          | "codex"
+          | "haiku"
+          | "user";
         confidence?: number;
         accepted: boolean;
         changed: boolean;
@@ -278,6 +306,9 @@ export default function ImportsPage() {
     setRowEdits({});
     setOverrides({});
     setPersistedClaimIds({});
+    setPersistedGroupDuplicates(new Set());
+    setPersistedGroupClaimIds({});
+    setGroupOverrides({});
     const edits: Record<
       number,
       {
@@ -294,7 +325,7 @@ export default function ImportsPage() {
         totalAmountCents: g.estimatedTotalCents,
         installmentCount: g.installmentCount,
         purchasedOn: g.purchasedOn,
-        skip: g.status === "exists", // already-exists default-skipped (spec §4)
+        skip: false,
       };
     });
     setGroupEdits(edits);
@@ -312,7 +343,13 @@ export default function ImportsPage() {
   useEffect(() => {
     if (bundle === null) return;
     const mp = bundle.mp !== undefined;
-    const required = [...new Set(bundle.preview.rows.map((row) => row.cardLast4).filter((value): value is string => value !== undefined))];
+    const required = [
+      ...new Set(
+        bundle.preview.rows
+          .map((row) => row.cardLast4)
+          .filter((value): value is string => value !== undefined),
+      ),
+    ];
     const needsDefault =
       bundle.preview.rows.some((row) => row.cardLast4 === undefined) ||
       required.length === 0;
@@ -332,13 +369,33 @@ export default function ImportsPage() {
       if (cancelled || !result.ok) return;
       const nextPersisted = new Set(result.duplicateIndices);
       setPersistedClaimIds(result.claimIdsByIndex);
+      const nextGroupPersisted = new Set(result.groupDuplicateIndices);
+      setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
+      setPersistedGroupDuplicates((previousPersisted) => {
+        setGroupEdits((previousEdits) => {
+          const updated = { ...previousEdits };
+          for (const index of previousPersisted) {
+            const edit = updated[index];
+            if (edit !== undefined) updated[index] = { ...edit, skip: false };
+          }
+          for (const index of nextGroupPersisted) {
+            const edit = updated[index];
+            if (edit !== undefined) updated[index] = { ...edit, skip: true };
+          }
+          return updated;
+        });
+        return nextGroupPersisted;
+      });
+      setGroupOverrides({});
       setPersistedDuplicates((previousPersisted) => {
         setExcluded((previous) => {
           const next = new Set(previous);
           for (const index of previousPersisted) next.delete(index);
           for (const index of nextPersisted) next.add(index);
-          for (const duplicate of bundle.preview.duplicates) next.add(duplicate.rowIndex);
-          for (const index of bundle.mp?.installmentRowIndices ?? []) next.add(index);
+          for (const duplicate of bundle.preview.duplicates)
+            next.add(duplicate.rowIndex);
+          for (const index of bundle.mp?.installmentRowIndices ?? [])
+            next.add(index);
           return next;
         });
         return nextPersisted;
@@ -387,7 +444,10 @@ export default function ImportsPage() {
   function setRowCategory(index: number, categoryId: string) {
     setMapping((prev) => ({
       ...prev,
-      [index]: { categoryId: categoryId || undefined, subcategoryId: undefined },
+      [index]: {
+        categoryId: categoryId || undefined,
+        subcategoryId: undefined,
+      },
     }));
     setProvenance((previous) => ({
       ...previous,
@@ -418,7 +478,9 @@ export default function ImportsPage() {
         snapshot: bundle.snapshot,
       });
       if (!result.ok) {
-        setAiMessage(`${result.message} Você ainda pode categorizar e importar manualmente.`);
+        setAiMessage(
+          `${result.message} Você ainda pode categorizar e importar manualmente.`,
+        );
         return;
       }
       const byIndex: Record<number, ImportAiSuggestion> = {};
@@ -433,11 +495,16 @@ export default function ImportsPage() {
       }
       setAiSuggestions(byIndex);
       setTaxonomyProposals(result.proposals);
-      const parts = [`${Object.keys(byIndex).length} sugestão(ões) para revisar`];
+      const parts = [
+        `${Object.keys(byIndex).length} sugestão(ões) para revisar`,
+      ];
       if (result.proposals.length > 0) {
-        parts.push(`${result.proposals.length} proposta(s) de categoria nova — nenhuma foi criada`);
+        parts.push(
+          `${result.proposals.length} proposta(s) de categoria nova — nenhuma foi criada`,
+        );
       }
-      if (result.unresolvedCount > 0) parts.push(`${result.unresolvedCount} sem sugestão`);
+      if (result.unresolvedCount > 0)
+        parts.push(`${result.unresolvedCount} sem sugestão`);
       setAiMessage(parts.join(" · "));
     });
   }
@@ -476,15 +543,19 @@ export default function ImportsPage() {
     const next = { ...mapping };
     const changed: number[] = [];
     bundle.preview.rows.forEach((row, index) => {
-      if (excluded.has(index) || bundle.mp?.installmentRowIndices.includes(index)) return;
+      if (
+        excluded.has(index) ||
+        bundle.mp?.installmentRowIndices.includes(index)
+      )
+        return;
       const matches =
         mode === "selected"
           ? true
           : mode === "unresolved"
-          ? (mapping[index]?.categoryId ?? "") === ""
-          : mode === "merchant"
-            ? normalizeMerchantKey(row.description) === bulkMerchantKey
-            : (row.sourceCategory ?? "") === bulkSourceLabel;
+            ? (mapping[index]?.categoryId ?? "") === ""
+            : mode === "merchant"
+              ? normalizeMerchantKey(row.description) === bulkMerchantKey
+              : (row.sourceCategory ?? "") === bulkSourceLabel;
       if (!matches) return;
       next[index] = { categoryId: bulkCategoryId };
       changed.push(index);
@@ -510,7 +581,13 @@ export default function ImportsPage() {
       return;
     }
     const isMp = bundle.mp !== undefined;
-    const requiredLast4s = [...new Set(bundle.preview.rows.map((row) => row.cardLast4).filter((value): value is string => value !== undefined))];
+    const requiredLast4s = [
+      ...new Set(
+        bundle.preview.rows
+          .map((row) => row.cardLast4)
+          .filter((value): value is string => value !== undefined),
+      ),
+    ];
     const needsDefaultCard =
       bundle.preview.rows.some((row) => row.cardLast4 === undefined) ||
       requiredLast4s.length === 0;
@@ -542,8 +619,14 @@ export default function ImportsPage() {
             categoryId: edit!.categoryId,
             subcategoryId: edit!.subcategoryId,
             creditCardId:
-              (g.cardLast4 ? cardByLast4[g.cardLast4] : undefined) ?? creditCardId,
+              (g.cardLast4 ? cardByLast4[g.cardLast4] : undefined) ??
+              creditCardId,
             cardLast4: g.cardLast4,
+            ...(groupOverrides[bundle.mp?.groups.indexOf(g) ?? -1] === undefined
+              ? {}
+              : {
+                  override: groupOverrides[bundle.mp?.groups.indexOf(g) ?? -1],
+                }),
           }))
       : undefined;
 
@@ -594,26 +677,36 @@ export default function ImportsPage() {
 
   const isMp = bundle?.mp !== undefined;
   const bulkMerchantKeys = useMemo(
-    () => [...new Set((bundle?.preview.rows ?? []).map((row) => normalizeMerchantKey(row.description)))].sort(),
+    () =>
+      [
+        ...new Set(
+          (bundle?.preview.rows ?? []).map((row) =>
+            normalizeMerchantKey(row.description),
+          ),
+        ),
+      ].sort(),
     [bundle],
   );
   const bulkSourceLabels = useMemo(
-    () => [
-      ...new Set(
-        (bundle?.preview.rows ?? []).flatMap((row) =>
-          row.sourceCategory === undefined ? [] : [row.sourceCategory],
+    () =>
+      [
+        ...new Set(
+          (bundle?.preview.rows ?? []).flatMap((row) =>
+            row.sourceCategory === undefined ? [] : [row.sourceCategory],
+          ),
         ),
-      ),
-    ].sort(),
+      ].sort(),
     [bundle],
   );
   const mpCardLast4s = useMemo(
     () =>
-      [...new Set(
-        (bundle?.preview.rows ?? [])
-          .map((row) => row.cardLast4)
-          .filter((value): value is string => value !== undefined),
-      )].sort(),
+      [
+        ...new Set(
+          (bundle?.preview.rows ?? [])
+            .map((row) => row.cardLast4)
+            .filter((value): value is string => value !== undefined),
+        ),
+      ].sort(),
     [bundle],
   );
   const mpNeedsDefaultTarget = useMemo(
@@ -631,7 +724,9 @@ export default function ImportsPage() {
     [preview, excluded],
   );
   const selectedCount = selectedIndices.length;
-  const selectedGroupCount = Object.values(groupEdits).filter((edit) => !edit.skip).length;
+  const selectedGroupCount = Object.values(groupEdits).filter(
+    (edit) => !edit.skip,
+  ).length;
   const excludedDuplicates = [...duplicateIndices].filter((i) =>
     excluded.has(i),
   ).length;
@@ -683,14 +778,19 @@ export default function ImportsPage() {
           value={last4 ? (cardByLast4[last4] ?? "") : creditCardId}
           onChange={(event) => {
             if (last4) {
-              setCardByLast4((previous) => ({ ...previous, [last4]: event.target.value }));
+              setCardByLast4((previous) => ({
+                ...previous,
+                [last4]: event.target.value,
+              }));
             } else {
               setCreditCardId(event.target.value);
             }
           }}
           aria-label={last4 ? `Cartão final ${last4}` : "Cartão de destino"}
         >
-          <option value="">{last4 ? `Final ${last4}…` : "Cartão de destino…"}</option>
+          <option value="">
+            {last4 ? `Final ${last4}…` : "Cartão de destino…"}
+          </option>
           {(bundle?.creditCards ?? []).map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -716,7 +816,8 @@ export default function ImportsPage() {
 
   const hasAllMpTargets =
     mpCardLast4s.every((last4) => (cardByLast4[last4] ?? "") !== "") &&
-    (!(mpNeedsDefaultTarget || mpCardLast4s.length === 0) || creditCardId !== "");
+    (!(mpNeedsDefaultTarget || mpCardLast4s.length === 0) ||
+      creditCardId !== "");
   const confirmDisabled =
     isPending ||
     selectedCount + selectedGroupCount === 0 ||
@@ -734,7 +835,9 @@ export default function ImportsPage() {
           Nossa casa · Importação
         </div>
         <h1 className="ff-page-title__heading">
-          {step === 1 ? "O que chegou pra gente?" : "Dá uma olhada antes de gravar"}
+          {step === 1
+            ? "O que chegou pra gente?"
+            : "Dá uma olhada antes de gravar"}
         </h1>
         <p className="ff-page-title__lead">
           {step === 1
@@ -813,7 +916,9 @@ export default function ImportsPage() {
                 >
                   <option value="minhas-financas">Minhas Financas (CSV)</option>
                   <option value="nubank">Nubank (CSV)</option>
-                  <option value="mercado-pago">Mercado Pago (Fatura PDF)</option>
+                  <option value="mercado-pago">
+                    Mercado Pago (Fatura PDF)
+                  </option>
                 </Select>
               </Field>
 
@@ -914,11 +1019,13 @@ export default function ImportsPage() {
                   {bundle.mp.groups.map((g, i) => {
                     const edit = groupEdits[i];
                     if (edit === undefined) return null;
+                    const isPersistedDuplicate =
+                      persistedGroupDuplicates.has(i);
                     return (
                       <div
                         key={i}
                         className={`ff-group${
-                          g.status === "new" ? " ff-group--new" : ""
+                          !isPersistedDuplicate ? " ff-group--new" : ""
                         }${edit.skip ? " ff-off" : ""}`}
                       >
                         <div className="ff-group__head">
@@ -926,9 +1033,11 @@ export default function ImportsPage() {
                             {g.description}
                           </span>
                           <Badge
-                            tone={g.status === "exists" ? "neutral" : "positive"}
+                            tone={isPersistedDuplicate ? "neutral" : "positive"}
                           >
-                            {g.status === "exists" ? "já existe" : "novo"}
+                            {isPersistedDuplicate
+                              ? "já existe neste cartão"
+                              : "novo"}
                           </Badge>
                         </div>
                         <div className="ff-group__grid">
@@ -945,9 +1054,8 @@ export default function ImportsPage() {
                                   [i]: {
                                     ...edit,
                                     totalAmountCents: Math.round(
-                                      Number.parseFloat(
-                                        e.target.value || "0",
-                                      ) * 100,
+                                      Number.parseFloat(e.target.value || "0") *
+                                        100,
                                     ),
                                   },
                                 }))
@@ -1023,7 +1131,8 @@ export default function ImportsPage() {
                                   ...previous,
                                   [i]: {
                                     ...edit,
-                                    subcategoryId: event.target.value || undefined,
+                                    subcategoryId:
+                                      event.target.value || undefined,
                                   },
                                 }))
                               }
@@ -1031,9 +1140,15 @@ export default function ImportsPage() {
                             >
                               <option value="">(nenhuma)</option>
                               {(bundle?.subcategories ?? [])
-                                .filter((subcategory) => subcategory.categoryId === edit.categoryId)
+                                .filter(
+                                  (subcategory) =>
+                                    subcategory.categoryId === edit.categoryId,
+                                )
                                 .map((subcategory) => (
-                                  <option key={subcategory.id} value={subcategory.id}>
+                                  <option
+                                    key={subcategory.id}
+                                    value={subcategory.id}
+                                  >
                                     {subcategory.name}
                                   </option>
                                 ))}
@@ -1042,8 +1157,8 @@ export default function ImportsPage() {
                         </div>
                         <div className="ff-group__foot">
                           <span className="ff-group__hint">
-                            {g.status === "exists"
-                              ? `vamos ligar a parcela ${g.installmentNumber}/${g.installmentCount} ao grupo que já existe`
+                            {isPersistedDuplicate
+                              ? `a compra já foi importada neste cartão; mantenha pulada ou justifique a reimportação`
                               : `parcela ${g.installmentNumber} de ${g.installmentCount} · ${formatBrl(g.perInstallmentCents)}`}
                             {g.cardLast4 ? ` · final ${g.cardLast4}` : ""}
                           </span>
@@ -1052,12 +1167,41 @@ export default function ImportsPage() {
                               className="ff-check"
                               type="checkbox"
                               checked={edit.skip}
-                              onChange={() =>
+                              onChange={() => {
+                                if (edit.skip && isPersistedDuplicate) {
+                                  const claimId = persistedGroupClaimIds[i];
+                                  const reason = window.prompt(
+                                    "Este parcelamento já foi importado neste cartão. Por que deseja importar novamente?",
+                                  );
+                                  if (
+                                    reason === null ||
+                                    reason.trim().length < 5
+                                  )
+                                    return;
+                                  setGroupOverrides((previous) => ({
+                                    ...previous,
+                                    [i]: {
+                                      reason: reason.trim().slice(0, 200),
+                                      ...(claimId === undefined
+                                        ? {}
+                                        : {
+                                            token: crypto.randomUUID(),
+                                            claimId,
+                                          }),
+                                    },
+                                  }));
+                                } else {
+                                  setGroupOverrides((previous) => {
+                                    const updated = { ...previous };
+                                    delete updated[i];
+                                    return updated;
+                                  });
+                                }
                                 setGroupEdits((prev) => ({
                                   ...prev,
                                   [i]: { ...edit, skip: !edit.skip },
-                                }))
-                              }
+                                }));
+                              }}
                               aria-label={`Pular parcelamento ${g.description}`}
                             />
                             pular
@@ -1076,13 +1220,26 @@ export default function ImportsPage() {
               <div className="ff-panel__head">
                 <div>
                   <h2 className="ff-h2">Ações em lote</h2>
-                  <span className="ff-note">Revise a seleção antes de confirmar.</span>
+                  <span className="ff-note">
+                    Revise a seleção antes de confirmar.
+                  </span>
                 </div>
-                <Button variant="ghost" onClick={undoBulkCategory} disabled={mappingUndo === null}>
+                <Button
+                  variant="ghost"
+                  onClick={undoBulkCategory}
+                  disabled={mappingUndo === null}
+                >
                   Desfazer última ação
                 </Button>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  marginTop: 12,
+                }}
+              >
                 <Select
                   value={bulkCategoryId}
                   onChange={(event) => setBulkCategoryId(event.target.value)}
@@ -1090,13 +1247,21 @@ export default function ImportsPage() {
                 >
                   <option value="">Categoria…</option>
                   {(bundle?.categories ?? []).map((category) => (
-                    <option key={category.id} value={category.id}>{category.name}</option>
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
                   ))}
                 </Select>
-                <Button variant="ghost" onClick={() => applyBulkCategory("unresolved")}>
+                <Button
+                  variant="ghost"
+                  onClick={() => applyBulkCategory("unresolved")}
+                >
                   Aplicar a todos sem categoria
                 </Button>
-                <Button variant="ghost" onClick={() => applyBulkCategory("selected")}>
+                <Button
+                  variant="ghost"
+                  onClick={() => applyBulkCategory("selected")}
+                >
                   Aplicar às linhas marcadas
                 </Button>
                 <Select
@@ -1106,7 +1271,9 @@ export default function ImportsPage() {
                 >
                   <option value="">Estabelecimento…</option>
                   {bulkMerchantKeys.map((merchant) => (
-                    <option key={merchant} value={merchant}>{merchant}</option>
+                    <option key={merchant} value={merchant}>
+                      {merchant}
+                    </option>
                   ))}
                 </Select>
                 <Button
@@ -1120,12 +1287,16 @@ export default function ImportsPage() {
                   <>
                     <Select
                       value={bulkSourceLabel}
-                      onChange={(event) => setBulkSourceLabel(event.target.value)}
+                      onChange={(event) =>
+                        setBulkSourceLabel(event.target.value)
+                      }
                       aria-label="Categoria da origem para ação em lote"
                     >
                       <option value="">Categoria da origem…</option>
                       {bulkSourceLabels.map((label) => (
-                        <option key={label} value={label}>{label}</option>
+                        <option key={label} value={label}>
+                          {label}
+                        </option>
                       ))}
                     </Select>
                     <Button
@@ -1153,14 +1324,21 @@ export default function ImportsPage() {
             <Button
               variant="ghost"
               onClick={onSuggestCategories}
-              disabled={isPending || (bundle?.categorizationPlan.aiItems.length ?? 0) === 0}
+              disabled={
+                isPending ||
+                (bundle?.categorizationPlan.aiItems.length ?? 0) === 0
+              }
             >
               {isPending ? "Consultando…" : "Sugerir com Codex"}
             </Button>
           </div>
 
           {aiMessage !== null ? (
-            <div className="ff-alert ff-alert--warn" role="status" style={{ marginBottom: 12 }}>
+            <div
+              className="ff-alert ff-alert--warn"
+              role="status"
+              style={{ marginBottom: 12 }}
+            >
               {aiMessage}
             </div>
           ) : null}
@@ -1171,12 +1349,16 @@ export default function ImportsPage() {
                 {taxonomyProposals.map((proposal, index) => (
                   <li key={`${proposal.rowKey}-${index}`}>
                     {proposal.categoryName}
-                    {proposal.subcategoryName ? ` › ${proposal.subcategoryName}` : ""}
+                    {proposal.subcategoryName
+                      ? ` › ${proposal.subcategoryName}`
+                      : ""}
                     {` · ${proposal.provider} · ${proposal.explanation}`}
                   </li>
                 ))}
               </ul>
-              <p className="ff-note">Nenhuma categoria é criada por esta tela.</p>
+              <p className="ff-note">
+                Nenhuma categoria é criada por esta tela.
+              </p>
             </Card>
           ) : null}
 
@@ -1196,9 +1378,12 @@ export default function ImportsPage() {
                 ? (subsByCategory.get(selectedCategory) ?? [])
                 : [];
               const finalKind = rowEdits[index]?.kind ?? row.kind;
-              const finalDescription = rowEdits[index]?.description ?? row.description;
-              const finalOccurredOn = rowEdits[index]?.occurredOn ?? row.occurredOn;
-              const finalAmountCents = rowEdits[index]?.amountCents ?? row.amount.cents;
+              const finalDescription =
+                rowEdits[index]?.description ?? row.description;
+              const finalOccurredOn =
+                rowEdits[index]?.occurredOn ?? row.occurredOn;
+              const finalAmountCents =
+                rowEdits[index]?.amountCents ?? row.amount.cents;
               return (
                 <TableRow
                   key={index}
@@ -1224,7 +1409,10 @@ export default function ImportsPage() {
                     onChange={(event) =>
                       setRowEdits((previous) => ({
                         ...previous,
-                        [index]: { ...previous[index], occurredOn: event.target.value },
+                        [index]: {
+                          ...previous[index],
+                          occurredOn: event.target.value,
+                        },
                       }))
                     }
                     aria-label={`Data linha ${row.sourceLine}`}
@@ -1238,7 +1426,8 @@ export default function ImportsPage() {
                       fontWeight: 500,
                     }}
                   >
-                    {aiSuggestion !== undefined && aiCategoryName !== undefined ? (
+                    {aiSuggestion !== undefined &&
+                    aiCategoryName !== undefined ? (
                       <button
                         type="button"
                         className="ff-btn ff-btn--ghost"
@@ -1250,31 +1439,47 @@ export default function ImportsPage() {
                       </button>
                     ) : null}
                     {!isInstallmentRow && selectedCategory !== "" ? (
-                      <label className="ff-note" title="Opcional: reutilizar esta escolha em próximas importações">
+                      <label
+                        className="ff-note"
+                        title="Opcional: reutilizar esta escolha em próximas importações"
+                      >
                         <input
                           type="checkbox"
                           checked={learning[index]?.merchant === true}
                           onChange={(event) =>
                             setLearning((previous) => ({
                               ...previous,
-                              [index]: { ...previous[index], merchant: event.target.checked },
+                              [index]: {
+                                ...previous[index],
+                                merchant: event.target.checked,
+                              },
                             }))
                           }
-                        /> ensinar estabelecimento
+                        />{" "}
+                        ensinar estabelecimento
                       </label>
                     ) : null}
-                    {!isInstallmentRow && selectedCategory !== "" && row.sourceCategory ? (
-                      <label className="ff-note" title="Opcional: mapear esta categoria do arquivo">
+                    {!isInstallmentRow &&
+                    selectedCategory !== "" &&
+                    row.sourceCategory ? (
+                      <label
+                        className="ff-note"
+                        title="Opcional: mapear esta categoria do arquivo"
+                      >
                         <input
                           type="checkbox"
                           checked={learning[index]?.sourceCategory === true}
                           onChange={(event) =>
                             setLearning((previous) => ({
                               ...previous,
-                              [index]: { ...previous[index], sourceCategory: event.target.checked },
+                              [index]: {
+                                ...previous[index],
+                                sourceCategory: event.target.checked,
+                              },
                             }))
                           }
-                        /> ensinar categoria da origem
+                        />{" "}
+                        ensinar categoria da origem
                       </label>
                     ) : null}
                     <Input
@@ -1284,7 +1489,10 @@ export default function ImportsPage() {
                       onChange={(event) =>
                         setRowEdits((previous) => ({
                           ...previous,
-                          [index]: { ...previous[index], description: event.target.value },
+                          [index]: {
+                            ...previous[index],
+                            description: event.target.value,
+                          },
                         }))
                       }
                       aria-label={`Descrição linha ${row.sourceLine}`}
@@ -1307,7 +1515,9 @@ export default function ImportsPage() {
                           ...previous,
                           [index]: {
                             ...previous[index],
-                            amountCents: Math.round(Number(event.target.value) * 100),
+                            amountCents: Math.round(
+                              Number(event.target.value) * 100,
+                            ),
                           },
                         }))
                       }
@@ -1454,9 +1664,12 @@ export default function ImportsPage() {
                 ? (subsByCategory.get(selectedCategory) ?? [])
                 : [];
               const finalKind = rowEdits[index]?.kind ?? row.kind;
-              const finalDescription = rowEdits[index]?.description ?? row.description;
-              const finalOccurredOn = rowEdits[index]?.occurredOn ?? row.occurredOn;
-              const finalAmountCents = rowEdits[index]?.amountCents ?? row.amount.cents;
+              const finalDescription =
+                rowEdits[index]?.description ?? row.description;
+              const finalOccurredOn =
+                rowEdits[index]?.occurredOn ?? row.occurredOn;
+              const finalAmountCents =
+                rowEdits[index]?.amountCents ?? row.amount.cents;
               const isExpense = finalKind === "expense";
               return (
                 <Card
@@ -1487,7 +1700,9 @@ export default function ImportsPage() {
                           minWidth: 0,
                         }}
                       >
-                        <span className="ff-txrow__desc">{finalDescription}</span>
+                        <span className="ff-txrow__desc">
+                          {finalDescription}
+                        </span>
                         {row.installment !== undefined ? (
                           <Badge tone="accent">
                             {row.installment.number}/{row.installment.count}
@@ -1519,7 +1734,8 @@ export default function ImportsPage() {
                       {isDbDuplicate ? (
                         <Badge tone="neutral">já importada</Badge>
                       ) : null}
-                      {aiSuggestion !== undefined && aiCategoryName !== undefined ? (
+                      {aiSuggestion !== undefined &&
+                      aiCategoryName !== undefined ? (
                         <button
                           type="button"
                           className="ff-btn ff-btn--ghost"
@@ -1544,7 +1760,10 @@ export default function ImportsPage() {
                             onChange={(event) =>
                               setRowEdits((previous) => ({
                                 ...previous,
-                                [index]: { ...previous[index], description: event.target.value },
+                                [index]: {
+                                  ...previous[index],
+                                  description: event.target.value,
+                                },
                               }))
                             }
                             aria-label={`Descrição linha ${row.sourceLine}`}
@@ -1555,7 +1774,10 @@ export default function ImportsPage() {
                             onChange={(event) =>
                               setRowEdits((previous) => ({
                                 ...previous,
-                                [index]: { ...previous[index], occurredOn: event.target.value },
+                                [index]: {
+                                  ...previous[index],
+                                  occurredOn: event.target.value,
+                                },
                               }))
                             }
                             aria-label={`Data linha ${row.sourceLine}`}
@@ -1570,7 +1792,9 @@ export default function ImportsPage() {
                                 ...previous,
                                 [index]: {
                                   ...previous[index],
-                                  amountCents: Math.round(Number(event.target.value) * 100),
+                                  amountCents: Math.round(
+                                    Number(event.target.value) * 100,
+                                  ),
                                 },
                               }))
                             }
@@ -1583,7 +1807,9 @@ export default function ImportsPage() {
                                 ...previous,
                                 [index]: {
                                   ...previous[index],
-                                  kind: event.target.value as "expense" | "income",
+                                  kind: event.target.value as
+                                    | "expense"
+                                    | "income",
                                 },
                               }))
                             }

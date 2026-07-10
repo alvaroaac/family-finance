@@ -345,6 +345,15 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
       let stderr = "";
       let stdout = "";
       let exceeded = false;
+      const killGroup = () => {
+        if (child.pid && process.platform !== "win32") {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+        } else child.kill("SIGKILL");
+      };
       child.stderr.on("data", (chunk: Buffer) => {
         if (stderr.length < request.maxOutputBytes) stderr += chunk.toString();
         if (stderr.length >= request.maxOutputBytes) {
@@ -365,18 +374,20 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
           killGroup();
         }
       });
-      const killGroup = () => {
-        if (child.pid && process.platform !== "win32") {
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {
-            child.kill("SIGKILL");
-          }
-        } else child.kill("SIGKILL");
-      };
       const timer = setTimeout(killGroup, request.timeoutMs);
+      const outputMonitor = setInterval(() => {
+        void stat(request.outputPath)
+          .then((info) => {
+            if (info.size > request.maxOutputBytes) {
+              exceeded = true;
+              killGroup();
+            }
+          })
+          .catch(() => undefined);
+      }, 25);
       child.on("error", (error: NodeJS.ErrnoException) => {
         clearTimeout(timer);
+        clearInterval(outputMonitor);
         resolve({
           exitCode: null,
           timedOut: false,
@@ -395,6 +406,7 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
       });
       child.on("close", (code, signal) => {
         clearTimeout(timer);
+        clearInterval(outputMonitor);
         let auditError: string | undefined;
         try {
           for (const line of stdout.split(/\r?\n/).filter(Boolean)) {

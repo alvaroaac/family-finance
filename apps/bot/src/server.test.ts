@@ -3,10 +3,7 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 
-import {
-  createBotServer,
-  type ImportSuggestionRoute,
-} from "./server.js";
+import { createBotServer, type ImportSuggestionRoute } from "./server.js";
 import type { WebhookResult } from "./index.js";
 
 type Handle = (
@@ -197,7 +194,12 @@ describe("createBotServer", () => {
     );
   });
 
-  function signedHeaders(body: string, secret: string, timestamp: number, nonce = randomUUID()) {
+  function signedHeaders(
+    body: string,
+    secret: string,
+    timestamp: number,
+    nonce = randomUUID(),
+  ) {
     const path = "/internal/v1/import-category-suggestions";
     const hash = createHash("sha256").update(body).digest("hex");
     const canonical = `${timestamp}\n${nonce}\nPOST\n${path}\n${hash}`;
@@ -219,6 +221,7 @@ describe("createBotServer", () => {
     const base = await startServer(handle, {
       secret,
       handle: internal,
+      claimNonce: vi.fn().mockResolvedValue(true),
       now: () => now,
     });
     const body = JSON.stringify({ version: 1 });
@@ -238,12 +241,20 @@ describe("createBotServer", () => {
 
   it("rejects invalid, stale, and replayed internal signatures", async () => {
     const handle = vi.fn<Handle>();
-    const internal = vi.fn().mockResolvedValue({ status: 200, body: { ok: true } });
+    const internal = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { ok: true } });
     const secret = "b".repeat(32);
     const now = 1_800_000_000_000;
+    const claimed = new Set<string>();
     const base = await startServer(handle, {
       secret,
       handle: internal,
+      claimNonce: vi.fn(async (nonce: string) => {
+        if (claimed.has(nonce)) return false;
+        claimed.add(nonce);
+        return true;
+      }),
       now: () => now,
     });
     const body = JSON.stringify({ version: 1 });
@@ -251,31 +262,43 @@ describe("createBotServer", () => {
     const nonce = randomUUID();
     const headers = signedHeaders(body, secret, current, nonce);
 
-    const invalid = await fetch(`${base}/internal/v1/import-category-suggestions`, {
-      method: "POST",
-      headers: { ...headers, "x-import-signature": "v1=bad" },
-      body,
-    });
+    const invalid = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: { ...headers, "x-import-signature": "v1=bad" },
+        body,
+      },
+    );
     expect(invalid.status).toBe(401);
 
-    const stale = await fetch(`${base}/internal/v1/import-category-suggestions`, {
-      method: "POST",
-      headers: signedHeaders(body, secret, current - 61),
-      body,
-    });
+    const stale = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: signedHeaders(body, secret, current - 61),
+        body,
+      },
+    );
     expect(stale.status).toBe(401);
 
-    const first = await fetch(`${base}/internal/v1/import-category-suggestions`, {
-      method: "POST",
-      headers,
-      body,
-    });
+    const first = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers,
+        body,
+      },
+    );
     expect(first.status).toBe(200);
-    const replay = await fetch(`${base}/internal/v1/import-category-suggestions`, {
-      method: "POST",
-      headers,
-      body,
-    });
+    const replay = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers,
+        body,
+      },
+    );
     expect(replay.status).toBe(409);
     expect(internal).toHaveBeenCalledTimes(1);
   });
