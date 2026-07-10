@@ -63,6 +63,7 @@ import type {
   ImportSource,
   SourceCategoryMappingRow,
   ImportItemClaimRow,
+  ImportRowRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -555,6 +556,24 @@ export async function confirmImportV2(
   return data as ConfirmImportV2Result;
 }
 
+/** Atomically reserve the per-preview paid fallback cap. Replays receive zero. */
+export async function reserveImportAiPaidItems(
+  client: AppSupabaseClient,
+  householdId: string,
+  requestKey: string,
+  requestedItems: number,
+): Promise<number> {
+  const { data, error } = await client.rpc("reserve_import_ai_paid_items", {
+    target_household_id: householdId,
+    target_request_key: requestKey,
+    requested_items: requestedItems,
+  });
+  if (error !== null) {
+    throw new Error(`reserveImportAiPaidItems failed: ${error.message}`);
+  }
+  return Number(data ?? 0);
+}
+
 /** Exact active claims used to mark already-imported rows during preview. */
 export async function findImportItemClaims(
   client: AppSupabaseClient,
@@ -576,6 +595,91 @@ export async function findImportItemClaims(
     throw new Error(`findImportItemClaims failed: ${error.message}`);
   }
   return (data ?? []) as ImportItemClaimRow[];
+}
+
+/** Prior audited dispositions for an exact raw-file replay (review context only). */
+export async function findImportRowsByFileFingerprint(
+  client: AppSupabaseClient,
+  householdId: string,
+  source: ImportSource,
+  fileFingerprint: string,
+): Promise<ImportRowRow[]> {
+  const { data: batches, error: batchError } = await client
+    .from("import_batches")
+    .select("id")
+    .eq("household_id", householdId)
+    .eq("source", source)
+    .eq("file_fingerprint", fileFingerprint);
+  if (batchError !== null) {
+    throw new Error(`findImportRowsByFileFingerprint failed: ${batchError.message}`);
+  }
+  const batchIds = (batches ?? []).map((batch) => batch.id);
+  if (batchIds.length === 0) return [];
+  const { data, error } = await client
+    .from("import_rows")
+    .select("*")
+    .eq("household_id", householdId)
+    .in("import_batch_id", batchIds)
+    .order("created_at", { ascending: false });
+  if (error !== null) {
+    throw new Error(`findImportRowsByFileFingerprint failed: ${error.message}`);
+  }
+  return (data ?? []) as ImportRowRow[];
+}
+
+export async function findImportBatchById(
+  client: AppSupabaseClient,
+  householdId: string,
+  batchId: string,
+): Promise<ImportBatchRow | null> {
+  const { data, error } = await client
+    .from("import_batches")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("id", batchId)
+    .maybeSingle();
+  if (error !== null) throw new Error(`findImportBatchById failed: ${error.message}`);
+  return (data as ImportBatchRow | null) ?? null;
+}
+
+/** Legacy-v1 duplicate bridge for artifacts created before item claims existed. */
+export async function findTransactionsForInstrumentBetween(
+  client: AppSupabaseClient,
+  householdId: string,
+  instrument: { type: "account" | "credit_card"; id: string },
+  fromDate: string,
+  toDate: string,
+): Promise<TransactionRow[]> {
+  let query = client
+    .from("transactions")
+    .select("*")
+    .eq("household_id", householdId)
+    .gte("occurred_on", fromDate)
+    .lte("occurred_on", toDate);
+  query =
+    instrument.type === "account"
+      ? query.eq("account_id", instrument.id)
+      : query.eq("credit_card_id", instrument.id);
+  const { data, error } = await query;
+  if (error !== null) {
+    throw new Error(`findTransactionsForInstrumentBetween failed: ${error.message}`);
+  }
+  return (data ?? []) as TransactionRow[];
+}
+
+export async function listImportRowsByBatchId(
+  client: AppSupabaseClient,
+  householdId: string,
+  batchId: string,
+): Promise<ImportRowRow[]> {
+  const { data, error } = await client
+    .from("import_rows")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("import_batch_id", batchId)
+    .order("source_line", { ascending: true });
+  if (error !== null) throw new Error(`listImportRowsByBatchId failed: ${error.message}`);
+  return (data ?? []) as ImportRowRow[];
 }
 
 // ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ export type ImportRowDisposition =
   | "imported"
   | "duplicate_existing"
   | "duplicate_in_file"
+  | "parser_error"
   | "validation_error"
   | "excluded";
 export type CategorizationMemoryMatchKind =
@@ -218,6 +219,7 @@ export type ImportBatchRow = {
   payload_fingerprint: string | null;
   file_fingerprint: string | null;
   parser_version: string | null;
+  normalized_fingerprint: string | null;
   confirmed_at: string | null;
   created_by_user_id: string;
   created_at: string;
@@ -245,6 +247,11 @@ export type ImportRowRow = {
   observed_installment_number: number | null;
   observed_installment_count: number | null;
   card_last4: string | null;
+  override_reason: string | null;
+  category_source: string | null;
+  category_confidence: number | null;
+  category_accepted: boolean | null;
+  category_changed: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -262,6 +269,9 @@ export type ImportItemClaimRow = {
   installment_group_id: string | null;
   source_line: number | null;
   override_token: string | null;
+  override_of_claim_id: string | null;
+  override_reason: string | null;
+  override_by_user_id: string | null;
   created_at: string;
 };
 
@@ -538,6 +548,7 @@ export type ConfirmImportV2BatchPayload = {
   notes?: string | null;
   file_fingerprint?: string | null;
   parser_version?: string | null;
+  normalized_fingerprint?: string | null;
 };
 
 export type ImportCategoryLearning = {
@@ -575,6 +586,11 @@ type ConfirmImportV2AuditFields = {
   observed_installment_number?: number | null;
   observed_installment_count?: number | null;
   card_last4?: string | null;
+  override_reason?: string | null;
+  category_source?: string | null;
+  category_confidence?: number | null;
+  category_accepted?: boolean | null;
+  category_changed?: boolean | null;
   /** Present only after the user explicitly opts in to teaching the mapping. */
   learning?: ConfirmImportV2Learning | null;
 };
@@ -585,6 +601,7 @@ export type ConfirmImportV2TransactionItem = ConfirmImportV2AuditFields & {
   base_fingerprint: string;
   occurrence_no: number;
   override_token?: string | null;
+  override_of_claim_id?: string | null;
   transaction: Omit<TransactionInsert, "import_batch_id">;
   installment_group?: never;
   installments?: never;
@@ -596,13 +613,18 @@ export type ConfirmImportV2InstallmentItem = ConfirmImportV2AuditFields & {
   base_fingerprint: string;
   occurrence_no: number;
   override_token?: string | null;
+  override_of_claim_id?: string | null;
   transaction?: never;
   installment_group: InstallmentGroupInsertPayload;
   installments: InstallmentInsertPayload[];
 };
 
 export type ConfirmImportV2AuditItem = ConfirmImportV2AuditFields & {
-  disposition: "duplicate_in_file" | "validation_error" | "excluded";
+  disposition:
+    | "duplicate_in_file"
+    | "parser_error"
+    | "validation_error"
+    | "excluded";
   transaction?: never;
   installment_group?: never;
   installments?: never;
@@ -730,6 +752,14 @@ export type Database = {
           items_payload: ConfirmImportV2Item[];
         };
         Returns: ConfirmImportV2Result;
+      };
+      reserve_import_ai_paid_items: {
+        Args: {
+          target_household_id: string;
+          target_request_key: string;
+          requested_items: number;
+        };
+        Returns: number;
       };
       // Atomic category merge: re-point transactions / installment groups /
       // installments / subcategories / categorization_memory off the source

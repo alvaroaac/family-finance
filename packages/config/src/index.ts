@@ -39,6 +39,12 @@ export const envSchema = z.object({
   CODEX_ENABLED: z.enum(["true", "false"]).optional(),
   CODEX_MODEL: z.string().min(1).optional(),
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).optional(),
+  // Import previews are signed by the web app; AI category batches are sent to
+  // the bot VPS over a separately authenticated internal endpoint.
+  IMPORT_PREVIEW_SIGNING_SECRET: z.string().min(32).optional(),
+  IMPORT_SUGGESTION_URL: z.string().url().optional(),
+  IMPORT_SUGGESTION_SHARED_SECRET: z.string().min(32).optional(),
+  IMPORT_HAIKU_MAX_ITEMS: z.coerce.number().int().min(0).max(25).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   AUTHORIZED_EMAILS: z.string().min(1),
   HOUSEHOLD_SLUG: z.string().min(1).default("casa"),

@@ -33,8 +33,9 @@ export type SourceCategoryMapping = {
   sourceLabel: string;
   normalizedSourceLabel?: string;
   rowKind: CategorizationRowKind;
-  categoryId: string;
+  categoryId: string | null;
   subcategoryId?: string | null;
+  suppress?: boolean;
   confidence?: number;
   explanation?: string;
   isActive: boolean;
@@ -208,7 +209,7 @@ function resolveRuleChoice(
       normalize(item.name) === normalize(subcategoryName),
   );
   return subcategory === undefined
-    ? { categoryId: category.id }
+    ? null
     : { categoryId: category.id, subcategoryId: subcategory.id };
 }
 
@@ -288,7 +289,7 @@ export function planCategorizationBatch(
     }
 
     const memory = matchMemory(context, [...memoryEntries]);
-    if (memory?.matchKind === "suppress" || (memory !== null && memory.categoryId === null)) {
+    if (memory?.matchKind === "suppress") {
       rows.push({
         ...base,
         status: "suppressed",
@@ -317,6 +318,16 @@ export function planCategorizationBatch(
 
     const mapping = matchingSourceMapping(row, sourceMappings);
     if (mapping !== null) {
+      if (mapping.suppress || mapping.categoryId === null) {
+        rows.push({
+          ...base,
+          status: "suppressed",
+          suppressionExplanation:
+            mapping.explanation ??
+            `Categoria da origem "${mapping.sourceLabel}" suprimida pelo usuário.`,
+        });
+        continue;
+      }
       const choice = validChoice(options.catalog, mapping.categoryId, mapping.subcategoryId);
       if (choice !== null) {
         const result = candidate({

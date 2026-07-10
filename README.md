@@ -40,6 +40,8 @@ committed; the web build stays green with placeholder values.
 | `HOUSEHOLD_SLUG`                                            | Single MVP household slug (`casa`).                                  |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`             | Bot API access + fail-closed webhook verification.                   |
 | `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL`), `OPENAI_API_KEY`   | Optional AI categorization fallback + voice transcription.           |
+| `IMPORT_PREVIEW_SIGNING_SECRET`                             | Signs transient import previews before confirmation.                 |
+| `IMPORT_SUGGESTION_URL`, `IMPORT_SUGGESTION_SHARED_SECRET`  | Authenticated web-to-bot import category suggestions.                |
 
 ### Supabase setup
 

@@ -15,12 +15,19 @@
  */
 
 import http from "node:http";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
+import { getBotServerEnv, getLlmConfig } from "@family-finance/config";
+
 import { startBot, type WebhookResult } from "./index.js";
+import { createImportSuggestionHandler } from "./import-suggestions.js";
+import { createAnthropicCompletionClient } from "./providers.js";
 
 /** Telegram updates are small; anything above this is not a real update. */
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_INTERNAL_BODY_BYTES = 256 * 1024;
+const IMPORT_SUGGESTION_PATH = "/internal/v1/import-category-suggestions";
 
 const DEFAULT_PORT = 8787;
 
@@ -31,6 +38,16 @@ type WebhookHandle = (
   rawBody: unknown,
   secretHeader: string | undefined,
 ) => Promise<WebhookResult>;
+
+export type ImportSuggestionHandle = (
+  body: unknown,
+) => Promise<{ status: number; body: unknown }>;
+
+export type ImportSuggestionRoute = {
+  secret: string;
+  handle: ImportSuggestionHandle;
+  now?: () => number;
+};
 
 function sendJson(
   response: http.ServerResponse,
@@ -45,13 +62,16 @@ function sendJson(
 }
 
 /** Read the full request body, rejecting anything above the byte cap. */
-function readBody(request: http.IncomingMessage): Promise<string> {
+function readBody(
+  request: http.IncomingMessage,
+  maxBytes = MAX_BODY_BYTES,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
     request.on("data", (chunk: Buffer) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBytes) {
         reject(new Error("body too large"));
         request.destroy();
         return;
@@ -67,9 +87,19 @@ function readBody(request: http.IncomingMessage): Promise<string> {
  * Build the HTTP server around an injected webhook handler (tests pass a fake;
  * production passes `startBot().handle`).
  */
-export function createBotServer(handle: WebhookHandle): http.Server {
+export function createBotServer(
+  handle: WebhookHandle,
+  options?: { importSuggestions?: ImportSuggestionRoute },
+): http.Server {
+  const usedNonces = new Map<string, number>();
   return http.createServer((request, response) => {
-    void routeRequest(handle, request, response);
+    void routeRequest(
+      handle,
+      request,
+      response,
+      options?.importSuggestions,
+      usedNonces,
+    );
   });
 }
 
@@ -77,6 +107,8 @@ async function routeRequest(
   handle: WebhookHandle,
   request: http.IncomingMessage,
   response: http.ServerResponse,
+  importSuggestions?: ImportSuggestionRoute,
+  usedNonces: Map<string, number> = new Map(),
 ): Promise<void> {
   const url = request.url ?? "/";
   const path = url.split("?")[0] ?? url;
@@ -125,14 +157,108 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === "POST" && path === IMPORT_SUGGESTION_PATH) {
+    if (importSuggestions === undefined) {
+      sendJson(response, 404, { ok: false, error: "not found" });
+      return;
+    }
+    let raw: string;
+    try {
+      raw = await readBody(request, MAX_INTERNAL_BODY_BYTES);
+    } catch {
+      sendJson(response, 413, { ok: false, error: "body too large" });
+      return;
+    }
+    const now = importSuggestions.now?.() ?? Date.now();
+    const timestampHeader = request.headers["x-import-timestamp"];
+    const nonceHeader = request.headers["x-import-nonce"];
+    const signatureHeader = request.headers["x-import-signature"];
+    const timestampRaw = Array.isArray(timestampHeader)
+      ? timestampHeader[0]
+      : timestampHeader;
+    const nonce = Array.isArray(nonceHeader) ? nonceHeader[0] : nonceHeader;
+    const signature = Array.isArray(signatureHeader)
+      ? signatureHeader[0]
+      : signatureHeader;
+    const timestamp = Number(timestampRaw);
+    if (
+      timestampRaw === undefined ||
+      !Number.isInteger(timestamp) ||
+      Math.abs(Math.floor(now / 1000) - timestamp) > 60 ||
+      nonce === undefined ||
+      !/^[A-Za-z0-9_-]{16,128}$/.test(nonce) ||
+      signature === undefined
+    ) {
+      sendJson(response, 401, { ok: false, error: "invalid signature" });
+      return;
+    }
+    for (const [key, expiresAt] of usedNonces) {
+      if (expiresAt <= now) usedNonces.delete(key);
+    }
+    if (usedNonces.has(nonce)) {
+      sendJson(response, 409, { ok: false, error: "replayed request" });
+      return;
+    }
+    const bodyHash = createHash("sha256").update(raw).digest("hex");
+    const canonical = `${timestamp}\n${nonce}\nPOST\n${IMPORT_SUGGESTION_PATH}\n${bodyHash}`;
+    const expected = `v1=${createHmac("sha256", importSuggestions.secret)
+      .update(canonical)
+      .digest("hex")}`;
+    const supplied = Buffer.from(signature);
+    const wanted = Buffer.from(expected);
+    if (supplied.length !== wanted.length || !timingSafeEqual(supplied, wanted)) {
+      sendJson(response, 401, { ok: false, error: "invalid signature" });
+      return;
+    }
+    usedNonces.set(nonce, now + 120_000);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendJson(response, 400, { ok: false, error: "invalid json" });
+      return;
+    }
+    try {
+      const result = await importSuggestions.handle(parsed);
+      sendJson(response, result.status, result.body);
+    } catch (error) {
+      console.error("[bot:server] import suggestion handler failed:", error);
+      sendJson(response, 503, { ok: false, error: "suggestions unavailable" });
+    }
+    return;
+  }
+
   sendJson(response, 404, { ok: false, error: "not found" });
 }
 
 /** Production entry point: real bot wiring + listen on PORT. */
 async function main(): Promise<void> {
   const { handle } = await startBot();
+  const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
-  const server = createBotServer(handle);
+  const llm = getLlmConfig();
+  const haikuClient =
+    llm.isConfigured && llm.apiKey !== undefined
+      ? createAnthropicCompletionClient({
+          apiKey: llm.apiKey,
+          model: llm.model,
+          timeoutMs: 8_000,
+        })
+      : undefined;
+  const importSuggestions =
+    env.IMPORT_SUGGESTION_SHARED_SECRET === undefined
+      ? undefined
+      : {
+          secret: env.IMPORT_SUGGESTION_SHARED_SECRET,
+          handle: createImportSuggestionHandler({
+            codexEnabled: env.CODEX_ENABLED === "true",
+            codexModel: env.CODEX_MODEL ?? "gpt-5.5",
+            codexTimeoutMs: env.CODEX_TIMEOUT_MS ?? 12_000,
+            codexHome: "/var/lib/family-finance-codex",
+            haikuClient,
+          }),
+        };
+  const server = createBotServer(handle, { importSuggestions });
   server.listen(port, () => {
     console.log(`[bot:server] listening on :${port}`);
   });

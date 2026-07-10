@@ -46,6 +46,8 @@ export {
   assignRowIdentities,
   normalizedRowsFingerprint,
   claimIdentity,
+  installmentGroupBaseIdentityHash,
+  assignInstallmentGroupIdentities,
 } from "./identity.js";
 export type {
   ImportIdentityVersion,

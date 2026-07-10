@@ -6,6 +6,8 @@ import {
   canonicalJson,
   claimIdentity,
   normalizedRowsFingerprint,
+  installmentGroupBaseIdentityHash,
+  assignInstallmentGroupIdentities,
   rowBaseIdentityHash,
   sha256Hex,
   type NormalizedImportRow,
@@ -94,5 +96,23 @@ describe("stable import identity", () => {
     const card = claimIdentity(identity, { type: "credit_card", id: "card-1" });
     expect(account.baseIdentityHash).toBe(card.baseIdentityHash);
     expect(account.claimFingerprint).not.toBe(card.claimFingerprint);
+  });
+
+  it("identifies an installment purchase independently of observed statement parcel", () => {
+    const purchase = {
+      source: "mercado-pago" as const,
+      description: "Notebook",
+      installmentCount: 12,
+      purchasedOn: "2026-01-10",
+      cardLast4: "1234",
+    };
+    expect(installmentGroupBaseIdentityHash(purchase)).toBe(
+      installmentGroupBaseIdentityHash({ ...purchase }),
+    );
+    expect(
+      assignInstallmentGroupIdentities([purchase, purchase]).map(
+        (identity) => identity.occurrenceNo,
+      ),
+    ).toEqual([1, 2]);
   });
 });

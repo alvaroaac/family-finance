@@ -14,6 +14,7 @@ do $$ begin
     'imported',
     'duplicate_existing',
     'duplicate_in_file',
+    'parser_error',
     'validation_error',
     'excluded'
   );
@@ -110,12 +111,19 @@ alter table import_batches add column if not exists request_key uuid;
 alter table import_batches add column if not exists payload_fingerprint text;
 alter table import_batches add column if not exists file_fingerprint text;
 alter table import_batches add column if not exists parser_version text;
+alter table import_batches add column if not exists normalized_fingerprint text;
 alter table import_batches add column if not exists confirmed_at timestamptz;
 
 do $$ begin
   alter table import_batches add constraint import_batches_payload_fingerprint_shape
     check (payload_fingerprint is null or payload_fingerprint ~ '^[0-9a-f]{64}$');
 exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table import_batches add constraint import_batches_normalized_fingerprint_shape
+    check (normalized_fingerprint is null or normalized_fingerprint ~ '^[0-9a-f]{64}$');
+exception when duplicate_object then null; end $$;
+create index if not exists import_batches_normalized_fingerprint_idx
+  on import_batches (household_id, source, normalized_fingerprint);
 do $$ begin
   alter table import_batches add constraint import_batches_file_fingerprint_shape
     check (file_fingerprint is null or file_fingerprint ~ '^[0-9a-f]{64}$');
@@ -166,9 +174,28 @@ create table if not exists import_item_claims (
   installment_group_id uuid references installment_groups (id) on delete restrict,
   source_line integer check (source_line >= 0),
   override_token uuid,
+  override_of_claim_id uuid,
+  override_reason text,
+  override_by_user_id uuid,
   created_at timestamptz not null default now(),
   check (not (transaction_id is not null and installment_group_id is not null))
 );
+
+alter table import_item_claims add column if not exists override_of_claim_id uuid;
+alter table import_item_claims add column if not exists override_reason text;
+alter table import_item_claims add column if not exists override_by_user_id uuid;
+do $$ begin
+  alter table import_item_claims add constraint import_item_claims_override_of_fk
+    foreign key (override_of_claim_id) references import_item_claims (id) on delete restrict;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table import_item_claims add constraint import_item_claims_override_by_fk
+    foreign key (override_by_user_id) references auth.users (id) on delete restrict;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table import_item_claims add constraint import_item_claims_override_reason_shape
+    check (override_reason is null or length(btrim(override_reason)) between 5 and 200);
+exception when duplicate_object then null; end $$;
 
 create unique index if not exists import_item_claims_identity_uniq
   on import_item_claims (
@@ -182,6 +209,82 @@ create unique index if not exists import_item_claims_override_uniq
 
 create index if not exists import_item_claims_batch_idx
   on import_item_claims (import_batch_id);
+
+create table if not exists import_ai_usage (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references households (id) on delete cascade,
+  request_key uuid not null,
+  paid_items_reserved integer not null check (paid_items_reserved between 0 and 25),
+  created_by_user_id uuid not null references auth.users (id) on delete restrict,
+  created_at timestamptz not null default now(),
+  unique (household_id, request_key)
+);
+create table if not exists import_ai_daily_usage (
+  household_id uuid not null references households (id) on delete cascade,
+  usage_date date not null default current_date,
+  paid_items_reserved integer not null default 0 check (paid_items_reserved between 0 and 25),
+  updated_at timestamptz not null default now(),
+  primary key (household_id, usage_date)
+);
+alter table import_ai_usage enable row level security;
+alter table import_ai_daily_usage enable row level security;
+drop policy if exists import_ai_usage_select on import_ai_usage;
+create policy import_ai_usage_select on import_ai_usage
+  for select using (is_household_member(household_id));
+drop policy if exists import_ai_daily_usage_select on import_ai_daily_usage;
+create policy import_ai_daily_usage_select on import_ai_daily_usage
+  for select using (is_household_member(household_id));
+do $$ begin
+  grant select on import_ai_usage, import_ai_daily_usage to authenticated, service_role;
+exception when undefined_object then null; end $$;
+
+create or replace function reserve_import_ai_paid_items(
+  target_household_id uuid,
+  target_request_key uuid,
+  requested_items integer
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  reservation_id uuid;
+  already_reserved integer;
+  allowed integer;
+begin
+  if requested_items not between 0 and 25
+     or not is_household_member(target_household_id) then
+    raise exception 'reserve_import_ai_paid_items: invalid request'
+      using errcode = '42501';
+  end if;
+  insert into import_ai_usage (
+    household_id, request_key, paid_items_reserved, created_by_user_id
+  ) values (
+    target_household_id, target_request_key, 0, auth.uid()
+  ) on conflict (household_id, request_key) do nothing
+  returning id into reservation_id;
+  if reservation_id is null then return 0; end if;
+
+  insert into import_ai_daily_usage (household_id, usage_date)
+  values (target_household_id, current_date)
+  on conflict (household_id, usage_date) do nothing;
+  select paid_items_reserved into already_reserved
+  from import_ai_daily_usage
+  where household_id = target_household_id and usage_date = current_date
+  for update;
+  allowed := least(requested_items, greatest(0, 25 - already_reserved));
+  update import_ai_daily_usage
+  set paid_items_reserved = paid_items_reserved + allowed, updated_at = now()
+  where household_id = target_household_id and usage_date = current_date;
+  update import_ai_usage set paid_items_reserved = allowed where id = reservation_id;
+  return allowed;
+end;
+$$;
+revoke all on function reserve_import_ai_paid_items(uuid, uuid, integer) from public;
+do $$ begin
+  grant execute on function reserve_import_ai_paid_items(uuid, uuid, integer) to authenticated;
+exception when undefined_object then null; end $$;
 
 do $$ begin
   alter table import_item_claims add constraint import_item_claims_hh_batch_fk
@@ -238,10 +341,19 @@ alter table import_rows add column if not exists occurrence_no integer;
 alter table import_rows add column if not exists observed_installment_number integer;
 alter table import_rows add column if not exists observed_installment_count integer;
 alter table import_rows add column if not exists card_last4 text;
+alter table import_rows add column if not exists override_reason text;
+alter table import_rows add column if not exists category_source text;
+alter table import_rows add column if not exists category_confidence numeric;
+alter table import_rows add column if not exists category_accepted boolean;
+alter table import_rows add column if not exists category_changed boolean;
 
 do $$ begin
   alter table import_rows add constraint import_rows_claim_fk
     foreign key (claim_id) references import_item_claims (id) on delete set null;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table import_rows add constraint import_rows_category_confidence_shape
+    check (category_confidence is null or category_confidence between 0 and 1);
 exception when duplicate_object then null; end $$;
 do $$ begin
   alter table import_rows add constraint import_rows_duplicate_claim_fk
@@ -269,6 +381,10 @@ do $$ begin
   alter table import_rows add constraint import_rows_card_last4_shape
     check (card_last4 is null or card_last4 ~ '^[0-9]{4}$');
 exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table import_rows add constraint import_rows_override_reason_shape
+    check (override_reason is null or length(btrim(override_reason)) between 5 and 200);
+exception when duplicate_object then null; end $$;
 
 alter table import_item_claims enable row level security;
 drop policy if exists import_item_claims_select on import_item_claims;
@@ -295,6 +411,8 @@ declare
   target_source import_source := (batch_payload ->> 'source')::import_source;
   target_request_key uuid := (batch_payload ->> 'request_key')::uuid;
   target_payload_fingerprint text := batch_payload ->> 'payload_fingerprint';
+  target_created_by_user_id uuid := (batch_payload ->> 'created_by_user_id')::uuid;
+  caller_user_id uuid := auth.uid();
   inserted_batch import_batches;
   existing_batch import_batches;
   item jsonb;
@@ -335,8 +453,59 @@ begin
       using errcode = '42501';
   end if;
 
+  if target_created_by_user_id is null
+     or not exists (
+       select 1 from household_members
+       where household_id = target_household_id
+         and user_id = target_created_by_user_id
+         and is_active
+     )
+     or (
+       coalesce(auth.role(), '') <> 'service_role'
+       and target_created_by_user_id is distinct from caller_user_id
+     ) then
+    raise exception 'confirm_import_v2: invalid created_by_user_id attribution'
+      using errcode = '42501';
+  end if;
+
   if jsonb_typeof(items_payload) is distinct from 'array' then
     raise exception 'confirm_import_v2: items_payload must be an array'
+      using errcode = '22023';
+  end if;
+  if jsonb_array_length(items_payload) = 0
+     or not exists (
+       select 1 from jsonb_array_elements(items_payload) candidate
+       where candidate ->> 'disposition' = 'imported'
+     ) then
+    raise exception 'confirm_import_v2: empty import cannot be confirmed'
+      using errcode = '22023';
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements(items_payload) candidate
+    where candidate -> 'learning' -> 'source_category' is not null
+    group by
+      candidate -> 'learning' -> 'source_category' ->> 'normalized_label',
+      candidate -> 'learning' -> 'source_category' ->> 'row_kind'
+    having count(distinct jsonb_build_object(
+      'category_id', candidate -> 'learning' -> 'source_category' ->> 'category_id',
+      'subcategory_id', candidate -> 'learning' -> 'source_category' ->> 'subcategory_id',
+      'suppress', candidate -> 'learning' -> 'source_category' ->> 'suppress'
+    )) > 1
+  ) or exists (
+    select 1
+    from jsonb_array_elements(items_payload) candidate
+    where candidate -> 'learning' -> 'merchant_memory' is not null
+    group by
+      candidate -> 'learning' -> 'merchant_memory' ->> 'pattern',
+      candidate -> 'learning' -> 'merchant_memory' ->> 'row_kind'
+    having count(distinct jsonb_build_object(
+      'category_id', candidate -> 'learning' -> 'merchant_memory' ->> 'category_id',
+      'subcategory_id', candidate -> 'learning' -> 'merchant_memory' ->> 'subcategory_id',
+      'suppress', candidate -> 'learning' -> 'merchant_memory' ->> 'suppress'
+    )) > 1
+  ) then
+    raise exception 'confirm_import_v2: conflicting learning commands'
       using errcode = '22023';
   end if;
 
@@ -346,18 +515,20 @@ begin
     household_id, source, status, total_rows, imported_rows, duplicate_rows,
     error_rows, notes, created_by_user_id, request_key, payload_fingerprint,
     file_fingerprint, parser_version, confirmed_at
+    , normalized_fingerprint
   ) values (
     target_household_id,
     target_source,
     'confirmed',
     0, 0, 0, 0,
     nullif(batch_payload ->> 'notes', ''),
-    (batch_payload ->> 'created_by_user_id')::uuid,
+    target_created_by_user_id,
     target_request_key,
     target_payload_fingerprint,
     nullif(batch_payload ->> 'file_fingerprint', ''),
     nullif(batch_payload ->> 'parser_version', ''),
-    now()
+    now(),
+    nullif(batch_payload ->> 'normalized_fingerprint', '')
   )
   on conflict (household_id, request_key) do nothing
   returning * into inserted_batch;
@@ -437,6 +608,27 @@ begin
         raise exception 'confirm_import_v2: invalid item identity'
           using errcode = '22023';
       end if;
+      if ((item ->> 'override_token') is null) <> ((item ->> 'override_of_claim_id') is null)
+         or ((item ->> 'override_token') is not null and (item ->> 'override_reason') is null)
+         or ((item ->> 'override_reason') is not null
+           and length(btrim(item ->> 'override_reason')) not between 5 and 200) then
+        raise exception 'confirm_import_v2: override token, claim, and reason must be supplied together'
+          using errcode = '22023';
+      end if;
+      if item ->> 'override_of_claim_id' is not null then
+        select * into existing_claim from import_item_claims
+        where id = (item ->> 'override_of_claim_id')::uuid
+          and household_id = target_household_id
+          and source = target_source
+          and fingerprint_version = (item ->> 'fingerprint_version')::smallint
+          and base_fingerprint = item ->> 'base_fingerprint'
+          and occurrence_no = (item ->> 'occurrence_no')::integer
+          and override_token is null;
+        if existing_claim.id is null then
+          raise exception 'confirm_import_v2: override does not reference the conflicting natural claim'
+            using errcode = '22023';
+        end if;
+      end if;
 
       artifact_kind := case when tx is not null
         then 'transaction'::import_artifact_kind
@@ -444,7 +636,8 @@ begin
 
       insert into import_item_claims (
         household_id, source, fingerprint_version, base_fingerprint,
-        occurrence_no, artifact_kind, import_batch_id, source_line, override_token
+        occurrence_no, artifact_kind, import_batch_id, source_line, override_token,
+        override_of_claim_id, override_reason, override_by_user_id
       ) values (
         target_household_id,
         target_source,
@@ -454,7 +647,11 @@ begin
         artifact_kind,
         inserted_batch.id,
         (item ->> 'source_line')::integer,
-        (item ->> 'override_token')::uuid
+        (item ->> 'override_token')::uuid,
+        (item ->> 'override_of_claim_id')::uuid,
+        nullif(btrim(item ->> 'override_reason'), ''),
+        case when item ->> 'override_token' is null then null
+          else (batch_payload ->> 'created_by_user_id')::uuid end
       )
       on conflict do nothing
       returning * into inserted_claim;
@@ -478,6 +675,27 @@ begin
         if (tx ->> 'household_id') is distinct from target_household_id::text then
           raise exception 'confirm_import_v2: transaction household_id mismatch'
             using errcode = '22023';
+        end if;
+        if (tx ->> 'created_by_user_id') is distinct from target_created_by_user_id::text
+           or ((tx ->> 'responsible_user_id') is not null and not exists (
+             select 1 from household_members
+             where household_id = target_household_id
+               and user_id = (tx ->> 'responsible_user_id')::uuid
+               and is_active
+           ))
+           or ((tx ->> 'category_id') is not null and not exists (
+             select 1 from categories
+             where id = (tx ->> 'category_id')::uuid
+               and household_id = target_household_id and is_active
+           ))
+           or ((tx ->> 'subcategory_id') is not null and not exists (
+             select 1 from subcategories
+             where id = (tx ->> 'subcategory_id')::uuid
+               and household_id = target_household_id and is_active
+               and category_id = (tx ->> 'category_id')::uuid
+           )) then
+          raise exception 'confirm_import_v2: invalid transaction attribution or taxonomy'
+            using errcode = '42501';
         end if;
         insert into transactions (
           household_id, kind, amount_cents, occurred_on, description,
@@ -514,6 +732,48 @@ begin
            ) then
           raise exception 'confirm_import_v2: installment plan scope mismatch'
             using errcode = '22023';
+        end if;
+        if (group_data ->> 'created_by_user_id') is distinct from target_created_by_user_id::text
+           or ((group_data ->> 'responsible_user_id') is not null and not exists (
+             select 1 from household_members
+             where household_id = target_household_id
+               and user_id = (group_data ->> 'responsible_user_id')::uuid
+               and is_active
+           ))
+           or ((group_data ->> 'category_id') is not null and not exists (
+             select 1 from categories
+             where id = (group_data ->> 'category_id')::uuid
+               and household_id = target_household_id and is_active
+           ))
+           or ((group_data ->> 'subcategory_id') is not null and not exists (
+             select 1 from subcategories
+             where id = (group_data ->> 'subcategory_id')::uuid
+               and household_id = target_household_id and is_active
+               and category_id = (group_data ->> 'category_id')::uuid
+           ))
+           or exists (
+             select 1 from jsonb_array_elements(parcels) p
+             where (p ->> 'created_by_user_id') is distinct from target_created_by_user_id::text
+                or ((p ->> 'responsible_user_id') is not null and not exists (
+                  select 1 from household_members
+                  where household_id = target_household_id
+                    and user_id = (p ->> 'responsible_user_id')::uuid
+                    and is_active
+                ))
+                or ((p ->> 'category_id') is not null and not exists (
+                  select 1 from categories
+                  where id = (p ->> 'category_id')::uuid
+                    and household_id = target_household_id and is_active
+                ))
+                or ((p ->> 'subcategory_id') is not null and not exists (
+                  select 1 from subcategories
+                  where id = (p ->> 'subcategory_id')::uuid
+                    and household_id = target_household_id and is_active
+                    and category_id = (p ->> 'category_id')::uuid
+                ))
+           ) then
+          raise exception 'confirm_import_v2: invalid installment attribution or taxonomy'
+            using errcode = '42501';
         end if;
 
         insert into installment_groups (
@@ -589,7 +849,7 @@ begin
       imported_count := imported_count + 1;
     elsif item_disposition in ('duplicate_existing', 'duplicate_in_file') then
       duplicate_count := duplicate_count + 1;
-    elsif item_disposition = 'validation_error' then
+    elsif item_disposition in ('parser_error', 'validation_error') then
       error_count := error_count + 1;
     elsif item_disposition = 'excluded' then
       excluded_count := excluded_count + 1;
@@ -600,7 +860,9 @@ begin
       description, error_message, is_duplicate, transaction_id,
       installment_group_id, claim_id, disposition, duplicate_of_claim_id,
       fingerprint_version, base_fingerprint, occurrence_no,
-      observed_installment_number, observed_installment_count, card_last4
+      observed_installment_number, observed_installment_count, card_last4,
+      override_reason, category_source, category_confidence,
+      category_accepted, category_changed
     ) values (
       target_household_id,
       inserted_batch.id,
@@ -620,7 +882,12 @@ begin
       (item ->> 'occurrence_no')::integer,
       (item ->> 'observed_installment_number')::integer,
       (item ->> 'observed_installment_count')::integer,
-      nullif(item ->> 'card_last4', '')
+      nullif(item ->> 'card_last4', ''),
+      nullif(btrim(item ->> 'override_reason'), ''),
+      nullif(item ->> 'category_source', ''),
+      (item ->> 'category_confidence')::numeric,
+      (item ->> 'category_accepted')::boolean,
+      (item ->> 'category_changed')::boolean
     );
 
     -- Learning is opt-in and rides in the same transaction as confirmation.
@@ -638,7 +905,18 @@ begin
          or (
            not coalesce((source_learning ->> 'suppress')::boolean, false)
            and (source_learning ->> 'category_id') is null
-         ) then
+         )
+         or ((source_learning ->> 'category_id') is not null and not exists (
+           select 1 from categories
+           where id = (source_learning ->> 'category_id')::uuid
+             and household_id = target_household_id and is_active
+         ))
+         or ((source_learning ->> 'subcategory_id') is not null and not exists (
+           select 1 from subcategories
+           where id = (source_learning ->> 'subcategory_id')::uuid
+             and household_id = target_household_id and is_active
+             and category_id = (source_learning ->> 'category_id')::uuid
+         )) then
         raise exception 'confirm_import_v2: invalid source-category learning payload'
           using errcode = '22023';
       end if;
@@ -680,7 +958,18 @@ begin
          or (
            not coalesce((memory_learning ->> 'suppress')::boolean, false)
            and (memory_learning ->> 'category_id') is null
-         ) then
+         )
+         or ((memory_learning ->> 'category_id') is not null and not exists (
+           select 1 from categories
+           where id = (memory_learning ->> 'category_id')::uuid
+             and household_id = target_household_id and is_active
+         ))
+         or ((memory_learning ->> 'subcategory_id') is not null and not exists (
+           select 1 from subcategories
+           where id = (memory_learning ->> 'subcategory_id')::uuid
+             and household_id = target_household_id and is_active
+             and category_id = (memory_learning ->> 'category_id')::uuid
+         )) then
         raise exception 'confirm_import_v2: invalid merchant-memory learning payload'
           using errcode = '22023';
       end if;

@@ -235,3 +235,44 @@ export function claimIdentity(identity: RowIdentity, target: ClaimTarget): Claim
   );
   return { ...identity, target, claimFingerprint };
 }
+
+/** Stable purchase-level identity shared by every observed monthly parcel. */
+export function installmentGroupBaseIdentityHash(input: {
+  source: "mercado-pago";
+  description: string;
+  installmentCount: number;
+  purchasedOn: string;
+  cardLast4?: string;
+}): string {
+  return sha256Hex(
+    canonicalJson({
+      identityVersion: IMPORT_IDENTITY_VERSION,
+      artifact: "installment_group",
+      source: input.source,
+      description: normalizeIdentityDescription(input.description),
+      installmentCount: input.installmentCount,
+      purchasedOn: input.purchasedOn,
+      cardLast4: input.cardLast4,
+    }),
+  );
+}
+
+export type InstallmentGroupIdentityInput = Parameters<
+  typeof installmentGroupBaseIdentityHash
+>[0];
+
+export function assignInstallmentGroupIdentities(
+  groups: readonly InstallmentGroupIdentityInput[],
+): RowIdentity[] {
+  const occurrences = new Map<string, number>();
+  return groups.map((group) => {
+    const baseIdentityHash = installmentGroupBaseIdentityHash(group);
+    const occurrenceNo = (occurrences.get(baseIdentityHash) ?? 0) + 1;
+    occurrences.set(baseIdentityHash, occurrenceNo);
+    return {
+      identityVersion: IMPORT_IDENTITY_VERSION,
+      baseIdentityHash,
+      occurrenceNo,
+    };
+  });
+}

@@ -139,6 +139,11 @@ export {
   createImportBatch,
   confirmImport,
   confirmImportV2,
+  reserveImportAiPaidItems,
+  findImportRowsByFileFingerprint,
+  findImportBatchById,
+  listImportRowsByBatchId,
+  findTransactionsForInstrumentBetween,
   findImportItemClaims,
   // Category cleanup + categorization memory (Task 6).
   findHouseholdIdForCurrentUser,

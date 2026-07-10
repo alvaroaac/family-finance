@@ -139,6 +139,45 @@ describe("deterministic batch planning", () => {
     expect(plan.aiItems).toHaveLength(0);
   });
 
+  it("treats a learned source-label suppression as terminal", () => {
+    const plan = planCategorizationBatch(
+      [row("source-suppressed", "Qualquer loja", { sourceCategory: "Ignorar" })],
+      {
+        catalog: CATALOG,
+        sourceMappings: [
+          {
+            id: "map-suppress",
+            householdId: "house-1",
+            source: "minhas-financas",
+            sourceLabel: "Ignorar",
+            rowKind: "expense",
+            categoryId: null,
+            suppress: true,
+            isActive: true,
+          },
+        ],
+      },
+    );
+    expect(plan.rows[0]?.status).toBe("suppressed");
+    expect(plan.aiItems).toHaveLength(0);
+  });
+
+  it("does not reinterpret a legacy null-category memory as suppression", () => {
+    const plan = planCategorizationBatch([row("legacy", "IFOOD legacy")], {
+      catalog: CATALOG,
+      memoryEntries: [
+        {
+          ...exactMemory,
+          id: "legacy-null",
+          pattern: "IFOOD",
+          categoryId: null,
+          matchKind: "description_contains",
+        },
+      ],
+    });
+    expect(plan.rows[0]?.selection?.source).toBe("rule");
+  });
+
   it("groups 100 repeated unresolved merchants into one AI signature", () => {
     const rows = Array.from({ length: 100 }, (_, index) =>
       row(`r-${index}`, `MP * Café Azul PEDIDO ID ABCDE${index % 10}`),
