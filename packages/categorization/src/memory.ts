@@ -15,6 +15,14 @@
 
 import { scoreConfidence } from "./confidence.js";
 import type { CategorizationContext } from "./context.js";
+import { normalizeMerchantKey } from "./merchant.js";
+
+export type CategorizationRowKind = "expense" | "income";
+export type MemoryMatchKind =
+  | "merchant_exact"
+  | "merchant_prefix"
+  | "description_contains"
+  | "suppress";
 
 /** One memory record. Mirrors the durable fields of `categorization_memory`. */
 export type CategorizationMemoryEntry = {
@@ -28,6 +36,12 @@ export type CategorizationMemoryEntry = {
   /** Stored human explanation, e.g. 'descrição contém "IFOOD" -> ...'. */
   explanation: string;
   isActive: boolean;
+  /** Undefined preserves legacy description-contains matching. */
+  matchKind?: MemoryMatchKind;
+  /** Undefined legacy entries are expense-only. */
+  rowKind?: CategorizationRowKind;
+  /** Version provenance for merchant keys; old records may omit it. */
+  normalizerVersion?: string;
 };
 
 /**
@@ -53,29 +67,59 @@ export function matchMemory(
   entries: CategorizationMemoryEntry[],
 ): CategorizationMemoryEntry | null {
   const haystack = (context.description ?? "").toUpperCase();
+  const merchantKey = context.merchantKey ?? normalizeMerchantKey(context.description);
+  const rowKind = context.kind ?? "expense";
   let best: CategorizationMemoryEntry | null = null;
   for (const entry of entries) {
-    if (!entry.isActive) {
+    if (
+      !entry.isActive ||
+      entry.householdId !== context.householdId ||
+      (entry.rowKind ?? "expense") !== rowKind
+    ) {
       continue;
     }
-    const needle = entry.pattern.trim().toUpperCase();
-    if (needle.length === 0 || !haystack.includes(needle)) {
+    const kind = entry.matchKind ?? "description_contains";
+    const legacyNeedle = entry.pattern.trim().toUpperCase();
+    const merchantNeedle = normalizeMerchantKey(entry.pattern);
+    const matched =
+      kind === "description_contains"
+        ? legacyNeedle.length > 0 && haystack.includes(legacyNeedle)
+        : kind === "merchant_prefix"
+          ? merchantNeedle.length > 0 && merchantKey.startsWith(merchantNeedle)
+          : merchantNeedle.length > 0 && merchantKey === merchantNeedle;
+    if (!matched) {
       continue;
     }
     if (best === null) {
       best = entry;
       continue;
     }
+    const bestRank = memorySpecificity(best);
+    const entryRank = memorySpecificity(entry);
     const bestLen = best.pattern.trim().length;
     const entryLen = entry.pattern.trim().length;
     if (
-      entryLen > bestLen ||
-      (entryLen === bestLen && entry.confidence > best.confidence)
+      entryRank > bestRank ||
+      (entryRank === bestRank && entryLen > bestLen) ||
+      (entryRank === bestRank && entryLen === bestLen && entry.confidence > best.confidence)
     ) {
       best = entry;
     }
   }
   return best;
+}
+
+function memorySpecificity(entry: CategorizationMemoryEntry): number {
+  switch (entry.matchKind ?? "description_contains") {
+    case "suppress":
+      return 4;
+    case "merchant_exact":
+      return 3;
+    case "merchant_prefix":
+      return 2;
+    case "description_contains":
+      return 1;
+  }
 }
 
 /** Minimal catalog projection used to render names in explanations. */
@@ -126,6 +170,9 @@ export function memoryEntryFromCorrection(input: {
   subcategoryId: string | null;
   confidence?: number;
   catalog: ExplainCatalog;
+  matchKind?: MemoryMatchKind;
+  rowKind?: CategorizationRowKind;
+  normalizerVersion?: string;
 }): Omit<CategorizationMemoryEntry, "id"> {
   const entry: CategorizationMemoryEntry = {
     id: "",
@@ -136,6 +183,11 @@ export function memoryEntryFromCorrection(input: {
     confidence: scoreConfidence(input.confidence ?? 0.95),
     explanation: "",
     isActive: true,
+    ...(input.matchKind === undefined ? {} : { matchKind: input.matchKind }),
+    ...(input.rowKind === undefined ? {} : { rowKind: input.rowKind }),
+    ...(input.normalizerVersion === undefined
+      ? {}
+      : { normalizerVersion: input.normalizerVersion }),
   };
   const { id: _omit, ...rest } = {
     ...entry,

@@ -46,8 +46,16 @@ export type {
   CategorizationMemoryEntry,
   CategorizationMemoryStore,
   ExplainCatalog,
+  CategorizationRowKind,
+  MemoryMatchKind,
 } from "./memory.js";
 export type { CategorizationContext } from "./context.js";
+export {
+  MERCHANT_KEY_VERSION,
+  SOURCE_CATEGORY_KEY_VERSION,
+  normalizeMerchantKey,
+  normalizeSourceCategoryLabel,
+} from "./merchant.js";
 
 // ---------------------------------------------------------------------------
 // Core suggestion contract.
@@ -93,6 +101,7 @@ export const categorySuggestionSchema = z.object({
 export type CategorizationStatus =
   | "matched"
   | "pending_new_category"
+  | "pending_new_subcategory"
   | "uncategorized";
 
 export type PendingCategoryProposal = {
@@ -108,6 +117,9 @@ export type CategorizationResult = {
   /** Present only when status === "pending_new_category". */
   pendingCategory?: PendingCategoryProposal;
   requiresConfirmation: boolean;
+  /** A confirmed suppression terminates the cascade and intentionally leaves it blank. */
+  suppressed?: boolean;
+  suppressionExplanation?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -169,6 +181,8 @@ type ResolvedCategory = {
   subcategoryId?: string;
   /** True when the proposed macro category name does not exist in the catalog. */
   isNewCategory: boolean;
+  /** True when the macro exists but the proposed subcategory does not. */
+  isNewSubcategory: boolean;
 };
 
 function resolveNames(
@@ -180,10 +194,14 @@ function resolveNames(
     (c) => norm(c.name) === norm(categoryName),
   );
   if (category === undefined) {
-    return { isNewCategory: true };
+    return { isNewCategory: true, isNewSubcategory: false };
   }
   if (subcategoryName === null) {
-    return { categoryId: category.id, isNewCategory: false };
+    return {
+      categoryId: category.id,
+      isNewCategory: false,
+      isNewSubcategory: false,
+    };
   }
   const subcategory = catalog.subcategories.find(
     (s) =>
@@ -191,10 +209,9 @@ function resolveNames(
   );
   return {
     categoryId: category.id,
-    // An unknown subcategory under a known macro is simply dropped (the macro
-    // still applies); it does not make the whole suggestion a new category.
     subcategoryId: subcategory?.id,
     isNewCategory: false,
+    isNewSubcategory: subcategory === undefined,
   };
 }
 
@@ -242,6 +259,13 @@ export async function suggestCategory(
       context.householdId,
     );
     const hit = matchMemory(context, entries);
+    if (hit !== null && (hit.matchKind === "suppress" || hit.categoryId === null)) {
+      return {
+        ...UNCATEGORIZED,
+        suppressed: true,
+        suppressionExplanation: hit.explanation,
+      };
+    }
     if (hit !== null && hit.categoryId !== null) {
       const suggestion: CategorySuggestion = {
         macroCategoryId: hit.categoryId,
@@ -305,6 +329,28 @@ export async function suggestCategory(
           requiresConfirmation: true,
         };
       }
+      if (
+        resolved.isNewSubcategory &&
+        resolved.categoryId !== undefined &&
+        ai.subcategoryName !== null
+      ) {
+        return {
+          status: "pending_new_subcategory",
+          suggestion: {
+            macroCategoryId: resolved.categoryId,
+            confidence,
+            explanation: ai.explanation,
+            source: "ai",
+          },
+          pendingCategory: {
+            categoryName: ai.categoryName,
+            subcategoryName: ai.subcategoryName,
+            confidence,
+            explanation: ai.explanation,
+          },
+          requiresConfirmation: true,
+        };
+      }
       if (resolved.categoryId !== undefined) {
         const suggestion: CategorySuggestion = {
           macroCategoryId: resolved.categoryId,
@@ -329,3 +375,36 @@ export async function suggestCategory(
 
 export { createAiCategorizer, buildCategorizationPrompt } from "./ai.js";
 export type { AiCompletionClient } from "./ai.js";
+
+export {
+  MAX_SUGGESTION_CANDIDATES,
+  MAX_AI_ITEMS_PER_PREVIEW,
+  MAX_AI_ITEMS_PER_CHUNK,
+  AI_BATCH_SCHEMA_VERSION,
+  suggestionCandidateSchema,
+  suggestionCandidatesSchema,
+  aiBatchRequestSchema,
+  aiBatchReplyItemSchema,
+  aiBatchReplyEnvelopeSchema,
+  planCategorizationBatch,
+  chunkAiSuggestionItems,
+  parseAiBatchReply,
+  applyAiBatchReply,
+} from "./batch.js";
+export type {
+  CategorizationImportSource,
+  SourceCategoryMapping,
+  SuggestionProvenance,
+  SuggestionCandidate,
+  ExplicitCategoryChoice,
+  BatchCategorizationRow,
+  FinalCategorySelection,
+  BatchCategorizationRowPlan,
+  AiSuggestionRequestItem,
+  BatchCategorizationPlan,
+  BatchCategorizationOptions,
+  AiBatchReplyItem,
+  ParsedAiBatchReply,
+  TaxonomyProposal,
+  AppliedAiBatch,
+} from "./batch.js";
