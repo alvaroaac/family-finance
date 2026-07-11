@@ -110,6 +110,46 @@ begin
 end;
 $$;
 
+-- An obligation's configured amount remains the forecast while each monthly
+-- materialization may store the actual charge. Replays never rewrite history.
+do $$
+declare
+  custom_result jsonb;
+  replay_result jsonb;
+  default_result jsonb;
+begin
+  insert into obligations(
+    id,household_id,description,amount_cents,start_month,term_months,due_day,
+    account_id,created_by_user_id
+  ) values (
+    '25000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001',
+    'Health care',80000,'2026-07',null,10,
+    '20000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000001'
+  );
+
+  custom_result := materialize_obligation_payment(
+    '25000000-0000-0000-0000-000000000001','2026-07','2026-07-11',92735
+  );
+  replay_result := materialize_obligation_payment(
+    '25000000-0000-0000-0000-000000000001','2026-07','2026-07-12',99999
+  );
+  default_result := materialize_obligation_payment(
+    '25000000-0000-0000-0000-000000000001','2026-08','2026-08-11',null
+  );
+
+  if (custom_result #>> '{transaction,amount_cents}')::bigint <> 92735
+     or not (replay_result ->> 'already_paid')::boolean
+     or (replay_result #>> '{transaction,amount_cents}')::bigint <> 92735
+     or (default_result #>> '{transaction,amount_cents}')::bigint <> 80000
+     or (select amount_cents from obligations
+         where id = '25000000-0000-0000-0000-000000000001') <> 80000 then
+    raise exception 'obligation forecast/actual amount assertion failed';
+  end if;
+end;
+$$;
+
 create or replace function verify_concurrent_import(
   request_key uuid,
   payload_hash text,

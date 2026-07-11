@@ -249,6 +249,7 @@ export function buildCodexPrompt(
     "Nunca escreva, execute ações ou invente dados. Retorne somente o JSON do schema.",
     "Menção a cartão sem parcelas é plain. Parcelamento no cartão é card_installment.",
     '"72x de 710,44" para financiamento/conta recorrente é obligation com valor mensal 71044.',
+    "Em mark_paid, amount_cents é o valor real pago agora, tanto para cartão quanto obrigação; null quando ausente.",
     "Use apenas cartões conhecidos e categorias/subcategorias existentes.",
     "Retorne até 3 categorias existentes ranqueadas. Nova categoria/subcategoria fica apenas proposta pendente.",
     "Separe merchant e item; description deve priorizar o item quando mencionado, senão o merchant/serviço.",

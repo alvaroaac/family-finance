@@ -273,11 +273,17 @@ async function buildDeps(
       const row = await dbCreateObligation(client, draft);
       return { id: row.id };
     },
-    materializeObligationPayment: async ({ obligationId, month, paidOn }) => {
+    materializeObligationPayment: async ({
+      obligationId,
+      month,
+      paidOn,
+      amountCents,
+    }) => {
       const result = await dbMaterializeObligationPayment(client, {
         obligationId,
         month,
         paidOn,
+        ...(amountCents === undefined ? {} : { amountCents }),
       });
       return { alreadyPaid: result.already_paid };
     },

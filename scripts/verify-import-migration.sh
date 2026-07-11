@@ -21,6 +21,8 @@ done
 docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
   < supabase/migrations/0016_import_reliability.sql >/dev/null
 docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
+  < supabase/migrations/0017_obligation_actual_amount.sql >/dev/null
+docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
   < packages/db/test/import-reliability-functional.sql >/dev/null
 
 docker exec "$name" psql -v ON_ERROR_STOP=1 -U postgres -c \

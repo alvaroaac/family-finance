@@ -792,6 +792,7 @@ export type Database = {
           target_obligation_id: string;
           target_month: string;
           paid_on?: string | null;
+          target_amount_cents?: number | null;
         };
         Returns: MaterializeObligationPaymentResult;
       };

@@ -2513,12 +2513,18 @@ export async function updateObligation(
  */
 export async function materializeObligationPayment(
   client: AppSupabaseClient,
-  args: { obligationId: string; month: string; paidOn?: string },
+  args: {
+    obligationId: string;
+    month: string;
+    paidOn?: string;
+    amountCents?: number;
+  },
 ): Promise<MaterializeObligationPaymentResult> {
   const { data, error } = await client.rpc("materialize_obligation_payment", {
     target_obligation_id: args.obligationId,
     target_month: args.month,
     paid_on: args.paidOn ?? null,
+    target_amount_cents: args.amountCents ?? null,
   });
   if (error !== null) {
     throw new Error(`materializeObligationPayment failed: ${error.message}`);

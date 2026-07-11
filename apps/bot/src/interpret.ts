@@ -283,7 +283,7 @@ export function buildClassifierPrompt(text: string, today: string): string {
     '- Em mark_paid, keyword é O QUE foi pago, sem a palavra "pago" (ex.: "placa solar pago" -> "placa solar"; "nubank pago" -> "nubank"). target é "card" quando a keyword é um cartão de crédito; senão "obligation".',
     "- category_hint/responsible_hint são texto livre; null quando não estiver claro.",
     '- Em card_installment: "12x de 300" e "300 12x" são POR PARCELA (per_installment_cents); "3600 em 12x" é o TOTAL (total_cents). Preencha EXATAMENTE UM dos dois; installment_count é o número de parcelas (12x -> 12), null se não aparecer. card_keyword é o nome do cartão ("no nubank" -> "nubank"); description é só o nome do produto/serviço.',
-    '- Em mark_paid com target "card", um número no fim ("nubank pago 2350") vira amount_cents em centavos (235000); null se não houver.',
+    '- Em mark_paid, um valor informado é o valor REAL pago neste mês: "nubank pago 2350" -> 235000 e "unimed pago 1.247,80" -> 124780. null se não houver.',
     "- Se a mensagem não for nada disso, responda exatamente: null",
   ].join("\n");
 }
