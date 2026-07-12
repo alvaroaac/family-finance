@@ -8,6 +8,13 @@ FROM node:22-slim
 
 WORKDIR /app
 
+# Codex's Rust HTTP client uses the OS trust store (Node's built-in roots are
+# not sufficient for it). Keep TLS verification enabled with Debian's standard
+# CA bundle and remove apt metadata from the production layer.
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 # pnpm via corepack, pinned by the "packageManager" field in package.json.
 RUN corepack enable
 
