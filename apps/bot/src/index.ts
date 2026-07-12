@@ -88,6 +88,7 @@ import {
 } from "./audio.js";
 import {
   createAnthropicCompletionClient,
+  createOpenAiCompletionClient,
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
 import {
@@ -921,6 +922,7 @@ export {
 } from "./audio.js";
 export {
   createAnthropicCompletionClient,
+  createOpenAiCompletionClient,
   createOpenAiTranscriptionProvider,
   DEFAULT_PROVIDER_TIMEOUT_MS,
 } from "./providers.js";

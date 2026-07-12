@@ -54,7 +54,7 @@ export const envSchema = z.object({
   IMPORT_PAID_FALLBACK_PROVIDER: z.preprocess(
     (value) =>
       typeof value === "string" && value.trim() === "" ? undefined : value,
-    z.enum(["anthropic"]).optional(),
+    z.enum(["anthropic", "openai"]).optional(),
   ),
   IMPORT_PAID_FALLBACK_MODEL: optionalNonEmptyString,
   IMPORT_PAID_FALLBACK_MAX_ITEMS: z.coerce
@@ -98,6 +98,22 @@ export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
     throw new Error(
       "IMPORT_PAID_FALLBACK_PROVIDER and IMPORT_PAID_FALLBACK_MODEL are required when paid fallback is enabled",
     );
+  }
+  if (
+    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    parsed.IMPORT_PAID_FALLBACK_PROVIDER === "anthropic" &&
+    parsed.ANTHROPIC_API_KEY === undefined
+  ) {
+    throw new Error(
+      "ANTHROPIC_API_KEY is required for the Anthropic paid fallback",
+    );
+  }
+  if (
+    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    parsed.IMPORT_PAID_FALLBACK_PROVIDER === "openai" &&
+    parsed.OPENAI_API_KEY === undefined
+  ) {
+    throw new Error("OPENAI_API_KEY is required for the OpenAI paid fallback");
   }
   return parsed;
 }

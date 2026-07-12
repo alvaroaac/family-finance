@@ -9,6 +9,7 @@ dist
 node_modules
 playwright-report
 test-results
+apps/bot/eval-results/
 *.tsbuildinfo
 .pr-review/
 .vercel/

@@ -532,6 +532,10 @@ failures—not descriptions or raw model output.
 - Paid fallback is disabled by default. Enabling it requires an explicit
   supported provider and exact model ID; no paid model (including Haiku) is
   selected implicitly.
+- Supported paid providers are Anthropic and OpenAI. Both use the same local
+  validation, quota, and telemetry contract; OpenAI requests set `store:false`.
+  The July 12 three-run evaluation selected `openai` + `gpt-5.4` as the
+  recommended operational fallback, but configuration remains explicit.
 - Only operational Codex failure or an omitted/invalid item is eligible. A valid
   Codex item with an explicit empty result is an abstention and remains manual.
 - The bot atomically reserves quota after Codex and immediately before the paid

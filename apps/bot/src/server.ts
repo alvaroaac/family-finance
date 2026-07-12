@@ -26,8 +26,14 @@ import {
 } from "@family-finance/db";
 
 import { startBot, type WebhookResult } from "./index.js";
-import { createImportSuggestionHandler } from "./import-suggestions.js";
-import { createAnthropicCompletionClient } from "./providers.js";
+import {
+  createImportSuggestionHandler,
+  IMPORT_SUGGESTION_OUTPUT_SCHEMA,
+} from "./import-suggestions.js";
+import {
+  createAnthropicCompletionClient,
+  createOpenAiCompletionClient,
+} from "./providers.js";
 
 /** Telegram updates are small; anything above this is not a real update. */
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -246,15 +252,20 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const llm = getLlmConfig();
   const paidFallbackClient =
-    env.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
-    env.IMPORT_PAID_FALLBACK_PROVIDER === "anthropic" &&
-    llm.isConfigured && llm.apiKey !== undefined
-      ? createAnthropicCompletionClient({
-          apiKey: llm.apiKey,
-          model: env.IMPORT_PAID_FALLBACK_MODEL as string,
-          timeoutMs: 8_000,
-        })
-      : undefined;
+    env.IMPORT_PAID_FALLBACK_ENABLED !== "true"
+      ? undefined
+      : env.IMPORT_PAID_FALLBACK_PROVIDER === "openai"
+        ? createOpenAiCompletionClient({
+            apiKey: env.OPENAI_API_KEY as string,
+            model: env.IMPORT_PAID_FALLBACK_MODEL as string,
+            outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
+            timeoutMs: 8_000,
+          })
+        : createAnthropicCompletionClient({
+            apiKey: llm.apiKey as string,
+            model: env.IMPORT_PAID_FALLBACK_MODEL as string,
+            timeoutMs: 8_000,
+          });
   const importSuggestions =
     env.IMPORT_SUGGESTION_SHARED_SECRET === undefined
       ? undefined

@@ -77,6 +77,23 @@ describe("getBotServerEnv", () => {
     });
   });
 
+  it("accepts OpenAI only with its matching API key", () => {
+    const env = parseEnvExample(templatePath);
+    env.IMPORT_PAID_FALLBACK_ENABLED = "true";
+    env.IMPORT_PAID_FALLBACK_PROVIDER = "openai";
+    env.IMPORT_PAID_FALLBACK_MODEL = "gpt-5.4";
+    delete env.OPENAI_API_KEY;
+    expect(() => getBotServerEnv(env as NodeJS.ProcessEnv)).toThrow(
+      /OPENAI_API_KEY/,
+    );
+
+    env.OPENAI_API_KEY = "sk-test";
+    expect(getBotServerEnv(env as NodeJS.ProcessEnv)).toMatchObject({
+      IMPORT_PAID_FALLBACK_PROVIDER: "openai",
+      IMPORT_PAID_FALLBACK_MODEL: "gpt-5.4",
+    });
+  });
+
   it("getServerEnv (web) keeps requiring the NEXT_PUBLIC_* vars", () => {
     const env = parseEnvExample(templatePath);
     expect(() => getServerEnv(env as NodeJS.ProcessEnv)).toThrow();
