@@ -322,6 +322,78 @@ describe("createImportSuggestionHandler", () => {
     expect(reservePaidItems).not.toHaveBeenCalled();
   });
 
+  it("sends only the item count actually granted by quota reservation", async () => {
+    const reservePaidItems = vi.fn(async () => 1);
+    const complete = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        items: [
+          {
+            key: "row-1",
+            candidates: [
+              {
+                categoryId: "food",
+                subcategoryId: null,
+                confidence: 0.8,
+                explanation: "fallback",
+              },
+            ],
+            proposedTaxonomyChange: null,
+          },
+        ],
+      }),
+    );
+    const run = handler({
+      codexEnabled: false,
+      paidFallbackEnabled: true,
+      paidFallbackMaxItems: 10,
+      paidFallbackClient: { complete },
+      reservePaidItems,
+    });
+
+    const result = await run(request(2));
+    expect(reservePaidItems).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedItems: 2 }),
+    );
+    expect(String(complete.mock.calls[0]?.[0])).toContain('"key":"row-1"');
+    expect(String(complete.mock.calls[0]?.[0])).not.toContain(
+      '"key":"row-2"',
+    );
+    expect(result.body).toMatchObject({
+      providerRuns: expect.arrayContaining([
+        expect.objectContaining({
+          provider: "paid_fallback",
+          attemptedItems: 1,
+        }),
+      ]),
+      unresolvedKeys: ["row-2"],
+    });
+  });
+
+  it("does not call the paid provider when quota reservation grants zero", async () => {
+    const reservePaidItems = vi.fn(async () => 0);
+    const complete = vi.fn();
+    const recordPaidResult = vi.fn(async () => undefined);
+    const run = handler({
+      codexEnabled: false,
+      paidFallbackEnabled: true,
+      paidFallbackMaxItems: 10,
+      paidFallbackClient: { complete },
+      reservePaidItems,
+      recordPaidResult,
+    });
+
+    const result = await run(request(2));
+    expect(reservePaidItems).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedItems: 2 }),
+    );
+    expect(complete).not.toHaveBeenCalled();
+    expect(recordPaidResult).not.toHaveBeenCalled();
+    expect(result.body).toMatchObject({
+      outcome: "unavailable",
+      unresolvedKeys: ["row-1", "row-2"],
+    });
+  });
+
   it("accepts legacy v1 requests during bot-first rolling deploys without paid fallback", async () => {
     const reservePaidItems = vi.fn(async () => 1);
     const complete = vi.fn();

@@ -28,7 +28,7 @@ Google OAuth), `docker compose up -d`. Bring Caddy up with
 ## 2. Migrations
 
 From a machine with the repo and the Supabase CLI, push migrations
-`0001..0015` to the VPS database:
+`0001..0017` to the VPS database:
 
 ```bash
 supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@<vps-host>:5432/postgres"
@@ -52,8 +52,10 @@ composite `(household_id, id)` FKs so no write path can reference another
 household's category/account/card; `0015` adds the `bill_month` column and
 the `settle_card_bill` RPC, and re-gates `create_installment_purchase`, so the
 bot's service-role (null `auth.uid()`) client can call both card flows.
-**`0015` must be applied BEFORE the new bot container starts** — a new bot
-image against the old schema fails both the card-bill and installment flows.
+`0016` adds reliable import claims, nonce replay protection, paid-fallback quota
+reservation, and telemetry RPCs; `0017` records the actual value when a variable
+obligation is paid. **Migrations through `0017` must be applied BEFORE the new
+bot or web deploy starts.**
 
 ## 3. Seed household members + allowlist
 
@@ -91,20 +93,7 @@ and that `materialize_obligation_payment` is idempotent + rejects
 out-of-window months, then cleans up after itself. **Exit code must be 0 and
 every check PASS before continuing.**
 
-## 5. Web — Vercel envs + deploy
-
-Follow [`vercel.md`](./vercel.md): set the production env vars (anon key only,
-dotted-form `AUTHORIZED_EMAILS`), project root `apps/web`, deploy.
-
-## 6. Google OAuth prod redirect
-
-In the Google Cloud console (same OAuth client as local), register
-`https://supabase.alvaroekarol.com.br/auth/v1/callback` as an authorized
-redirect URI and the Vercel URL as a JavaScript origin (details in
-`vercel.md`). Then log in on the Vercel app with both Google accounts and
-confirm each lands on the dashboard with a `household_members` row.
-
-## 7. Bot container up
+## 5. Bot container up (before the v2 web deploy)
 
 On the VPS, with the repo checked out and `deploy/bot/.env` filled from
 [`bot/.env.example`](./bot/.env.example) (chmod 600 — this is the ONLY place
@@ -120,15 +109,30 @@ docker compose build bot
 docker compose run --rm bot codex login --device-auth
 ```
 
-Then set `CODEX_ENABLED=true`, `CODEX_MODEL=gpt-5.5`, and
-`CODEX_TIMEOUT_MS=12000` in the VPS-only `.env`. With Codex enabled the
-Anthropic fallback uses an 8-second request timeout, bounding the normal chain
-near 20 seconds; Anthropic keeps its existing timeout when Codex is disabled.
+Then configure the VPS-only `.env`:
+
+```dotenv
+CODEX_ENABLED=true
+CODEX_MODEL=gpt-5.5
+CODEX_TIMEOUT_MS=12000
+IMPORT_SUGGESTION_SHARED_SECRET=<same-random-32+-character-secret-as-vercel>
+IMPORT_PAID_FALLBACK_ENABLED=true
+IMPORT_PAID_FALLBACK_PROVIDER=openai
+IMPORT_PAID_FALLBACK_MODEL=gpt-5.4
+IMPORT_PAID_FALLBACK_MAX_ITEMS=10
+OPENAI_API_KEY=<openai-api-key>
+```
+
+Paid fallback has an 8-second request timeout and runs only for operational
+Codex failures or omitted/invalid items; explicit Codex abstentions stay manual.
+The quota is capped per preview and at 25 items per household/day. OpenAI is the
+evaluated recommendation; Anthropic remains available only when explicitly
+configured with `provider=anthropic`, an exact model, and `ANTHROPIC_API_KEY`.
 The `codex-auth` volume
 persists device credentials across container replacement. This CLI login is
 operationally more fragile than a service API: monitor the structured Codex
-fallback telemetry and repeat device login if credentials expire. Claude/Haiku
-remains fully usable when Codex is disabled or fails; Whisper is unchanged.
+fallback telemetry and repeat device login if credentials expire. Whisper is
+unchanged.
 The CLI still holds a reusable device credential in-process; the deny list,
 event audit, non-root user, read-only filesystem, empty cwd, and secret-free
 child environment reduce exposure but do not eliminate credential risk. A
@@ -144,6 +148,24 @@ docker compose up -d
 curl -s http://localhost:8787/health   # → {"ok":true,...}
 ```
 
+The bot accepts both v1 and v2 suggestion contracts during the rollback window.
+Deploy it before the v2 web caller so either deployment order within this step
+remains compatible without allowing legacy callers to spend paid quota.
+
+## 6. Web — Vercel envs + deploy
+
+Follow [`vercel.md`](./vercel.md): set the production env vars, including the
+preview-signing secret, bot suggestion URL, and the same shared secret used by
+the bot. Set project root `apps/web`, then deploy only after the bot is healthy.
+
+## 7. Google OAuth prod redirect
+
+In the Google Cloud console (same OAuth client as local), register
+`https://supabase.alvaroekarol.com.br/auth/v1/callback` as an authorized
+redirect URI and the Vercel URL as a JavaScript origin (details in
+`vercel.md`). Then log in on the Vercel app with both Google accounts and
+confirm each lands on the dashboard with a `household_members` row.
+
 ## 8. Register the Telegram webhook
 
 Exact curl (secret must equal `TELEGRAM_WEBHOOK_SECRET` in `deploy/bot/.env`):
@@ -158,7 +180,7 @@ curl -s "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
 Verify: `curl -s "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"`
 shows the URL with `pending_update_count` draining and no `last_error_message`.
 
-## 9. Bot smoke test (end-to-end)
+## 9. Bot and import smoke test (end-to-end)
 
 In a private chat with the bot, as a provisioned member:
 
@@ -168,6 +190,59 @@ In a private chat with the bot, as a provisioned member:
 3. Verify both rows appear in the web app's `/transactions` page and that the
    settings page shows the bot's status (last update timestamp moves).
 4. `docker logs family-finance-bot` shows no errors.
+
+Then exercise the complete paid import path with synthetic data:
+
+1. Temporarily set `CODEX_ENABLED=false` in `deploy/bot/.env` and restart only
+   the bot. This intentionally creates an operational Codex-unavailable outcome.
+2. Record the household's current daily reservation counter before the request:
+
+   ```sql
+   select coalesce((
+     select paid_items_reserved from import_ai_daily_usage
+     where household_id = '<household-uuid>' and usage_date = current_date
+   ), 0) as paid_items_before;
+   ```
+
+   Require `paid_items_before <= 24` so at least one daily slot remains. Pause
+   other import-suggestion requests for this household until the after-value is
+   recorded; otherwise a concurrent fallback makes the exact `+ 1` assertion
+   ambiguous.
+
+3. Generate a fresh marker (for example `date -u +%Y%m%dT%H%M%SZ`) and upload a
+   Nubank CSV with today's date and that marker. Never reuse a previous marker:
+
+   ```csv
+   date,title,amount
+   <YYYY-MM-DD>,PADARIA SMOKE OPENAI <fresh-marker>,-1.23
+   ```
+
+4. Request categorization suggestions. **The row must receive a `fallback pago`
+   suggestion. An unresolved row is safe application behavior but fails this
+   deployment smoke.** Confirm the import once and verify the transaction
+   appears exactly once. Retrying confirmation must not duplicate it.
+5. In Postgres, verify the newest usage row for this smoke exactly matches:
+
+   ```sql
+   select provider, model, outcome, paid_items_reserved, resolved_items,
+          latency_ms, completed_at
+   from import_ai_usage
+   where household_id = '<household-uuid>'
+   order by created_at desc
+   limit 1;
+   -- Required: openai | gpt-5.4 | success | 1 | 1 | non-null | non-null
+   ```
+
+   Query `import_ai_daily_usage` again and require `paid_items_reserved` to be
+   exactly `paid_items_before + 1`. Any other outcome is a failed deployment
+   gate, even though the application correctly degrades to manual review.
+6. Confirm bot logs contain request IDs/counts/outcomes but not the synthetic
+   description or model response.
+7. Restore `CODEX_ENABLED=true`, restart the bot, and confirm `/health` again.
+
+This smoke is mandatory on the first `0016`/v2 deployment. If any step fails,
+restore the previous web deployment and bot image; the bot's dual v1/v2 reader
+keeps the rollback window compatible.
 
 Done. Record the deployed Supabase tag and date in `supabase/README.md`.
 

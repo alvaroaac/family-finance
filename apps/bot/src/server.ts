@@ -18,7 +18,8 @@ import http from "node:http";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-import { getBotServerEnv, getLlmConfig } from "@family-finance/config";
+import { getBotServerEnv, type BotEnv } from "@family-finance/config";
+import type { AiCompletionClient } from "@family-finance/categorization";
 import {
   claimImportSuggestionNonce,
   recordImportAiPaidResult,
@@ -41,6 +42,37 @@ const MAX_INTERNAL_BODY_BYTES = 256 * 1024;
 const IMPORT_SUGGESTION_PATH = "/internal/v1/import-category-suggestions";
 
 const DEFAULT_PORT = 8787;
+
+type PaidFallbackFactories = {
+  anthropic: typeof createAnthropicCompletionClient;
+  openai: typeof createOpenAiCompletionClient;
+};
+
+/** Production provider composition, exported so provider-selection mutations
+ * are covered independently from each provider adapter's unit tests. */
+export function createPaidFallbackClient(
+  env: BotEnv,
+  factories: PaidFallbackFactories = {
+    anthropic: createAnthropicCompletionClient,
+    openai: createOpenAiCompletionClient,
+  },
+): AiCompletionClient | undefined {
+  if (env.IMPORT_PAID_FALLBACK_ENABLED !== "true") return undefined;
+  const model = env.IMPORT_PAID_FALLBACK_MODEL as string;
+  if (env.IMPORT_PAID_FALLBACK_PROVIDER === "openai") {
+    return factories.openai({
+      apiKey: env.OPENAI_API_KEY as string,
+      model,
+      outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
+      timeoutMs: 8_000,
+    });
+  }
+  return factories.anthropic({
+    apiKey: env.ANTHROPIC_API_KEY as string,
+    model,
+    timeoutMs: 8_000,
+  });
+}
 
 /** Timestamp of the last received webhook (module-level, surfaced by /health). */
 let lastUpdateAt: Date | null = null;
@@ -250,22 +282,7 @@ async function main(): Promise<void> {
   const { handle, client } = await startBot();
   const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
-  const llm = getLlmConfig();
-  const paidFallbackClient =
-    env.IMPORT_PAID_FALLBACK_ENABLED !== "true"
-      ? undefined
-      : env.IMPORT_PAID_FALLBACK_PROVIDER === "openai"
-        ? createOpenAiCompletionClient({
-            apiKey: env.OPENAI_API_KEY as string,
-            model: env.IMPORT_PAID_FALLBACK_MODEL as string,
-            outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
-            timeoutMs: 8_000,
-          })
-        : createAnthropicCompletionClient({
-            apiKey: llm.apiKey as string,
-            model: env.IMPORT_PAID_FALLBACK_MODEL as string,
-            timeoutMs: 8_000,
-          });
+  const paidFallbackClient = createPaidFallbackClient(env);
   const importSuggestions =
     env.IMPORT_SUGGESTION_SHARED_SECRET === undefined
       ? undefined

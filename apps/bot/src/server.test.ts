@@ -3,13 +3,87 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { createBotServer, type ImportSuggestionRoute } from "./server.js";
+import {
+  createBotServer,
+  createPaidFallbackClient,
+  type ImportSuggestionRoute,
+} from "./server.js";
+import { IMPORT_SUGGESTION_OUTPUT_SCHEMA } from "./import-suggestions.js";
+import type { BotEnv } from "@family-finance/config";
 import type { WebhookResult } from "./index.js";
 
 type Handle = (
   rawBody: unknown,
   secretHeader: string | undefined,
 ) => Promise<WebhookResult>;
+
+function paidEnv(overrides: Partial<BotEnv> = {}): BotEnv {
+  return {
+    IMPORT_PAID_FALLBACK_ENABLED: "false",
+    IMPORT_PAID_FALLBACK_MAX_ITEMS: 10,
+    HOUSEHOLD_SLUG: "casa",
+    ...overrides,
+  };
+}
+
+describe("createPaidFallbackClient", () => {
+  const fakeClient = { complete: vi.fn() };
+
+  it("does not construct a provider when paid fallback is disabled", () => {
+    const anthropic = vi.fn();
+    const openai = vi.fn();
+    expect(
+      createPaidFallbackClient(paidEnv(), { anthropic, openai }),
+    ).toBeUndefined();
+    expect(anthropic).not.toHaveBeenCalled();
+    expect(openai).not.toHaveBeenCalled();
+  });
+
+  it("maps OpenAI config to the OpenAI client with its key and strict schema", () => {
+    const anthropic = vi.fn();
+    const openai = vi.fn(() => fakeClient);
+    expect(
+      createPaidFallbackClient(
+        paidEnv({
+          IMPORT_PAID_FALLBACK_ENABLED: "true",
+          IMPORT_PAID_FALLBACK_PROVIDER: "openai",
+          IMPORT_PAID_FALLBACK_MODEL: "gpt-5.4",
+          OPENAI_API_KEY: "openai-key",
+        }),
+        { anthropic, openai },
+      ),
+    ).toBe(fakeClient);
+    expect(openai).toHaveBeenCalledWith({
+      apiKey: "openai-key",
+      model: "gpt-5.4",
+      outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
+      timeoutMs: 8_000,
+    });
+    expect(anthropic).not.toHaveBeenCalled();
+  });
+
+  it("maps Anthropic config to the Anthropic client with its key", () => {
+    const anthropic = vi.fn(() => fakeClient);
+    const openai = vi.fn();
+    expect(
+      createPaidFallbackClient(
+        paidEnv({
+          IMPORT_PAID_FALLBACK_ENABLED: "true",
+          IMPORT_PAID_FALLBACK_PROVIDER: "anthropic",
+          IMPORT_PAID_FALLBACK_MODEL: "claude-haiku-4-5",
+          ANTHROPIC_API_KEY: "anthropic-key",
+        }),
+        { anthropic, openai },
+      ),
+    ).toBe(fakeClient);
+    expect(anthropic).toHaveBeenCalledWith({
+      apiKey: "anthropic-key",
+      model: "claude-haiku-4-5",
+      timeoutMs: 8_000,
+    });
+    expect(openai).not.toHaveBeenCalled();
+  });
+});
 
 /** Start the server on an ephemeral port and return its base URL. */
 async function listen(server: http.Server): Promise<string> {
