@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+const optionalNonEmptyString = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().min(1).optional(),
+);
+
 // Provider-agnostic AI config/selection (lazy, build-safe). Re-exported so
 // `@family-finance/config` is the single entry point.
 export {
@@ -44,7 +50,19 @@ export const envSchema = z.object({
   IMPORT_PREVIEW_SIGNING_SECRET: z.string().min(32).optional(),
   IMPORT_SUGGESTION_URL: z.string().url().optional(),
   IMPORT_SUGGESTION_SHARED_SECRET: z.string().min(32).optional(),
-  IMPORT_HAIKU_MAX_ITEMS: z.coerce.number().int().min(0).max(25).optional(),
+  IMPORT_PAID_FALLBACK_ENABLED: z.enum(["true", "false"]).default("false"),
+  IMPORT_PAID_FALLBACK_PROVIDER: z.preprocess(
+    (value) =>
+      typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.enum(["anthropic"]).optional(),
+  ),
+  IMPORT_PAID_FALLBACK_MODEL: optionalNonEmptyString,
+  IMPORT_PAID_FALLBACK_MAX_ITEMS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(25)
+    .default(10),
   OPENAI_API_KEY: z.string().min(1).optional(),
   AUTHORIZED_EMAILS: z.string().min(1),
   HOUSEHOLD_SLUG: z.string().min(1).default("casa"),
@@ -71,7 +89,17 @@ export type BotEnv = z.infer<typeof botEnvSchema>;
  * `getServerEnv` — invoke at server start, never at module scope.
  */
 export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
-  return botEnvSchema.parse(env);
+  const parsed = botEnvSchema.parse(env);
+  if (
+    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    (parsed.IMPORT_PAID_FALLBACK_PROVIDER === undefined ||
+      parsed.IMPORT_PAID_FALLBACK_MODEL === undefined)
+  ) {
+    throw new Error(
+      "IMPORT_PAID_FALLBACK_PROVIDER and IMPORT_PAID_FALLBACK_MODEL are required when paid fallback is enabled",
+    );
+  }
+  return parsed;
 }
 
 /**

@@ -19,36 +19,37 @@ const subcategorySchema = z
   })
   .strict();
 
-export const importSuggestionRequestSchema = z
+const requestCatalogAndItemsSchema = {
+  catalog: z
+    .object({
+      categories: z.array(categorySchema).max(100),
+      subcategories: z.array(subcategorySchema).max(500),
+    })
+    .strict(),
+  items: z
+    .array(
+      z
+        .object({
+          key: z.string().min(1).max(128),
+          description: z.string().min(1).max(200),
+          amountCents: z.number().int().positive(),
+          occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          merchantKey: z.string().min(1).max(160).optional(),
+        })
+        .strict(),
+    )
+    .min(1)
+    .max(25),
+};
+
+const legacyImportSuggestionRequestSchema = z
   .object({
     version: z.literal(1),
     requestId: z.string().uuid(),
     scopeKey: z.string().min(1).max(128),
-    catalog: z
-      .object({
-        categories: z.array(categorySchema).max(100),
-        subcategories: z.array(subcategorySchema).max(500),
-      })
-      .strict(),
-    items: z
-      .array(
-        z
-          .object({
-            key: z.string().min(1).max(128),
-            description: z.string().min(1).max(200),
-            amountCents: z.number().int().positive(),
-            occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-            merchantKey: z.string().min(1).max(160).optional(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(25),
+    ...requestCatalogAndItemsSchema,
     fallback: z
-      .object({
-        haiku: z.boolean(),
-        maxPaidItems: z.number().int().min(0).max(25),
-      })
+      .object({ haiku: z.boolean(), maxPaidItems: z.number().int().min(0).max(25) })
       .strict(),
   })
   .strict()
@@ -72,6 +73,42 @@ export const importSuggestionRequestSchema = z
       }
     }
   });
+
+const currentImportSuggestionRequestSchema = z
+  .object({
+    version: z.literal(2),
+    requestId: z.string().uuid(),
+    scopeKey: z.string().uuid(),
+    budgetKey: z.string().uuid(),
+    actorUserId: z.string().uuid(),
+    ...requestCatalogAndItemsSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const keys = value.items.map((item) => item.key);
+    if (new Set(keys).size !== keys.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "duplicate item key",
+      });
+    }
+    const categoryIds = new Set(
+      value.catalog.categories.map((item) => item.id),
+    );
+    for (const subcategory of value.catalog.subcategories) {
+      if (!categoryIds.has(subcategory.categoryId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "subcategory has unknown parent",
+        });
+      }
+    }
+  });
+
+export const importSuggestionRequestSchema = z.union([
+  legacyImportSuggestionRequestSchema,
+  currentImportSuggestionRequestSchema,
+]);
 
 export type ImportSuggestionRequest = z.infer<
   typeof importSuggestionRequestSchema
@@ -105,24 +142,33 @@ const modelResultSchema = z
   .strict();
 
 export type ImportSuggestionCandidate = z.infer<typeof candidateSchema> & {
-  provider: "codex" | "haiku";
+  provider: "codex" | "paid_fallback";
 };
 export type ImportSuggestionItem = {
   key: string;
   candidates: ImportSuggestionCandidate[];
   proposedTaxonomyChange:
-    | (z.infer<typeof proposalSchema> & { provider: "codex" | "haiku" })
+    | (z.infer<typeof proposalSchema> & {
+        provider: "codex" | "paid_fallback";
+      })
     | null;
 };
 
 export type ImportSuggestionResponse = {
-  version: 1;
+  version: 1 | 2;
   requestId: string;
   outcome: "success" | "partial" | "unavailable";
   providerRuns: Array<{
-    provider: "codex" | "haiku";
-    outcome: StructuredCodexOutcome | "success" | "invalid_schema" | "error";
-    itemCount: number;
+    provider: "codex" | "paid_fallback";
+    model: string;
+    outcome:
+      | StructuredCodexOutcome
+      | "disabled"
+      | "success"
+      | "invalid_schema"
+      | "error";
+    attemptedItems: number;
+    resolvedItems: number;
     latencyMs: number;
   }>;
   items: ImportSuggestionItem[];
@@ -262,7 +308,28 @@ export function createImportSuggestionHandler(args: {
   codexTimeoutMs: number;
   codexHome: string;
   codexRunner?: CodexProcessRunner;
-  haikuClient?: AiCompletionClient;
+  paidFallbackEnabled: boolean;
+  paidFallbackMaxItems: number;
+  paidFallbackProvider: string;
+  paidFallbackModel: string;
+  paidFallbackClient?: AiCompletionClient;
+  reservePaidItems: (input: {
+    householdId: string;
+    budgetKey: string;
+    attemptKey: string;
+    requestedItems: number;
+    previewMaxItems: number;
+    createdByUserId: string;
+  }) => Promise<number>;
+  recordPaidResult: (input: {
+    householdId: string;
+    attemptKey: string;
+    provider: string;
+    model: string;
+    outcome: "success" | "invalid_schema" | "error";
+    resolvedItems: number;
+    latencyMs: number;
+  }) => Promise<void>;
 }): (body: unknown) => Promise<{ status: number; body: unknown }> {
   let active = 0;
   return async (body) => {
@@ -278,6 +345,8 @@ export function createImportSuggestionHandler(args: {
       const request = parsed.data;
       const providerRuns: ImportSuggestionResponse["providerRuns"] = [];
       const resolved = new Map<string, ImportSuggestionItem>();
+      const codexReturnedKeys = new Set<string>();
+      let codexOutcome: StructuredCodexOutcome | "disabled" = "disabled";
 
       if (args.codexEnabled) {
         const codex = await runCodexStructured({
@@ -289,10 +358,20 @@ export function createImportSuggestionHandler(args: {
           codexHome: args.codexHome,
           runner: args.codexRunner,
         });
+        codexOutcome = codex.outcome;
+        for (const item of codex.data?.items ?? []) {
+          codexReturnedKeys.add(item.key);
+        }
         providerRuns.push({
           provider: "codex",
+          model: args.codexModel,
           outcome: codex.outcome,
-          itemCount: request.items.length,
+          attemptedItems: request.items.length,
+          resolvedItems: (codex.data?.items ?? []).filter(
+            (item) =>
+              item.candidates.length > 0 ||
+              item.proposedTaxonomyChange !== null,
+          ).length,
           latencyMs: codex.latencyMs,
         });
         for (const item of codex.data?.items ?? []) {
@@ -316,59 +395,110 @@ export function createImportSuggestionHandler(args: {
             });
           }
         }
+      } else {
+        providerRuns.push({
+          provider: "codex",
+          model: args.codexModel,
+          outcome: "disabled",
+          attemptedItems: 0,
+          resolvedItems: 0,
+          latencyMs: 0,
+        });
       }
 
-      const unresolved = request.items.filter(
-        (item) => !resolved.has(item.key),
-      );
-      const paidItems = unresolved.slice(0, request.fallback.maxPaidItems);
+      // A successful Codex item with an empty result is an intentional
+      // abstention and stays manual. Paid fallback is reserved only for an
+      // operational failure or a key missing from otherwise-valid output.
+      const operationallyMissing =
+        codexOutcome === "success"
+          ? request.items.filter((item) => !codexReturnedKeys.has(item.key))
+          : request.items;
       if (
-        request.fallback.haiku &&
-        args.haikuClient !== undefined &&
-        paidItems.length > 0
+        request.version === 2 &&
+        args.paidFallbackEnabled &&
+        args.paidFallbackClient !== undefined &&
+        operationallyMissing.length > 0 &&
+        args.paidFallbackMaxItems > 0
       ) {
-        const started = Date.now();
-        const paidRequest = { ...request, items: paidItems };
-        const reply = await args.haikuClient
-          .complete(buildPrompt(paidRequest), {
-            label: "import_category_fallback",
-          })
-          .catch(() => null);
-        const data =
-          reply === null
-            ? null
-            : validatedModelResult(parseCompletionJson(reply), paidRequest);
-        providerRuns.push({
-          provider: "haiku",
-          outcome:
+        const requestedItems = Math.min(
+          operationallyMissing.length,
+          args.paidFallbackMaxItems,
+        );
+        let allowedItems = 0;
+        try {
+          allowedItems = await args.reservePaidItems({
+            householdId: request.scopeKey,
+            budgetKey: request.budgetKey,
+            attemptKey: request.requestId,
+            requestedItems,
+            previewMaxItems: args.paidFallbackMaxItems,
+            createdByUserId: request.actorUserId,
+          });
+        } catch {
+          allowedItems = 0;
+        }
+        const paidItems = operationallyMissing.slice(0, allowedItems);
+        if (paidItems.length > 0) {
+          const started = Date.now();
+          const paidRequest = { ...request, items: paidItems };
+          const reply = await args.paidFallbackClient
+            .complete(buildPrompt(paidRequest), {
+              label: "import_category_paid_fallback",
+            })
+            .catch(() => null);
+          const data =
+            reply === null
+              ? null
+              : validatedModelResult(parseCompletionJson(reply), paidRequest);
+          const outcome =
             data === null
               ? reply === null
-                ? "error"
-                : "invalid_schema"
-              : "success",
-          itemCount: paidItems.length,
-          latencyMs: Date.now() - started,
-        });
-        for (const item of data?.items ?? []) {
-          if (
-            item.candidates.length > 0 ||
-            item.proposedTaxonomyChange !== null
-          ) {
-            resolved.set(item.key, {
-              key: item.key,
-              proposedTaxonomyChange:
-                item.proposedTaxonomyChange === null
-                  ? null
-                  : {
-                      ...item.proposedTaxonomyChange,
-                      provider: "haiku" as const,
-                    },
-              candidates: item.candidates.map((candidate) => ({
-                ...candidate,
-                provider: "haiku" as const,
-              })),
-            });
+                ? ("error" as const)
+                : ("invalid_schema" as const)
+              : ("success" as const);
+          let resolvedItems = 0;
+          for (const item of data?.items ?? []) {
+            if (
+              item.candidates.length > 0 ||
+              item.proposedTaxonomyChange !== null
+            ) {
+              resolvedItems += 1;
+              resolved.set(item.key, {
+                key: item.key,
+                proposedTaxonomyChange:
+                  item.proposedTaxonomyChange === null
+                    ? null
+                    : {
+                        ...item.proposedTaxonomyChange,
+                        provider: "paid_fallback" as const,
+                      },
+                candidates: item.candidates.map((candidate) => ({
+                  ...candidate,
+                  provider: "paid_fallback" as const,
+                })),
+              });
+            }
           }
+          const latencyMs = Date.now() - started;
+          providerRuns.push({
+            provider: "paid_fallback",
+            model: args.paidFallbackModel,
+            outcome,
+            attemptedItems: paidItems.length,
+            resolvedItems,
+            latencyMs,
+          });
+          await args
+            .recordPaidResult({
+              householdId: request.scopeKey,
+              attemptKey: request.requestId,
+              provider: args.paidFallbackProvider,
+              model: args.paidFallbackModel,
+              outcome,
+              resolvedItems,
+              latencyMs,
+            })
+            .catch(() => undefined);
         }
       }
 
@@ -376,7 +506,7 @@ export function createImportSuggestionHandler(args: {
         .map((item) => item.key)
         .filter((key) => !resolved.has(key));
       const response: ImportSuggestionResponse = {
-        version: 1,
+        version: request.version,
         requestId: request.requestId,
         outcome:
           resolved.size === 0

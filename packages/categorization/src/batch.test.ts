@@ -99,7 +99,11 @@ describe("deterministic batch planning", () => {
         }),
         row("rule", "IFOOD *TESTE"),
       ],
-      { catalog: CATALOG, memoryEntries: [exactMemory], sourceMappings: [sourceMapping] },
+      {
+        catalog: CATALOG,
+        memoryEntries: [exactMemory],
+        sourceMappings: [sourceMapping],
+      },
     );
     expect(plan.rows.map((item) => item.selection?.source)).toEqual([
       "user",
@@ -118,7 +122,11 @@ describe("deterministic batch planning", () => {
           sourceCategory: "Comida antiga",
         }),
       ],
-      { catalog: CATALOG, memoryEntries: [exactMemory], sourceMappings: [sourceMapping] },
+      {
+        catalog: CATALOG,
+        memoryEntries: [exactMemory],
+        sourceMappings: [sourceMapping],
+      },
     );
     expect(plan.rows[0]?.status).toBe("unresolved");
     expect(plan.aiItems).toHaveLength(0);
@@ -141,7 +149,11 @@ describe("deterministic batch planning", () => {
 
   it("treats a learned source-label suppression as terminal", () => {
     const plan = planCategorizationBatch(
-      [row("source-suppressed", "Qualquer loja", { sourceCategory: "Ignorar" })],
+      [
+        row("source-suppressed", "Qualquer loja", {
+          sourceCategory: "Ignorar",
+        }),
+      ],
       {
         catalog: CATALOG,
         sourceMappings: [
@@ -195,7 +207,9 @@ describe("deterministic batch planning", () => {
     expect(plan.aiItems).toHaveLength(50);
     const chunks = chunkAiSuggestionItems(plan.aiItems);
     expect(chunks).toHaveLength(2);
-    expect(chunks.every((chunk) => chunk.length <= MAX_AI_ITEMS_PER_CHUNK)).toBe(true);
+    expect(
+      chunks.every((chunk) => chunk.length <= MAX_AI_ITEMS_PER_CHUNK),
+    ).toBe(true);
     expect(() => chunkAiSuggestionItems(plan.aiItems, 26)).toThrow();
   });
 });
@@ -230,7 +244,10 @@ describe("strict bounded AI batch contracts", () => {
     expect(
       aiBatchRequestSchema.safeParse({
         schemaVersion: AI_BATCH_SCHEMA_VERSION,
-        items: Array.from({ length: 26 }, (_, index) => ({ ...item, requestKey: `k-${index}` })),
+        items: Array.from({ length: 26 }, (_, index) => ({
+          ...item,
+          requestKey: `k-${index}`,
+        })),
         catalog: {
           categories: CATALOG.categories,
           subcategories: CATALOG.subcategories,
@@ -295,9 +312,16 @@ describe("strict bounded AI batch contracts", () => {
       CATALOG,
       { modelVersion: "gpt-test", promptVersion: "prompt-v1" },
     );
-    expect(applied.plan.rows.every((item) => item.selection?.source === "codex")).toBe(true);
-    expect(applied.plan.rows.every((item) => item.candidates[0]?.requiresReview)).toBe(true);
-    expect(suggestionCandidatesSchema.safeParse(applied.plan.rows[0]?.candidates).success).toBe(true);
+    expect(
+      applied.plan.rows.every((item) => item.selection?.source === "codex"),
+    ).toBe(true);
+    expect(
+      applied.plan.rows.every((item) => item.candidates[0]?.requiresReview),
+    ).toBe(true);
+    expect(
+      suggestionCandidatesSchema.safeParse(applied.plan.rows[0]?.candidates)
+        .success,
+    ).toBe(true);
 
     const invalid = applyAiBatchReply(
       plan,
@@ -316,9 +340,9 @@ describe("strict bounded AI batch contracts", () => {
         },
         [requestKey],
       ),
-      "haiku",
+      "paid_fallback",
       CATALOG,
-      { modelVersion: "haiku-test", promptVersion: "prompt-v1" },
+      { modelVersion: "fallback-test", promptVersion: "prompt-v1" },
     );
     expect(invalid.plan.rows[0]?.status).toBe("unresolved");
     expect(invalid.rejectedRequestKeys).toContain(requestKey);

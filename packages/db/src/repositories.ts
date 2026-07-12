@@ -559,19 +559,54 @@ export async function confirmImportV2(
 /** Atomically reserve the per-preview paid fallback cap. Replays receive zero. */
 export async function reserveImportAiPaidItems(
   client: AppSupabaseClient,
-  householdId: string,
-  requestKey: string,
-  requestedItems: number,
+  args: {
+    householdId: string;
+    budgetKey: string;
+    attemptKey: string;
+    requestedItems: number;
+    previewMaxItems: number;
+    createdByUserId: string;
+  },
 ): Promise<number> {
   const { data, error } = await client.rpc("reserve_import_ai_paid_items", {
-    target_household_id: householdId,
-    target_request_key: requestKey,
-    requested_items: requestedItems,
+    target_household_id: args.householdId,
+    target_budget_key: args.budgetKey,
+    target_attempt_key: args.attemptKey,
+    requested_items: args.requestedItems,
+    preview_max_items: args.previewMaxItems,
+    target_created_by_user_id: args.createdByUserId,
   });
   if (error !== null) {
     throw new Error(`reserveImportAiPaidItems failed: ${error.message}`);
   }
   return Number(data ?? 0);
+}
+
+/** Complete persisted telemetry for one paid fallback attempt. */
+export async function recordImportAiPaidResult(
+  client: AppSupabaseClient,
+  args: {
+    householdId: string;
+    attemptKey: string;
+    provider: string;
+    model: string;
+    outcome: "success" | "invalid_schema" | "error";
+    resolvedItems: number;
+    latencyMs: number;
+  },
+): Promise<void> {
+  const { error } = await client.rpc("record_import_ai_paid_result", {
+    target_household_id: args.householdId,
+    target_attempt_key: args.attemptKey,
+    target_provider: args.provider,
+    target_model: args.model,
+    target_outcome: args.outcome,
+    target_resolved_items: args.resolvedItems,
+    target_latency_ms: args.latencyMs,
+  });
+  if (error !== null) {
+    throw new Error(`recordImportAiPaidResult failed: ${error.message}`);
+  }
 }
 
 /** Atomically claim a short-lived internal-request nonce across bot replicas. */

@@ -48,6 +48,10 @@ function formatBrl(cents: number): string {
   });
 }
 
+function providerLabel(provider: "codex" | "paid_fallback"): string {
+  return provider === "codex" ? "Codex" : "fallback pago";
+}
+
 /** "2026-06-05" -> "05/06". */
 function formatDayMonth(iso: string): string {
   const [, month, day] = iso.split("-");
@@ -174,7 +178,7 @@ export default function ImportsPage() {
       categoryName: string;
       subcategoryName: string | null;
       explanation: string;
-      provider: "codex" | "haiku";
+      provider: "codex" | "paid_fallback";
     }>
   >([]);
   const [persistedDuplicates, setPersistedDuplicates] = useState<Set<number>>(
@@ -209,7 +213,7 @@ export default function ImportsPage() {
           | "source_mapping"
           | "rule"
           | "codex"
-          | "haiku"
+          | "paid_fallback"
           | "user";
         confidence?: number;
         accepted: boolean;
@@ -1352,7 +1356,7 @@ export default function ImportsPage() {
                     {proposal.subcategoryName
                       ? ` › ${proposal.subcategoryName}`
                       : ""}
-                    {` · ${proposal.provider} · ${proposal.explanation}`}
+                    {` · ${providerLabel(proposal.provider)} · ${proposal.explanation}`}
                   </li>
                 ))}
               </ul>
@@ -1435,7 +1439,8 @@ export default function ImportsPage() {
                         onClick={() => applyAiSuggestion(index)}
                         title={aiSuggestion.explanation}
                       >
-                        usar {aiCategoryName} · {aiSuggestion.provider}
+                        usar {aiCategoryName} ·{" "}
+                        {providerLabel(aiSuggestion.provider)}
                       </button>
                     ) : null}
                     {!isInstallmentRow && selectedCategory !== "" ? (
@@ -1743,7 +1748,8 @@ export default function ImportsPage() {
                           onClick={() => applyAiSuggestion(index)}
                           title={aiSuggestion.explanation}
                         >
-                          usar {aiCategoryName} · {aiSuggestion.provider}
+                          usar {aiCategoryName} ·{" "}
+                          {providerLabel(aiSuggestion.provider)}
                         </button>
                       ) : null}
                       {isInstallmentRow ? (

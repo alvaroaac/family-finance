@@ -345,12 +345,24 @@ create index if not exists import_item_claims_batch_idx
 create table if not exists import_ai_usage (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references households (id) on delete cascade,
+  budget_key uuid not null,
+  -- One idempotency key per paid-provider attempt/chunk.
   request_key uuid not null,
   paid_items_reserved integer not null check (paid_items_reserved between 0 and 25),
   created_by_user_id uuid not null references auth.users (id) on delete restrict,
+  provider text,
+  model text,
+  outcome text check (outcome is null or outcome in ('success', 'invalid_schema', 'error')),
+  resolved_items integer check (
+    resolved_items is null or resolved_items between 0 and paid_items_reserved
+  ),
+  latency_ms integer check (latency_ms is null or latency_ms >= 0),
+  completed_at timestamptz,
   created_at timestamptz not null default now(),
   unique (household_id, request_key)
 );
+create index if not exists import_ai_usage_budget_idx
+  on import_ai_usage (household_id, budget_key);
 create table if not exists import_ai_daily_usage (
   household_id uuid not null references households (id) on delete cascade,
   usage_date date not null default current_date,
@@ -372,8 +384,11 @@ exception when undefined_object then null; end $$;
 
 create or replace function reserve_import_ai_paid_items(
   target_household_id uuid,
-  target_request_key uuid,
-  requested_items integer
+  target_budget_key uuid,
+  target_attempt_key uuid,
+  requested_items integer,
+  preview_max_items integer,
+  target_created_by_user_id uuid
 )
 returns integer
 language plpgsql
@@ -382,18 +397,35 @@ set search_path = public, pg_temp
 as $$
 declare
   reservation_id uuid;
-  already_reserved integer;
+  already_reserved_daily integer;
+  already_reserved_preview integer;
   allowed integer;
 begin
   if requested_items not between 0 and 25
-     or not is_household_member(target_household_id) then
+     or preview_max_items not between 0 and 25
+     or target_budget_key is null
+     or target_attempt_key is null
+     or not exists (
+       select 1 from household_members
+       where household_id = target_household_id
+         and user_id = target_created_by_user_id
+         and is_active
+     )
+     or (
+       coalesce(auth.role(), '') <> 'service_role'
+       and (
+         not is_household_member(target_household_id)
+         or target_created_by_user_id is distinct from auth.uid()
+       )
+     ) then
     raise exception 'reserve_import_ai_paid_items: invalid request'
       using errcode = '42501';
   end if;
   insert into import_ai_usage (
-    household_id, request_key, paid_items_reserved, created_by_user_id
+    household_id, budget_key, request_key, paid_items_reserved, created_by_user_id
   ) values (
-    target_household_id, target_request_key, 0, auth.uid()
+    target_household_id, target_budget_key, target_attempt_key, 0,
+    target_created_by_user_id
   ) on conflict (household_id, request_key) do nothing
   returning id into reservation_id;
   if reservation_id is null then return 0; end if;
@@ -401,11 +433,20 @@ begin
   insert into import_ai_daily_usage (household_id, usage_date)
   values (target_household_id, current_date)
   on conflict (household_id, usage_date) do nothing;
-  select paid_items_reserved into already_reserved
+  select paid_items_reserved into already_reserved_daily
   from import_ai_daily_usage
   where household_id = target_household_id and usage_date = current_date
   for update;
-  allowed := least(requested_items, greatest(0, 25 - already_reserved));
+  select coalesce(sum(paid_items_reserved), 0) into already_reserved_preview
+  from import_ai_usage
+  where household_id = target_household_id
+    and budget_key = target_budget_key
+    and id <> reservation_id;
+  allowed := least(
+    requested_items,
+    greatest(0, preview_max_items - already_reserved_preview),
+    greatest(0, 25 - already_reserved_daily)
+  );
   update import_ai_daily_usage
   set paid_items_reserved = paid_items_reserved + allowed, updated_at = now()
   where household_id = target_household_id and usage_date = current_date;
@@ -413,9 +454,62 @@ begin
   return allowed;
 end;
 $$;
-revoke all on function reserve_import_ai_paid_items(uuid, uuid, integer) from public;
+revoke all on function reserve_import_ai_paid_items(uuid, uuid, uuid, integer, integer, uuid)
+  from public;
 do $$ begin
-  grant execute on function reserve_import_ai_paid_items(uuid, uuid, integer) to authenticated;
+  revoke all on function reserve_import_ai_paid_items(uuid, uuid, uuid, integer, integer, uuid)
+    from anon;
+  grant execute on function reserve_import_ai_paid_items(uuid, uuid, uuid, integer, integer, uuid)
+    to authenticated, service_role;
+exception when undefined_object then null; end $$;
+
+create or replace function record_import_ai_paid_result(
+  target_household_id uuid,
+  target_attempt_key uuid,
+  target_provider text,
+  target_model text,
+  target_outcome text,
+  target_resolved_items integer,
+  target_latency_ms integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if coalesce(auth.role(), '') <> 'service_role'
+     or target_provider is null or length(btrim(target_provider)) not between 1 and 40
+     or target_model is null or length(btrim(target_model)) not between 1 and 120
+     or target_outcome not in ('success', 'invalid_schema', 'error')
+     or target_latency_ms < 0 then
+    raise exception 'record_import_ai_paid_result: invalid request'
+      using errcode = '42501';
+  end if;
+  update import_ai_usage
+  set provider = btrim(target_provider),
+      model = btrim(target_model),
+      outcome = target_outcome,
+      resolved_items = target_resolved_items,
+      latency_ms = target_latency_ms,
+      completed_at = now()
+  where household_id = target_household_id
+    and request_key = target_attempt_key
+    and paid_items_reserved > 0
+    and target_resolved_items between 0 and paid_items_reserved;
+  if not found then
+    raise exception 'record_import_ai_paid_result: reservation not found'
+      using errcode = '22023';
+  end if;
+end;
+$$;
+revoke all on function record_import_ai_paid_result(uuid, uuid, text, text, text, integer, integer)
+  from public;
+do $$ begin
+  revoke all on function record_import_ai_paid_result(uuid, uuid, text, text, text, integer, integer)
+    from anon, authenticated;
+  grant execute on function record_import_ai_paid_result(uuid, uuid, text, text, text, integer, integer)
+    to service_role;
 exception when undefined_object then null; end $$;
 
 do $$ begin

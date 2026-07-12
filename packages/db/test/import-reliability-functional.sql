@@ -150,6 +150,38 @@ begin
 end;
 $$;
 
+create or replace function auth.role() returns text language sql stable
+as 'select ''service_role''::text';
+do $$
+begin
+  if reserve_import_ai_paid_items(
+       '10000000-0000-0000-0000-000000000002',
+       '50000000-0000-0000-0000-000000000003',
+       '51000000-0000-0000-0000-000000000004', 1, 10,
+       '00000000-0000-0000-0000-000000000002'
+     ) <> 1 then
+    raise exception 'service-role paid fallback reservation failed';
+  end if;
+  perform record_import_ai_paid_result(
+    '10000000-0000-0000-0000-000000000002',
+    '51000000-0000-0000-0000-000000000004',
+    'anthropic','claude-test','success',1,42
+  );
+  if not exists (
+    select 1 from import_ai_usage
+    where household_id = '10000000-0000-0000-0000-000000000002'
+      and request_key = '51000000-0000-0000-0000-000000000004'
+      and paid_items_reserved = 1 and resolved_items = 1
+      and provider = 'anthropic' and model = 'claude-test'
+      and outcome = 'success' and latency_ms = 42 and completed_at is not null
+  ) then
+    raise exception 'paid fallback telemetry assertion failed';
+  end if;
+end;
+$$;
+create or replace function auth.role() returns text language sql stable
+as 'select ''authenticated''::text';
+
 create or replace function verify_concurrent_import(
   request_key uuid,
   payload_hash text,
@@ -183,15 +215,27 @@ do $$
 begin
   if reserve_import_ai_paid_items(
        '10000000-0000-0000-0000-000000000001',
-       '50000000-0000-0000-0000-000000000001', 10
-     ) <> 10
+       '50000000-0000-0000-0000-000000000001',
+       '51000000-0000-0000-0000-000000000001', 1, 10,
+       '00000000-0000-0000-0000-000000000001'
+     ) <> 1
      or reserve_import_ai_paid_items(
        '10000000-0000-0000-0000-000000000001',
-       '50000000-0000-0000-0000-000000000001', 10
+       '50000000-0000-0000-0000-000000000001',
+       '51000000-0000-0000-0000-000000000001', 1, 10,
+       '00000000-0000-0000-0000-000000000001'
      ) <> 0
      or reserve_import_ai_paid_items(
        '10000000-0000-0000-0000-000000000001',
-       '50000000-0000-0000-0000-000000000002', 20
+       '50000000-0000-0000-0000-000000000001',
+       '51000000-0000-0000-0000-000000000002', 10, 10,
+       '00000000-0000-0000-0000-000000000001'
+     ) <> 9
+     or reserve_import_ai_paid_items(
+       '10000000-0000-0000-0000-000000000001',
+       '50000000-0000-0000-0000-000000000002',
+       '51000000-0000-0000-0000-000000000003', 20, 25,
+       '00000000-0000-0000-0000-000000000001'
      ) <> 15 then
     raise exception 'paid fallback budget assertion failed';
   end if;

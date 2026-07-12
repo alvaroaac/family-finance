@@ -56,7 +56,6 @@ import {
   findImportItemClaims,
   findImportRowsByFileFingerprint,
   findTransactionsForInstrumentBetween,
-  reserveImportAiPaidItems,
   type ImportSource as DbImportSource,
   type ConfirmImportV2Item,
 } from "@family-finance/db";
@@ -199,7 +198,7 @@ export type PreviewError = { ok: false; message: string };
 
 const suggestionResponseSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     requestId: z.string().uuid(),
     outcome: z.enum(["success", "partial", "unavailable"]),
     providerRuns: z.array(z.unknown()).max(2),
@@ -216,7 +215,7 @@ const suggestionResponseSchema = z
                     subcategoryId: z.string().nullable(),
                     confidence: z.number().min(0).max(1),
                     explanation: z.string().max(500),
-                    provider: z.enum(["codex", "haiku"]),
+                    provider: z.enum(["codex", "paid_fallback"]),
                   })
                   .strict(),
               )
@@ -227,7 +226,7 @@ const suggestionResponseSchema = z
                 categoryName: z.string().min(1).max(100),
                 subcategoryName: z.string().max(100).nullable(),
                 explanation: z.string().max(500),
-                provider: z.enum(["codex", "haiku"]),
+                provider: z.enum(["codex", "paid_fallback"]),
               })
               .strict()
               .nullable(),
@@ -245,7 +244,7 @@ export type ImportAiSuggestion = {
   subcategoryId?: string;
   confidence: number;
   explanation: string;
-  provider: "codex" | "haiku";
+  provider: "codex" | "paid_fallback";
 };
 
 export type SuggestImportResult =
@@ -257,7 +256,7 @@ export type SuggestImportResult =
         categoryName: string;
         subcategoryName: string | null;
         explanation: string;
-        provider: "codex" | "haiku";
+        provider: "codex" | "paid_fallback";
       }>;
       unresolvedCount: number;
       providerRuns: unknown[];
@@ -938,25 +937,19 @@ export async function suggestImportCategories(input: {
         providerRuns: [],
       };
     }
-    const paidFallbackItems = await reserveImportAiPaidItems(
-      client,
-      householdId,
-      previewClaims.requestKey,
-      env.IMPORT_HAIKU_MAX_ITEMS ?? 10,
-    );
     const responses: z.infer<typeof suggestionResponseSchema>[] = [];
     let failedUnresolvedCount = 0;
-    for (const [chunkIndex, chunk] of chunkAiSuggestionItems(
-      plan.aiItems,
-    ).entries()) {
+    for (const chunk of chunkAiSuggestionItems(plan.aiItems)) {
       try {
         const raw = await requestImportSuggestions({
           baseUrl: env.IMPORT_SUGGESTION_URL as string,
           secret: env.IMPORT_SUGGESTION_SHARED_SECRET as string,
           body: {
-            version: 1,
+            version: 2,
             requestId: crypto.randomUUID(),
             scopeKey: householdId,
+            budgetKey: previewClaims.requestKey,
+            actorUserId: userId,
             catalog: {
               categories: catalog.categories,
               subcategories: catalog.subcategories,
@@ -969,13 +962,6 @@ export async function suggestImportCategories(input: {
                 item.occurredOn ?? new Date().toISOString().slice(0, 10),
               merchantKey: item.merchantKey || undefined,
             })),
-            fallback: {
-              haiku: paidFallbackItems > 0,
-              maxPaidItems:
-                chunkIndex === 0
-                  ? Math.min(paidFallbackItems, chunk.length)
-                  : 0,
-            },
           },
         });
         responses.push(suggestionResponseSchema.parse(raw));
@@ -1097,7 +1083,13 @@ export type ConfirmInput = {
   provenance?: Record<
     number,
     {
-      source: "memory" | "source_mapping" | "rule" | "codex" | "haiku" | "user";
+      source:
+        | "memory"
+        | "source_mapping"
+        | "rule"
+        | "codex"
+        | "paid_fallback"
+        | "user";
       confidence?: number;
       accepted: boolean;
       changed: boolean;

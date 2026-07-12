@@ -761,10 +761,25 @@ export type Database = {
       reserve_import_ai_paid_items: {
         Args: {
           target_household_id: string;
-          target_request_key: string;
+          target_budget_key: string;
+          target_attempt_key: string;
           requested_items: number;
+          preview_max_items: number;
+          target_created_by_user_id: string;
         };
         Returns: number;
+      };
+      record_import_ai_paid_result: {
+        Args: {
+          target_household_id: string;
+          target_attempt_key: string;
+          target_provider: string;
+          target_model: string;
+          target_outcome: "success" | "invalid_schema" | "error";
+          target_resolved_items: number;
+          target_latency_ms: number;
+        };
+        Returns: undefined;
       };
       claim_import_suggestion_nonce: {
         Args: { target_nonce: string; target_expires_at: string };

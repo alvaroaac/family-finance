@@ -19,7 +19,11 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import { getBotServerEnv, getLlmConfig } from "@family-finance/config";
-import { claimImportSuggestionNonce } from "@family-finance/db";
+import {
+  claimImportSuggestionNonce,
+  recordImportAiPaidResult,
+  reserveImportAiPaidItems,
+} from "@family-finance/db";
 
 import { startBot, type WebhookResult } from "./index.js";
 import { createImportSuggestionHandler } from "./import-suggestions.js";
@@ -241,11 +245,13 @@ async function main(): Promise<void> {
   const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const llm = getLlmConfig();
-  const haikuClient =
+  const paidFallbackClient =
+    env.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    env.IMPORT_PAID_FALLBACK_PROVIDER === "anthropic" &&
     llm.isConfigured && llm.apiKey !== undefined
       ? createAnthropicCompletionClient({
           apiKey: llm.apiKey,
-          model: llm.model,
+          model: env.IMPORT_PAID_FALLBACK_MODEL as string,
           timeoutMs: 8_000,
         })
       : undefined;
@@ -261,7 +267,17 @@ async function main(): Promise<void> {
             codexModel: env.CODEX_MODEL ?? "gpt-5.5",
             codexTimeoutMs: env.CODEX_TIMEOUT_MS ?? 12_000,
             codexHome: "/var/lib/family-finance-codex",
-            haikuClient,
+            paidFallbackEnabled: env.IMPORT_PAID_FALLBACK_ENABLED === "true",
+            paidFallbackMaxItems: env.IMPORT_PAID_FALLBACK_MAX_ITEMS,
+            paidFallbackProvider:
+              env.IMPORT_PAID_FALLBACK_PROVIDER ?? "unconfigured",
+            paidFallbackModel:
+              env.IMPORT_PAID_FALLBACK_MODEL ?? "unconfigured",
+            paidFallbackClient,
+            reservePaidItems: (input) =>
+              reserveImportAiPaidItems(client, input),
+            recordPaidResult: (input) =>
+              recordImportAiPaidResult(client, input),
           }),
         };
   const server = createBotServer(handle, { importSuggestions });

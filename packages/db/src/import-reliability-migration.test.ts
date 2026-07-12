@@ -85,6 +85,10 @@ describe("import reliability migration contract", () => {
       "create table if not exists import_ai_daily_usage",
     );
     expect(migration).toContain("reserve_import_ai_paid_items");
+    expect(migration).toContain("target_budget_key uuid");
+    expect(migration).toContain("target_attempt_key uuid");
+    expect(migration).toContain("preview_max_items - already_reserved_preview");
+    expect(migration).toContain("record_import_ai_paid_result");
   });
 
   it("rejects irreconcilable learning commands", () => {

@@ -13,7 +13,11 @@ import {
   normalizeMerchantKey,
   normalizeSourceCategoryLabel,
 } from "./merchant.js";
-import { defaultRuleSet, matchRules, type CategorizationRule } from "./rules.js";
+import {
+  defaultRuleSet,
+  matchRules,
+  type CategorizationRule,
+} from "./rules.js";
 import type { CategoryCatalog } from "./index.js";
 
 export const MAX_SUGGESTION_CANDIDATES = 3;
@@ -46,7 +50,7 @@ export type SuggestionProvenance =
   | "source_mapping"
   | "rule"
   | "codex"
-  | "haiku";
+  | "paid_fallback";
 
 export type SuggestionCandidate = {
   categoryId: string;
@@ -68,7 +72,13 @@ export const suggestionCandidateSchema = z
   .object({
     categoryId: boundedId,
     subcategoryId: boundedId.optional(),
-    source: z.enum(["memory", "source_mapping", "rule", "codex", "haiku"]),
+    source: z.enum([
+      "memory",
+      "source_mapping",
+      "rule",
+      "codex",
+      "paid_fallback",
+    ]),
     confidence: z.number().min(0).max(1),
     tier: z.enum(["high", "medium", "low"]),
     explanation: boundedExplanation,
@@ -140,7 +150,10 @@ export type BatchCategorizationOptions = {
 };
 
 function bounded(value: string, max: number): string {
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return normalized.slice(0, max);
 }
 
@@ -180,11 +193,19 @@ function candidate(input: {
     explanation: bounded(input.explanation, 240) || "Sugestão de categoria.",
     // AI is review-required regardless of self-reported confidence.
     requiresReview:
-      input.source === "codex" || input.source === "haiku" || confidence < 0.85,
+      input.source === "codex" ||
+      input.source === "paid_fallback" ||
+      confidence < 0.85,
     normalizerVersion: MERCHANT_KEY_VERSION,
-    ...(input.rulesVersion === undefined ? {} : { rulesVersion: input.rulesVersion }),
-    ...(input.modelVersion === undefined ? {} : { modelVersion: input.modelVersion }),
-    ...(input.promptVersion === undefined ? {} : { promptVersion: input.promptVersion }),
+    ...(input.rulesVersion === undefined
+      ? {}
+      : { rulesVersion: input.rulesVersion }),
+    ...(input.modelVersion === undefined
+      ? {}
+      : { modelVersion: input.modelVersion }),
+    ...(input.promptVersion === undefined
+      ? {}
+      : { promptVersion: input.promptVersion }),
   };
 }
 
@@ -247,10 +268,16 @@ export function planCategorizationBatch(
   const rules = options.rules ?? defaultRuleSet();
   const maxAi = Math.max(
     0,
-    Math.min(options.maxAiSignatures ?? MAX_AI_ITEMS_PER_PREVIEW, MAX_AI_ITEMS_PER_PREVIEW),
+    Math.min(
+      options.maxAiSignatures ?? MAX_AI_ITEMS_PER_PREVIEW,
+      MAX_AI_ITEMS_PER_PREVIEW,
+    ),
   );
   const rows: BatchCategorizationRowPlan[] = [];
-  const grouped = new Map<string, { requestKey: string; item: AiSuggestionRequestItem }>();
+  const grouped = new Map<
+    string,
+    { requestKey: string; item: AiSuggestionRequestItem }
+  >();
 
   for (const row of inputRows) {
     const merchantKey = normalizeMerchantKey(row.description);
@@ -259,7 +286,9 @@ export function planCategorizationBatch(
       description: row.description,
       kind: row.kind,
       merchantKey,
-      ...(row.amountCents === undefined ? {} : { amountCents: row.amountCents }),
+      ...(row.amountCents === undefined
+        ? {}
+        : { amountCents: row.amountCents }),
       ...(row.occurredOn === undefined ? {} : { occurredOn: row.occurredOn }),
     };
     const base: BatchCategorizationRowPlan = {
@@ -283,7 +312,11 @@ export function planCategorizationBatch(
       rows.push(
         choice === null
           ? base
-          : { ...base, status: "selected", selection: { ...choice, source: "user" } },
+          : {
+              ...base,
+              status: "selected",
+              selection: { ...choice, source: "user" },
+            },
       );
       continue;
     }
@@ -298,7 +331,11 @@ export function planCategorizationBatch(
       continue;
     }
     if (memory?.categoryId !== undefined && memory.categoryId !== null) {
-      const choice = validChoice(options.catalog, memory.categoryId, memory.subcategoryId);
+      const choice = validChoice(
+        options.catalog,
+        memory.categoryId,
+        memory.subcategoryId,
+      );
       if (choice !== null) {
         const result = candidate({
           choice,
@@ -328,14 +365,19 @@ export function planCategorizationBatch(
         });
         continue;
       }
-      const choice = validChoice(options.catalog, mapping.categoryId, mapping.subcategoryId);
+      const choice = validChoice(
+        options.catalog,
+        mapping.categoryId,
+        mapping.subcategoryId,
+      );
       if (choice !== null) {
         const result = candidate({
           choice,
           source: "source_mapping",
           confidence: mapping.confidence ?? 0.95,
           explanation:
-            mapping.explanation ?? `Categoria do arquivo "${mapping.sourceLabel}" mapeada pelo usuário.`,
+            mapping.explanation ??
+            `Categoria do arquivo "${mapping.sourceLabel}" mapeada pelo usuário.`,
         });
         rows.push({
           ...base,
@@ -388,7 +430,9 @@ export function planCategorizationBatch(
         requestKey,
         merchantKey: bounded(merchantKey, 120),
         description: bounded(row.description, 200),
-        ...(row.amountCents === undefined ? {} : { amountCents: row.amountCents }),
+        ...(row.amountCents === undefined
+          ? {}
+          : { amountCents: row.amountCents }),
         ...(row.occurredOn === undefined ? {} : { occurredOn: row.occurredOn }),
         ...(row.sourceCategory === undefined
           ? {}
@@ -408,8 +452,14 @@ export function chunkAiSuggestionItems(
   items: readonly AiSuggestionRequestItem[],
   chunkSize = MAX_AI_ITEMS_PER_CHUNK,
 ): AiSuggestionRequestItem[][] {
-  if (!Number.isInteger(chunkSize) || chunkSize < 1 || chunkSize > MAX_AI_ITEMS_PER_CHUNK) {
-    throw new Error(`chunkSize must be between 1 and ${MAX_AI_ITEMS_PER_CHUNK}`);
+  if (
+    !Number.isInteger(chunkSize) ||
+    chunkSize < 1 ||
+    chunkSize > MAX_AI_ITEMS_PER_CHUNK
+  ) {
+    throw new Error(
+      `chunkSize must be between 1 and ${MAX_AI_ITEMS_PER_CHUNK}`,
+    );
   }
   const chunks: AiSuggestionRequestItem[][] = [];
   for (let index = 0; index < items.length; index += chunkSize) {
@@ -423,15 +473,29 @@ const requestItemSchema = z
     requestKey: z.string().min(1).max(64),
     merchantKey: z.string().max(120),
     description: z.string().min(1).max(200),
-    amountCents: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    amountCents: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    occurredOn: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
     sourceCategory: z.string().min(1).max(100).optional(),
   })
   .strict();
 
-const catalogCategorySchema = z.object({ id: boundedId, name: z.string().min(1).max(80) }).strict();
+const catalogCategorySchema = z
+  .object({ id: boundedId, name: z.string().min(1).max(80) })
+  .strict();
 const catalogSubcategorySchema = z
-  .object({ id: boundedId, categoryId: boundedId, name: z.string().min(1).max(80) })
+  .object({
+    id: boundedId,
+    categoryId: boundedId,
+    name: z.string().min(1).max(80),
+  })
   .strict();
 
 export const aiBatchRequestSchema = z
@@ -552,7 +616,7 @@ export function parseAiBatchReply(
 
 export type TaxonomyProposal = {
   requestKey: string;
-  provider: "codex" | "haiku";
+  provider: "codex" | "paid_fallback";
   categoryName: string;
   subcategoryName: string | null;
   confidence: number;
@@ -569,7 +633,7 @@ export type AppliedAiBatch = {
 export function applyAiBatchReply(
   plan: BatchCategorizationPlan,
   parsed: ParsedAiBatchReply,
-  provider: "codex" | "haiku",
+  provider: "codex" | "paid_fallback",
   catalog: CategoryCatalog,
   versions: { modelVersion: string; promptVersion: string },
 ): AppliedAiBatch {
@@ -616,8 +680,15 @@ export function applyAiBatchReply(
       ...row,
       status: "selected",
       selection: { ...choice, source: provider },
-      candidates: [...row.candidates, result].slice(0, MAX_SUGGESTION_CANDIDATES),
+      candidates: [...row.candidates, result].slice(
+        0,
+        MAX_SUGGESTION_CANDIDATES,
+      ),
     };
   });
-  return { plan: { ...plan, rows }, proposals, rejectedRequestKeys: [...rejected] };
+  return {
+    plan: { ...plan, rows },
+    proposals,
+    rejectedRequestKeys: [...rejected],
+  };
 }

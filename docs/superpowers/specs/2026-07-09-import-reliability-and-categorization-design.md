@@ -123,7 +123,8 @@ Precedence for a row is:
 3. saved household + import-source category mapping;
 4. deterministic merchant rules/aliases;
 5. Codex batch suggestion for unresolved expense rows;
-6. optional bounded Haiku fallback for only failed/unresolved AI items;
+6. optional provider-neutral paid fallback for operationally failed/missing
+   Codex items only;
 7. uncategorized.
 
 Merchant-specific memory outranks a broad source label. AI never outranks a
@@ -132,7 +133,7 @@ confirmed household rule.
 Every memory, source mapping, and rule declares the row kinds it applies to.
 Merchant memories default to `expense`; they must never classify income merely
 because the description matches. Income may use an explicit income-scoped source
-mapping/memory/rule or remain uncategorized. Codex/Haiku enrichment is
+mapping/memory/rule or remain uncategorized. Model enrichment is
 expense-only until income/refund/transfer semantics receive their own design.
 
 ### 4.6 AI failure never blocks import
@@ -460,7 +461,7 @@ Each row may carry up to three candidates:
 
 - active category ID;
 - optional active subcategory ID belonging to that category;
-- source (`source_mapping`, `memory`, `rule`, `codex`, `haiku`);
+- source (`source_mapping`, `memory`, `rule`, `codex`, `paid_fallback`);
 - confidence/tier and bounded explanation;
 - model/prompt/rules/normalizer version where relevant.
 
@@ -475,7 +476,8 @@ returned for review.
 
 ### 10.5 Taxonomy proposals
 
-Codex/Haiku may return a separate bounded novel-category/subcategory proposal.
+Codex or the configured paid fallback may return a separate bounded
+novel-category/subcategory proposal.
 It is non-selected and never created during ordinary import confirmation.
 
 The user may map it to an existing path or leave the row uncategorized. A later
@@ -485,7 +487,7 @@ accent/case duplicates, archived names, and the parent for a subcategory.
 Unknown subcategories under a known macro must no longer disappear silently;
 they become explicit pending-subcategory proposals or an explicit warning.
 
-## 11. Codex and Haiku connection
+## 11. Codex and paid-fallback connection
 
 ### 11.1 Deployment boundary
 
@@ -527,9 +529,16 @@ failures—not descriptions or raw model output.
 - Per-item validation: one invalid suggestion does not discard valid siblings.
 - Tool-free/no-network Codex subprocess, read-only sandbox, minimal environment,
   event audit, timeout/output limits, circuit breaker, and concurrency cap.
-- Haiku receives only failed/unresolved signatures, with a configurable paid
-  item cap; valid Codex abstention does not automatically spend money unless the
-  fallback policy explicitly says so.
+- Paid fallback is disabled by default. Enabling it requires an explicit
+  supported provider and exact model ID; no paid model (including Haiku) is
+  selected implicitly.
+- Only operational Codex failure or an omitted/invalid item is eligible. A valid
+  Codex item with an explicit empty result is an abstention and remains manual.
+- The bot atomically reserves quota after Codex and immediately before the paid
+  call, for exactly the items it will attempt. Reservation is idempotent per
+  attempt and bounded per preview and household/day.
+- Telemetry persists provider, model, attempted/resolved counts, outcome, and
+  latency without descriptions or raw output.
 - Partial/time-out result returns valid suggestions plus unresolved keys.
 
 The initial paid fallback default should be conservative and observable. Model
@@ -550,7 +559,7 @@ The review screen shows:
 
 - counts: ready, needs review, uncategorized, duplicate, error, excluded;
 - category/subcategory plus provenance chip: `Lembrado`, `Categoria do arquivo`,
-  `Regra`, `Codex`, or `Haiku`;
+  `Regra`, `Codex`, or `Fallback pago`;
 - explanation on demand;
 - source-vs-final differences for edited fields;
 - exact/probable duplicate reason and link to existing artifact/batch;
@@ -625,7 +634,7 @@ the same atomic result through request-key/confirmation-fingerprint matching.
 
 `apps/bot`
 
-- internal batch-suggestion HTTP endpoint and hardened Codex/Haiku runtime.
+- internal batch-suggestion HTTP endpoint and hardened Codex/paid-fallback runtime.
 
 Provider-neutral contracts may move to a server-only shared package if needed;
 web must not import implementation from bot.
@@ -689,7 +698,12 @@ payments/credits excluded, and international entries.
 5. Revoke authenticated execution of v1 after rollback window.
 6. Ship deterministic categorization/source mappings and review UX.
 7. Ship explicit correction learning.
-8. Enable Codex batch enrichment, then optional capped Haiku fallback.
+8. Deploy the bot's dual v1/v2 suggestion reader before the v2 web caller, then
+   deploy the web app. Legacy v1 requests remain Codex-only during the rollback
+   window so an old caller cannot trigger the new paid path.
+9. Enable Codex batch enrichment; keep provider-neutral paid fallback disabled
+   until an operator explicitly configures its provider and exact model for
+   operational failures.
 
 Metrics/logs:
 
@@ -719,11 +733,12 @@ Metrics/logs:
 - provenance/confidence UI, editable fields, bulk apply/undo;
 - explicit mapping/memory opt-in persistence.
 
-### C. Codex/Haiku enrichment
+### C. Codex/paid-fallback enrichment
 
 - internal authenticated batch endpoint;
 - strict provider-neutral schema and bounded chunk orchestration;
-- Codex-first, configurable capped Haiku fallback;
+- Codex-first, operational-failure-only provider-neutral paid fallback,
+  disabled by default;
 - progressive preview integration and adversarial/evaluation gates.
 
 Each slice must leave import functional and safe if the next slice never ships.
@@ -743,7 +758,8 @@ This design is complete when:
   in the documented precedence order;
 - users can bulk review and explicitly choose what the system learns;
 - Codex receives only unresolved grouped signatures and never blocks import;
-- Haiku spend is bounded, observable, and limited to configured failures;
+- paid fallback spend is bounded, observable, reserved only for actual attempts,
+  and limited to operational Codex failures;
 - AI cannot create taxonomy or persist unconfirmed categories;
 - real Postgres/RLS and browser E2E prove upload through safe re-import;
 - telemetry proves reliability/cost without logging raw financial content.
@@ -755,7 +771,5 @@ This design is complete when:
 2. What initial file/page/row limits match the family’s largest real exports?
 3. Which real Minhas Finanças/Nubank export variants can be anonymized into the
    fixture matrix?
-4. Should Haiku fallback be disabled by default for imports, or enabled with a
-   per-preview unresolved-item cap?
-5. Should deterministic high-confidence suggestions start preselected, or only
+4. Should deterministic high-confidence suggestions start preselected, or only
    highlighted until one production evaluation calibrates acceptance rates?
