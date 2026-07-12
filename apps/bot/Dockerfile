@@ -15,8 +15,10 @@ RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# pnpm via corepack, pinned by the "packageManager" field in package.json.
-RUN corepack enable
+# Install the pinned package manager at build time. A Corepack shim would try to
+# populate /home/node/.cache on container startup, which is forbidden by the
+# production read-only filesystem.
+RUN corepack disable && npm install --global pnpm@9.15.4
 
 # Production text interpreter. Pin exactly; auth is mounted at runtime and is
 # never baked into the image.
