@@ -301,6 +301,10 @@ async function buildDeps(
     },
     accountNameById: (accountId: string) =>
       accounts.find((account) => account.id === accountId)?.name,
+    listActiveAccounts: () =>
+      accounts.map((account) => ({ id: account.id, name: account.name })),
+    cardNameById: (cardId: string) =>
+      cards.find((card) => card.id === cardId)?.name,
     // Category creation (inline buttons + nova categoria design, 2026-07-04).
     listAllCategories: async () =>
       (await dbListAllCategories(client, householdId)).map((c) => ({

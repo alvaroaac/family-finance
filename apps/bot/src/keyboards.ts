@@ -30,6 +30,10 @@ export const CATEGORY_SUGGESTION_TOKEN_PREFIX = "cs:";
 export const RESPONSIBLE_TOKEN_PREFIX = "rs:";
 /** `cd:<uuid>` assigns a credit card (card installment flow). */
 export const CARD_TOKEN_PREFIX = "cd:";
+/** `pa:<uuid>` assigns an account to a plain expense. */
+export const PAYMENT_ACCOUNT_TOKEN_PREFIX = "pa:";
+/** `pc:<uuid>` assigns a credit card to a plain expense. */
+export const PAYMENT_CARD_TOKEN_PREFIX = "pc:";
 
 /** Chunk buttons into rows of two (household-scale grids, no pagination). */
 function twoPerRow(buttons: InlineKeyboardButton[]): InlineKeyboardButton[][] {
@@ -184,6 +188,24 @@ export function cardGridKeyboard(
       sorted.map((c) => ({
         text: c.name,
         callback_data: `${CARD_TOKEN_PREFIX}${c.id}`,
+      })),
+    ),
+  };
+}
+
+/** Payment choices for an ambiguous provider name (for example Nubank). */
+export function paymentInstrumentKeyboard(
+  instruments: ReadonlyArray<{
+    type: "account" | "card";
+    id: string;
+    name: string;
+  }>,
+): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: twoPerRow(
+      instruments.map((instrument) => ({
+        text: `${instrument.type === "account" ? "Conta" : "Crédito"} ${instrument.name}`,
+        callback_data: `${instrument.type === "account" ? PAYMENT_ACCOUNT_TOKEN_PREFIX : PAYMENT_CARD_TOKEN_PREFIX}${instrument.id}`,
       })),
     ),
   };

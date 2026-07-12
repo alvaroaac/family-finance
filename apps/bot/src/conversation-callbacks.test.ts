@@ -86,6 +86,112 @@ describe("keyboards on text outcomes", () => {
   });
 });
 
+describe("named payment instrument resolution", () => {
+  const instruments = {
+    listActiveAccounts: () => [{ id: "acct-nubank", name: "Nubank" }],
+    listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
+    accountNameById: (id: string) =>
+      id === "acct-nubank" ? "Nubank" : undefined,
+    cardNameById: (id: string) => (id === "card-nubank" ? "Nubank" : undefined),
+  };
+
+  it("asks account vs credit when a bare provider name matches both", async () => {
+    const deps = makeDeps(instruments);
+    const outcome = await startConversation(
+      {
+        text: "Compra no posto Marcio de 115 reais, no Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_payment_choice");
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.state.draft.cardId).toBeUndefined();
+    expect(
+      outcome.keyboard?.inline_keyboard.flat().map((button) => button.text),
+    ).toEqual(["Conta Nubank", "Crédito Nubank"]);
+  });
+
+  it("defaults to the only matching instrument", async () => {
+    const accountOnly = makeDeps({
+      ...instruments,
+      listActiveCards: () => [],
+    });
+    const account = await startConversation(
+      { text: "posto 115 reais no Nubank", fromUserId: "user-alvaro" },
+      accountOnly,
+      { today: TODAY },
+    );
+    expect(account.state.status).toBe("awaiting_confirmation");
+    expect(account.state.draft.accountId).toBe("acct-nubank");
+
+    const cardOnly = makeDeps({
+      ...instruments,
+      listActiveAccounts: () => [],
+    });
+    const card = await startConversation(
+      { text: "posto 115 reais no Nubank", fromUserId: "user-alvaro" },
+      cardOnly,
+      { today: TODAY },
+    );
+    expect(card.state.draft.cardId).toBe("card-nubank");
+  });
+
+  it("uses an explicit type without asking", async () => {
+    const deps = makeDeps(instruments);
+    const card = await startConversation(
+      { text: "posto 115 reais no cartão Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(card.state.status).toBe("awaiting_confirmation");
+    expect(card.state.draft.cardId).toBe("card-nubank");
+
+    const account = await startConversation(
+      { text: "posto 115 reais na conta Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(account.state.draft.accountId).toBe("acct-nubank");
+  });
+
+  it("resumes confirmation after a validated button choice", async () => {
+    const deps = makeDeps(instruments);
+    const started = await startConversation(
+      { text: "posto 115 reais no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const picked = await applyCallback(started.state, "pc:card-nubank", deps, {
+      today: TODAY,
+    });
+    expect(picked.state.status).toBe("awaiting_confirmation");
+    expect(picked.state.draft.cardId).toBe("card-nubank");
+    expect(picked.reply).toContain("Crédito Nubank");
+    expect(
+      picked.keyboard?.inline_keyboard
+        .flat()
+        .some((button) => button.callback_data === "cf"),
+    ).toBe(true);
+  });
+
+  it("rejects stale or forged payment choices", async () => {
+    const deps = makeDeps(instruments);
+    const started = await startConversation(
+      { text: "posto 115 reais no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const forged = await applyCallback(started.state, "pc:card-other", deps, {
+      today: TODAY,
+    });
+    expect(forged.state.status).toBe("awaiting_payment_choice");
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe("applyCallback: cf / cx", () => {
   it("cf persists exactly like typed confirmar (parity)", async () => {
     const deps = makeDeps();
