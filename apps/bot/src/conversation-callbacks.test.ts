@@ -157,6 +157,19 @@ describe("named payment instrument resolution", () => {
     expect(account.state.draft.accountId).toBe("acct-nubank");
   });
 
+  it("preserves the card resolver when active-card inventory is unavailable", async () => {
+    const deps = makeDeps({ resolveCardId: () => "card-nubank" });
+    const card = await startConversation(
+      { text: "Uber 32 reais hoje no cartão", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(card.state.status).toBe("awaiting_confirmation");
+    expect(card.state.draft.cardId).toBe("card-nubank");
+    expect(card.state.draft.accountId).toBeUndefined();
+  });
+
   it("resumes confirmation after a validated button choice", async () => {
     const deps = makeDeps(instruments);
     const started = await startConversation(
@@ -188,6 +201,29 @@ describe("named payment instrument resolution", () => {
       today: TODAY,
     });
     expect(forged.state.status).toBe("awaiting_payment_choice");
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a typed choice when the instrument became inactive", async () => {
+    let cardActive = true;
+    const deps = makeDeps({
+      ...instruments,
+      listActiveCards: () =>
+        cardActive ? [{ id: "card-nubank", name: "Nubank" }] : [],
+    });
+    const started = await startConversation(
+      { text: "posto 115 reais no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    cardActive = false;
+
+    const stale = await applyMessage(started.state, "crédito Nubank", deps, {
+      today: TODAY,
+    });
+
+    expect(stale.state.status).toBe("awaiting_payment_choice");
+    expect(stale.state.draft.cardId).toBeUndefined();
     expect(deps.createTransaction).not.toHaveBeenCalled();
   });
 });

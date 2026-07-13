@@ -1364,9 +1364,12 @@ export async function startConversation(
     if (selected?.type === "account") draft.accountId = selected.id;
   } else if (paymentCandidates.length === 0) {
     if (parsed.cardHint) {
-      const cards = deps.listActiveCards?.() ?? [];
-      if (cards.length === 1) draft.cardId = cards[0]?.id;
-      if (cards.length > 1) {
+      const cards = deps.listActiveCards?.();
+      if (cards === undefined) {
+        draft.cardId = deps.resolveCardId() ?? undefined;
+      } else if (cards.length === 1) {
+        draft.cardId = cards[0]?.id;
+      } else if (cards.length > 1) {
         paymentCandidates = cards.map((card) => ({
           type: "card" as const,
           id: card.id,
@@ -2425,7 +2428,13 @@ export async function applyMessage(
       const prefix = item.type === "account" ? "conta" : "credito";
       return normalized === normalizeText(`${prefix} ${item.name}`);
     });
-    if (candidate === undefined) {
+    const stillActive =
+      candidate?.type === "account"
+        ? deps.listActiveAccounts?.().some((item) => item.id === candidate.id)
+        : candidate?.type === "card"
+          ? deps.listActiveCards?.().some((item) => item.id === candidate.id)
+          : false;
+    if (candidate === undefined || !stillActive) {
       return {
         state,
         reply: "Escolha uma das opções de pagamento abaixo.",
