@@ -97,11 +97,14 @@ import {
   CATEGORY_TOKEN_PREFIX,
   CATEGORY_SUGGESTION_TOKEN_PREFIX,
   CARD_TOKEN_PREFIX,
+  PAYMENT_ACCOUNT_TOKEN_PREFIX,
+  PAYMENT_CARD_TOKEN_PREFIX,
   RESPONSIBLE_TOKEN_PREFIX,
   confirmationKeyboard,
   installmentConfirmationKeyboard,
   categoryGridKeyboard,
   cardGridKeyboard,
+  paymentInstrumentKeyboard,
   responsibleGridKeyboard,
   cancelOnlyKeyboard,
   obligationConfirmationKeyboard,
@@ -125,6 +128,8 @@ export type ConversationStatus =
   | "awaiting_card_bill_confirmation"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
   | "awaiting_mark_paid_choice"
+  /** A provider name matched both an account and a card. */
+  | "awaiting_payment_choice"
   /** Waiting for the user to TYPE a new category's name (nc button / bare "nova categoria"). */
   | "awaiting_category_name";
 
@@ -207,6 +212,12 @@ export type MarkPaidCandidate = {
   amountCents: number;
 };
 
+export type PaymentInstrumentCandidate = {
+  type: "account" | "card";
+  id: string;
+  name: string;
+};
+
 export type ConversationState = {
   status: ConversationStatus;
   draft: DraftInProgress;
@@ -220,6 +231,8 @@ export type ConversationState = {
   markPaidCandidates?: MarkPaidCandidate[];
   /** Actual amount supplied with an ambiguous obligation payment. */
   markPaidAmountCents?: number;
+  /** Valid callback choices while status = awaiting_payment_choice. */
+  paymentCandidates?: PaymentInstrumentCandidate[];
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
   proposedCategoryName?: string;
   /** Ranked existing categories returned by the unified interpreter. */
@@ -327,6 +340,10 @@ export type ConversationDeps = {
   resolveAccountIdByName?: (name: string) => string | undefined;
   /** Display name of an account id, for the confirmation summary. */
   accountNameById?: (accountId: string) => string | undefined;
+  /** Active accounts available to resolve provider names in plain expenses. */
+  listActiveAccounts?: () => Array<{ id: string; name: string }>;
+  /** Display name of a card id, for the confirmation summary. */
+  cardNameById?: (cardId: string) => string | undefined;
   /** ALL categories (active + archived) for create-dedupe (bot category creation). */
   listAllCategories?: () => Promise<
     Array<{ id: string; name: string; isActive: boolean }>
@@ -399,11 +416,11 @@ function categoryLabel(
   return macro;
 }
 
-function paymentLabel(draft: DraftInProgress): string {
+function paymentLabel(draft: DraftInProgress, deps: ConversationDeps): string {
   if (draft.cardId !== undefined) {
-    return "Cartão de crédito";
+    return `Crédito ${deps.cardNameById?.(draft.cardId) ?? "Cartão"}`;
   }
-  return "Conta";
+  return `Conta ${deps.accountNameById?.(draft.accountId ?? "") ?? ""}`.trim();
 }
 
 function responsibleLabel(
@@ -431,7 +448,7 @@ function summaryView(
       draft.subcategoryId,
       draft.categoryNameFallback,
     ),
-    paymentLabel: paymentLabel(draft),
+    paymentLabel: paymentLabel(draft, deps),
     responsibleLabel: responsibleLabel(draft.responsibleUserId, deps),
     categoryExplanation: draft.categoryExplanation,
     proposedNewCategory,
@@ -470,6 +487,9 @@ function keyboardForState(
   if (state.status === "awaiting_category_name") {
     return cancelOnlyKeyboard();
   }
+  if (state.status === "awaiting_payment_choice") {
+    return paymentInstrumentKeyboard(state.paymentCandidates ?? []);
+  }
   if (state.status === "awaiting_obligation_confirmation") {
     return obligationConfirmationKeyboard(
       state.proposedCategoryName,
@@ -486,6 +506,40 @@ function keyboardForState(
 /** Case- and accent-insensitive normalization for keyword matching. */
 function normalizeText(value: string): string {
   return value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+}
+
+function textNamesInstrument(text: string, name: string): boolean {
+  const haystack = ` ${normalizeText(text).replace(/[^a-z0-9]+/g, " ")} `;
+  const needle = ` ${normalizeText(name).replace(/[^a-z0-9]+/g, " ")} `;
+  return needle.trim().length > 0 && haystack.includes(needle);
+}
+
+function paymentCandidatesForText(
+  text: string,
+  deps: ConversationDeps,
+): PaymentInstrumentCandidate[] {
+  const accounts = (deps.listActiveAccounts?.() ?? []).map((item) => ({
+    type: "account" as const,
+    ...item,
+  }));
+  const cards = (deps.listActiveCards?.() ?? []).map((item) => ({
+    type: "card" as const,
+    id: item.id,
+    name: item.name,
+  }));
+  const named = [...accounts, ...cards].filter((item) =>
+    textNamesInstrument(text, item.name),
+  );
+  const normalized = normalizeText(text);
+  const explicitlyCard = /\b(cartao|credito|fatura)\b/.test(normalized);
+  const explicitlyAccount = /\b(conta|debito|pix|dinheiro|corrente)\b/.test(
+    normalized,
+  );
+  if (explicitlyCard && !explicitlyAccount)
+    return named.filter((item) => item.type === "card");
+  if (explicitlyAccount && !explicitlyCard)
+    return named.filter((item) => item.type === "account");
+  return named;
 }
 
 function resolveCategoryCandidates(
@@ -1288,22 +1342,46 @@ export async function startConversation(
     );
   }
 
-  // Resolve payment instrument from hints (default account otherwise).
-  if (parsed.cardHint) {
-    draft.cardId = deps.resolveCardId() ?? undefined;
+  // Resolve a named instrument before applying any household default. Bare
+  // provider names ("no Nubank") are safe only when they identify one real
+  // instrument; account+card collisions become an explicit button choice.
+  let paymentCandidates = paymentCandidatesForText(input.text, deps);
+  if (
+    paymentCandidates.length === 0 &&
+    interpreted?.cardKeyword !== undefined
+  ) {
+    paymentCandidates = (deps.listActiveCards?.() ?? [])
+      .filter(
+        (card) =>
+          normalizeText(card.name) ===
+          normalizeText(interpreted.cardKeyword as string),
+      )
+      .map((card) => ({ type: "card" as const, id: card.id, name: card.name }));
   }
-  if (interpreted?.cardKeyword !== undefined) {
-    const matches = (deps.listActiveCards?.() ?? []).filter(
-      (card) =>
-        normalizeText(card.name) ===
-        normalizeText(interpreted.cardKeyword as string),
-    );
-    if (matches.length === 1) draft.cardId = matches[0]?.id;
-  }
-  if (draft.cardId === undefined) {
-    draft.accountId =
-      (parsed.accountHint ? deps.resolveAccountId() : undefined) ??
-      deps.defaultAccountId;
+  if (paymentCandidates.length === 1) {
+    const selected = paymentCandidates[0];
+    if (selected?.type === "card") draft.cardId = selected.id;
+    if (selected?.type === "account") draft.accountId = selected.id;
+  } else if (paymentCandidates.length === 0) {
+    if (parsed.cardHint) {
+      const cards = deps.listActiveCards?.();
+      if (cards === undefined) {
+        draft.cardId = deps.resolveCardId() ?? undefined;
+      } else if (cards.length === 1) {
+        draft.cardId = cards[0]?.id;
+      } else if (cards.length > 1) {
+        paymentCandidates = cards.map((card) => ({
+          type: "card" as const,
+          id: card.id,
+          name: card.name,
+        }));
+      }
+    }
+    if (draft.cardId === undefined && paymentCandidates.length === 0) {
+      draft.accountId =
+        (parsed.accountHint ? deps.resolveAccountId() : undefined) ??
+        deps.defaultAccountId;
+    }
   }
 
   // Ask the categorization engine for a suggestion (shared engine, both
@@ -1349,14 +1427,22 @@ export async function startConversation(
   }
 
   const state: ConversationState = {
-    status: statusForDraft(draft),
+    status:
+      paymentCandidates.length > 1
+        ? "awaiting_payment_choice"
+        : statusForDraft(draft),
     draft,
     proposedCategoryName,
     categoryCandidates,
+    paymentCandidates:
+      paymentCandidates.length > 1 ? paymentCandidates : undefined,
   };
   return {
     state,
-    reply: replyForState(state, deps),
+    reply:
+      state.status === "awaiting_payment_choice"
+        ? "Qual forma de pagamento você quis dizer?"
+        : replyForState(state, deps),
     keyboard: keyboardForState(state),
   };
 }
@@ -2336,6 +2422,45 @@ export async function applyMessage(
   if (state.status === "awaiting_mark_paid_choice") {
     return applyMarkPaidChoice(state, message, deps, today);
   }
+  if (state.status === "awaiting_payment_choice") {
+    const normalized = normalizeText(message);
+    const candidate = state.paymentCandidates?.find((item) => {
+      const prefix = item.type === "account" ? "conta" : "credito";
+      return normalized === normalizeText(`${prefix} ${item.name}`);
+    });
+    const stillActive =
+      candidate?.type === "account"
+        ? deps.listActiveAccounts?.().some((item) => item.id === candidate.id)
+        : candidate?.type === "card"
+          ? deps.listActiveCards?.().some((item) => item.id === candidate.id)
+          : false;
+    if (candidate === undefined || !stillActive) {
+      return {
+        state,
+        reply: "Escolha uma das opções de pagamento abaixo.",
+        keyboard: keyboardForState(state),
+      };
+    }
+    const draft = { ...state.draft };
+    if (candidate.type === "card") {
+      draft.cardId = candidate.id;
+      draft.accountId = undefined;
+    } else {
+      draft.accountId = candidate.id;
+      draft.cardId = undefined;
+    }
+    const next: ConversationState = {
+      ...state,
+      status: statusForDraft(draft),
+      draft,
+      paymentCandidates: undefined,
+    };
+    return {
+      state: next,
+      reply: replyForState(next, deps),
+      keyboard: keyboardForState(next),
+    };
+  }
   if (state.status === "awaiting_obligation_confirmation") {
     return applyObligationMessage(state, message, deps, today);
   }
@@ -2602,6 +2727,50 @@ export async function applyCallback(
   }
   if (state.status === "cancelled") {
     return expiredOutcome(state);
+  }
+
+  if (state.status === "awaiting_payment_choice") {
+    const candidates = state.paymentCandidates ?? [];
+    const requestedType = token.startsWith(PAYMENT_ACCOUNT_TOKEN_PREFIX)
+      ? "account"
+      : token.startsWith(PAYMENT_CARD_TOKEN_PREFIX)
+        ? "card"
+        : undefined;
+    if (requestedType === undefined) return expiredOutcome(state);
+    const prefix =
+      requestedType === "account"
+        ? PAYMENT_ACCOUNT_TOKEN_PREFIX
+        : PAYMENT_CARD_TOKEN_PREFIX;
+    const id = token.slice(prefix.length);
+    const candidate = candidates.find(
+      (item) => item.type === requestedType && item.id === id,
+    );
+    if (candidate === undefined) return expiredOutcome(state);
+    const depsValue = await getDeps();
+    const stillActive =
+      candidate.type === "account"
+        ? depsValue.listActiveAccounts?.().some((item) => item.id === id)
+        : depsValue.listActiveCards?.().some((item) => item.id === id);
+    if (!stillActive) return expiredOutcome(state);
+    const draft = { ...state.draft };
+    if (candidate.type === "card") {
+      draft.cardId = id;
+      draft.accountId = undefined;
+    } else {
+      draft.accountId = id;
+      draft.cardId = undefined;
+    }
+    const next: ConversationState = {
+      ...state,
+      status: statusForDraft(draft),
+      draft,
+      paymentCandidates: undefined,
+    };
+    return {
+      state: next,
+      reply: replyForState(next, depsValue),
+      keyboard: keyboardForState(next),
+    };
   }
 
   // Card-installment confirmation: cf/cx parity with typed confirm/cancel,
