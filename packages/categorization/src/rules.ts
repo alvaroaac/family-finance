@@ -12,6 +12,7 @@
 
 import { CONFIDENCE, scoreConfidence } from "./confidence.js";
 import type { CategorizationContext } from "./context.js";
+import type { CategorizationRowKind } from "./memory.js";
 
 /** A single deterministic rule. */
 export type CategorizationRule = {
@@ -26,6 +27,8 @@ export type CategorizationRule = {
   subcategoryName?: string;
   /** Confidence this rule asserts (clamped to [0,1]). Defaults to RULE. */
   confidence?: number;
+  /** Undefined legacy rules are expense-only. */
+  rowKind?: CategorizationRowKind;
 };
 
 /** Outcome of matching a context against rules — names, not ids. */
@@ -111,6 +114,9 @@ export function matchRules(
   rules: CategorizationRule[],
 ): RuleMatch | null {
   for (const rule of rules) {
+    if ((rule.rowKind ?? "expense") !== (context.kind ?? "expense")) {
+      continue;
+    }
     const haystack = fieldValue(context, rule.field).toUpperCase();
     const needle = rule.contains.trim().toUpperCase();
     if (needle.length === 0) {

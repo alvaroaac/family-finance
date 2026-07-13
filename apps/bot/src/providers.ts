@@ -145,6 +145,103 @@ export function createAnthropicCompletionClient(args: {
 }
 
 /**
+ * OpenAI Responses API completion client. The paid import fallback uses JSON
+ * schema mode and still validates the returned object locally before accepting
+ * any financial suggestion. `store:false` disables Responses application-state
+ * storage; provider retention remains governed by the account's data controls.
+ */
+export function createOpenAiCompletionClient(args: {
+  apiKey: string;
+  model: string;
+  outputSchema: Record<string, unknown>;
+  timeoutMs?: number;
+  logCall?: AiCallLogger;
+}): AiCompletionClient {
+  const timeoutMs = args.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  const logCall = args.logCall ?? logAiCall;
+  return {
+    async complete(prompt, opts): Promise<string | null> {
+      const startedAt = Date.now();
+      let outcome: AiCallOutcome = "error";
+      let status: number | undefined;
+      let inputTokens: number | undefined;
+      let outputTokens: number | undefined;
+      let error: string | undefined;
+      try {
+        const response = await withTimeout(timeoutMs, (signal) =>
+          fetch("https://api.openai.com/v1/responses", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${args.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: args.model,
+              input: prompt,
+              max_output_tokens: 1600,
+              store: false,
+              text: {
+                format: {
+                  type: "json_schema",
+                  name: "import_suggestions",
+                  schema: args.outputSchema,
+                  strict: true,
+                },
+              },
+            }),
+            signal,
+          }),
+        );
+        if (!response.ok) {
+          outcome = "http_error";
+          status = response.status;
+          return null;
+        }
+        const json = (await response.json()) as {
+          status?: string;
+          output?: Array<{
+            content?: Array<{ type?: string; text?: string }>;
+          }>;
+          usage?: { input_tokens?: number; output_tokens?: number };
+        };
+        inputTokens = json.usage?.input_tokens;
+        outputTokens = json.usage?.output_tokens;
+        if (json.status !== "completed") {
+          outcome = "error";
+          error = "OpenAI response did not complete";
+          return null;
+        }
+        const text = (json.output ?? [])
+          .flatMap((item) => item.content ?? [])
+          .filter((item) => item.type === "output_text" && item.text)
+          .map((item) => item.text as string)
+          .join("");
+        outcome = text.length > 0 ? "ok" : "abstain";
+        return text.length > 0 ? text : null;
+      } catch (caught) {
+        outcome =
+          caught instanceof Error && caught.name === "AbortError"
+            ? "timeout"
+            : "error";
+        error = caught instanceof Error ? caught.message : String(caught);
+        return null;
+      } finally {
+        logCall({
+          label: opts?.label ?? "unknown",
+          model: args.model,
+          outcome,
+          latencyMs: Date.now() - startedAt,
+          inputTokens,
+          outputTokens,
+          status,
+          error,
+        });
+      }
+    },
+  };
+}
+
+/**
  * OpenAI audio transcription provider (Whisper). Reads the temp file and posts it
  * as multipart/form-data to the transcription endpoint. The caller
  * (`transcribeVoiceMessage`) deletes the temp file afterwards in its `finally`.

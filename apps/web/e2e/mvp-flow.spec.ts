@@ -45,8 +45,10 @@ test.describe("MVP review loop — public guarantees (no session)", () => {
     page,
   }) => {
     await page.goto("/login");
-    await expect(page.getByRole("heading", { name: "Casa" })).toBeVisible();
-    await expect(page.getByText(/Apenas emails autorizados/i)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /Alvaro\s*&\s*Karol/i }),
+    ).toBeVisible();
+    await expect(page.getByText(/Só a gente entra por aqui/i)).toBeVisible();
   });
 });
 

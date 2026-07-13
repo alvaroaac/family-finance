@@ -15,4 +15,8 @@ export type CategorizationContext = {
   amountCents?: number;
   /** Optional ISO date (YYYY-MM-DD) — reserved for future seasonal rules. */
   occurredOn?: string;
+  /** Legacy callers omit this and therefore retain expense-only behavior. */
+  kind?: "expense" | "income";
+  /** Precomputed versioned merchant identity; computed when omitted. */
+  merchantKey?: string;
 };

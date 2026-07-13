@@ -42,6 +42,9 @@ import type {
   ConfirmImportBatchPayload,
   ConfirmImportRowPayload,
   ConfirmImportResult,
+  ConfirmImportV2BatchPayload,
+  ConfirmImportV2Item,
+  ConfirmImportV2Result,
   AccountRow,
   InvestmentBucketRow,
   CreditCardRow,
@@ -57,6 +60,10 @@ import type {
   ObligationStatus,
   MaterializeObligationPaymentResult,
   SettleCardBillResult,
+  ImportSource,
+  SourceCategoryMappingRow,
+  ImportItemClaimRow,
+  ImportRowRow,
 } from "./types.js";
 
 export type AppSupabaseClient = SupabaseClient<Database>;
@@ -427,16 +434,16 @@ export async function getMonthlySummary(
   month: string,
 ): Promise<MonthlySummary> {
   const { start, end } = monthDateRange(month);
-  const rows = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
-    "getMonthlySummary",
-    (from, to) =>
-      client
-        .from("transactions")
-        .select("kind, amount_cents")
-        .eq("household_id", householdId)
-        .gte("occurred_on", start)
-        .lte("occurred_on", end)
-        .range(from, to),
+  const rows = await fetchAllRows<
+    Pick<TransactionRow, "kind" | "amount_cents">
+  >("getMonthlySummary", (from, to) =>
+    client
+      .from("transactions")
+      .select("kind, amount_cents")
+      .eq("household_id", householdId)
+      .gte("occurred_on", start)
+      .lte("occurred_on", end)
+      .range(from, to),
   );
   return summarizeMonth(month, rows);
 }
@@ -524,6 +531,212 @@ export async function confirmImport(
     batch: result.batch,
     imported_rows: result.imported_rows ?? 0,
   };
+}
+
+/**
+ * Atomically confirm a retry-safe import containing flat transactions and/or
+ * reconstructed installment purchases. The database owns claim acquisition,
+ * duplicate disposition, artifact linkage, and all persisted counts.
+ *
+ * Reusing the same `(household_id, request_key)` with the same payload hash
+ * returns the original result. Reusing it with another hash is rejected.
+ */
+export async function confirmImportV2(
+  client: AppSupabaseClient,
+  batch: ConfirmImportV2BatchPayload,
+  items: ConfirmImportV2Item[],
+): Promise<ConfirmImportV2Result> {
+  const { data, error } = await client.rpc("confirm_import_v2", {
+    batch_payload: batch,
+    items_payload: items,
+  });
+  if (error !== null) {
+    throw new Error(`confirmImportV2 failed: ${error.message}`);
+  }
+  return data as ConfirmImportV2Result;
+}
+
+/** Atomically reserve the per-preview paid fallback cap. Replays receive zero. */
+export async function reserveImportAiPaidItems(
+  client: AppSupabaseClient,
+  args: {
+    householdId: string;
+    budgetKey: string;
+    attemptKey: string;
+    requestedItems: number;
+    previewMaxItems: number;
+    createdByUserId: string;
+  },
+): Promise<number> {
+  const { data, error } = await client.rpc("reserve_import_ai_paid_items", {
+    target_household_id: args.householdId,
+    target_budget_key: args.budgetKey,
+    target_attempt_key: args.attemptKey,
+    requested_items: args.requestedItems,
+    preview_max_items: args.previewMaxItems,
+    target_created_by_user_id: args.createdByUserId,
+  });
+  if (error !== null) {
+    throw new Error(`reserveImportAiPaidItems failed: ${error.message}`);
+  }
+  return Number(data ?? 0);
+}
+
+/** Complete persisted telemetry for one paid fallback attempt. */
+export async function recordImportAiPaidResult(
+  client: AppSupabaseClient,
+  args: {
+    householdId: string;
+    attemptKey: string;
+    provider: string;
+    model: string;
+    outcome: "success" | "invalid_schema" | "error";
+    resolvedItems: number;
+    latencyMs: number;
+  },
+): Promise<void> {
+  const { error } = await client.rpc("record_import_ai_paid_result", {
+    target_household_id: args.householdId,
+    target_attempt_key: args.attemptKey,
+    target_provider: args.provider,
+    target_model: args.model,
+    target_outcome: args.outcome,
+    target_resolved_items: args.resolvedItems,
+    target_latency_ms: args.latencyMs,
+  });
+  if (error !== null) {
+    throw new Error(`recordImportAiPaidResult failed: ${error.message}`);
+  }
+}
+
+/** Atomically claim a short-lived internal-request nonce across bot replicas. */
+export async function claimImportSuggestionNonce(
+  client: AppSupabaseClient,
+  nonce: string,
+  expiresAt: Date,
+): Promise<boolean> {
+  const { data, error } = await client.rpc("claim_import_suggestion_nonce", {
+    target_nonce: nonce,
+    target_expires_at: expiresAt.toISOString(),
+  });
+  if (error !== null) {
+    throw new Error(`claimImportSuggestionNonce failed: ${error.message}`);
+  }
+  return data === true;
+}
+
+/** Exact active claims used to mark already-imported rows during preview. */
+export async function findImportItemClaims(
+  client: AppSupabaseClient,
+  householdId: string,
+  source: ImportSource,
+  fingerprintVersion: number,
+  baseFingerprints: string[],
+): Promise<ImportItemClaimRow[]> {
+  const unique = [...new Set(baseFingerprints)];
+  if (unique.length === 0) return [];
+  const { data, error } = await client
+    .from("import_item_claims")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("source", source)
+    .eq("fingerprint_version", fingerprintVersion)
+    .in("base_fingerprint", unique);
+  if (error !== null) {
+    throw new Error(`findImportItemClaims failed: ${error.message}`);
+  }
+  return (data ?? []) as ImportItemClaimRow[];
+}
+
+/** Prior audited dispositions for an exact raw-file replay (review context only). */
+export async function findImportRowsByFileFingerprint(
+  client: AppSupabaseClient,
+  householdId: string,
+  source: ImportSource,
+  fileFingerprint: string,
+): Promise<ImportRowRow[]> {
+  const { data: batches, error: batchError } = await client
+    .from("import_batches")
+    .select("id")
+    .eq("household_id", householdId)
+    .eq("source", source)
+    .eq("file_fingerprint", fileFingerprint);
+  if (batchError !== null) {
+    throw new Error(
+      `findImportRowsByFileFingerprint failed: ${batchError.message}`,
+    );
+  }
+  const batchIds = (batches ?? []).map((batch) => batch.id);
+  if (batchIds.length === 0) return [];
+  const { data, error } = await client
+    .from("import_rows")
+    .select("*")
+    .eq("household_id", householdId)
+    .in("import_batch_id", batchIds)
+    .order("created_at", { ascending: false });
+  if (error !== null) {
+    throw new Error(`findImportRowsByFileFingerprint failed: ${error.message}`);
+  }
+  return (data ?? []) as ImportRowRow[];
+}
+
+export async function findImportBatchById(
+  client: AppSupabaseClient,
+  householdId: string,
+  batchId: string,
+): Promise<ImportBatchRow | null> {
+  const { data, error } = await client
+    .from("import_batches")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("id", batchId)
+    .maybeSingle();
+  if (error !== null)
+    throw new Error(`findImportBatchById failed: ${error.message}`);
+  return (data as ImportBatchRow | null) ?? null;
+}
+
+/** Legacy-v1 duplicate bridge for artifacts created before item claims existed. */
+export async function findTransactionsForInstrumentBetween(
+  client: AppSupabaseClient,
+  householdId: string,
+  instrument: { type: "account" | "credit_card"; id: string },
+  fromDate: string,
+  toDate: string,
+): Promise<TransactionRow[]> {
+  let query = client
+    .from("transactions")
+    .select("*")
+    .eq("household_id", householdId)
+    .gte("occurred_on", fromDate)
+    .lte("occurred_on", toDate);
+  query =
+    instrument.type === "account"
+      ? query.eq("account_id", instrument.id)
+      : query.eq("credit_card_id", instrument.id);
+  const { data, error } = await query;
+  if (error !== null) {
+    throw new Error(
+      `findTransactionsForInstrumentBetween failed: ${error.message}`,
+    );
+  }
+  return (data ?? []) as TransactionRow[];
+}
+
+export async function listImportRowsByBatchId(
+  client: AppSupabaseClient,
+  householdId: string,
+  batchId: string,
+): Promise<ImportRowRow[]> {
+  const { data, error } = await client
+    .from("import_rows")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("import_batch_id", batchId)
+    .order("source_line", { ascending: true });
+  if (error !== null)
+    throw new Error(`listImportRowsByBatchId failed: ${error.message}`);
+  return (data ?? []) as ImportRowRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +929,31 @@ export async function listActiveCategorizationMemory(
   return (data ?? []) as CategorizationMemoryRow[];
 }
 
+/** Active, explicitly learned source-label mappings for import preview. */
+export async function listSourceCategoryMappings(
+  client: AppSupabaseClient,
+  householdId: string,
+  source: ImportSource,
+  rowKind?: "expense" | "income",
+): Promise<SourceCategoryMappingRow[]> {
+  let query = client
+    .from("source_category_mappings")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("source", source)
+    .eq("is_active", true);
+  if (rowKind !== undefined) {
+    query = query.eq("row_kind", rowKind);
+  }
+  const { data, error } = await query.order("normalized_label", {
+    ascending: true,
+  });
+  if (error !== null) {
+    throw new Error(`listSourceCategoryMappings failed: ${error.message}`);
+  }
+  return (data ?? []) as SourceCategoryMappingRow[];
+}
+
 /**
  * Insert a categorization-memory pattern (e.g. mapping an old/imported category
  * name to a current one, or recording a confirmed correction). `household_id`
@@ -824,10 +1062,7 @@ export function creditCardInsert(input: {
   name: string;
   closingDay?: number;
   dueDay?: number;
-}): Pick<
-  CreditCardRow,
-  "household_id" | "name" | "closing_day" | "due_day"
-> {
+}): Pick<CreditCardRow, "household_id" | "name" | "closing_day" | "due_day"> {
   return {
     household_id: input.householdId,
     name: input.name.trim(),
@@ -1115,7 +1350,9 @@ export async function listInstallmentGroupsByHousehold(
     .select("*")
     .eq("household_id", householdId);
   if (error !== null) {
-    throw new Error(`listInstallmentGroupsByHousehold failed: ${error.message}`);
+    throw new Error(
+      `listInstallmentGroupsByHousehold failed: ${error.message}`,
+    );
   }
   return (data ?? []) as InstallmentGroupRow[];
 }
@@ -1262,17 +1499,17 @@ export async function getCardPressure(
 ): Promise<CardPressure> {
   const { start, end } = monthDateRange(month);
 
-  const txData = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
-    "getCardPressure(transactions)",
-    (from, to) =>
-      client
-        .from("transactions")
-        .select("kind, amount_cents")
-        .eq("household_id", householdId)
-        .not("credit_card_id", "is", null)
-        .gte("occurred_on", start)
-        .lte("occurred_on", end)
-        .range(from, to),
+  const txData = await fetchAllRows<
+    Pick<TransactionRow, "kind" | "amount_cents">
+  >("getCardPressure(transactions)", (from, to) =>
+    client
+      .from("transactions")
+      .select("kind, amount_cents")
+      .eq("household_id", householdId)
+      .not("credit_card_id", "is", null)
+      .gte("occurred_on", start)
+      .lte("occurred_on", end)
+      .range(from, to),
   );
 
   const instData = await fetchAllRows<Pick<InstallmentRow, "amount_cents">>(
@@ -1303,17 +1540,17 @@ export async function getCardPressureForCard(
 ): Promise<CardPressure> {
   const { start, end } = monthDateRange(month);
 
-  const txData = await fetchAllRows<Pick<TransactionRow, "kind" | "amount_cents">>(
-    "getCardPressureForCard(transactions)",
-    (from, to) =>
-      client
-        .from("transactions")
-        .select("kind, amount_cents")
-        .eq("household_id", householdId)
-        .eq("credit_card_id", creditCardId)
-        .gte("occurred_on", start)
-        .lte("occurred_on", end)
-        .range(from, to),
+  const txData = await fetchAllRows<
+    Pick<TransactionRow, "kind" | "amount_cents">
+  >("getCardPressureForCard(transactions)", (from, to) =>
+    client
+      .from("transactions")
+      .select("kind, amount_cents")
+      .eq("household_id", householdId)
+      .eq("credit_card_id", creditCardId)
+      .gte("occurred_on", start)
+      .lte("occurred_on", end)
+      .range(from, to),
   );
 
   const instData = await fetchAllRows<Pick<InstallmentRow, "amount_cents">>(
@@ -1489,7 +1726,9 @@ export type TransactionListItem = PersistedTransaction & {
 };
 
 /** Map a raw row to a `TransactionListItem`. Pure. */
-export function mapTransactionListItem(row: TransactionRow): TransactionListItem {
+export function mapTransactionListItem(
+  row: TransactionRow,
+): TransactionListItem {
   return {
     ...mapTransactionRow(row),
     accountId: row.account_id,
@@ -1689,7 +1928,9 @@ export async function updateTransaction(
       .eq("id", transactionId)
       .maybeSingle();
     if (lookupError !== null) {
-      throw new Error(`updateTransaction lookup failed: ${lookupError.message}`);
+      throw new Error(
+        `updateTransaction lookup failed: ${lookupError.message}`,
+      );
     }
     if (data !== null && data.installment_id !== null) {
       throw new Error(
@@ -1906,9 +2147,10 @@ export async function updateInvestmentBucketBalance(
 export async function findLastBotInteraction(
   client: AppSupabaseClient,
   householdId: string,
-): Promise<
-  Pick<BotInteractionRow, "created_at" | "input_kind" | "transaction_id"> | null
-> {
+): Promise<Pick<
+  BotInteractionRow,
+  "created_at" | "input_kind" | "transaction_id"
+> | null> {
   const { data, error } = await client
     .from("bot_interactions")
     .select("created_at, input_kind, transaction_id")
@@ -2237,7 +2479,9 @@ export function obligationUpdateFromChanges(
   }
   if (changes.amountCents !== undefined) {
     if (!Number.isInteger(changes.amountCents) || changes.amountCents <= 0) {
-      throw new Error("O valor mensal precisa ser positivo, em centavos inteiros.");
+      throw new Error(
+        "O valor mensal precisa ser positivo, em centavos inteiros.",
+      );
     }
     update.amount_cents = changes.amountCents;
   }
@@ -2259,7 +2503,9 @@ export function obligationUpdateFromChanges(
       changes.termMonths !== null &&
       (!Number.isInteger(changes.termMonths) || changes.termMonths < 1)
     ) {
-      throw new Error("O prazo precisa ser um número de meses positivo (ou vazio).");
+      throw new Error(
+        "O prazo precisa ser um número de meses positivo (ou vazio).",
+      );
     }
     update.term_months = changes.termMonths;
   }
@@ -2302,12 +2548,18 @@ export async function updateObligation(
  */
 export async function materializeObligationPayment(
   client: AppSupabaseClient,
-  args: { obligationId: string; month: string; paidOn?: string },
+  args: {
+    obligationId: string;
+    month: string;
+    paidOn?: string;
+    amountCents?: number;
+  },
 ): Promise<MaterializeObligationPaymentResult> {
   const { data, error } = await client.rpc("materialize_obligation_payment", {
     target_obligation_id: args.obligationId,
     target_month: args.month,
     paid_on: args.paidOn ?? null,
+    target_amount_cents: args.amountCents ?? null,
   });
   if (error !== null) {
     throw new Error(`materializeObligationPayment failed: ${error.message}`);

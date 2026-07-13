@@ -1,13 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
-import type {
-  ImportSource,
-  ImportPreview,
-  NormalizedImportRow,
-} from "@family-finance/importers";
+import type { ImportSource, ImportPreview } from "@family-finance/importers";
 
 import {
   Badge,
@@ -25,13 +21,21 @@ import {
 import {
   previewImport,
   confirmImport,
+  suggestImportCategories,
+  resolveImportTargets,
   type AccountOption,
   type CategoryOption,
   type SubcategoryOption,
   type CreditCardOption,
   type MpPreviewExtras,
   type ConfirmResult,
+  type ImportPreviewSnapshot,
+  type ImportAiSuggestion,
 } from "./actions";
+import {
+  normalizeMerchantKey,
+  type BatchCategorizationPlan,
+} from "@family-finance/categorization";
 
 // NOTE: server-driven page metadata cannot be exported from a client component.
 // The layout already establishes the "Casa" workspace title; this screen is the
@@ -44,6 +48,10 @@ function formatBrl(cents: number): string {
   });
 }
 
+function providerLabel(provider: "codex" | "paid_fallback"): string {
+  return provider === "codex" ? "Codex" : "fallback pago";
+}
+
 /** "2026-06-05" -> "05/06". */
 function formatDayMonth(iso: string): string {
   const [, month, day] = iso.split("-");
@@ -51,7 +59,23 @@ function formatDayMonth(iso: string): string {
 }
 
 type PreviewBundle = {
+  requestKey: string;
+  previewToken: string;
+  fileFingerprint: string;
+  normalizedFingerprint: string;
+  parserVersion: string;
+  snapshot: ImportPreviewSnapshot;
   preview: ImportPreview;
+  categorizationPlan: BatchCategorizationPlan;
+  priorDispositions: Record<
+    number,
+    | "imported"
+    | "duplicate_existing"
+    | "duplicate_in_file"
+    | "parser_error"
+    | "validation_error"
+    | "excluded"
+  >;
   accounts: AccountOption[];
   categories: CategoryOption[];
   subcategories: SubcategoryOption[];
@@ -111,6 +135,7 @@ export default function ImportsPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState<string>("");
   const [creditCardId, setCreditCardId] = useState<string>("");
+  const [cardByLast4, setCardByLast4] = useState<Record<string, string>>({});
   // Purely presentational: the chosen file's name echoed in the dropzone.
   const [fileName, setFileName] = useState<string | null>(null);
   // Per-group edits + skip flags, keyed by group array index.
@@ -122,20 +147,99 @@ export default function ImportsPage() {
         installmentCount: number;
         purchasedOn: string;
         skip: boolean;
+        categoryId?: string;
+        subcategoryId?: string;
       }
     >
+  >({});
+  const [persistedGroupDuplicates, setPersistedGroupDuplicates] = useState<
+    Set<number>
+  >(new Set());
+  const [persistedGroupClaimIds, setPersistedGroupClaimIds] = useState<
+    Record<number, string>
+  >({});
+  const [groupOverrides, setGroupOverrides] = useState<
+    Record<number, { token?: string; claimId?: string; reason: string }>
   >({});
   const [mapping, setMapping] = useState<
     Record<number, { categoryId?: string; subcategoryId?: string }>
   >({});
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
-  const [confirmResult, setConfirmResult] = useState<ConfirmResult | null>(null);
+  const [confirmResult, setConfirmResult] = useState<ConfirmResult | null>(
+    null,
+  );
+  const [aiSuggestions, setAiSuggestions] = useState<
+    Record<number, ImportAiSuggestion>
+  >({});
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [taxonomyProposals, setTaxonomyProposals] = useState<
+    Array<{
+      rowKey: string;
+      categoryName: string;
+      subcategoryName: string | null;
+      explanation: string;
+      provider: "codex" | "paid_fallback";
+    }>
+  >([]);
+  const [persistedDuplicates, setPersistedDuplicates] = useState<Set<number>>(
+    new Set(),
+  );
+  const [learning, setLearning] = useState<
+    Record<number, { sourceCategory?: boolean; merchant?: boolean }>
+  >({});
+  const [rowEdits, setRowEdits] = useState<
+    Record<
+      number,
+      {
+        occurredOn?: string;
+        description?: string;
+        amountCents?: number;
+        kind?: "expense" | "income";
+      }
+    >
+  >({});
+  const [overrides, setOverrides] = useState<
+    Record<number, { token?: string; claimId?: string; reason: string }>
+  >({});
+  const [persistedClaimIds, setPersistedClaimIds] = useState<
+    Record<number, string>
+  >({});
+  const [provenance, setProvenance] = useState<
+    Record<
+      number,
+      {
+        source:
+          | "memory"
+          | "source_mapping"
+          | "rule"
+          | "codex"
+          | "paid_fallback"
+          | "user";
+        confidence?: number;
+        accepted: boolean;
+        changed: boolean;
+      }
+    >
+  >({});
+  const [bulkCategoryId, setBulkCategoryId] = useState("");
+  const [bulkMerchantKey, setBulkMerchantKey] = useState("");
+  const [bulkSourceLabel, setBulkSourceLabel] = useState("");
+  const [mappingUndo, setMappingUndo] = useState<typeof mapping | null>(null);
   const [isPending, startTransition] = useTransition();
   const toast = useToast();
 
   // Rows flagged as probable duplicates start excluded from the write.
   const duplicateIndices = useMemo(
     () => new Set(bundle?.preview.duplicates.map((d) => d.rowIndex) ?? []),
+    [bundle],
+  );
+  const suppressedIndices = useMemo(
+    () =>
+      new Set(
+        (bundle?.categorizationPlan.rows ?? []).flatMap((row, index) =>
+          row.status === "suppressed" ? [index] : [],
+        ),
+      ),
     [bundle],
   );
 
@@ -149,16 +253,66 @@ export default function ImportsPage() {
       return;
     }
     setBundle({
+      requestKey: result.requestKey,
+      previewToken: result.previewToken,
+      fileFingerprint: result.fileFingerprint,
+      normalizedFingerprint: result.normalizedFingerprint,
+      parserVersion: result.parserVersion,
+      snapshot: result.snapshot,
       preview: result.preview,
+      categorizationPlan: result.categorizationPlan,
+      priorDispositions: result.priorDispositions,
       accounts: result.accounts,
       categories: result.categories,
       subcategories: result.subcategories,
       creditCards: result.creditCards,
       mp: result.mp,
     });
-    setMapping({});
-    setAccountId(result.accounts[0]?.id ?? "");
-    setCreditCardId(result.creditCards[0]?.id ?? "");
+    const initialMapping: Record<
+      number,
+      { categoryId?: string; subcategoryId?: string }
+    > = {};
+    result.categorizationPlan.rows.forEach((planned, index) => {
+      if (planned.status === "selected" && planned.selection !== null) {
+        initialMapping[index] = {
+          categoryId: planned.selection.categoryId,
+          subcategoryId: planned.selection.subcategoryId,
+        };
+      }
+    });
+    const initialProvenance: typeof provenance = {};
+    result.categorizationPlan.rows.forEach((planned, index) => {
+      const candidate = planned.candidates[0];
+      if (planned.selection !== null) {
+        initialProvenance[index] = {
+          source: planned.selection.source,
+          confidence: candidate?.confidence,
+          accepted: true,
+          changed: false,
+        };
+      }
+    });
+    setProvenance(initialProvenance);
+    setBulkCategoryId("");
+    setBulkMerchantKey("");
+    setBulkSourceLabel("");
+    setMappingUndo(null);
+    setMapping(initialMapping);
+    // Destination is a claim identity component. Never guess it.
+    setAccountId("");
+    setCreditCardId("");
+    setCardByLast4({});
+    setAiSuggestions({});
+    setAiMessage(null);
+    setTaxonomyProposals([]);
+    setPersistedDuplicates(new Set(result.mp?.dbDuplicateIndices ?? []));
+    setLearning({});
+    setRowEdits({});
+    setOverrides({});
+    setPersistedClaimIds({});
+    setPersistedGroupDuplicates(new Set());
+    setPersistedGroupClaimIds({});
+    setGroupOverrides({});
     const edits: Record<
       number,
       {
@@ -166,6 +320,8 @@ export default function ImportsPage() {
         installmentCount: number;
         purchasedOn: string;
         skip: boolean;
+        categoryId?: string;
+        subcategoryId?: string;
       }
     > = {};
     (result.mp?.groups ?? []).forEach((g, i) => {
@@ -173,7 +329,7 @@ export default function ImportsPage() {
         totalAmountCents: g.estimatedTotalCents,
         installmentCount: g.installmentCount,
         purchasedOn: g.purchasedOn,
-        skip: g.status === "exists", // already-exists default-skipped (spec §4)
+        skip: false,
       };
     });
     setGroupEdits(edits);
@@ -188,13 +344,102 @@ export default function ImportsPage() {
     );
   }
 
+  useEffect(() => {
+    if (bundle === null) return;
+    const mp = bundle.mp !== undefined;
+    const required = [
+      ...new Set(
+        bundle.preview.rows
+          .map((row) => row.cardLast4)
+          .filter((value): value is string => value !== undefined),
+      ),
+    ];
+    const needsDefault =
+      bundle.preview.rows.some((row) => row.cardLast4 === undefined) ||
+      required.length === 0;
+    const ready = mp
+      ? required.every((last4) => (cardByLast4[last4] ?? "") !== "") &&
+        (!needsDefault || creditCardId !== "")
+      : accountId !== "";
+    if (!ready) return;
+    let cancelled = false;
+    void resolveImportTargets({
+      previewToken: bundle.previewToken,
+      snapshot: bundle.snapshot,
+      accountId: mp ? undefined : accountId,
+      creditCardId: mp ? creditCardId || undefined : undefined,
+      creditCardByLast4: mp ? cardByLast4 : undefined,
+    }).then((result) => {
+      if (cancelled || !result.ok) return;
+      const nextPersisted = new Set(result.duplicateIndices);
+      setPersistedClaimIds(result.claimIdsByIndex);
+      const nextGroupPersisted = new Set(result.groupDuplicateIndices);
+      setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
+      setPersistedGroupDuplicates((previousPersisted) => {
+        setGroupEdits((previousEdits) => {
+          const updated = { ...previousEdits };
+          for (const index of previousPersisted) {
+            const edit = updated[index];
+            if (edit !== undefined) updated[index] = { ...edit, skip: false };
+          }
+          for (const index of nextGroupPersisted) {
+            const edit = updated[index];
+            if (edit !== undefined) updated[index] = { ...edit, skip: true };
+          }
+          return updated;
+        });
+        return nextGroupPersisted;
+      });
+      setGroupOverrides({});
+      setPersistedDuplicates((previousPersisted) => {
+        setExcluded((previous) => {
+          const next = new Set(previous);
+          for (const index of previousPersisted) next.delete(index);
+          for (const index of nextPersisted) next.add(index);
+          for (const duplicate of bundle.preview.duplicates)
+            next.add(duplicate.rowIndex);
+          for (const index of bundle.mp?.installmentRowIndices ?? [])
+            next.add(index);
+          return next;
+        });
+        return nextPersisted;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bundle, accountId, creditCardId, cardByLast4]);
+
   function toggleExcluded(index: number) {
     setExcluded((prev) => {
       const next = new Set(prev);
       if (next.has(index)) {
+        if (persistedDuplicates.has(index) || duplicateIndices.has(index)) {
+          const reason = window.prompt(
+            "Esta linha já foi importada. Por que deseja importar novamente?",
+          );
+          if (reason === null || reason.trim().length < 5) return prev;
+          setOverrides((current) => ({
+            ...current,
+            [index]: {
+              ...(persistedClaimIds[index] === undefined
+                ? {}
+                : {
+                    token: crypto.randomUUID(),
+                    claimId: persistedClaimIds[index],
+                  }),
+              reason: reason.trim().slice(0, 200),
+            },
+          }));
+        }
         next.delete(index);
       } else {
         next.add(index);
+        setOverrides((current) => {
+          const updated = { ...current };
+          delete updated[index];
+          return updated;
+        });
       }
       return next;
     });
@@ -203,7 +448,14 @@ export default function ImportsPage() {
   function setRowCategory(index: number, categoryId: string) {
     setMapping((prev) => ({
       ...prev,
-      [index]: { categoryId: categoryId || undefined, subcategoryId: undefined },
+      [index]: {
+        categoryId: categoryId || undefined,
+        subcategoryId: undefined,
+      },
+    }));
+    setProvenance((previous) => ({
+      ...previous,
+      [index]: { source: "user", accepted: true, changed: true },
     }));
   }
 
@@ -215,6 +467,117 @@ export default function ImportsPage() {
         subcategoryId: subcategoryId || undefined,
       },
     }));
+    setProvenance((previous) => ({
+      ...previous,
+      [index]: { source: "user", accepted: true, changed: true },
+    }));
+  }
+
+  function onSuggestCategories() {
+    if (bundle === null) return;
+    setAiMessage(null);
+    startTransition(async () => {
+      const result = await suggestImportCategories({
+        previewToken: bundle.previewToken,
+        snapshot: bundle.snapshot,
+      });
+      if (!result.ok) {
+        setAiMessage(
+          `${result.message} Você ainda pode categorizar e importar manualmente.`,
+        );
+        return;
+      }
+      const byIndex: Record<number, ImportAiSuggestion> = {};
+      const indexByRowKey = new Map(
+        bundle.categorizationPlan.rows.map((row, index) => [row.rowKey, index]),
+      );
+      for (const suggestion of result.suggestions) {
+        const index = indexByRowKey.get(suggestion.rowKey);
+        if (index !== undefined && mapping[index]?.categoryId === undefined) {
+          byIndex[index] = suggestion;
+        }
+      }
+      setAiSuggestions(byIndex);
+      setTaxonomyProposals(result.proposals);
+      const parts = [
+        `${Object.keys(byIndex).length} sugestão(ões) para revisar`,
+      ];
+      if (result.proposals.length > 0) {
+        parts.push(
+          `${result.proposals.length} proposta(s) de categoria nova — nenhuma foi criada`,
+        );
+      }
+      if (result.unresolvedCount > 0)
+        parts.push(`${result.unresolvedCount} sem sugestão`);
+      setAiMessage(parts.join(" · "));
+    });
+  }
+
+  function applyAiSuggestion(index: number) {
+    const suggestion = aiSuggestions[index];
+    if (suggestion === undefined) return;
+    setMapping((previous) => ({
+      ...previous,
+      [index]: {
+        categoryId: suggestion.categoryId,
+        subcategoryId: suggestion.subcategoryId,
+      },
+    }));
+    setProvenance((previous) => ({
+      ...previous,
+      [index]: {
+        source: suggestion.provider,
+        confidence: suggestion.confidence,
+        accepted: true,
+        changed: false,
+      },
+    }));
+    setAiSuggestions((previous) => {
+      const next = { ...previous };
+      delete next[index];
+      return next;
+    });
+  }
+
+  function applyBulkCategory(
+    mode: "selected" | "unresolved" | "merchant" | "source",
+  ) {
+    if (bundle === null || bulkCategoryId === "") return;
+    setMappingUndo(mapping);
+    const next = { ...mapping };
+    const changed: number[] = [];
+    bundle.preview.rows.forEach((row, index) => {
+      if (
+        excluded.has(index) ||
+        bundle.mp?.installmentRowIndices.includes(index)
+      )
+        return;
+      const matches =
+        mode === "selected"
+          ? true
+          : mode === "unresolved"
+            ? (mapping[index]?.categoryId ?? "") === ""
+            : mode === "merchant"
+              ? normalizeMerchantKey(row.description) === bulkMerchantKey
+              : (row.sourceCategory ?? "") === bulkSourceLabel;
+      if (!matches) return;
+      next[index] = { categoryId: bulkCategoryId };
+      changed.push(index);
+    });
+    setMapping(next);
+    setProvenance((previous) => {
+      const updated = { ...previous };
+      for (const index of changed) {
+        updated[index] = { source: "user", accepted: true, changed: true };
+      }
+      return updated;
+    });
+  }
+
+  function undoBulkCategory() {
+    if (mappingUndo === null) return;
+    setMapping(mappingUndo);
+    setMappingUndo(null);
   }
 
   function onConfirm() {
@@ -222,7 +585,20 @@ export default function ImportsPage() {
       return;
     }
     const isMp = bundle.mp !== undefined;
-    if (isMp ? creditCardId === "" : accountId === "") {
+    const requiredLast4s = [
+      ...new Set(
+        bundle.preview.rows
+          .map((row) => row.cardLast4)
+          .filter((value): value is string => value !== undefined),
+      ),
+    ];
+    const needsDefaultCard =
+      bundle.preview.rows.some((row) => row.cardLast4 === undefined) ||
+      requiredLast4s.length === 0;
+    const allMpTargets =
+      requiredLast4s.every((last4) => (cardByLast4[last4] ?? "") !== "") &&
+      (!needsDefaultCard || creditCardId !== "");
+    if (isMp ? !allMpTargets : accountId === "") {
       setConfirmResult({
         ok: false,
         message: isMp
@@ -231,8 +607,7 @@ export default function ImportsPage() {
       });
       return;
     }
-    const rows: NormalizedImportRow[] = bundle.preview.rows;
-    const selectedIndices = rows
+    const selectedIndices = bundle.preview.rows
       .map((_, index) => index)
       .filter((index) => !excluded.has(index));
     const groups = isMp
@@ -240,25 +615,44 @@ export default function ImportsPage() {
           .map((g, i) => ({ g, edit: groupEdits[i] }))
           .filter((x) => x.edit !== undefined && !x.edit.skip)
           .map(({ g, edit }) => ({
+            sourceGroupIndex: bundle.mp?.groups.indexOf(g) ?? -1,
             description: g.description,
             totalAmountCents: edit!.totalAmountCents,
             installmentCount: edit!.installmentCount,
             purchasedOn: edit!.purchasedOn,
+            categoryId: edit!.categoryId,
+            subcategoryId: edit!.subcategoryId,
+            creditCardId:
+              (g.cardLast4 ? cardByLast4[g.cardLast4] : undefined) ??
+              creditCardId,
+            cardLast4: g.cardLast4,
+            ...(groupOverrides[bundle.mp?.groups.indexOf(g) ?? -1] === undefined
+              ? {}
+              : {
+                  override: groupOverrides[bundle.mp?.groups.indexOf(g) ?? -1],
+                }),
           }))
       : undefined;
 
     startTransition(async () => {
       const result = await confirmImport({
+        previewToken: bundle.previewToken,
+        snapshot: bundle.snapshot,
+        requestKey: bundle.requestKey,
+        fileFingerprint: bundle.fileFingerprint,
+        normalizedFingerprint: bundle.normalizedFingerprint,
+        parserVersion: bundle.parserVersion,
         source: bundle.preview.source,
-        rows,
         accountId: isMp ? "" : accountId,
         creditCardId: isMp ? creditCardId : undefined,
+        creditCardByLast4: isMp ? cardByLast4 : undefined,
         groups,
         mapping,
         selectedIndices,
-        totalRows: bundle.preview.totalRows,
-        errorRows: bundle.preview.errorCount,
-        duplicateRows: bundle.preview.duplicateCount,
+        learning,
+        edits: rowEdits,
+        overrides,
+        provenance,
       });
       setConfirmResult(result);
       if (result.ok) {
@@ -286,6 +680,44 @@ export default function ImportsPage() {
     confirmResult?.ok === true ? 3 : preview !== null ? 2 : 1;
 
   const isMp = bundle?.mp !== undefined;
+  const bulkMerchantKeys = useMemo(
+    () =>
+      [
+        ...new Set(
+          (bundle?.preview.rows ?? []).map((row) =>
+            normalizeMerchantKey(row.description),
+          ),
+        ),
+      ].sort(),
+    [bundle],
+  );
+  const bulkSourceLabels = useMemo(
+    () =>
+      [
+        ...new Set(
+          (bundle?.preview.rows ?? []).flatMap((row) =>
+            row.sourceCategory === undefined ? [] : [row.sourceCategory],
+          ),
+        ),
+      ].sort(),
+    [bundle],
+  );
+  const mpCardLast4s = useMemo(
+    () =>
+      [
+        ...new Set(
+          (bundle?.preview.rows ?? [])
+            .map((row) => row.cardLast4)
+            .filter((value): value is string => value !== undefined),
+        ),
+      ].sort(),
+    [bundle],
+  );
+  const mpNeedsDefaultTarget = useMemo(
+    () =>
+      (bundle?.preview.rows ?? []).some((row) => row.cardLast4 === undefined),
+    [bundle],
+  );
 
   // Footer summary — "28 novos · 1 duplicata desmarcada · 1 já importada …".
   const selectedIndices = useMemo(
@@ -296,12 +728,15 @@ export default function ImportsPage() {
     [preview, excluded],
   );
   const selectedCount = selectedIndices.length;
+  const selectedGroupCount = Object.values(groupEdits).filter(
+    (edit) => !edit.skip,
+  ).length;
   const excludedDuplicates = [...duplicateIndices].filter((i) =>
     excluded.has(i),
   ).length;
-  const dbDuplicateCount = bundle?.mp?.dbDuplicateIndices.length ?? 0;
+  const dbDuplicateCount = persistedDuplicates.size;
   const semCategoriaCount = selectedIndices.filter(
-    (i) => (mapping[i]?.categoryId ?? "") === "",
+    (i) => (mapping[i]?.categoryId ?? "") === "" && !suppressedIndices.has(i),
   ).length;
 
   const summaryParts: string[] = [];
@@ -337,18 +772,37 @@ export default function ImportsPage() {
   );
 
   const destinationSelect = isMp ? (
-    <Select
-      value={creditCardId}
-      onChange={(e) => setCreditCardId(e.target.value)}
-      aria-label="Cartão de destino"
-    >
-      <option value="">Cartão de destino…</option>
-      {(bundle?.creditCards ?? []).map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.name}
-        </option>
+    <span style={{ display: "grid", gap: 6 }}>
+      {[
+        ...mpCardLast4s,
+        ...(mpNeedsDefaultTarget || mpCardLast4s.length === 0 ? [""] : []),
+      ].map((last4) => (
+        <Select
+          key={last4 || "default"}
+          value={last4 ? (cardByLast4[last4] ?? "") : creditCardId}
+          onChange={(event) => {
+            if (last4) {
+              setCardByLast4((previous) => ({
+                ...previous,
+                [last4]: event.target.value,
+              }));
+            } else {
+              setCreditCardId(event.target.value);
+            }
+          }}
+          aria-label={last4 ? `Cartão final ${last4}` : "Cartão de destino"}
+        >
+          <option value="">
+            {last4 ? `Final ${last4}…` : "Cartão de destino…"}
+          </option>
+          {(bundle?.creditCards ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
       ))}
-    </Select>
+    </span>
   ) : (
     <Select
       value={accountId}
@@ -364,8 +818,14 @@ export default function ImportsPage() {
     </Select>
   );
 
+  const hasAllMpTargets =
+    mpCardLast4s.every((last4) => (cardByLast4[last4] ?? "") !== "") &&
+    (!(mpNeedsDefaultTarget || mpCardLast4s.length === 0) ||
+      creditCardId !== "");
   const confirmDisabled =
-    isPending || (isMp ? creditCardId === "" : accountId === "");
+    isPending ||
+    selectedCount + selectedGroupCount === 0 ||
+    (isMp ? !hasAllMpTargets : accountId === "");
   const confirmLabel = isPending
     ? "Importando…"
     : selectedCount === 1
@@ -379,7 +839,9 @@ export default function ImportsPage() {
           Nossa casa · Importação
         </div>
         <h1 className="ff-page-title__heading">
-          {step === 1 ? "O que chegou pra gente?" : "Dá uma olhada antes de gravar"}
+          {step === 1
+            ? "O que chegou pra gente?"
+            : "Dá uma olhada antes de gravar"}
         </h1>
         <p className="ff-page-title__lead">
           {step === 1
@@ -424,6 +886,14 @@ export default function ImportsPage() {
                 {confirmResult.message}
               </p>
               <div className="ff-success__actions">
+                {confirmResult.batchId ? (
+                  <Link
+                    href={`/imports/${confirmResult.batchId}`}
+                    className="ff-btn ff-btn--primary"
+                  >
+                    Ver detalhes do lote
+                  </Link>
+                ) : null}
                 <Link href="/transactions" className="ff-btn ff-btn--primary">
                   Ver na lista
                 </Link>
@@ -450,7 +920,9 @@ export default function ImportsPage() {
                 >
                   <option value="minhas-financas">Minhas Financas (CSV)</option>
                   <option value="nubank">Nubank (CSV)</option>
-                  <option value="mercado-pago">Mercado Pago (Fatura PDF)</option>
+                  <option value="mercado-pago">
+                    Mercado Pago (Fatura PDF)
+                  </option>
                 </Select>
               </Field>
 
@@ -551,11 +1023,13 @@ export default function ImportsPage() {
                   {bundle.mp.groups.map((g, i) => {
                     const edit = groupEdits[i];
                     if (edit === undefined) return null;
+                    const isPersistedDuplicate =
+                      persistedGroupDuplicates.has(i);
                     return (
                       <div
                         key={i}
                         className={`ff-group${
-                          g.status === "new" ? " ff-group--new" : ""
+                          !isPersistedDuplicate ? " ff-group--new" : ""
                         }${edit.skip ? " ff-off" : ""}`}
                       >
                         <div className="ff-group__head">
@@ -563,9 +1037,11 @@ export default function ImportsPage() {
                             {g.description}
                           </span>
                           <Badge
-                            tone={g.status === "exists" ? "neutral" : "positive"}
+                            tone={isPersistedDuplicate ? "neutral" : "positive"}
                           >
-                            {g.status === "exists" ? "já existe" : "novo"}
+                            {isPersistedDuplicate
+                              ? "já existe neste cartão"
+                              : "novo"}
                           </Badge>
                         </div>
                         <div className="ff-group__grid">
@@ -582,9 +1058,8 @@ export default function ImportsPage() {
                                   [i]: {
                                     ...edit,
                                     totalAmountCents: Math.round(
-                                      Number.parseFloat(
-                                        e.target.value || "0",
-                                      ) * 100,
+                                      Number.parseFloat(e.target.value || "0") *
+                                        100,
                                     ),
                                   },
                                 }))
@@ -597,6 +1072,7 @@ export default function ImportsPage() {
                               className="ff-input--compact ff-num"
                               type="number"
                               min={1}
+                              max={120}
                               value={edit.installmentCount}
                               onChange={(e) =>
                                 setGroupEdits((prev) => ({
@@ -625,11 +1101,68 @@ export default function ImportsPage() {
                               aria-label={`Data da compra ${g.description}`}
                             />
                           </Field>
+                          <Field label="Categoria">
+                            <Select
+                              className="ff-select--compact"
+                              value={edit.categoryId ?? ""}
+                              onChange={(event) =>
+                                setGroupEdits((previous) => ({
+                                  ...previous,
+                                  [i]: {
+                                    ...edit,
+                                    categoryId: event.target.value || undefined,
+                                    subcategoryId: undefined,
+                                  },
+                                }))
+                              }
+                              aria-label={`Categoria do parcelamento ${g.description}`}
+                            >
+                              <option value="">(sem categoria)</option>
+                              {(bundle?.categories ?? []).map((category) => (
+                                <option key={category.id} value={category.id}>
+                                  {category.name}
+                                </option>
+                              ))}
+                            </Select>
+                          </Field>
+                          <Field label="Subcategoria">
+                            <Select
+                              className="ff-select--compact"
+                              value={edit.subcategoryId ?? ""}
+                              disabled={edit.categoryId === undefined}
+                              onChange={(event) =>
+                                setGroupEdits((previous) => ({
+                                  ...previous,
+                                  [i]: {
+                                    ...edit,
+                                    subcategoryId:
+                                      event.target.value || undefined,
+                                  },
+                                }))
+                              }
+                              aria-label={`Subcategoria do parcelamento ${g.description}`}
+                            >
+                              <option value="">(nenhuma)</option>
+                              {(bundle?.subcategories ?? [])
+                                .filter(
+                                  (subcategory) =>
+                                    subcategory.categoryId === edit.categoryId,
+                                )
+                                .map((subcategory) => (
+                                  <option
+                                    key={subcategory.id}
+                                    value={subcategory.id}
+                                  >
+                                    {subcategory.name}
+                                  </option>
+                                ))}
+                            </Select>
+                          </Field>
                         </div>
                         <div className="ff-group__foot">
                           <span className="ff-group__hint">
-                            {g.status === "exists"
-                              ? `vamos ligar a parcela ${g.installmentNumber}/${g.installmentCount} ao grupo que já existe`
+                            {isPersistedDuplicate
+                              ? `a compra já foi importada neste cartão; mantenha pulada ou justifique a reimportação`
                               : `parcela ${g.installmentNumber} de ${g.installmentCount} · ${formatBrl(g.perInstallmentCents)}`}
                             {g.cardLast4 ? ` · final ${g.cardLast4}` : ""}
                           </span>
@@ -638,12 +1171,41 @@ export default function ImportsPage() {
                               className="ff-check"
                               type="checkbox"
                               checked={edit.skip}
-                              onChange={() =>
+                              onChange={() => {
+                                if (edit.skip && isPersistedDuplicate) {
+                                  const claimId = persistedGroupClaimIds[i];
+                                  const reason = window.prompt(
+                                    "Este parcelamento já foi importado neste cartão. Por que deseja importar novamente?",
+                                  );
+                                  if (
+                                    reason === null ||
+                                    reason.trim().length < 5
+                                  )
+                                    return;
+                                  setGroupOverrides((previous) => ({
+                                    ...previous,
+                                    [i]: {
+                                      reason: reason.trim().slice(0, 200),
+                                      ...(claimId === undefined
+                                        ? {}
+                                        : {
+                                            token: crypto.randomUUID(),
+                                            claimId,
+                                          }),
+                                    },
+                                  }));
+                                } else {
+                                  setGroupOverrides((previous) => {
+                                    const updated = { ...previous };
+                                    delete updated[i];
+                                    return updated;
+                                  });
+                                }
                                 setGroupEdits((prev) => ({
                                   ...prev,
                                   [i]: { ...edit, skip: !edit.skip },
-                                }))
-                              }
+                                }));
+                              }}
                               aria-label={`Pular parcelamento ${g.description}`}
                             />
                             pular
@@ -657,28 +1219,175 @@ export default function ImportsPage() {
             </div>
           ) : null}
 
+          <div style={{ marginTop: 24 }}>
+            <Card>
+              <div className="ff-panel__head">
+                <div>
+                  <h2 className="ff-h2">Ações em lote</h2>
+                  <span className="ff-note">
+                    Revise a seleção antes de confirmar.
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={undoBulkCategory}
+                  disabled={mappingUndo === null}
+                >
+                  Desfazer última ação
+                </Button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  marginTop: 12,
+                }}
+              >
+                <Select
+                  value={bulkCategoryId}
+                  onChange={(event) => setBulkCategoryId(event.target.value)}
+                  aria-label="Categoria para ação em lote"
+                >
+                  <option value="">Categoria…</option>
+                  {(bundle?.categories ?? []).map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  variant="ghost"
+                  onClick={() => applyBulkCategory("unresolved")}
+                >
+                  Aplicar a todos sem categoria
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => applyBulkCategory("selected")}
+                >
+                  Aplicar às linhas marcadas
+                </Button>
+                <Select
+                  value={bulkMerchantKey}
+                  onChange={(event) => setBulkMerchantKey(event.target.value)}
+                  aria-label="Estabelecimento para ação em lote"
+                >
+                  <option value="">Estabelecimento…</option>
+                  {bulkMerchantKeys.map((merchant) => (
+                    <option key={merchant} value={merchant}>
+                      {merchant}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  variant="ghost"
+                  disabled={bulkMerchantKey === ""}
+                  onClick={() => applyBulkCategory("merchant")}
+                >
+                  Aplicar ao estabelecimento
+                </Button>
+                {bulkSourceLabels.length > 0 ? (
+                  <>
+                    <Select
+                      value={bulkSourceLabel}
+                      onChange={(event) =>
+                        setBulkSourceLabel(event.target.value)
+                      }
+                      aria-label="Categoria da origem para ação em lote"
+                    >
+                      <option value="">Categoria da origem…</option>
+                      {bulkSourceLabels.map((label) => (
+                        <option key={label} value={label}>
+                          {label}
+                        </option>
+                      ))}
+                    </Select>
+                    <Button
+                      variant="ghost"
+                      disabled={bulkSourceLabel === ""}
+                      onClick={() => applyBulkCategory("source")}
+                    >
+                      Aplicar à categoria da origem
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </Card>
+          </div>
+
           {/* Preview rows */}
           <div
             className="ff-panel__head"
             style={{ marginTop: 24, marginBottom: 12 }}
           >
-            <h2 className="ff-h2">Prévia dos lançamentos</h2>
-            <span className="ff-note">duplicatas já vêm desmarcadas</span>
+            <div>
+              <h2 className="ff-h2">Prévia dos lançamentos</h2>
+              <span className="ff-note">duplicatas já vêm desmarcadas</span>
+            </div>
+            <Button
+              variant="ghost"
+              onClick={onSuggestCategories}
+              disabled={
+                isPending ||
+                (bundle?.categorizationPlan.aiItems.length ?? 0) === 0
+              }
+            >
+              {isPending ? "Consultando…" : "Sugerir com Codex"}
+            </Button>
           </div>
+
+          {aiMessage !== null ? (
+            <div
+              className="ff-alert ff-alert--warn"
+              role="status"
+              style={{ marginBottom: 12 }}
+            >
+              {aiMessage}
+            </div>
+          ) : null}
+          {taxonomyProposals.length > 0 ? (
+            <Card>
+              <strong>Propostas de taxonomia (somente revisão)</strong>
+              <ul style={{ marginBottom: 0 }}>
+                {taxonomyProposals.map((proposal, index) => (
+                  <li key={`${proposal.rowKey}-${index}`}>
+                    {proposal.categoryName}
+                    {proposal.subcategoryName
+                      ? ` › ${proposal.subcategoryName}`
+                      : ""}
+                    {` · ${providerLabel(proposal.provider)} · ${proposal.explanation}`}
+                  </li>
+                ))}
+              </ul>
+              <p className="ff-note">
+                Nenhuma categoria é criada por esta tela.
+              </p>
+            </Card>
+          ) : null}
 
           <Table columns={PREVIEW_COLUMNS} gridTemplate={PREVIEW_GRID}>
             {preview.rows.map((row, index) => {
               const isDuplicate = duplicateIndices.has(index);
               const isExcluded = excluded.has(index);
-              const isDbDuplicate =
-                bundle?.mp?.dbDuplicateIndices.includes(index) ?? false;
+              const isDbDuplicate = persistedDuplicates.has(index);
               const isInstallmentRow =
                 bundle?.mp?.installmentRowIndices.includes(index) ?? false;
               const selectedCategory = mapping[index]?.categoryId ?? "";
+              const aiSuggestion = aiSuggestions[index];
+              const aiCategoryName = bundle?.categories.find(
+                (category) => category.id === aiSuggestion?.categoryId,
+              )?.name;
               const subs = selectedCategory
                 ? (subsByCategory.get(selectedCategory) ?? [])
                 : [];
-              const isExpense = row.kind === "expense";
+              const finalKind = rowEdits[index]?.kind ?? row.kind;
+              const finalDescription =
+                rowEdits[index]?.description ?? row.description;
+              const finalOccurredOn =
+                rowEdits[index]?.occurredOn ?? row.occurredOn;
+              const finalAmountCents =
+                rowEdits[index]?.amountCents ?? row.amount.cents;
               return (
                 <TableRow
                   key={index}
@@ -697,9 +1406,21 @@ export default function ImportsPage() {
                     }
                     aria-label={`Importar linha ${row.sourceLine}`}
                   />
-                  <span className="ff-dim ff-num">
-                    {formatDayMonth(row.occurredOn)}
-                  </span>
+                  <Input
+                    className="ff-input--compact ff-num"
+                    type="date"
+                    value={finalOccurredOn}
+                    onChange={(event) =>
+                      setRowEdits((previous) => ({
+                        ...previous,
+                        [index]: {
+                          ...previous[index],
+                          occurredOn: event.target.value,
+                        },
+                      }))
+                    }
+                    aria-label={`Data linha ${row.sourceLine}`}
+                  />
                   <span
                     style={{
                       display: "flex",
@@ -709,32 +1430,121 @@ export default function ImportsPage() {
                       fontWeight: 500,
                     }}
                   >
-                    <span
-                      style={{
-                        minWidth: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {row.description}
-                    </span>
+                    {aiSuggestion !== undefined &&
+                    aiCategoryName !== undefined ? (
+                      <button
+                        type="button"
+                        className="ff-btn ff-btn--ghost"
+                        style={{ padding: "3px 7px", fontSize: 11 }}
+                        onClick={() => applyAiSuggestion(index)}
+                        title={aiSuggestion.explanation}
+                      >
+                        usar {aiCategoryName} ·{" "}
+                        {providerLabel(aiSuggestion.provider)}
+                      </button>
+                    ) : null}
+                    {!isInstallmentRow && selectedCategory !== "" ? (
+                      <label
+                        className="ff-note"
+                        title="Opcional: reutilizar esta escolha em próximas importações"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={learning[index]?.merchant === true}
+                          onChange={(event) =>
+                            setLearning((previous) => ({
+                              ...previous,
+                              [index]: {
+                                ...previous[index],
+                                merchant: event.target.checked,
+                              },
+                            }))
+                          }
+                        />{" "}
+                        ensinar estabelecimento
+                      </label>
+                    ) : null}
+                    {!isInstallmentRow &&
+                    selectedCategory !== "" &&
+                    row.sourceCategory ? (
+                      <label
+                        className="ff-note"
+                        title="Opcional: mapear esta categoria do arquivo"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={learning[index]?.sourceCategory === true}
+                          onChange={(event) =>
+                            setLearning((previous) => ({
+                              ...previous,
+                              [index]: {
+                                ...previous[index],
+                                sourceCategory: event.target.checked,
+                              },
+                            }))
+                          }
+                        />{" "}
+                        ensinar categoria da origem
+                      </label>
+                    ) : null}
+                    <Input
+                      className="ff-input--compact"
+                      value={finalDescription}
+                      maxLength={200}
+                      onChange={(event) =>
+                        setRowEdits((previous) => ({
+                          ...previous,
+                          [index]: {
+                            ...previous[index],
+                            description: event.target.value,
+                          },
+                        }))
+                      }
+                      aria-label={`Descrição linha ${row.sourceLine}`}
+                    />
                     {row.installment !== undefined ? (
                       <Badge tone="accent">
                         {row.installment.number}/{row.installment.count}
                       </Badge>
                     ) : null}
                   </span>
-                  <span
-                    className={`ff-num ${isExpense ? "ff-amount--neg" : "ff-amount--pos"}`}
-                    style={{
-                      textAlign: "right",
-                      whiteSpace: "nowrap",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {isExpense ? "− " : "+ "}
-                    {formatBrl(row.amount.cents)}
+                  <span style={{ display: "grid", gap: 4 }}>
+                    <Input
+                      className="ff-input--compact ff-num"
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      value={(finalAmountCents / 100).toFixed(2)}
+                      onChange={(event) =>
+                        setRowEdits((previous) => ({
+                          ...previous,
+                          [index]: {
+                            ...previous[index],
+                            amountCents: Math.round(
+                              Number(event.target.value) * 100,
+                            ),
+                          },
+                        }))
+                      }
+                      aria-label={`Valor linha ${row.sourceLine}`}
+                    />
+                    <Select
+                      className="ff-select--compact"
+                      value={finalKind}
+                      onChange={(event) =>
+                        setRowEdits((previous) => ({
+                          ...previous,
+                          [index]: {
+                            ...previous[index],
+                            kind: event.target.value as "expense" | "income",
+                          },
+                        }))
+                      }
+                      aria-label={`Tipo linha ${row.sourceLine}`}
+                    >
+                      <option value="expense">saída</option>
+                      <option value="income">entrada</option>
+                    </Select>
                   </span>
                   <span>
                     {isInstallmentRow ? (
@@ -796,12 +1606,20 @@ export default function ImportsPage() {
                     {isInstallmentRow ? (
                       <span className="ff-note">entra pelo parcelamento</span>
                     ) : null}
+                    {bundle?.priorDispositions[row.sourceLine] !== undefined ? (
+                      <Badge tone="neutral">
+                        antes: {bundle.priorDispositions[row.sourceLine]}
+                      </Badge>
+                    ) : null}
                     {!isDuplicate &&
                     !isDbDuplicate &&
                     !isInstallmentRow &&
                     !isExcluded &&
                     selectedCategory === "" ? (
                       <Badge tone="warn">sem categoria</Badge>
+                    ) : null}
+                    {suppressedIndices.has(index) ? (
+                      <Badge tone="neutral">sem categoria por memória</Badge>
                     ) : null}
                   </span>
                 </TableRow>
@@ -839,15 +1657,25 @@ export default function ImportsPage() {
             {preview.rows.map((row, index) => {
               const isDuplicate = duplicateIndices.has(index);
               const isExcluded = excluded.has(index);
-              const isDbDuplicate =
-                bundle?.mp?.dbDuplicateIndices.includes(index) ?? false;
+              const isDbDuplicate = persistedDuplicates.has(index);
               const isInstallmentRow =
                 bundle?.mp?.installmentRowIndices.includes(index) ?? false;
               const selectedCategory = mapping[index]?.categoryId ?? "";
+              const aiSuggestion = aiSuggestions[index];
+              const aiCategoryName = bundle?.categories.find(
+                (category) => category.id === aiSuggestion?.categoryId,
+              )?.name;
               const subs = selectedCategory
                 ? (subsByCategory.get(selectedCategory) ?? [])
                 : [];
-              const isExpense = row.kind === "expense";
+              const finalKind = rowEdits[index]?.kind ?? row.kind;
+              const finalDescription =
+                rowEdits[index]?.description ?? row.description;
+              const finalOccurredOn =
+                rowEdits[index]?.occurredOn ?? row.occurredOn;
+              const finalAmountCents =
+                rowEdits[index]?.amountCents ?? row.amount.cents;
+              const isExpense = finalKind === "expense";
               return (
                 <Card
                   key={index}
@@ -877,7 +1705,9 @@ export default function ImportsPage() {
                           minWidth: 0,
                         }}
                       >
-                        <span className="ff-txrow__desc">{row.description}</span>
+                        <span className="ff-txrow__desc">
+                          {finalDescription}
+                        </span>
                         {row.installment !== undefined ? (
                           <Badge tone="accent">
                             {row.installment.number}/{row.installment.count}
@@ -890,7 +1720,7 @@ export default function ImportsPage() {
                         }`}
                       >
                         {isExpense ? "− " : "+ "}
-                        {formatBrl(row.amount.cents)}
+                        {formatBrl(finalAmountCents)}
                       </span>
                     </div>
                     <div
@@ -902,17 +1732,101 @@ export default function ImportsPage() {
                         flexWrap: "wrap",
                       }}
                     >
-                      {formatDayMonth(row.occurredOn)}
+                      {formatDayMonth(finalOccurredOn)}
                       {isDuplicate ? (
                         <Badge tone="negative">duplicata provável</Badge>
                       ) : null}
                       {isDbDuplicate ? (
                         <Badge tone="neutral">já importada</Badge>
                       ) : null}
+                      {aiSuggestion !== undefined &&
+                      aiCategoryName !== undefined ? (
+                        <button
+                          type="button"
+                          className="ff-btn ff-btn--ghost"
+                          style={{ padding: "3px 7px", fontSize: 11 }}
+                          onClick={() => applyAiSuggestion(index)}
+                          title={aiSuggestion.explanation}
+                        >
+                          usar {aiCategoryName} ·{" "}
+                          {providerLabel(aiSuggestion.provider)}
+                        </button>
+                      ) : null}
                       {isInstallmentRow ? (
                         <span className="ff-note">entra pelo parcelamento</span>
                       ) : null}
                     </div>
+                    {!isInstallmentRow ? (
+                      <details style={{ marginTop: 8 }}>
+                        <summary className="ff-note">editar lançamento</summary>
+                        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                          <Input
+                            value={finalDescription}
+                            maxLength={200}
+                            onChange={(event) =>
+                              setRowEdits((previous) => ({
+                                ...previous,
+                                [index]: {
+                                  ...previous[index],
+                                  description: event.target.value,
+                                },
+                              }))
+                            }
+                            aria-label={`Descrição linha ${row.sourceLine}`}
+                          />
+                          <Input
+                            type="date"
+                            value={finalOccurredOn}
+                            onChange={(event) =>
+                              setRowEdits((previous) => ({
+                                ...previous,
+                                [index]: {
+                                  ...previous[index],
+                                  occurredOn: event.target.value,
+                                },
+                              }))
+                            }
+                            aria-label={`Data linha ${row.sourceLine}`}
+                          />
+                          <Input
+                            type="number"
+                            min={0.01}
+                            step={0.01}
+                            value={(finalAmountCents / 100).toFixed(2)}
+                            onChange={(event) =>
+                              setRowEdits((previous) => ({
+                                ...previous,
+                                [index]: {
+                                  ...previous[index],
+                                  amountCents: Math.round(
+                                    Number(event.target.value) * 100,
+                                  ),
+                                },
+                              }))
+                            }
+                            aria-label={`Valor linha ${row.sourceLine}`}
+                          />
+                          <Select
+                            value={finalKind}
+                            onChange={(event) =>
+                              setRowEdits((previous) => ({
+                                ...previous,
+                                [index]: {
+                                  ...previous[index],
+                                  kind: event.target.value as
+                                    | "expense"
+                                    | "income",
+                                },
+                              }))
+                            }
+                            aria-label={`Tipo linha ${row.sourceLine}`}
+                          >
+                            <option value="expense">saída</option>
+                            <option value="income">entrada</option>
+                          </Select>
+                        </div>
+                      </details>
+                    ) : null}
                     {!isInstallmentRow ? (
                       <div
                         style={{

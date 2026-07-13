@@ -318,6 +318,32 @@ describe("mark_paid{obligation} flow", () => {
     expect(logInteraction).toHaveBeenCalledTimes(1);
   });
 
+  it("uses a supplied actual amount without changing the obligation forecast", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "solar",
+        amountCents: 82437,
+      }),
+    });
+    const { state, reply } = await startConversation(
+      { text: "placa solar paga 824,37", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-solar",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 82437,
+    });
+    expect(reply).toContain("824,37");
+    expect(reply).not.toContain("710,44");
+  });
+
   it("an already-paid month replies as a friendly no-op", async () => {
     const { deps } = buildDeps({
       classifyMessage: classifierReturning(MARK_SOLAR),
@@ -370,6 +396,43 @@ describe("mark_paid{obligation} flow", () => {
       obligationId: "ob-carro",
       month: "2026-07",
       paidOn: TODAY,
+    });
+  });
+
+  it("preserves the actual amount while resolving an ambiguous obligation", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "financiamento",
+        amountCents: 95500,
+      }),
+      listActiveObligations: async () => [
+        {
+          id: "ob-solar",
+          description: "Financiamento solar",
+          amountCents: 71044,
+        },
+        {
+          id: "ob-carro",
+          description: "Financiamento carro",
+          amountCents: 90000,
+        },
+      ],
+    });
+    const asked = await startConversation(
+      { text: "financiamento pago 955", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(asked.state.markPaidAmountCents).toBe(95500);
+
+    await applyMessage(asked.state, "carro", deps, { today: TODAY });
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-carro",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 95500,
     });
   });
 

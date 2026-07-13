@@ -133,6 +133,18 @@ describe("categorization memory", () => {
     expect(matchMemory(ctx("ZZZ-DISABLED charge"), memory)).toBeNull();
   });
 
+  it("matches exact merchant keys conservatively and scopes by row kind", () => {
+    const exact: CategorizationMemoryEntry = {
+      ...memory[0]!,
+      pattern: "Café Azul 12",
+      matchKind: "merchant_exact",
+      rowKind: "expense",
+    };
+    expect(matchMemory(ctx("MP * CAFE AZUL 12"), [exact])).not.toBeNull();
+    expect(matchMemory(ctx("CAFE AZUL 13"), [exact])).toBeNull();
+    expect(matchMemory(ctx("CAFE AZUL 12", { kind: "income" }), [exact])).toBeNull();
+  });
+
   it("produces a human-readable explanation a power user can audit", () => {
     const explanation = describeMemory(
       {
@@ -154,6 +166,39 @@ describe("categorization memory", () => {
 });
 
 describe("suggestCategory engine", () => {
+  it("terminates the cascade for an explicit suppression memory", async () => {
+    let aiCalled = false;
+    const result = await suggestCategory(ctx("IFOOD *LANCHE"), {
+      catalog: CATALOG,
+      memoryStore: {
+        async findActiveByHousehold() {
+          return [
+            {
+              id: "suppress",
+              householdId: "house-1",
+              pattern: "IFOOD *LANCHE",
+              categoryId: null,
+              subcategoryId: null,
+              confidence: 1,
+              explanation: "Sempre deixar sem categoria.",
+              isActive: true,
+              matchKind: "suppress",
+              rowKind: "expense",
+            },
+          ];
+        },
+      },
+      ai: {
+        async categorize() {
+          aiCalled = true;
+          return null;
+        },
+      },
+    });
+    expect(result.status).toBe("uncategorized");
+    expect(result.suppressed).toBe(true);
+    expect(aiCalled).toBe(false);
+  });
   it("memory match improves a suggestion over a bare rule match", async () => {
     const store: CategorizationMemoryStore = {
       async findActiveByHousehold() {
@@ -246,6 +291,26 @@ describe("suggestCategory engine", () => {
     // The proposed (unresolved) name is surfaced for review, but no id exists.
     expect(result.pendingCategory?.categoryName).toBe("Petshop Exótico");
     expect(result.suggestion?.macroCategoryId).toBeUndefined();
+  });
+
+  it("surfaces an unknown subcategory under a real macro instead of silently dropping it", async () => {
+    const result = await suggestCategory(ctx("restaurante peculiar"), {
+      catalog: CATALOG,
+      ai: {
+        async categorize() {
+          return {
+            categoryName: "Alimentação",
+            subcategoryName: "Restaurante temático",
+            confidence: 0.8,
+            explanation: "Subcategoria ainda não existe.",
+          };
+        },
+      },
+    });
+    expect(result.status).toBe("pending_new_subcategory");
+    expect(result.suggestion?.macroCategoryId).toBe("cat-food");
+    expect(result.suggestion?.subcategoryId).toBeUndefined();
+    expect(result.pendingCategory?.subcategoryName).toBe("Restaurante temático");
   });
 
   it("with no rule, memory, or AI, returns an uncategorized pending result needing confirmation", async () => {

@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+const optionalNonEmptyString = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().min(1).optional(),
+);
+
 // Provider-agnostic AI config/selection (lazy, build-safe). Re-exported so
 // `@family-finance/config` is the single entry point.
 export {
@@ -39,6 +45,24 @@ export const envSchema = z.object({
   CODEX_ENABLED: z.enum(["true", "false"]).optional(),
   CODEX_MODEL: z.string().min(1).optional(),
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).optional(),
+  // Import previews are signed by the web app; AI category batches are sent to
+  // the bot VPS over a separately authenticated internal endpoint.
+  IMPORT_PREVIEW_SIGNING_SECRET: z.string().min(32).optional(),
+  IMPORT_SUGGESTION_URL: z.string().url().optional(),
+  IMPORT_SUGGESTION_SHARED_SECRET: z.string().min(32).optional(),
+  IMPORT_PAID_FALLBACK_ENABLED: z.enum(["true", "false"]).default("false"),
+  IMPORT_PAID_FALLBACK_PROVIDER: z.preprocess(
+    (value) =>
+      typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.enum(["anthropic", "openai"]).optional(),
+  ),
+  IMPORT_PAID_FALLBACK_MODEL: optionalNonEmptyString,
+  IMPORT_PAID_FALLBACK_MAX_ITEMS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(25)
+    .default(10),
   OPENAI_API_KEY: z.string().min(1).optional(),
   AUTHORIZED_EMAILS: z.string().min(1),
   HOUSEHOLD_SLUG: z.string().min(1).default("casa"),
@@ -65,7 +89,33 @@ export type BotEnv = z.infer<typeof botEnvSchema>;
  * `getServerEnv` — invoke at server start, never at module scope.
  */
 export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
-  return botEnvSchema.parse(env);
+  const parsed = botEnvSchema.parse(env);
+  if (
+    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    (parsed.IMPORT_PAID_FALLBACK_PROVIDER === undefined ||
+      parsed.IMPORT_PAID_FALLBACK_MODEL === undefined)
+  ) {
+    throw new Error(
+      "IMPORT_PAID_FALLBACK_PROVIDER and IMPORT_PAID_FALLBACK_MODEL are required when paid fallback is enabled",
+    );
+  }
+  if (
+    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    parsed.IMPORT_PAID_FALLBACK_PROVIDER === "anthropic" &&
+    parsed.ANTHROPIC_API_KEY === undefined
+  ) {
+    throw new Error(
+      "ANTHROPIC_API_KEY is required for the Anthropic paid fallback",
+    );
+  }
+  if (
+    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
+    parsed.IMPORT_PAID_FALLBACK_PROVIDER === "openai" &&
+    parsed.OPENAI_API_KEY === undefined
+  ) {
+    throw new Error("OPENAI_API_KEY is required for the OpenAI paid fallback");
+  }
+  return parsed;
 }
 
 /**

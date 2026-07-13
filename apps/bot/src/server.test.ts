@@ -1,14 +1,89 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { createBotServer } from "./server.js";
+import {
+  createBotServer,
+  createPaidFallbackClient,
+  type ImportSuggestionRoute,
+} from "./server.js";
+import { IMPORT_SUGGESTION_OUTPUT_SCHEMA } from "./import-suggestions.js";
+import type { BotEnv } from "@family-finance/config";
 import type { WebhookResult } from "./index.js";
 
 type Handle = (
   rawBody: unknown,
   secretHeader: string | undefined,
 ) => Promise<WebhookResult>;
+
+function paidEnv(overrides: Partial<BotEnv> = {}): BotEnv {
+  return {
+    IMPORT_PAID_FALLBACK_ENABLED: "false",
+    IMPORT_PAID_FALLBACK_MAX_ITEMS: 10,
+    HOUSEHOLD_SLUG: "casa",
+    ...overrides,
+  };
+}
+
+describe("createPaidFallbackClient", () => {
+  const fakeClient = { complete: vi.fn() };
+
+  it("does not construct a provider when paid fallback is disabled", () => {
+    const anthropic = vi.fn();
+    const openai = vi.fn();
+    expect(
+      createPaidFallbackClient(paidEnv(), { anthropic, openai }),
+    ).toBeUndefined();
+    expect(anthropic).not.toHaveBeenCalled();
+    expect(openai).not.toHaveBeenCalled();
+  });
+
+  it("maps OpenAI config to the OpenAI client with its key and strict schema", () => {
+    const anthropic = vi.fn();
+    const openai = vi.fn(() => fakeClient);
+    expect(
+      createPaidFallbackClient(
+        paidEnv({
+          IMPORT_PAID_FALLBACK_ENABLED: "true",
+          IMPORT_PAID_FALLBACK_PROVIDER: "openai",
+          IMPORT_PAID_FALLBACK_MODEL: "gpt-5.4",
+          OPENAI_API_KEY: "openai-key",
+        }),
+        { anthropic, openai },
+      ),
+    ).toBe(fakeClient);
+    expect(openai).toHaveBeenCalledWith({
+      apiKey: "openai-key",
+      model: "gpt-5.4",
+      outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
+      timeoutMs: 8_000,
+    });
+    expect(anthropic).not.toHaveBeenCalled();
+  });
+
+  it("maps Anthropic config to the Anthropic client with its key", () => {
+    const anthropic = vi.fn(() => fakeClient);
+    const openai = vi.fn();
+    expect(
+      createPaidFallbackClient(
+        paidEnv({
+          IMPORT_PAID_FALLBACK_ENABLED: "true",
+          IMPORT_PAID_FALLBACK_PROVIDER: "anthropic",
+          IMPORT_PAID_FALLBACK_MODEL: "claude-haiku-4-5",
+          ANTHROPIC_API_KEY: "anthropic-key",
+        }),
+        { anthropic, openai },
+      ),
+    ).toBe(fakeClient);
+    expect(anthropic).toHaveBeenCalledWith({
+      apiKey: "anthropic-key",
+      model: "claude-haiku-4-5",
+      timeoutMs: 8_000,
+    });
+    expect(openai).not.toHaveBeenCalled();
+  });
+});
 
 /** Start the server on an ephemeral port and return its base URL. */
 async function listen(server: http.Server): Promise<string> {
@@ -26,8 +101,11 @@ function closeServer(server: http.Server): Promise<void> {
 describe("createBotServer", () => {
   const openServers: http.Server[] = [];
 
-  async function startServer(handle: Handle): Promise<string> {
-    const server = createBotServer(handle);
+  async function startServer(
+    handle: Handle,
+    importSuggestions?: ImportSuggestionRoute,
+  ): Promise<string> {
+    const server = createBotServer(handle, { importSuggestions });
     openServers.push(server);
     return listen(server);
   }
@@ -188,5 +266,114 @@ describe("createBotServer", () => {
     expect(new Date(body.lastUpdateAt as string).toISOString()).toBe(
       body.lastUpdateAt,
     );
+  });
+
+  function signedHeaders(
+    body: string,
+    secret: string,
+    timestamp: number,
+    nonce = randomUUID(),
+  ) {
+    const path = "/internal/v1/import-category-suggestions";
+    const hash = createHash("sha256").update(body).digest("hex");
+    const canonical = `${timestamp}\n${nonce}\nPOST\n${path}\n${hash}`;
+    return {
+      "x-import-timestamp": String(timestamp),
+      "x-import-nonce": nonce,
+      "x-import-signature": `v1=${createHmac("sha256", secret).update(canonical).digest("hex")}`,
+    };
+  }
+
+  it("accepts a fresh signed internal suggestion request", async () => {
+    const handle = vi.fn<Handle>();
+    const internal = vi.fn().mockResolvedValue({
+      status: 200,
+      body: { version: 1, outcome: "success" },
+    });
+    const secret = "a".repeat(32);
+    const now = 1_800_000_000_000;
+    const base = await startServer(handle, {
+      secret,
+      handle: internal,
+      claimNonce: vi.fn().mockResolvedValue(true),
+      now: () => now,
+    });
+    const body = JSON.stringify({ version: 1 });
+    const response = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: signedHeaders(body, secret, Math.floor(now / 1000)),
+        body,
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(internal).toHaveBeenCalledWith({ version: 1 });
+    expect(handle).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid, stale, and replayed internal signatures", async () => {
+    const handle = vi.fn<Handle>();
+    const internal = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { ok: true } });
+    const secret = "b".repeat(32);
+    const now = 1_800_000_000_000;
+    const claimed = new Set<string>();
+    const base = await startServer(handle, {
+      secret,
+      handle: internal,
+      claimNonce: vi.fn(async (nonce: string) => {
+        if (claimed.has(nonce)) return false;
+        claimed.add(nonce);
+        return true;
+      }),
+      now: () => now,
+    });
+    const body = JSON.stringify({ version: 1 });
+    const current = Math.floor(now / 1000);
+    const nonce = randomUUID();
+    const headers = signedHeaders(body, secret, current, nonce);
+
+    const invalid = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: { ...headers, "x-import-signature": "v1=bad" },
+        body,
+      },
+    );
+    expect(invalid.status).toBe(401);
+
+    const stale = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: signedHeaders(body, secret, current - 61),
+        body,
+      },
+    );
+    expect(stale.status).toBe(401);
+
+    const first = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers,
+        body,
+      },
+    );
+    expect(first.status).toBe(200);
+    const replay = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers,
+        body,
+      },
+    );
+    expect(replay.status).toBe(409);
+    expect(internal).toHaveBeenCalledTimes(1);
   });
 });

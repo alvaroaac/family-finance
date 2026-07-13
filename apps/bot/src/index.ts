@@ -88,6 +88,7 @@ import {
 } from "./audio.js";
 import {
   createAnthropicCompletionClient,
+  createOpenAiCompletionClient,
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
 import {
@@ -273,11 +274,17 @@ async function buildDeps(
       const row = await dbCreateObligation(client, draft);
       return { id: row.id };
     },
-    materializeObligationPayment: async ({ obligationId, month, paidOn }) => {
+    materializeObligationPayment: async ({
+      obligationId,
+      month,
+      paidOn,
+      amountCents,
+    }) => {
       const result = await dbMaterializeObligationPayment(client, {
         obligationId,
         month,
         paidOn,
+        ...(amountCents === undefined ? {} : { amountCents }),
       });
       return { alreadyPaid: result.already_paid };
     },
@@ -750,6 +757,7 @@ export async function startBot(): Promise<{
     rawBody: unknown,
     secretHeader: string | undefined,
   ) => Promise<WebhookResult>;
+  client: AppSupabaseClient;
 }> {
   // Bot-scoped env parse: the container carries only the spec §3.5 vars, so
   // web-only settings (NEXT_PUBLIC_*, AUTHORIZED_EMAILS) must not be required.
@@ -863,6 +871,7 @@ export async function startBot(): Promise<{
   }
 
   return {
+    client,
     handle: (rawBody, secretHeader) =>
       handleWebhook({
         rawBody,
@@ -913,6 +922,7 @@ export {
 } from "./audio.js";
 export {
   createAnthropicCompletionClient,
+  createOpenAiCompletionClient,
   createOpenAiTranscriptionProvider,
   DEFAULT_PROVIDER_TIMEOUT_MS,
 } from "./providers.js";

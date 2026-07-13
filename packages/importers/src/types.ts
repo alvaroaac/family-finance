@@ -48,6 +48,8 @@ export type NormalizedImportRow = {
   installment?: { number: number; count: number };
   /** Card last-4 of the fatura section this row came from, when known. */
   cardLast4?: string;
+  /** Stable source-native transaction ID when an adapter can provide one. */
+  providerTransactionId?: string;
 };
 
 /**

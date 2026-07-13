@@ -27,6 +27,19 @@ export type ImportBatchStatus =
   | "previewed"
   | "confirmed"
   | "discarded";
+export type ImportArtifactKind = "transaction" | "installment_group";
+export type ImportRowDisposition =
+  | "imported"
+  | "duplicate_existing"
+  | "duplicate_in_file"
+  | "parser_error"
+  | "validation_error"
+  | "excluded";
+export type CategorizationMemoryMatchKind =
+  | "merchant_exact"
+  | "merchant_prefix"
+  | "description_contains"
+  | "suppress";
 export type ResponsibilityScope = "household" | "user";
 export type BotChannel = "telegram";
 export type ObligationStatus = "active" | "ended" | "canceled";
@@ -167,6 +180,8 @@ export type InstallmentGroupRow = {
   responsibility_scope: ResponsibilityScope;
   responsible_user_id: string | null;
   created_by_user_id: string;
+  /** Set when the group was reconstructed by confirm_import_v2. */
+  import_batch_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -200,6 +215,12 @@ export type ImportBatchRow = {
   duplicate_rows: number;
   error_rows: number;
   notes: string | null;
+  request_key: string | null;
+  payload_fingerprint: string | null;
+  file_fingerprint: string | null;
+  parser_version: string | null;
+  normalized_fingerprint: string | null;
+  confirmed_at: string | null;
   created_by_user_id: string;
   created_at: string;
   updated_at: string;
@@ -216,18 +237,72 @@ export type ImportRowRow = {
   error_message: string | null;
   is_duplicate: boolean;
   transaction_id: string | null;
+  installment_group_id: string | null;
+  claim_id: string | null;
+  disposition: ImportRowDisposition | null;
+  duplicate_of_claim_id: string | null;
+  fingerprint_version: number | null;
+  base_fingerprint: string | null;
+  occurrence_no: number | null;
+  observed_installment_number: number | null;
+  observed_installment_count: number | null;
+  card_last4: string | null;
+  override_reason: string | null;
+  category_source: string | null;
+  category_confidence: number | null;
+  category_accepted: boolean | null;
+  category_changed: boolean | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ImportItemClaimRow = {
+  id: string;
+  household_id: string;
+  source: ImportSource;
+  fingerprint_version: number;
+  base_fingerprint: string;
+  occurrence_no: number;
+  artifact_kind: ImportArtifactKind;
+  import_batch_id: string;
+  transaction_id: string | null;
+  installment_group_id: string | null;
+  source_line: number | null;
+  override_token: string | null;
+  override_of_claim_id: string | null;
+  override_reason: string | null;
+  override_by_user_id: string | null;
+  created_at: string;
 };
 
 export type CategorizationMemoryRow = {
   id: string;
   household_id: string;
   pattern: string;
+  row_kind: "expense" | "income";
   category_id: string | null;
   subcategory_id: string | null;
   confidence: number;
   explanation: string;
+  suppress: boolean;
+  match_kind: CategorizationMemoryMatchKind | null;
+  normalizer_version: string | null;
+  import_managed: boolean;
+  is_active: boolean;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SourceCategoryMappingRow = {
+  id: string;
+  household_id: string;
+  source: ImportSource;
+  normalized_label: string;
+  row_kind: "expense" | "income";
+  category_id: string | null;
+  subcategory_id: string | null;
+  suppress: boolean;
   is_active: boolean;
   created_by_user_id: string | null;
   created_at: string;
@@ -332,11 +407,29 @@ export type ImportBatchInsert = Insertable<
   | "duplicate_rows"
   | "error_rows"
   | "notes"
+  | "request_key"
+  | "payload_fingerprint"
+  | "file_fingerprint"
+  | "parser_version"
+  | "confirmed_at"
 >;
 
 export type CategorizationMemoryInsert = Insertable<
   CategorizationMemoryRow,
-  "category_id" | "subcategory_id" | "is_active" | "created_by_user_id"
+  | "category_id"
+  | "subcategory_id"
+  | "row_kind"
+  | "suppress"
+  | "match_kind"
+  | "normalizer_version"
+  | "import_managed"
+  | "is_active"
+  | "created_by_user_id"
+>;
+
+export type SourceCategoryMappingInsert = Insertable<
+  SourceCategoryMappingRow,
+  "subcategory_id" | "suppress" | "is_active" | "created_by_user_id"
 >;
 
 export type BotInteractionInsert = Insertable<
@@ -442,6 +535,122 @@ export type ConfirmImportResult = {
   imported_rows: number;
 };
 
+// --- Reliable import v2 RPC ------------------------------------------------
+
+export type ConfirmImportV2BatchPayload = {
+  household_id: string;
+  source: ImportSource;
+  /** Stable per-preview UUID; the same key must be reused on retries. */
+  request_key: string;
+  /** SHA-256 hex of the immutable reviewed payload. */
+  payload_fingerprint: string;
+  created_by_user_id: string;
+  notes?: string | null;
+  file_fingerprint?: string | null;
+  parser_version?: string | null;
+  normalized_fingerprint?: string | null;
+};
+
+export type ImportCategoryLearning = {
+  row_kind: "expense" | "income";
+  category_id: string | null;
+  subcategory_id?: string | null;
+  suppress: boolean;
+};
+
+export type ConfirmImportV2Learning = {
+  source_category?:
+    | (ImportCategoryLearning & {
+        normalized_label: string;
+      })
+    | null;
+  merchant_memory?:
+    | (ImportCategoryLearning & {
+        pattern: string;
+        confidence: number;
+        explanation: string;
+        match_kind?: Exclude<CategorizationMemoryMatchKind, "suppress">;
+        normalizer_version?: string | null;
+      })
+    | null;
+};
+
+type ConfirmImportV2AuditFields = {
+  household_id: string;
+  disposition: Exclude<ImportRowDisposition, "duplicate_existing">;
+  source_line?: number | null;
+  occurred_on?: string | null;
+  /** Signed source amount for audit; transaction payload stays positive. */
+  amount_cents?: number | null;
+  description?: string | null;
+  error_message?: string | null;
+  fingerprint_version?: number | null;
+  base_fingerprint?: string | null;
+  occurrence_no?: number | null;
+  observed_installment_number?: number | null;
+  observed_installment_count?: number | null;
+  card_last4?: string | null;
+  override_reason?: string | null;
+  category_source?: string | null;
+  category_confidence?: number | null;
+  category_accepted?: boolean | null;
+  category_changed?: boolean | null;
+  /** Present only after the user explicitly opts in to teaching the mapping. */
+  learning?: ConfirmImportV2Learning | null;
+};
+
+export type ConfirmImportV2TransactionItem = ConfirmImportV2AuditFields & {
+  disposition: "imported";
+  fingerprint_version: number;
+  base_fingerprint: string;
+  occurrence_no: number;
+  override_token?: string | null;
+  override_of_claim_id?: string | null;
+  transaction: Omit<TransactionInsert, "import_batch_id">;
+  installment_group?: never;
+  installments?: never;
+};
+
+export type ConfirmImportV2InstallmentItem = ConfirmImportV2AuditFields & {
+  disposition: "imported";
+  fingerprint_version: number;
+  base_fingerprint: string;
+  occurrence_no: number;
+  override_token?: string | null;
+  override_of_claim_id?: string | null;
+  transaction?: never;
+  installment_group: InstallmentGroupInsertPayload;
+  installments: InstallmentInsertPayload[];
+};
+
+export type ConfirmImportV2AuditItem = ConfirmImportV2AuditFields & {
+  disposition:
+    | "duplicate_in_file"
+    | "parser_error"
+    | "validation_error"
+    | "excluded";
+  transaction?: never;
+  installment_group?: never;
+  installments?: never;
+  override_token?: never;
+};
+
+export type ConfirmImportV2Item =
+  | ConfirmImportV2TransactionItem
+  | ConfirmImportV2InstallmentItem
+  | ConfirmImportV2AuditItem;
+
+export type ConfirmImportV2Result = {
+  batch: ImportBatchRow;
+  imported_rows: number;
+  duplicate_rows: number;
+  error_rows: number;
+  excluded_rows: number;
+  transactions_created: number;
+  installment_groups_created: number;
+  replayed: boolean;
+};
+
 // --- Merge category RPC result ---------------------------------------------
 //
 // Shape returned by the `merge_category` plpgsql function (see
@@ -457,6 +666,7 @@ export type MergeCategoryResult = {
     installments: number;
     subcategories: number;
     categorization_memory: number;
+    source_category_mappings: number;
   };
 };
 
@@ -494,6 +704,14 @@ export type Database = {
       installments: TableDef<InstallmentRow, Partial<InstallmentRow>>;
       import_batches: TableDef<ImportBatchRow, ImportBatchInsert>;
       import_rows: TableDef<ImportRowRow, Partial<ImportRowRow>>;
+      import_item_claims: TableDef<
+        ImportItemClaimRow,
+        Partial<ImportItemClaimRow>
+      >;
+      source_category_mappings: TableDef<
+        SourceCategoryMappingRow,
+        SourceCategoryMappingInsert
+      >;
       categorization_memory: TableDef<
         CategorizationMemoryRow,
         CategorizationMemoryInsert
@@ -532,6 +750,41 @@ export type Database = {
         };
         Returns: ConfirmImportResult;
       };
+      /** Atomic, claim-protected flat + installment import (migration 0016). */
+      confirm_import_v2: {
+        Args: {
+          batch_payload: ConfirmImportV2BatchPayload;
+          items_payload: ConfirmImportV2Item[];
+        };
+        Returns: ConfirmImportV2Result;
+      };
+      reserve_import_ai_paid_items: {
+        Args: {
+          target_household_id: string;
+          target_budget_key: string;
+          target_attempt_key: string;
+          requested_items: number;
+          preview_max_items: number;
+          target_created_by_user_id: string;
+        };
+        Returns: number;
+      };
+      record_import_ai_paid_result: {
+        Args: {
+          target_household_id: string;
+          target_attempt_key: string;
+          target_provider: string;
+          target_model: string;
+          target_outcome: "success" | "invalid_schema" | "error";
+          target_resolved_items: number;
+          target_latency_ms: number;
+        };
+        Returns: undefined;
+      };
+      claim_import_suggestion_nonce: {
+        Args: { target_nonce: string; target_expires_at: string };
+        Returns: boolean;
+      };
       // Atomic category merge: re-point transactions / installment groups /
       // installments / subcategories / categorization_memory off the source
       // onto the target and archive the source, all in one transaction. See
@@ -554,6 +807,7 @@ export type Database = {
           target_obligation_id: string;
           target_month: string;
           paid_on?: string | null;
+          target_amount_cents?: number | null;
         };
         Returns: MaterializeObligationPaymentResult;
       };

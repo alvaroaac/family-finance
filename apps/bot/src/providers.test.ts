@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   createAnthropicCompletionClient,
+  createOpenAiCompletionClient,
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
 
@@ -72,6 +73,7 @@ function jsonFetch(status: number, body: unknown): typeof fetch {
 describe("createAnthropicCompletionClient (telemetry)", () => {
   it("emits one ok record with token usage and the caller label", async () => {
     globalThis.fetch = jsonFetch(200, {
+      status: "completed",
       content: [{ type: "text", text: "hello" }],
       usage: { input_tokens: 42, output_tokens: 7 },
     });
@@ -155,6 +157,117 @@ describe("createAnthropicCompletionClient (telemetry)", () => {
     expect(result).toBeNull();
     expect(logCall).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "timeout", label: "categorizer" }),
+    );
+  });
+});
+
+describe("createOpenAiCompletionClient", () => {
+  it("uses non-stored JSON Responses output and records usage", async () => {
+    globalThis.fetch = jsonFetch(200, {
+      status: "completed",
+      output: [
+        { content: [{ type: "output_text", text: '{"items":[]}' }] },
+      ],
+      usage: { input_tokens: 80, output_tokens: 12 },
+    });
+    const logCall = vi.fn();
+    const client = createOpenAiCompletionClient({
+      apiKey: "sk-test",
+      model: "gpt-5.4",
+      outputSchema: { type: "object", additionalProperties: false },
+      logCall,
+    });
+
+    await expect(
+      client.complete("categorize", { label: "import_category_paid_fallback" }),
+    ).resolves.toBe('{"items":[]}');
+    const fetchCall = vi.mocked(globalThis.fetch).mock.calls[0];
+    const body = JSON.parse(String(fetchCall?.[1]?.body)) as {
+      store?: boolean;
+      text?: {
+        format?: { type?: string; strict?: boolean; schema?: unknown };
+      };
+    };
+    expect(body).toMatchObject({
+      store: false,
+      text: {
+        format: {
+          type: "json_schema",
+          strict: true,
+          schema: { type: "object", additionalProperties: false },
+        },
+      },
+    });
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.4",
+        outcome: "ok",
+        inputTokens: 80,
+        outputTokens: 12,
+      }),
+    );
+  });
+
+  it("returns null and records an HTTP failure without response contents", async () => {
+    globalThis.fetch = jsonFetch(429, { error: { message: "secret detail" } });
+    const logCall = vi.fn();
+    const client = createOpenAiCompletionClient({
+      apiKey: "sk-test",
+      model: "gpt-5.4",
+      outputSchema: { type: "object" },
+      logCall,
+    });
+
+    await expect(client.complete("categorize")).resolves.toBeNull();
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "http_error", status: 429 }),
+    );
+    expect(JSON.stringify(logCall.mock.calls)).not.toContain("secret detail");
+  });
+
+  it("returns null and records a timeout", async () => {
+    globalThis.fetch = hangingFetch();
+    const logCall = vi.fn();
+    const client = createOpenAiCompletionClient({
+      apiKey: "sk-test",
+      model: "gpt-5.4",
+      outputSchema: { type: "object" },
+      timeoutMs: 5,
+      logCall,
+    });
+
+    await expect(client.complete("categorize")).resolves.toBeNull();
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "timeout" }),
+    );
+  });
+
+  it("rejects output text from an incomplete 200 response", async () => {
+    globalThis.fetch = jsonFetch(200, {
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [
+        { content: [{ type: "output_text", text: '{"items":[]}' }] },
+      ],
+      usage: { input_tokens: 80, output_tokens: 1600 },
+    });
+    const logCall = vi.fn();
+    const client = createOpenAiCompletionClient({
+      apiKey: "sk-test",
+      model: "gpt-5.4",
+      outputSchema: { type: "object" },
+      logCall,
+    });
+
+    await expect(client.complete("categorize")).resolves.toBeNull();
+    expect(logCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        error: "OpenAI response did not complete",
+      }),
+    );
+    expect(JSON.stringify(logCall.mock.calls)).not.toContain(
+      "max_output_tokens",
     );
   });
 });

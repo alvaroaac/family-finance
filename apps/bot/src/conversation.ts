@@ -218,6 +218,8 @@ export type ConversationState = {
   cardBillDraft?: CardBillDraftInProgress;
   /** Set while status = awaiting_mark_paid_choice. */
   markPaidCandidates?: MarkPaidCandidate[];
+  /** Actual amount supplied with an ambiguous obligation payment. */
+  markPaidAmountCents?: number;
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
   proposedCategoryName?: string;
   /** Ranked existing categories returned by the unified interpreter. */
@@ -319,6 +321,7 @@ export type ConversationDeps = {
     obligationId: string;
     month: string;
     paidOn: string;
+    amountCents?: number;
   }) => Promise<{ alreadyPaid: boolean }>;
   /** Map a spoken account name ("conta Nubank") to an account id. */
   resolveAccountIdByName?: (name: string) => string | undefined;
@@ -686,6 +689,7 @@ async function settleObligation(
   messageText: string,
   deps: ConversationDeps,
   today: string,
+  amountCents?: number,
 ): Promise<ConversationOutcome> {
   if (deps.materializeObligationPayment === undefined) {
     // The obligation WAS found — the settle capability just is not wired.
@@ -701,6 +705,7 @@ async function settleObligation(
       obligationId: candidate.id,
       month,
       paidOn: today,
+      ...(amountCents === undefined ? {} : { amountCents }),
     }));
   } catch (error) {
     // The RPC rejects months outside [start_month, term end] and non-active
@@ -730,7 +735,7 @@ async function settleObligation(
         })
       : obligationPaidMessage({
           description: candidate.description,
-          amountCents: candidate.amountCents,
+          amountCents: amountCents ?? candidate.amountCents,
           month,
         }),
   };
@@ -1048,6 +1053,7 @@ async function startClassifiedIntent(
         input.text,
         deps,
         options.today,
+        classified.amountCents,
       );
     }
     return {
@@ -1055,6 +1061,9 @@ async function startClassifiedIntent(
         status: "awaiting_mark_paid_choice",
         draft: ballast,
         markPaidCandidates: matches,
+        ...(classified.amountCents === undefined
+          ? {}
+          : { markPaidAmountCents: classified.amountCents }),
       },
       reply: obligationAmbiguousMessage(matches.map((m) => m.description)),
     };
@@ -1750,6 +1759,7 @@ async function applyMarkPaidChoice(
     message,
     deps,
     today,
+    state.markPaidAmountCents,
   );
 }
 
@@ -2907,7 +2917,9 @@ export async function applyCallback(
       };
       return {
         state: nextState,
-        reply: obligationConfirmationMessage(obligationSummaryView(nextDraft, depsValue)),
+        reply: obligationConfirmationMessage(
+          obligationSummaryView(nextDraft, depsValue),
+        ),
         keyboard: obligationConfirmationKeyboard(),
       };
     }

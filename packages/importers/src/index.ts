@@ -35,6 +35,29 @@ export {
 // Duplicate detection + preview assembly.
 export { findDuplicateCandidates, buildImportPreview } from "./dedupe.js";
 
+// Versioned immutable source identity and target-scoped claim helpers.
+export {
+  IMPORT_IDENTITY_VERSION,
+  normalizeIdentityDescription,
+  canonicalJson,
+  sha256Hex,
+  rowIdentityCanonicalValue,
+  rowBaseIdentityHash,
+  assignRowIdentities,
+  normalizedRowsFingerprint,
+  claimIdentity,
+  installmentGroupBaseIdentityHash,
+  assignInstallmentGroupIdentities,
+} from "./identity.js";
+export type {
+  ImportIdentityVersion,
+  SourceIdentityMetadata,
+  RowIdentityInput,
+  RowIdentity,
+  ClaimTarget,
+  ClaimIdentity,
+} from "./identity.js";
+
 // Parcela reconstruction: split flat rows from inferred installment groups.
 export {
   splitFlatAndInstallmentRows,

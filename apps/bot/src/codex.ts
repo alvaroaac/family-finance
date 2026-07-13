@@ -31,6 +31,83 @@ export type CodexProcessRunner = (
   request: CodexRunRequest,
 ) => Promise<CodexRunResult>;
 
+export type StructuredCodexOutcome =
+  | "success"
+  | "timeout"
+  | "invalid_schema"
+  | "error";
+
+export type StructuredCodexResult<T> = {
+  outcome: StructuredCodexOutcome;
+  data?: T;
+  latencyMs: number;
+};
+
+/**
+ * Execute Codex as a bounded, tool-free structured-output worker.
+ *
+ * This is shared by Telegram interpretation and import categorization so both
+ * paths inherit the same ephemeral directory, event audit, output cap, timeout,
+ * and cleanup guarantees. `validate` is deliberately supplied by the caller:
+ * JSON Schema constrains Codex while the runtime validator remains the final
+ * trust boundary.
+ */
+export async function runCodexStructured<T>(args: {
+  prompt: string;
+  outputSchema: object;
+  validate: (value: unknown) => T | null;
+  model: string;
+  timeoutMs: number;
+  codexHome: string;
+  runner?: CodexProcessRunner;
+  maxOutputBytes?: number;
+}): Promise<StructuredCodexResult<T>> {
+  const started = Date.now();
+  const runner = args.runner ?? createNodeCodexRunner();
+  const maxOutputBytes = args.maxOutputBytes ?? 64 * 1024;
+  let temp: string | undefined;
+  try {
+    temp = await mkdtemp(join(tmpdir(), "family-finance-codex-"));
+    const cwd = join(temp, "empty");
+    const schemaPath = join(temp, "schema.json");
+    const outputPath = join(temp, "output.json");
+    await Promise.all([
+      mkdir(cwd),
+      mkdir(args.codexHome, { recursive: true }),
+      writeFile(schemaPath, JSON.stringify(args.outputSchema), "utf8"),
+    ]);
+    const result = await runner({
+      prompt: args.prompt,
+      schemaPath,
+      outputPath,
+      cwd,
+      codexHome: args.codexHome,
+      model: args.model,
+      timeoutMs: args.timeoutMs,
+      maxOutputBytes,
+    });
+    if (result.exitCode !== 0 || result.timedOut || result.errorCode) {
+      return {
+        outcome: result.timedOut ? "timeout" : "error",
+        latencyMs: Date.now() - started,
+      };
+    }
+    if ((await stat(outputPath)).size > maxOutputBytes) {
+      return { outcome: "error", latencyMs: Date.now() - started };
+    }
+    const data = args.validate(JSON.parse(await readFile(outputPath, "utf8")));
+    return data === null
+      ? { outcome: "invalid_schema", latencyMs: Date.now() - started }
+      : { outcome: "success", data, latencyMs: Date.now() - started };
+  } catch {
+    return { outcome: "error", latencyMs: Date.now() - started };
+  } finally {
+    if (temp !== undefined) {
+      await rm(temp, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+}
+
 export const CODEX_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -172,6 +249,7 @@ export function buildCodexPrompt(
     "Nunca escreva, execute ações ou invente dados. Retorne somente o JSON do schema.",
     "Menção a cartão sem parcelas é plain. Parcelamento no cartão é card_installment.",
     '"72x de 710,44" para financiamento/conta recorrente é obligation com valor mensal 71044.',
+    "Em mark_paid, amount_cents é o valor real pago agora, tanto para cartão quanto obrigação; null quando ausente.",
     "Use apenas cartões conhecidos e categorias/subcategorias existentes.",
     "Retorne até 3 categorias existentes ranqueadas. Nova categoria/subcategoria fica apenas proposta pendente.",
     "Separe merchant e item; description deve priorizar o item quando mencionado, senão o merchant/serviço.",
@@ -268,6 +346,15 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
       let stderr = "";
       let stdout = "";
       let exceeded = false;
+      const killGroup = () => {
+        if (child.pid && process.platform !== "win32") {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+        } else child.kill("SIGKILL");
+      };
       child.stderr.on("data", (chunk: Buffer) => {
         if (stderr.length < request.maxOutputBytes) stderr += chunk.toString();
         if (stderr.length >= request.maxOutputBytes) {
@@ -288,18 +375,20 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
           killGroup();
         }
       });
-      const killGroup = () => {
-        if (child.pid && process.platform !== "win32") {
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {
-            child.kill("SIGKILL");
-          }
-        } else child.kill("SIGKILL");
-      };
       const timer = setTimeout(killGroup, request.timeoutMs);
+      const outputMonitor = setInterval(() => {
+        void stat(request.outputPath)
+          .then((info) => {
+            if (info.size > request.maxOutputBytes) {
+              exceeded = true;
+              killGroup();
+            }
+          })
+          .catch(() => undefined);
+      }, 25);
       child.on("error", (error: NodeJS.ErrnoException) => {
         clearTimeout(timer);
+        clearInterval(outputMonitor);
         resolve({
           exitCode: null,
           timedOut: false,
@@ -318,6 +407,7 @@ export function createNodeCodexRunner(binary = "codex"): CodexProcessRunner {
       });
       child.on("close", (code, signal) => {
         clearTimeout(timer);
+        clearInterval(outputMonitor);
         let auditError: string | undefined;
         try {
           for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
@@ -549,63 +639,43 @@ export function createCodexMessageClassifier(args: {
       return null;
     }
     active += 1;
-    let temp: string | undefined;
-    const started = Date.now();
     try {
-      temp = await mkdtemp(join(tmpdir(), "family-finance-codex-"));
-      const cwd = join(temp, "empty");
-      const schemaPath = join(temp, "schema.json");
-      const outputPath = join(temp, "output.json");
-      await Promise.all([
-        mkdir(cwd),
-        mkdir(args.codexHome, { recursive: true }),
-        writeFile(schemaPath, JSON.stringify(CODEX_OUTPUT_SCHEMA), "utf8"),
-      ]);
-      const result = await runner({
+      const result = await runCodexStructured({
         prompt: buildCodexPrompt(text, options),
-        schemaPath,
-        outputPath,
-        cwd,
+        outputSchema: CODEX_OUTPUT_SCHEMA,
+        validate: (value) => {
+          const parsed = resultSchema.safeParse(value);
+          return parsed.success ? parsed.data : null;
+        },
+        runner,
         codexHome: args.codexHome,
         model: args.model,
         timeoutMs: args.timeoutMs,
         maxOutputBytes: 64 * 1024,
       });
-      if (result.exitCode !== 0 || result.timedOut || result.errorCode) {
+      if (result.outcome !== "success" || result.data === undefined) {
         noteFailure();
         args.telemetry?.({
           type: "ai_call",
           provider: "codex",
           role: "primary",
-          outcome: result.timedOut ? "timeout" : "fallback",
-          latencyMs: Date.now() - started,
+          outcome:
+            result.outcome === "timeout"
+              ? "timeout"
+              : result.outcome === "invalid_schema"
+                ? "invalid_schema"
+                : "fallback",
+          latencyMs: result.latencyMs,
         });
         return null;
       }
-      if ((await stat(outputPath)).size > 64 * 1024) {
-        throw new Error("Codex output file exceeded limit");
-      }
-      const parsed = resultSchema.safeParse(
-        JSON.parse(await readFile(outputPath, "utf8")),
-      );
-      if (!parsed.success) {
-        noteFailure();
-        args.telemetry?.({
-          type: "ai_call",
-          provider: "codex",
-          role: "primary",
-          outcome: "invalid_schema",
-          latencyMs: Date.now() - started,
-        });
-        return null;
-      }
-      const mapped = mapResult(parsed.data, options);
+      const mapped = mapResult(result.data, options);
       args.telemetry?.({
         type: "ai_call",
         provider: "codex",
         role: "primary",
         outcome: "success",
-        latencyMs: Date.now() - started,
+        latencyMs: result.latencyMs,
       });
       consecutiveFailures = 0;
       circuitOpenUntil = 0;
@@ -617,14 +687,10 @@ export function createCodexMessageClassifier(args: {
         provider: "codex",
         role: "primary",
         outcome: "fallback",
-        latencyMs: Date.now() - started,
       });
       return null;
     } finally {
       active -= 1;
-      if (temp) {
-        await rm(temp, { recursive: true, force: true }).catch(() => undefined);
-      }
     }
   };
 }
