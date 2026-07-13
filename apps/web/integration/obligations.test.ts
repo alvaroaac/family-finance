@@ -14,7 +14,10 @@ import type { AppSupabaseClient } from "@family-finance/db";
 import { materializeObligationPayment } from "@family-finance/db";
 
 import { buildObligationsData } from "../app/(app)/obligations/queries.js";
-import { obligationInputFromForm } from "../app/(app)/obligations/form.js";
+import {
+  obligationInputFromForm,
+  obligationPaymentFromForm,
+} from "../app/(app)/obligations/form.js";
 import {
   FakeSupabaseStore,
   createFakeSupabaseClient,
@@ -246,5 +249,46 @@ describe("mark-paid default occurred date (no paidOn)", () => {
       .table("transactions")
       .find((r) => r.obligation_id === "ob-rent");
     expect(tx?.occurred_on).toBe("2026-07-10");
+  });
+});
+
+describe("obligationPaymentFromForm", () => {
+  function paymentForm(amount: string): FormData {
+    const data = new FormData();
+    data.set("obligationId", "ob-rent");
+    data.set("month", "2026-07");
+    data.set("amount", amount);
+    return data;
+  }
+
+  it("maps a pt-BR actual payment amount to cents", () => {
+    expect(obligationPaymentFromForm(paymentForm("1.247,80"))).toEqual({
+      obligationId: "ob-rent",
+      month: "2026-07",
+      amountCents: 124780,
+    });
+  });
+
+  it.each(["", "0", "-1", "abc"])("rejects invalid amount %j", (amount) => {
+    expect(() => obligationPaymentFromForm(paymentForm(amount))).toThrow();
+  });
+});
+
+describe("mark-paid actual amount", () => {
+  it("records the actual for this month without changing future forecasts", async () => {
+    const { client } = seededClient();
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+      amountCents: 124780,
+    });
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.thisMonth.paid[0]?.amountCents).toBe(124780);
+    expect(
+      data.timeline[1]?.entries.find(
+        (entry) => entry.obligationId === "ob-rent",
+      )?.amountCents,
+    ).toBe(120000);
   });
 });

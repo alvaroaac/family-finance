@@ -29,6 +29,28 @@ export function optionalField(
     : undefined;
 }
 
+export type ObligationPaymentInput = {
+  obligationId: string;
+  month: string;
+  amountCents: number;
+};
+
+/** Map the payment modal fields into the actual monthly payment override. */
+export function obligationPaymentFromForm(
+  formData: FormData,
+): ObligationPaymentInput {
+  const amountCents = parseReaisToCents(requireField(formData, "amount"));
+  if (amountCents === null || amountCents <= 0) {
+    throw new Error("Valor pago inválido — use por exemplo 710,44.");
+  }
+
+  return {
+    obligationId: requireField(formData, "obligationId"),
+    month: requireField(formData, "month"),
+    amountCents,
+  };
+}
+
 /** Strictly numeric positive integer — "12abc" is rejected, not truncated. */
 function strictPositiveInt(value: string, label: string): number {
   if (!/^\d+$/.test(value)) {

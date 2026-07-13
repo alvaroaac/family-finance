@@ -389,6 +389,102 @@
   box-shadow: 0 0 0 3px var(--ff-tint);
 }
 
+/* ---- Dialog ------------------------------------------------------------- */
+
+.ff-dialog {
+  width: min(92vw, 460px);
+  max-width: 460px;
+  margin: auto;
+  padding: 0;
+  color: var(--ff-ink);
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md);
+  box-shadow: 0 24px 70px rgb(42 32 24 / 24%);
+}
+
+.ff-dialog::backdrop {
+  background: rgb(42 32 24 / 48%);
+  backdrop-filter: blur(2px);
+}
+
+.ff-dialog__surface {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.ff-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.ff-dialog__title {
+  margin: 5px 0 0;
+  color: var(--ff-ink);
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.ff-dialog__close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--ff-ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ff-dialog__close:hover,
+.ff-dialog__close:focus-visible {
+  color: var(--ff-ink);
+  background: var(--ff-tint);
+  border-color: var(--ff-border);
+  outline: none;
+}
+
+.ff-dialog__description,
+.ff-dialog__hint {
+  margin: 0;
+  color: var(--ff-ink-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  line-height: 1.5;
+}
+
+.ff-dialog__description {
+  font-size: 14px;
+}
+
+.ff-dialog__hint {
+  margin-top: -12px;
+  font-size: 12px;
+}
+
+.ff-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+@media (max-width: 520px) {
+  .ff-dialog__surface {
+    padding: 20px;
+  }
+
+  .ff-dialog__actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+}
+
 .ff-select {
   position: relative;
   display: block;

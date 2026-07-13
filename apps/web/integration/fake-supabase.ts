@@ -512,12 +512,13 @@ function mergeCategoryRpc(
 
 /**
  * JS stand-in for the `materialize_obligation_payment` plpgsql function
- * (supabase/migrations/0011_create_obligations.sql). The REAL atomicity +
- * idempotency guarantee (unique partial index) is proven against live Postgres
- * separately; here we reproduce the happy-path DATA EFFECT: insert ONE expense
- * transaction linked via obligation_id/obligation_month — or return the
- * existing one with already_paid = true — with occurred_on defaulting to the
- * month's due day unless paid_on overrides it.
+ * (supabase/migrations/0011_create_obligations.sql, extended by 0017). The REAL
+ * atomicity + idempotency guarantee (unique partial index) is proven against
+ * live Postgres separately; here we reproduce the happy-path DATA EFFECT:
+ * insert ONE expense transaction linked via obligation_id/obligation_month —
+ * or return the existing one with already_paid = true — with occurred_on
+ * defaulting to the month's due day and amount defaulting to the forecast
+ * unless either value is explicitly overridden.
  */
 function materializeObligationPaymentRpc(
   store: FakeSupabaseStore,
@@ -525,6 +526,7 @@ function materializeObligationPaymentRpc(
     target_obligation_id: string;
     target_month: string;
     paid_on?: string | null;
+    target_amount_cents?: number | null;
   },
 ): Result<Row> {
   const obligation = store
@@ -561,7 +563,7 @@ function materializeObligationPaymentRpc(
   const tx = store.materialize({
     household_id: obligation.household_id,
     kind: "expense",
-    amount_cents: obligation.amount_cents,
+    amount_cents: args.target_amount_cents ?? obligation.amount_cents,
     occurred_on: args.paid_on ?? `${args.target_month}-${dueDay}`,
     description: obligation.description,
     category_id: obligation.category_id ?? null,
@@ -691,6 +693,7 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
               target_obligation_id: string;
               target_month: string;
               paid_on?: string | null;
+              target_amount_cents?: number | null;
             },
           ),
         );

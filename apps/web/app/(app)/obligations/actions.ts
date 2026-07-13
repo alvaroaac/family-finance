@@ -15,7 +15,11 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { parseReaisToCents } from "../../../lib/format";
-import { obligationInputFromForm, requireField } from "./form";
+import {
+  obligationInputFromForm,
+  obligationPaymentFromForm,
+  requireField,
+} from "./form";
 
 /**
  * Server actions for the "Obrigações" screen.
@@ -129,16 +133,16 @@ export async function cancelObligationAction(
 }
 
 /**
- * Mark an obligation month as paid — materialize one real transaction. No
- * `paidOn` is passed, so the RPC defaults occurred_on to the month's due day.
- * Idempotent: a repeat click is a no-op (already_paid), never a second charge.
+ * Mark an obligation month as paid — materialize one real transaction with
+ * the amount confirmed in the modal. No `paidOn` is passed, so the RPC
+ * defaults occurred_on to the month's due day. Idempotent: a repeat click is
+ * a no-op (already_paid), never a second charge.
  */
 export async function markObligationPaidAction(
   formData: FormData,
 ): Promise<void> {
   const { client } = await authedHousehold();
-  const obligationId = requireField(formData, "obligationId");
-  const month = requireField(formData, "month");
-  await materializeObligationPayment(client, { obligationId, month });
+  const payment = obligationPaymentFromForm(formData);
+  await materializeObligationPayment(client, payment);
   revalidateObligationPaths();
 }
