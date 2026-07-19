@@ -36,6 +36,8 @@ export type InterpretedExpense = {
   responsibleHint?: string;
   /** Known-card keyword selected by a unified interpreter. */
   cardKeyword?: string;
+  /** Known-account keyword selected by a unified interpreter. */
+  accountKeyword?: string;
   /** True only when one unified primary call produced this whole result. */
   unifiedPrimary?: boolean;
   /** Ranked EXISTING catalog category names (never ids), max 3. */
@@ -182,6 +184,7 @@ export type MessageClassifier = (
     today: string;
     parserHints?: Record<string, unknown>;
     knownCards?: Array<{ id: string; name: string }>;
+    knownAccounts?: Array<{ id: string; name: string }>;
     catalog?: {
       categories: ReadonlyArray<{ id: string; name: string }>;
       subcategories: ReadonlyArray<{

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createCodexMessageClassifier,
-  createUnifiedAnthropicMessageClassifier,
+  createUnifiedCompletionMessageClassifier,
   buildCodexExecArgs,
   withClassifierFallback,
   type CodexProcessRunner,
@@ -19,6 +19,7 @@ const OPTIONS = {
   today: "2026-07-09",
   parserHints: { amountCents: 12345, description: "Giassi" },
   knownCards: [{ id: "card-1", name: "Nubank" }],
+  knownAccounts: [{ id: "account-1", name: "Conta Nubank" }],
   catalog: {
     householdId: "house-1",
     categories: [{ id: "cat-food", name: "Alimentação" }],
@@ -43,6 +44,8 @@ const VALID = {
   due_day: null,
   card_id: "card-1",
   card_name: "Nubank",
+  account_id: null,
+  account_name: null,
   mark_paid_target: null,
   category_hint: "Alimentação",
   category_candidates: [
@@ -141,6 +144,7 @@ describe("Codex unified primary", () => {
     const request = runner.mock.calls[0]?.[0];
     expect(request?.prompt).toContain("12345");
     expect(request?.prompt).toContain("Nubank");
+    expect(request?.prompt).toContain("Conta Nubank");
     expect(request?.prompt).toContain("Alimentação");
     expect(result).toMatchObject({
       intent: "plain",
@@ -197,6 +201,24 @@ describe("Codex unified primary", () => {
     ["plain installment leakage", { ...VALID, installment_count: 2 }],
     ["invalid calendar date", { ...VALID, occurred_on: "2026-02-31" }],
     ["unknown card id", { ...VALID, card_id: "card-unknown" }],
+    [
+      "unknown account id",
+      { ...VALID, card_id: null, card_name: null, account_id: "account-x" },
+    ],
+    [
+      "account id/name mismatch",
+      {
+        ...VALID,
+        card_id: null,
+        card_name: null,
+        account_id: "account-1",
+        account_name: "Outra conta",
+      },
+    ],
+    [
+      "multiple payment instruments",
+      { ...VALID, account_id: "account-1", account_name: "Conta Nubank" },
+    ],
     [
       "duplicate candidates",
       {
@@ -266,6 +288,8 @@ describe("Codex unified primary", () => {
           amount_cents: null,
           card_id: null,
           card_name: null,
+          account_id: null,
+          account_name: null,
           category_hint: null,
           category_candidates: [],
         }),
@@ -289,7 +313,7 @@ describe("Codex unified primary", () => {
       timedOut: true,
       stderr: "",
     }));
-    const fallback = createUnifiedAnthropicMessageClassifier({ complete });
+    const fallback = createUnifiedCompletionMessageClassifier({ complete });
     const result = await withClassifierFallback(
       primary,
       fallback,
@@ -311,6 +335,8 @@ describe("Codex unified primary", () => {
         installment_count: 72,
         card_id: null,
         card_name: null,
+        account_id: null,
+        account_name: null,
         category_candidates: [],
       },
       "obligation",

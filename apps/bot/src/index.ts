@@ -98,8 +98,9 @@ import {
   type TextInterpreter,
 } from "./interpret.js";
 import {
+  CODEX_OUTPUT_SCHEMA,
   createCodexMessageClassifier,
-  createUnifiedAnthropicMessageClassifier,
+  createUnifiedCompletionMessageClassifier,
   withClassifierFallback,
 } from "./codex.js";
 import { STARTER_MERCHANT_ALIASES } from "./merchant-aliases.js";
@@ -837,8 +838,19 @@ export async function startBot(): Promise<{
   const anthropicClassifier: MessageClassifier | undefined =
     completionClient !== undefined
       ? codexEnabled
-        ? createUnifiedAnthropicMessageClassifier(completionClient)
+        ? createUnifiedCompletionMessageClassifier(completionClient)
         : createMessageClassifier(completionClient)
+      : undefined;
+  const openAiClassifier: MessageClassifier | undefined =
+    codexEnabled && env.OPENAI_API_KEY !== undefined
+      ? createUnifiedCompletionMessageClassifier(
+          createOpenAiCompletionClient({
+            apiKey: env.OPENAI_API_KEY,
+            model: env.OPENAI_MODEL ?? "gpt-5-nano",
+            outputSchema: CODEX_OUTPUT_SCHEMA,
+            timeoutMs: 8_000,
+          }),
+        )
       : undefined;
   const codexClassifier: MessageClassifier | undefined = codexEnabled
     ? createCodexMessageClassifier({
@@ -849,9 +861,23 @@ export async function startBot(): Promise<{
         telemetry: (event) => console.log(JSON.stringify(event)),
       })
     : undefined;
+  const paidFallbackClassifier = withClassifierFallback(
+    openAiClassifier,
+    anthropicClassifier,
+    undefined,
+    {
+      from: "openai",
+      to: "anthropic",
+    },
+  );
   const classifyMessage = withClassifierFallback(
     codexClassifier,
-    anthropicClassifier,
+    paidFallbackClassifier,
+    undefined,
+    {
+      from: "codex",
+      to: openAiClassifier !== undefined ? "openai" : "anthropic",
+    },
   );
 
   // Voice transcription — only when both a bot token (to fetch the file) and a
