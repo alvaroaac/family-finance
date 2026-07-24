@@ -30,6 +30,7 @@ import {
   markObligationPaidAction,
   updateObligationAction,
 } from "./actions";
+import { ObligationPaymentDialog } from "./payment-dialog";
 
 export const metadata = {
   title: "Obrigações — Casa",
@@ -161,17 +162,13 @@ export default async function ObligationsPage() {
                   {entry.description} · vence dia {entry.dueDay}
                 </span>
                 <strong>{formatBrlCents(entry.amountCents)}</strong>
-                <form action={markObligationPaidAction}>
-                  <input
-                    type="hidden"
-                    name="obligationId"
-                    value={entry.obligationId}
-                  />
-                  <input type="hidden" name="month" value={entry.month} />
-                  <SubmitButton pendingLabel="Marcando…">
-                    Marcar como pago
-                  </SubmitButton>
-                </form>
+                <ObligationPaymentDialog
+                  obligationId={entry.obligationId}
+                  month={entry.month}
+                  description={entry.description}
+                  projectedAmountCents={entry.amountCents}
+                  action={markObligationPaidAction}
+                />
               </li>
             ))}
             {data.thisMonth.paid.map((paidEntry) => (
