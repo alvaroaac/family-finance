@@ -9,9 +9,9 @@
  * sign-out form and theme picker all arrive via props from `(app)/layout.tsx`.
  * The only client concern here is the active state via `usePathname()`.
  */
-import type { ReactNode } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import {
   IconBank,
@@ -25,6 +25,7 @@ import {
   IconTransfer,
   IconUpload,
 } from "./icons";
+import { Spinner } from "./primitives";
 
 /** Icon registry so nav config (in the layout) stays serializable strings. */
 export const NAV_ICONS = {
@@ -63,6 +64,85 @@ export function AppShell(props: {
 }) {
   const { items, brand, user, signOut, themePicker, children } = props;
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const routeKey = `${pathname ?? ""}?${searchParams?.toString() ?? ""}`;
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [routeKey]);
+
+  useEffect(() => {
+    if (pendingHref === null) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setPendingHref(null), 15_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [pendingHref]);
+
+  useEffect(() => {
+    function handleDocumentClick(event: globalThis.MouseEvent): void {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey ||
+        !(event.target instanceof Element)
+      ) {
+        return;
+      }
+      const anchor = event.target.closest("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target || anchor.download) {
+        return;
+      }
+      const destination = new URL(anchor.href, window.location.href);
+      if (
+        destination.origin !== window.location.origin ||
+        (destination.pathname === window.location.pathname &&
+          destination.search === window.location.search)
+      ) {
+        return;
+      }
+      setPendingHref(destination.pathname);
+    }
+
+    function handleDocumentSubmit(event: SubmitEvent): void {
+      if (!(event.target instanceof HTMLFormElement) || event.target.method !== "get") {
+        return;
+      }
+      const destination = new URL(event.target.action, window.location.href);
+      if (destination.origin === window.location.origin) {
+        setPendingHref(destination.pathname);
+      }
+    }
+
+    document.addEventListener("click", handleDocumentClick, true);
+    document.addEventListener("submit", handleDocumentSubmit, true);
+    return () => {
+      document.removeEventListener("click", handleDocumentClick, true);
+      document.removeEventListener("submit", handleDocumentSubmit, true);
+    };
+  }, []);
+
+  function startNavigation(
+    event: MouseEvent<HTMLAnchorElement>,
+    href: string,
+  ): void {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      isNavItemActive(pathname, href)
+    ) {
+      return;
+    }
+    setPendingHref(href);
+  }
 
   const bottomItems = BOTTOM_NAV_HREFS.map((href) =>
     items.find((item) => item.href === href),
@@ -84,11 +164,20 @@ export function AppShell(props: {
               <Link
                 key={item.href}
                 href={item.href}
-                className={active ? "ff-nav-link ff-nav-link--active" : "ff-nav-link"}
+                className={
+                  pendingHref === item.href
+                    ? "ff-nav-link ff-nav-link--pending"
+                    : active
+                      ? "ff-nav-link ff-nav-link--active"
+                      : "ff-nav-link"
+                }
                 aria-current={active ? "page" : undefined}
+                aria-busy={pendingHref === item.href || undefined}
+                onClick={(event) => startNavigation(event, item.href)}
               >
                 <Icon size={18} />
-                {item.label}
+                <span>{item.label}</span>
+                {pendingHref === item.href ? <Spinner /> : null}
               </Link>
             );
           })}
@@ -107,6 +196,11 @@ export function AppShell(props: {
       </aside>
 
       <div className="ff-shell__content">
+        {pendingHref !== null ? (
+          <div className="ff-route-progress" role="progressbar" aria-label="Carregando página">
+            <span />
+          </div>
+        ) : null}
         <main className="ff-main">{children}</main>
 
         <nav className="ff-bottomnav">
@@ -121,9 +215,14 @@ export function AppShell(props: {
                   active ? "ff-bottomnav__item ff-bottomnav__item--active" : "ff-bottomnav__item"
                 }
                 aria-current={active ? "page" : undefined}
+                aria-busy={pendingHref === item.href || undefined}
+                onClick={(event) => startNavigation(event, item.href)}
               >
                 <Icon size={21} />
-                <span>{item.label}</span>
+                <span className="ff-bottomnav__label">
+                  {item.label}
+                  {pendingHref === item.href ? <Spinner /> : null}
+                </span>
               </Link>
             );
           })}
@@ -134,9 +233,14 @@ export function AppShell(props: {
                 ? "ff-bottomnav__item ff-bottomnav__item--active"
                 : "ff-bottomnav__item"
             }
+            aria-busy={pendingHref === BOTTOM_NAV_MORE_HREF || undefined}
+            onClick={(event) => startNavigation(event, BOTTOM_NAV_MORE_HREF)}
           >
             <IconDots size={21} />
-            <span>Mais</span>
+            <span className="ff-bottomnav__label">
+              Mais
+              {pendingHref === BOTTOM_NAV_MORE_HREF ? <Spinner /> : null}
+            </span>
           </Link>
         </nav>
       </div>

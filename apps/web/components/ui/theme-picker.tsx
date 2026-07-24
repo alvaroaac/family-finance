@@ -9,10 +9,11 @@
  * resolves we `router.refresh()` so the `data-theme` cookie re-renders the
  * tree with zero flash.
  */
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { useToast } from "./toast";
+import { Spinner } from "./primitives";
 
 type ThemeId = "esmeralda" | "salvia";
 
@@ -30,11 +31,13 @@ export function ThemePicker(props: {
   const router = useRouter();
   const toast = useToast();
   const [isPending, startTransition] = useTransition();
+  const [pendingTheme, setPendingTheme] = useState<ThemeId | null>(null);
 
   function pick(theme: ThemeId): void {
     if (theme === current) {
       return;
     }
+    setPendingTheme(theme);
     startTransition(async () => {
       try {
         await onSelect(theme);
@@ -42,6 +45,8 @@ export function ThemePicker(props: {
         router.refresh();
       } catch {
         toast.error("Não foi possível trocar o tema.");
+      } finally {
+        setPendingTheme(null);
       }
     });
   }
@@ -68,7 +73,11 @@ export function ThemePicker(props: {
               .filter(Boolean)
               .join(" ")}
           >
-            <span className="ff-themepicker__dot" style={{ background: swatch.dot }} />
+            {pendingTheme === swatch.id ? (
+              <Spinner />
+            ) : (
+              <span className="ff-themepicker__dot" style={{ background: swatch.dot }} />
+            )}
           </button>
         );
       })}

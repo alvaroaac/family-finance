@@ -2,7 +2,13 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { AppShell, ThemePicker, ToastProvider, type NavItem } from "../../components/ui";
+import {
+  AppShell,
+  SubmitButton,
+  ThemePicker,
+  ToastProvider,
+  type NavItem,
+} from "../../components/ui";
 import { requireAuthorizedUser } from "../../lib/auth";
 import { currentMemberName } from "../../lib/member";
 import { setThemeAction } from "./settings/actions";
@@ -63,9 +69,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         user={{ initial: name.charAt(0).toUpperCase(), name, email }}
         signOut={
           <form action={signOutAction}>
-            <button type="submit" className="ff-signout">
+            <SubmitButton
+              unstyled
+              className="ff-signout"
+              pendingLabel="saindo…"
+            >
               sair
-            </button>
+            </SubmitButton>
           </form>
         }
         themePicker={<ThemePicker current={theme} onSelect={setThemeAction} />}

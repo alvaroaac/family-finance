@@ -8,11 +8,11 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
-  Button,
   Card,
   Field,
   Input,
   PageTitle,
+  SubmitButton,
 } from "../../../components/ui";
 import { createCardAction, updateCardAction, deleteCardAction } from "./actions";
 import { CardPurchaseForm } from "./purchase-form";
@@ -168,15 +168,15 @@ export default async function CardsPage() {
                         />
                       </Field>
                     </div>
-                    <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                    <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
                       Salvar
-                    </button>
+                    </SubmitButton>
                   </form>
                   <form action={deleteCardAction}>
                     <input type="hidden" name="cardId" value={c.id} />
-                    <Button variant="danger" type="submit">
+                    <SubmitButton variant="danger" pendingLabel="Excluindo…">
                       Excluir
-                    </Button>
+                    </SubmitButton>
                   </form>
                 </div>
               </Card>
@@ -232,9 +232,9 @@ export default async function CardsPage() {
                 />
               </Field>
             </div>
-            <Button variant="ghost" type="submit">
+            <SubmitButton variant="ghost" pendingLabel="Adicionando…">
               Adicionar cartão
-            </Button>
+            </SubmitButton>
           </form>
         </Card>
       </div>

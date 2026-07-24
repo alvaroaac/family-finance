@@ -9,12 +9,12 @@ import {
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { formatBrlCents } from "../../../lib/format";
 import {
-  Button,
   Card,
   Field,
   Input,
   PageTitle,
   Select,
+  SubmitButton,
 } from "../../../components/ui";
 import { currentMonth } from "@family-finance/db";
 
@@ -168,7 +168,9 @@ export default async function ObligationsPage() {
                     value={entry.obligationId}
                   />
                   <input type="hidden" name="month" value={entry.month} />
-                  <Button type="submit">Marcar como pago</Button>
+                  <SubmitButton pendingLabel="Marcando…">
+                    Marcar como pago
+                  </SubmitButton>
                 </form>
               </li>
             ))}
@@ -256,15 +258,15 @@ export default async function ObligationsPage() {
                     aria-label={`Dia de vencimento de ${item.description}`}
                     style={{ maxWidth: 80 }}
                   />
-                  <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
                     Salvar
-                  </button>
+                  </SubmitButton>
                 </form>
                 <form action={cancelObligationAction}>
                   <input type="hidden" name="obligationId" value={item.id} />
-                  <Button variant="danger" type="submit">
+                  <SubmitButton variant="danger" pendingLabel="Cancelando…">
                     Cancelar
-                  </Button>
+                  </SubmitButton>
                 </form>
               </div>
             </Card>
@@ -323,7 +325,7 @@ export default async function ObligationsPage() {
             </Select>
           </Field>
           <div style={{ alignSelf: "end" }}>
-            <Button type="submit">Criar obrigação</Button>
+            <SubmitButton pendingLabel="Criando…">Criar obrigação</SubmitButton>
           </div>
         </form>
       </Card>

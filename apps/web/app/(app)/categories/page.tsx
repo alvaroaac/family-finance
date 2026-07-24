@@ -10,12 +10,12 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
-  Button,
   Card,
   Field,
   Input,
   PageTitle,
   Select,
+  SubmitButton,
 } from "../../../components/ui";
 import {
   archiveCategoryAction,
@@ -144,9 +144,9 @@ export default async function CategoriesPage() {
                 </div>
                 <form action={archiveCategoryAction}>
                   <input type="hidden" name="categoryId" value={c.id} />
-                  <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Arquivando…">
                     Arquivar
-                  </button>
+                  </SubmitButton>
                 </form>
               </div>
             );
@@ -196,9 +196,9 @@ export default async function CategoriesPage() {
                 </Select>
               </Field>
             </div>
-            <Button variant="ghost" type="submit">
+            <SubmitButton variant="ghost" pendingLabel="Mesclando…">
               Mesclar
-            </Button>
+            </SubmitButton>
           </form>
         </Card>
       </div>
@@ -222,9 +222,9 @@ export default async function CategoriesPage() {
                   </div>
                   <form action={restoreCategoryAction}>
                     <input type="hidden" name="categoryId" value={c.id} />
-                    <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                    <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Restaurando…">
                       Restaurar
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
               ))}
@@ -289,9 +289,9 @@ export default async function CategoriesPage() {
                 </Select>
               </Field>
             </div>
-            <Button variant="ghost" type="submit">
+            <SubmitButton variant="ghost" pendingLabel="Adicionando…">
               Adicionar memória
-            </Button>
+            </SubmitButton>
           </form>
 
           {memory.length === 0 ? (
@@ -324,16 +324,16 @@ export default async function CategoriesPage() {
                     {m.is_active ? (
                       <form action={disableMemoryAction}>
                         <input type="hidden" name="memoryId" value={m.id} />
-                        <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                        <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Desativando…">
                           Desativar
-                        </button>
+                        </SubmitButton>
                       </form>
                     ) : (
                       <form action={enableMemoryAction}>
                         <input type="hidden" name="memoryId" value={m.id} />
-                        <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                        <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Ativando…">
                           Ativar
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </li>

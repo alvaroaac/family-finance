@@ -6,7 +6,14 @@ import type { HouseholdMemberProfile } from "@family-finance/db";
 
 import { setThemeAction, updateMemberAction } from "./actions";
 import { THEMES, telegramDisplayValue, type ThemeId } from "./helpers";
-import { Badge, Field, Input, useToast } from "../../../components/ui";
+import {
+  Badge,
+  Button,
+  Field,
+  Input,
+  Spinner,
+  useToast,
+} from "../../../components/ui";
 
 /**
  * Client widgets for "Configurações": the theme picker (two theme-preview
@@ -45,6 +52,7 @@ const THEME_CARD: Record<
 export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
   const toast = useToast();
   const [isPending, startTransition] = useTransition();
+  const [pendingTheme, setPendingTheme] = useState<ThemeId | null>(null);
 
   return (
     <div className="ff-themecards">
@@ -58,12 +66,15 @@ export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
             disabled={isPending}
             aria-pressed={isActive}
             onClick={() => {
+              setPendingTheme(theme.id);
               startTransition(async () => {
                 try {
                   await setThemeAction(theme.id);
                   toast.success("Tema atualizado.");
                 } catch {
                   toast.error("Não foi possível trocar o tema.");
+                } finally {
+                  setPendingTheme(null);
                 }
               });
             }}
@@ -86,6 +97,11 @@ export function ThemePicker({ activeTheme }: { activeTheme: ThemeId }) {
             </div>
             <div className="ff-themecard__name">{theme.label}</div>
             <div className="ff-themecard__desc">{preview.description}</div>
+            {pendingTheme === theme.id ? (
+              <span className="ff-theme-pending" role="status">
+                <Spinner /> Aplicando…
+              </span>
+            ) : null}
           </button>
         );
       })}
@@ -165,13 +181,14 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
           </Field>
         </div>
         <Badge tone="accent">{roleLabelPtBr[member.role] ?? member.role}</Badge>
-        <button
+        <Button
           type="submit"
-          disabled={isPending}
-          className="ff-btn ff-btn--ghost-sm"
+          className="ff-btn--ghost-sm"
+          loading={isPending}
+          loadingText="Salvando…"
         >
-          {isPending ? "Salvando..." : "Salvar"}
-        </button>
+          Salvar
+        </Button>
         {saved ? <span className="ff-hint-pos">Salvo ✓</span> : null}
         {error ? (
           <span role="alert" className="ff-note" style={{ color: "var(--ff-negative)" }}>

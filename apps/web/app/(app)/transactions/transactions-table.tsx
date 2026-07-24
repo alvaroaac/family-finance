@@ -12,6 +12,7 @@ import {
   Input,
   RowCardList,
   Select,
+  Spinner,
   Table,
   TableRow,
   useToast,
@@ -446,6 +447,13 @@ export function TransactionsTable({
         </div>
       ) : null}
 
+      {isSaving ? (
+        <div className="ff-table-pending" role="status">
+          <Spinner />
+          Salvando alteração…
+        </div>
+      ) : null}
+
       <div style={{ opacity: isSaving ? 0.6 : 1 }}>
         <Table columns={COLUMNS} gridTemplate={GRID}>
           {rows.map((row) => {
@@ -467,7 +475,11 @@ export function TransactionsTable({
                     disabled={isSaving}
                     onClick={() => removeRow(row)}
                   >
-                    Excluir
+                    {isSaving ? (
+                      <span className="ff-btn__pending"><Spinner /> Excluindo…</span>
+                    ) : (
+                      "Excluir"
+                    )}
                   </button>
                   <button
                     type="button"
@@ -592,7 +604,11 @@ export function TransactionsTable({
                           disabled={isSaving}
                           onClick={() => removeRow(row)}
                         >
-                          Excluir
+                          {isSaving ? (
+                            <span className="ff-btn__pending"><Spinner /> Excluindo…</span>
+                          ) : (
+                            "Excluir"
+                          )}
                         </button>
                         <button
                           type="button"

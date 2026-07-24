@@ -8,7 +8,6 @@ import {
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { formatBrlCents } from "../../../lib/format";
 import {
-  Button,
   Card,
   Field,
   IconHome,
@@ -17,6 +16,7 @@ import {
   Input,
   PageTitle,
   Select,
+  SubmitButton,
 } from "../../../components/ui";
 import {
   createBucketAction,
@@ -171,9 +171,13 @@ export default async function InvestmentsPage() {
                     aria-label={`Saldo da caixinha ${bucket.name} (R$)`}
                   />
                 </div>
-                <button type="submit" className="ff-chip-link">
+                <SubmitButton
+                  unstyled
+                  className="ff-chip-link"
+                  pendingLabel="Atualizando…"
+                >
                   Atualizar saldo
-                </button>
+                </SubmitButton>
               </form>
               <div className="ff-actions">
                 <form
@@ -195,15 +199,15 @@ export default async function InvestmentsPage() {
                     className="ff-input--compact"
                     aria-label={`Nome da caixinha ${bucket.name}`}
                   />
-                  <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
                     Salvar
-                  </button>
+                  </SubmitButton>
                 </form>
                 <form action={deleteBucketAction}>
                   <input type="hidden" name="bucketId" value={bucket.id} />
-                  <Button variant="danger" type="submit">
+                  <SubmitButton variant="danger" pendingLabel="Excluindo…">
                     Excluir
-                  </Button>
+                  </SubmitButton>
                 </form>
               </div>
             </Card>
@@ -254,9 +258,9 @@ export default async function InvestmentsPage() {
                   />
                 </Field>
               </div>
-              <Button variant="ghost" type="submit">
+              <SubmitButton variant="ghost" pendingLabel="Adicionando…">
                 Adicionar caixinha
-              </Button>
+              </SubmitButton>
             </form>
           )}
         </Card>

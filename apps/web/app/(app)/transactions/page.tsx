@@ -13,9 +13,9 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
-  Button,
   Field,
   MonthStepper,
+  NavigationSubmitButton,
   PillToggle,
   Select,
   Input,
@@ -288,9 +288,9 @@ export default async function TransactionsPage({
             </Field>
           </div>
 
-          <Button variant="ghost" type="submit">
+          <NavigationSubmitButton pendingLabel="Filtrando…">
             Filtrar
-          </Button>
+          </NavigationSubmitButton>
         </form>
 
         <span className="ff-filterbar__push">
