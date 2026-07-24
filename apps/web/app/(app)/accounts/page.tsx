@@ -6,7 +6,6 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
-  Button,
   Card,
   Field,
   IconBank,
@@ -14,6 +13,7 @@ import {
   Input,
   PageTitle,
   Select,
+  SubmitButton,
 } from "../../../components/ui";
 import {
   createAccountAction,
@@ -130,15 +130,15 @@ export default async function AccountsPage() {
                     className="ff-input--compact"
                     aria-label={`Nome da conta ${account.name}`}
                   />
-                  <button type="submit" className="ff-btn ff-btn--ghost-sm">
+                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
                     Salvar
-                  </button>
+                  </SubmitButton>
                 </form>
                 <form action={deleteAccountAction}>
                   <input type="hidden" name="accountId" value={account.id} />
-                  <Button variant="danger" type="submit">
+                  <SubmitButton variant="danger" pendingLabel="Excluindo…">
                     Excluir
-                  </Button>
+                  </SubmitButton>
                 </form>
               </div>
             </Card>
@@ -179,9 +179,9 @@ export default async function AccountsPage() {
                 </Select>
               </Field>
             </div>
-            <Button variant="ghost" type="submit">
+            <SubmitButton variant="ghost" pendingLabel="Criando…">
               + Nova conta
-            </Button>
+            </SubmitButton>
           </form>
         </Card>
       </div>

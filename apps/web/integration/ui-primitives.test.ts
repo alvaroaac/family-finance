@@ -18,6 +18,7 @@ import {
   PageTitle,
   PillToggle,
   PressureBars,
+  RouteSkeleton,
   RowCardList,
   Select,
   StatCard,
@@ -54,6 +55,46 @@ describe("ui primitives — core", () => {
   it("Button defaults to ghost variant", () => {
     const html = renderToStaticMarkup(createElement(Button, { children: "Cancelar" }));
     expect(html).toContain("ff-btn--ghost");
+  });
+
+  it("Button loading state is immediate, disabled and announced", () => {
+    const html = renderToStaticMarkup(
+      createElement(Button, {
+        loading: true,
+        loadingText: "Salvando…",
+        children: "Salvar",
+      }),
+    );
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("disabled");
+    expect(html).toContain("ff-spinner");
+    expect(html).toContain("Salvando…");
+    expect(html).not.toContain(">Salvar<");
+  });
+
+  it("route skeletons preserve page-specific geometry", () => {
+    const expectedClassByVariant = {
+      resumo: "ff-grid-resumo",
+      dashboard: "ff-grid-stats",
+      transactions: "ff-skeleton-table",
+      imports: "ff-skeleton-upload",
+      categories: "ff-skeleton-category-list",
+      accounts: "ff-cards-grid",
+      cards: "ff-skeleton-fields",
+      obligations: "ff-skeleton-rows",
+      investments: "ff-skeleton-actions",
+      settings: "ff-skeleton-theme-grid",
+    } as const;
+
+    for (const [variant, expectedClass] of Object.entries(expectedClassByVariant)) {
+      const html = renderToStaticMarkup(
+        createElement(RouteSkeleton, {
+          variant: variant as keyof typeof expectedClassByVariant,
+        }),
+      );
+      expect(html).toContain('role="status"');
+      expect(html).toContain(expectedClass);
+    }
   });
 
   it("StatCard renders kicker uppercase text + value inside .ff-num", () => {

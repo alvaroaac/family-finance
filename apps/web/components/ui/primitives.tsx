@@ -128,24 +128,43 @@ export function Button({
   type = "button",
   onClick,
   disabled,
+  loading = false,
+  loadingText,
+  className,
   children,
 }: {
   variant?: "primary" | "ghost" | "danger" | "link";
   type?: "button" | "submit";
   onClick?: () => void;
   disabled?: boolean;
+  loading?: boolean;
+  loadingText?: ReactNode;
+  className?: string;
   children: ReactNode;
 }): ReactElement {
   return (
     <button
-      className={cx("ff-btn", `ff-btn--${variant}`)}
+      className={cx("ff-btn", `ff-btn--${variant}`, className)}
       type={type}
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
     >
-      {children}
+      {loading ? (
+        <span className="ff-btn__pending">
+          <Spinner />
+          {loadingText ?? children}
+        </span>
+      ) : (
+        children
+      )}
     </button>
   );
+}
+
+/** Small current-color progress indicator used by pending links and buttons. */
+export function Spinner(): ReactElement {
+  return <span className="ff-spinner" aria-hidden="true" />;
 }
 
 /** Comparison chip, e.g. "↓ R$ 320 a menos que junho 🌱". */

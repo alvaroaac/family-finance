@@ -74,6 +74,7 @@ export function CardPurchaseForm({
   const [parcels, setParcels] = useState<ParcelPreview[] | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [isPending, startTransition] = useTransition();
   const toast = useToast();
 
@@ -98,21 +99,26 @@ export function CardPurchaseForm({
       setPreviewError("Informe um valor total válido maior que zero.");
       return;
     }
-    const result = await previewCardPurchase({
-      creditCardId,
-      description,
-      totalCents,
-      installmentCount: effectiveCount,
-      purchasedOn,
-      categoryId: categoryId || undefined,
-      subcategoryId: subcategoryId || undefined,
-    });
-    if (!result.ok) {
-      setParcels(null);
-      setPreviewError(result.message);
-      return;
+    setIsPreviewing(true);
+    try {
+      const result = await previewCardPurchase({
+        creditCardId,
+        description,
+        totalCents,
+        installmentCount: effectiveCount,
+        purchasedOn,
+        categoryId: categoryId || undefined,
+        subcategoryId: subcategoryId || undefined,
+      });
+      if (!result.ok) {
+        setParcels(null);
+        setPreviewError(result.message);
+        return;
+      }
+      setParcels(result.parcels);
+    } finally {
+      setIsPreviewing(false);
     }
-    setParcels(result.parcels);
   }
 
   function onSave() {
@@ -275,15 +281,23 @@ export function CardPurchaseForm({
             </div>
 
             <div style={{ display: "flex", gap: 12, marginTop: 18, flexWrap: "wrap" }}>
-              <Button variant="ghost" onClick={onPreview}>
+              <Button
+                variant="ghost"
+                loading={isPreviewing}
+                loadingText="Gerando…"
+                disabled={isPending}
+                onClick={onPreview}
+              >
                 Ver parcelas
               </Button>
               <Button
                 variant="primary"
                 onClick={onSave}
-                disabled={isPending || creditCardId === ""}
+                disabled={isPreviewing || creditCardId === ""}
+                loading={isPending}
+                loadingText="Salvando…"
               >
-                {isPending ? "Salvando…" : "Salvar compra"}
+                Salvar compra
               </Button>
             </div>
 

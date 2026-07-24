@@ -14,6 +14,7 @@ import {
   Input,
   RowCardList,
   Select,
+  SubmitButton,
   Table,
   TableRow,
   useToast,
@@ -953,13 +954,13 @@ export default function ImportsPage() {
               </label>
 
               <div style={{ marginTop: 18 }}>
-                <button
-                  type="submit"
-                  className="ff-btn ff-btn--primary"
-                  style={{ width: "100%", padding: 13 }}
+                <SubmitButton
+                  variant="primary"
+                  className="ff-btn--block"
+                  pendingLabel="Lendo arquivo…"
                 >
                   Ver prévia →
-                </button>
+                </SubmitButton>
               </div>
 
               <p className="ff-note" style={{ marginTop: 14, marginBottom: 0 }}>
@@ -1645,6 +1646,8 @@ export default function ImportsPage() {
                   variant="primary"
                   onClick={onConfirm}
                   disabled={confirmDisabled}
+                  loading={isPending}
+                  loadingText="Importando…"
                 >
                   {confirmLabel}
                 </Button>
@@ -1891,15 +1894,16 @@ export default function ImportsPage() {
               </Button>
               <span style={{ flex: 1, display: "flex" }}>
                 <span style={{ flex: 1 }}>
-                  <button
-                    type="button"
-                    className="ff-btn ff-btn--primary"
-                    style={{ width: "100%" }}
+                  <Button
+                    variant="primary"
+                    className="ff-btn--block"
                     onClick={onConfirm}
                     disabled={confirmDisabled}
+                    loading={isPending}
+                    loadingText="Importando…"
                   >
                     {confirmLabel}
-                  </button>
+                  </Button>
                 </span>
               </span>
             </div>

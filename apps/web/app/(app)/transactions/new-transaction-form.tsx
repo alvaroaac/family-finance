@@ -246,10 +246,21 @@ export function NewTransactionForm({
         ) : null}
 
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-          <Button variant="primary" type="button" disabled={isSaving} onClick={save}>
+          <Button
+            variant="primary"
+            type="button"
+            loading={isSaving}
+            loadingText="Salvando…"
+            onClick={save}
+          >
             Salvar lançamento
           </Button>
-          <Button variant="ghost" type="button" onClick={() => setOpen(false)}>
+          <Button
+            variant="ghost"
+            type="button"
+            disabled={isSaving}
+            onClick={() => setOpen(false)}
+          >
             Cancelar
           </Button>
         </div>
