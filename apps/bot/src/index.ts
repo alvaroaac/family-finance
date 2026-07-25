@@ -98,8 +98,10 @@ import {
   type TextInterpreter,
 } from "./interpret.js";
 import {
+  CODEX_OUTPUT_SCHEMA,
   createCodexMessageClassifier,
-  createUnifiedAnthropicMessageClassifier,
+  createUnifiedCompletionMessageClassifier,
+  withClassifierDeadline,
   withClassifierFallback,
 } from "./codex.js";
 import { STARTER_MERCHANT_ALIASES } from "./merchant-aliases.js";
@@ -109,6 +111,13 @@ import {
   DRAFT_NOT_YOURS_TOAST,
   ALREADY_SAVED_TOAST,
 } from "./replies.js";
+
+/**
+ * Time every paid classifier tier SHARES once the primary gives up. It is a
+ * single slot, not one per provider, so the fallback chain cannot grow the
+ * webhook's worst-case latency as tiers are added.
+ */
+const CLASSIFIER_FALLBACK_BUDGET_MS = 8_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -822,7 +831,10 @@ export async function startBot(): Promise<{
       ? createAnthropicCompletionClient({
           apiKey: llm.apiKey,
           model: llm.model,
-          timeoutMs: env.CODEX_ENABLED === "true" ? 8000 : undefined,
+          timeoutMs:
+            env.CODEX_ENABLED === "true"
+              ? CLASSIFIER_FALLBACK_BUDGET_MS
+              : undefined,
         })
       : undefined;
   const codexEnabled = env.CODEX_ENABLED === "true";
@@ -837,8 +849,19 @@ export async function startBot(): Promise<{
   const anthropicClassifier: MessageClassifier | undefined =
     completionClient !== undefined
       ? codexEnabled
-        ? createUnifiedAnthropicMessageClassifier(completionClient)
+        ? createUnifiedCompletionMessageClassifier(completionClient)
         : createMessageClassifier(completionClient)
+      : undefined;
+  const openAiClassifier: MessageClassifier | undefined =
+    codexEnabled && env.OPENAI_API_KEY !== undefined
+      ? createUnifiedCompletionMessageClassifier(
+          createOpenAiCompletionClient({
+            apiKey: env.OPENAI_API_KEY,
+            model: env.OPENAI_MODEL ?? "gpt-5-nano",
+            outputSchema: CODEX_OUTPUT_SCHEMA,
+            timeoutMs: CLASSIFIER_FALLBACK_BUDGET_MS,
+          }),
+        )
       : undefined;
   const codexClassifier: MessageClassifier | undefined = codexEnabled
     ? createCodexMessageClassifier({
@@ -849,9 +872,30 @@ export async function startBot(): Promise<{
         telemetry: (event) => console.log(JSON.stringify(event)),
       })
     : undefined;
-  const classifyMessage = withClassifierFallback(
-    codexClassifier,
+  const paidFallbackClassifier = withClassifierFallback(
+    openAiClassifier,
     anthropicClassifier,
+    undefined,
+    {
+      from: "openai",
+      to: "anthropic",
+    },
+  );
+  const classifierChain = withClassifierFallback(
+    codexClassifier,
+    paidFallbackClassifier,
+    undefined,
+    {
+      from: "codex",
+      to: openAiClassifier !== undefined ? "openai" : "anthropic",
+    },
+  );
+  // The chain is awaited on the webhook hot path, so it gets ONE budget: the
+  // primary's timeout plus a single fallback slot shared by every paid tier.
+  // Adding another tier can no longer stretch how long a message waits.
+  const classifyMessage = withClassifierDeadline(
+    classifierChain,
+    (env.CODEX_TIMEOUT_MS ?? 12000) + CLASSIFIER_FALLBACK_BUDGET_MS,
   );
 
   // Voice transcription — only when both a bot token (to fetch the file) and a

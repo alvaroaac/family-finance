@@ -28,7 +28,7 @@ import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import { existsSync } from "node:fs";
 
 import { handleWebhook } from "./index.js";
-import type { TextInterpreter } from "./interpret.js";
+import type { MessageClassifier, TextInterpreter } from "./interpret.js";
 import {
   createInMemoryConversationStore,
   createDbConversationStore,
@@ -78,11 +78,12 @@ describe("parseExpenseText", () => {
 
   it("reads pt-BR thousands (dot groups of 3) as reais, not centavos", () => {
     // Regression: "1.500" used to match ".50" as a dot-decimal -> 150 cents.
-    expect(parseExpenseText("aluguel R$ 1.500", { today: TODAY }).amountCents).toBe(
-      150000,
-    );
     expect(
-      parseExpenseText("financiamento 1.234 reais", { today: TODAY }).amountCents,
+      parseExpenseText("aluguel R$ 1.500", { today: TODAY }).amountCents,
+    ).toBe(150000);
+    expect(
+      parseExpenseText("financiamento 1.234 reais", { today: TODAY })
+        .amountCents,
     ).toBe(123400);
     expect(
       parseExpenseText("carro 51.000 em 72x", { today: TODAY }).amountCents,
@@ -93,9 +94,9 @@ describe("parseExpenseText", () => {
   });
 
   it("keeps thousands+decimals and plain decimals correct", () => {
-    expect(
-      parseExpenseText("R$ 1.234,56", { today: TODAY }).amountCents,
-    ).toBe(123456);
+    expect(parseExpenseText("R$ 1.234,56", { today: TODAY }).amountCents).toBe(
+      123456,
+    );
     // A 2-digit group after the dot is a decimal, not thousands.
     expect(parseExpenseText("R$ 1.50", { today: TODAY }).amountCents).toBe(150);
     expect(parseExpenseText("32.50", { today: TODAY }).amountCents).toBe(3250);
@@ -108,9 +109,13 @@ describe("parseExpenseText", () => {
   });
 
   it("detects a card hint and an account hint", () => {
-    const card = parseExpenseText("Almoço 40 reais no cartão", { today: TODAY });
+    const card = parseExpenseText("Almoço 40 reais no cartão", {
+      today: TODAY,
+    });
     expect(card.cardHint).toBe(true);
-    const acct = parseExpenseText("Almoço 40 reais no débito", { today: TODAY });
+    const acct = parseExpenseText("Almoço 40 reais no débito", {
+      today: TODAY,
+    });
     expect(acct.accountHint).toBe(true);
   });
 
@@ -319,11 +324,7 @@ describe("conversation: text -> confirmed transaction", () => {
       { today: TODAY },
     );
 
-    const corrected = await applyMessage(
-      started.state,
-      "valor 45,90",
-      deps,
-    );
+    const corrected = await applyMessage(started.state, "valor 45,90", deps);
     expect(corrected.state.status).toBe("awaiting_confirmation");
     expect(corrected.state.draft.amountCents).toBe(4590);
     expect(createTransaction).not.toHaveBeenCalled();
@@ -401,7 +402,11 @@ describe("conversation: text -> confirmed transaction", () => {
       deps,
       { today: TODAY },
     );
-    const corrected = await applyMessage(started.state, "responsável casa", deps);
+    const corrected = await applyMessage(
+      started.state,
+      "responsável casa",
+      deps,
+    );
     expect(corrected.state.draft.responsibleUserId).toBeUndefined();
 
     await applyMessage(corrected.state, "confirmar", deps);
@@ -442,11 +447,7 @@ describe("conversation: text -> confirmed transaction", () => {
       { today: TODAY },
     );
     expect(started.state.status).toBe("needs_amount");
-    const confirmAttempt = await applyMessage(
-      started.state,
-      "confirmar",
-      deps,
-    );
+    const confirmAttempt = await applyMessage(started.state, "confirmar", deps);
     // Still cannot save without a value.
     expect(createTransaction).not.toHaveBeenCalled();
     expect(confirmAttempt.reply).toMatch(/valor/i);
@@ -459,7 +460,11 @@ describe("conversation: text -> confirmed transaction", () => {
 
 describe("transcribeVoiceMessage (temp audio handling)", () => {
   function downloaderReturning(bytes: Uint8Array): AudioDownloader {
-    return { async download() { return bytes; } };
+    return {
+      async download() {
+        return bytes;
+      },
+    };
   }
 
   it("deletes the temporary audio file after transcription (no raw audio retained)", async () => {
@@ -494,8 +499,16 @@ describe("audio entry: transcription -> confirmation (never bypasses confirm)", 
 
   function transcribeDeps(text: string): TranscribeDeps {
     return {
-      downloader: { async download() { return new Uint8Array([7, 7]); } },
-      provider: { async transcribe() { return text; } },
+      downloader: {
+        async download() {
+          return new Uint8Array([7, 7]);
+        },
+      },
+      provider: {
+        async transcribe() {
+          return text;
+        },
+      },
     };
   }
 
@@ -594,7 +607,10 @@ describe("AI fallback in the bot flow", () => {
     });
 
     const outcome = await startConversation(
-      { text: "transacao obscura 9981 50 reais hoje", fromUserId: "user-alvaro" },
+      {
+        text: "transacao obscura 9981 50 reais hoje",
+        fromUserId: "user-alvaro",
+      },
       deps,
       { today: TODAY },
     );
@@ -608,12 +624,12 @@ describe("AI fallback in the bot flow", () => {
   });
 });
 
-describe("LLM text interpretation (always runs; parser owns amount/date)", () => {
-  it("calls the interpreter even when the parser found an amount; parser amount/date win, LLM description wins", async () => {
+describe("LLM text interpretation (always runs; LLM owns structured fields)", () => {
+  it("calls the interpreter even when the parser found an amount; LLM amount/date/description win and disagreements need attention", async () => {
     const interpretText = vi.fn<TextInterpreter>(async () => ({
-      amountCents: 9999, // must NOT beat the parser's amount
+      amountCents: 9999,
       description: "OpenAI",
-      occurredOn: "2026-01-01", // must NOT beat the parser's explicit date
+      occurredOn: "2026-01-01",
       categoryHint: "Assinaturas",
     }));
     const { deps } = buildDeps({ interpretText });
@@ -632,9 +648,10 @@ describe("LLM text interpretation (always runs; parser owns amount/date)", () =>
       "Gasto em OpenAI no valor de 56,13 reais ontem",
       { today: TODAY },
     );
-    expect(outcome.state.draft.amountCents).toBe(5613);
-    expect(outcome.state.draft.occurredOn).toBe("2026-06-21");
+    expect(outcome.state.draft.amountCents).toBe(9999);
+    expect(outcome.state.draft.occurredOn).toBe("2026-01-01");
     expect(outcome.state.draft.description).toBe("OpenAI");
+    expect(outcome.state.draft.needsAttention).toBe(true);
     expect(outcome.state.status).toBe("awaiting_confirmation");
   });
 
@@ -687,15 +704,13 @@ describe("LLM text interpretation (always runs; parser owns amount/date)", () =>
   });
 
   it("parser miss + interpreter success -> awaiting_confirmation with the interpreted fields (still no save)", async () => {
-    const interpretText = vi.fn<TextInterpreter>(
-      async () => ({
-        amountCents: 4590,
-        description: "Mercadinho da esquina",
-        occurredOn: "2026-06-21",
-        categoryHint: "Alimentação",
-        responsibleHint: "Karol",
-      }),
-    );
+    const interpretText = vi.fn<TextInterpreter>(async () => ({
+      amountCents: 4590,
+      description: "Mercadinho da esquina",
+      occurredOn: "2026-06-21",
+      categoryHint: "Alimentação",
+      responsibleHint: "Karol",
+    }));
     const suggestCategorySpy = vi.fn(async () => ({
       status: "uncategorized" as const,
       suggestion: null,
@@ -710,7 +725,10 @@ describe("LLM text interpretation (always runs; parser owns amount/date)", () =>
 
     // No digits anywhere -> the deterministic parser cannot extract an amount.
     const outcome = await startConversation(
-      { text: "gastei uma nota no mercadinho da esquina ontem", fromUserId: "user-alvaro" },
+      {
+        text: "gastei uma nota no mercadinho da esquina ontem",
+        fromUserId: "user-alvaro",
+      },
       deps,
       { today: TODAY },
     );
@@ -729,7 +747,7 @@ describe("LLM text interpretation (always runs; parser owns amount/date)", () =>
     expect(outcome.state.draft.occurredOn).toBe("2026-06-21");
     // responsibleHint went through resolveResponsibleUserId (not trusted raw).
     expect(outcome.state.draft.responsibleUserId).toBe("user-karol");
-    // LLM-derived drafts always merit a closer look.
+    // Missing parser facts still merit a closer look.
     expect(outcome.state.draft.needsAttention).toBe(true);
 
     // categoryHint reaches the categorization engine as context description
@@ -745,10 +763,142 @@ describe("LLM text interpretation (always runs; parser owns amount/date)", () =>
     expect(outcome.reply).toContain("45,90");
   });
 
-  it("interpreter returns null -> today's rephrase behavior (needs_amount)", async () => {
-    const interpretText = vi.fn<TextInterpreter>(
-      async () => null,
+  it("uses unified AI description, category candidates, and flexible card match for Giassi on Nubank credit", async () => {
+    const classifyMessage = vi.fn<MessageClassifier>(async () => ({
+      intent: "plain",
+      expense: {
+        amountCents: 20000,
+        description: "Giassi",
+        cardKeyword: "Crédito Nubank",
+        unifiedPrimary: true,
+        categoryCandidates: [
+          {
+            categoryName: "Alimentação",
+            confidence: 0.96,
+            explanation: "Giassi é um supermercado.",
+          },
+        ],
+      },
+    }));
+    const suggestCategory = vi.fn(async () => ({
+      status: "uncategorized" as const,
+      suggestion: null,
+      requiresConfirmation: true,
+    }));
+    const { deps } = buildDeps({
+      classifyMessage,
+      suggestCategory,
+      listActiveCards: () => [{ id: "card-nubank", name: "Crédito Nubank" }],
+      listActiveAccounts: () => [{ id: "acct-nubank", name: "Conta Nubank" }],
+      cardNameById: (id) =>
+        id === "card-nubank" ? "Crédito Nubank" : undefined,
+    });
+
+    const outcome = await startConversation(
+      {
+        text: "compra no Giassi 200 reais no credito nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
     );
+
+    expect(classifyMessage).toHaveBeenCalledWith(
+      "compra no Giassi 200 reais no credito nubank",
+      expect.objectContaining({
+        knownCards: [{ id: "card-nubank", name: "Crédito Nubank" }],
+        knownAccounts: [{ id: "acct-nubank", name: "Conta Nubank" }],
+      }),
+    );
+    expect(suggestCategory).not.toHaveBeenCalled();
+    expect(outcome.state.draft.description).toBe("Giassi");
+    expect(outcome.state.draft.amountCents).toBe(20000);
+    expect(outcome.state.draft.cardId).toBe("card-nubank");
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.state.categoryCandidates).toEqual([
+      {
+        categoryId: "cat-food",
+        categoryName: "Alimentação",
+        subcategoryId: undefined,
+        subcategoryName: undefined,
+        confidence: 0.96,
+        explanation: "Giassi é um supermercado.",
+      },
+    ]);
+  });
+
+  it("keeps bare Nubank ambiguous when account and card both match", async () => {
+    const classifyMessage = vi.fn<MessageClassifier>(async () => ({
+      intent: "plain",
+      expense: {
+        amountCents: 20000,
+        description: "Giassi",
+        unifiedPrimary: true,
+        categoryCandidates: [],
+      },
+    }));
+    const { deps } = buildDeps({
+      classifyMessage,
+      listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
+      listActiveAccounts: () => [{ id: "acct-nubank", name: "Nubank" }],
+    });
+
+    const outcome = await startConversation(
+      { text: "Giassi Nubank 200 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_payment_choice");
+    expect(outcome.state.paymentCandidates).toEqual([
+      { type: "account", id: "acct-nubank", name: "Nubank" },
+      { type: "card", id: "card-nubank", name: "Nubank" },
+    ]);
+  });
+
+  it("says so briefly when every classifier tier fails (Codex error/timeout)", async () => {
+    // A null chain result means Codex failed AND the paid fallbacks failed or
+    // ran out of budget. The draft still comes from the parser.
+    const classifyMessage = vi.fn<MessageClassifier>(async () => null);
+    const { deps, createTransaction } = buildDeps({ classifyMessage });
+
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.reply).toContain("modo simples");
+    expect(outcome.reply).toContain("Confirme o lançamento:");
+    expect(outcome.state.draft.amountCents).toBe(3200);
+    expect(outcome.state.draft.needsAttention).toBe(true);
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet about the AI when the classifier answers normally", async () => {
+    const classifyMessage = vi.fn<MessageClassifier>(async () => ({
+      intent: "plain",
+      expense: {
+        amountCents: 3200,
+        description: "Uber",
+        unifiedPrimary: true,
+        categoryCandidates: [],
+      },
+    }));
+    const { deps } = buildDeps({ classifyMessage });
+
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.reply).not.toContain("modo simples");
+  });
+
+  it("interpreter returns null -> today's rephrase behavior (needs_amount)", async () => {
+    const interpretText = vi.fn<TextInterpreter>(async () => null);
     const { deps, createTransaction } = buildDeps({ interpretText });
 
     const outcome = await startConversation(
@@ -888,7 +1038,12 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
     ],
     subcategories: [],
     accounts: [
-      { id: "acct-1", household_id: "house-1", kind: "checking", name: "Conta" },
+      {
+        id: "acct-1",
+        household_id: "house-1",
+        kind: "checking",
+        name: "Conta",
+      },
     ],
     credit_cards: [],
     categorization_memory: [],
@@ -950,7 +1105,11 @@ function fakeTelegram(): {
 }
 
 const IDENTITIES: Record<string, BotMemberIdentity> = {
-  "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
+  "777": {
+    householdId: "house-1",
+    userId: "user-alvaro",
+    displayName: "Alvaro",
+  },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
   "@karolzinha": {
     householdId: "house-1",
@@ -1083,17 +1242,26 @@ describe("handleWebhook: telegram identity", () => {
     });
 
     // Case-insensitive: "KAROL" matches display_name "Karol".
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável KAROL") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "responsável KAROL"),
+    });
     let state = await store.load("555");
     expect(state?.draft.responsibleUserId).toBe("user-karol");
 
     // Accent-insensitive: "Álvaro" matches display_name "Alvaro".
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável Álvaro") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "responsável Álvaro"),
+    });
     state = await store.load("555");
     expect(state?.draft.responsibleUserId).toBe("user-alvaro");
 
     // Unknown name → back to the house (undefined).
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "responsável Zeca") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "responsável Zeca"),
+    });
     state = await store.load("555");
     expect(state?.draft.responsibleUserId).toBeUndefined();
   });
@@ -1112,8 +1280,13 @@ describe("handleWebhook: telegram identity", () => {
     };
 
     // Alvaro (777) starts a draft in the shared group chat 555.
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
-    expect((await store.load("555"))?.draft.createdByUserId).toBe("user-alvaro");
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    expect((await store.load("555"))?.draft.createdByUserId).toBe(
+      "user-alvaro",
+    );
 
     // Karol (888) says "confirmar" in the same chat — it must NOT save Alvaro's
     // draft. It starts Karol's OWN fresh conversation instead.
@@ -1136,7 +1309,10 @@ describe("handleWebhook: telegram identity", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
 
     // Telegram delivers updates over parallel connections: a double "sim" can
@@ -1166,7 +1342,10 @@ describe("handleWebhook: telegram identity", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     await handleWebhook({ ...base, rawBody: textUpdate(777, "sim") });
     expect(tables.transactions).toHaveLength(1);
 
@@ -1177,7 +1356,10 @@ describe("handleWebhook: telegram identity", () => {
 
     // But confirm-word PREFIX with more content is a real new entry, not a
     // no-op ("ok" swallowing "ok, mercado 50 reais" would lose a lançamento).
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "ok, mercado 50 reais") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "ok, mercado 50 reais"),
+    });
     expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
   });
 });

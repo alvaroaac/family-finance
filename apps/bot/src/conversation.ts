@@ -61,6 +61,7 @@ import {
   cardBillZeroMessage,
   categoryCreatedMessage,
   categoryReusedMessage,
+  AI_UNAVAILABLE_NOTICE,
   chooseCardBillMessage,
   chooseCategoryMessage,
   chooseResponsibleMessage,
@@ -622,6 +623,10 @@ function cardKeywordMatch(keyword: string, name: string): boolean {
     normalizedKeyword.includes(normalizedName) ||
     normalizedName.includes(normalizedKeyword)
   );
+}
+
+function valuesDisagree<T>(left: T | undefined, right: T | undefined): boolean {
+  return left !== undefined && right !== undefined && left !== right;
 }
 
 /** Minimal expense draft used as state ballast by non-expense flows. */
@@ -1246,15 +1251,16 @@ export async function startConversation(
     };
   }
 
-  // Deterministic parsing runs first. Rich interpreters receive these hints,
-  // but parser-owned amount/date fields still win in the plain-expense path.
+  // Deterministic parsing runs first only to provide hints and a final fallback.
+  // A successful unified interpreter owns the structured plain-expense fields.
   const parsed = parseExpenseText(input.text, { today: options.today });
 
-  // Unified intent classification (recurring-obligations design): when
-  // configured it sees every NEW message first. A null result — or a plain
-  // expense — falls through to the deterministic parser path below, so the
-  // legacy behavior is untouched when the classifier is absent or fails.
+  // Unified intent classification: when configured it sees every NEW message
+  // with parser/DB context. A null result falls back to the parser path below.
   let classifiedExpense: InterpretedExpense | null = null;
+  // True when the classifier was configured but every tier failed or timed out.
+  // The draft still gets built from the parser — the reply just says so.
+  let aiUnavailable = false;
   if (deps.classifyMessage !== undefined) {
     const classified = await deps
       .classifyMessage(input.text, {
@@ -1264,10 +1270,17 @@ export async function startConversation(
           id,
           name,
         })),
+        knownAccounts: (deps.listActiveAccounts?.() ?? []).map(
+          ({ id, name }) => ({
+            id,
+            name,
+          }),
+        ),
         catalog: deps.catalog,
         merchantAliases: deps.merchantAliases,
       })
       .catch(() => null);
+    aiUnavailable = classified === null;
     if (classified?.intent === "non_financial") {
       // Successful unified abstention: do not call Anthropic interpretation or
       // categorization. The deterministic parser still owns the safe fallback
@@ -1311,14 +1324,21 @@ export async function startConversation(
     interpreted?.description ?? parsed.description,
   );
   const dateUncertain = parsed.uncertainFields.includes("date");
+  const amountDisagreement = valuesDisagree(
+    parsed.amountCents,
+    interpreted?.amountCents,
+  );
+  const dateDisagreement =
+    !dateUncertain &&
+    valuesDisagree(parsed.occurredOn, interpreted?.occurredOn);
   const draft: DraftInProgress = {
-    // The deterministic parser owns amount and date; the LLM only fills what
-    // the parser missed.
-    amountCents: parsed.amountCents ?? interpreted?.amountCents,
+    // The unified LLM path owns structured interpretation; the parser is a
+    // validator/hint source and final fallback.
+    amountCents: interpreted?.amountCents ?? parsed.amountCents,
     description,
     occurredOn: dateUncertain
       ? (interpreted?.occurredOn ?? parsed.occurredOn ?? options.today)
-      : (parsed.occurredOn ?? options.today),
+      : (interpreted?.occurredOn ?? parsed.occurredOn ?? options.today),
     kind: "expense",
     createdByUserId: input.fromUserId,
     // Responsibility defaults to the SENDER; "responsável casa" (or an
@@ -1327,9 +1347,13 @@ export async function startConversation(
     inputKind,
     needsAttention:
       // Audio always merits a closer look (transcription can be imperfect),
-      // and so do an uncertain amount or date. The interpreter running is
-      // NOT a signal by itself — it runs on every message.
+      // and so do an uncertain amount or date, or a parser-only draft after
+      // every AI tier failed. The interpreter running is NOT a signal by
+      // itself — it runs on every message.
       inputKind === "audio" ||
+      aiUnavailable ||
+      amountDisagreement ||
+      dateDisagreement ||
       parsed.uncertainFields.includes("amount") ||
       dateUncertain,
   };
@@ -1357,6 +1381,22 @@ export async function startConversation(
           normalizeText(interpreted.cardKeyword as string),
       )
       .map((card) => ({ type: "card" as const, id: card.id, name: card.name }));
+  }
+  if (
+    paymentCandidates.length === 0 &&
+    interpreted?.accountKeyword !== undefined
+  ) {
+    paymentCandidates = (deps.listActiveAccounts?.() ?? [])
+      .filter(
+        (account) =>
+          normalizeText(account.name) ===
+          normalizeText(interpreted.accountKeyword as string),
+      )
+      .map((account) => ({
+        type: "account" as const,
+        id: account.id,
+        name: account.name,
+      }));
   }
   if (paymentCandidates.length === 1) {
     const selected = paymentCandidates[0];
@@ -1437,12 +1477,13 @@ export async function startConversation(
     paymentCandidates:
       paymentCandidates.length > 1 ? paymentCandidates : undefined,
   };
+  const reply =
+    state.status === "awaiting_payment_choice"
+      ? "Qual forma de pagamento você quis dizer?"
+      : replyForState(state, deps);
   return {
     state,
-    reply:
-      state.status === "awaiting_payment_choice"
-        ? "Qual forma de pagamento você quis dizer?"
-        : replyForState(state, deps),
+    reply: aiUnavailable ? `${AI_UNAVAILABLE_NOTICE}\n\n${reply}` : reply,
     keyboard: keyboardForState(state),
   };
 }

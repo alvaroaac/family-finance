@@ -126,6 +126,8 @@ export const CODEX_OUTPUT_SCHEMA = {
     "due_day",
     "card_id",
     "card_name",
+    "account_id",
+    "account_name",
     "mark_paid_target",
     "category_hint",
     "category_candidates",
@@ -154,6 +156,8 @@ export const CODEX_OUTPUT_SCHEMA = {
     due_day: { type: ["integer", "null"], minimum: 1, maximum: 28 },
     card_id: { type: ["string", "null"] },
     card_name: { type: ["string", "null"] },
+    account_id: { type: ["string", "null"] },
+    account_name: { type: ["string", "null"] },
     mark_paid_target: { enum: ["card", "obligation", null] },
     category_hint: { type: ["string", "null"] },
     category_candidates: {
@@ -226,6 +230,8 @@ const resultSchema = z
     due_day: z.number().int().min(1).max(28).nullable(),
     card_id: z.string().nullable(),
     card_name: z.string().nullable(),
+    account_id: z.string().nullable(),
+    account_name: z.string().nullable(),
     mark_paid_target: z.enum(["card", "obligation"]).nullable(),
     category_hint: z.string().nullable(),
     category_candidates: z.array(candidateSchema).max(3),
@@ -251,12 +257,16 @@ export function buildCodexPrompt(
     '"72x de 710,44" para financiamento/conta recorrente é obligation com valor mensal 71044.',
     "Em mark_paid, amount_cents é o valor real pago agora, tanto para cartão quanto obrigação; null quando ausente.",
     "Use apenas cartões conhecidos e categorias/subcategorias existentes.",
+    "Use contas/cartões conhecidos por nome natural; aliases são exemplos úteis, não uma lista fechada.",
+    "Retorne card_id/account_id somente quando a combinação de nome, aliases e palavras como crédito/conta deixar uma correspondência clara.",
+    "Se um nome como Nubank puder ser conta e cartão sem desambiguação suficiente, deixe card_id e account_id null.",
     "Retorne até 3 categorias existentes ranqueadas. Nova categoria/subcategoria fica apenas proposta pendente.",
     "Separe merchant e item; description deve priorizar o item quando mencionado, senão o merchant/serviço.",
     `Hoje: ${options.today}`,
     `Mensagem: ${JSON.stringify(text)}`,
     `Parser hints: ${JSON.stringify(options.parserHints ?? {})}`,
     `Cartões conhecidos: ${JSON.stringify(options.knownCards ?? [])}`,
+    `Contas conhecidas: ${JSON.stringify(options.knownAccounts ?? [])}`,
     `Catálogo: ${JSON.stringify(options.catalog ?? { categories: [], subcategories: [] })}`,
     `Aliases de estabelecimentos: ${JSON.stringify(options.merchantAliases ?? {})}`,
   ].join("\n");
@@ -462,11 +472,28 @@ function mapResult(
       ? undefined
       : options.knownCards?.find((card) => card.id === data.card_id);
   if (data.card_id !== null && knownCard === undefined) return null;
+  const knownAccount =
+    data.account_id === null
+      ? undefined
+      : options.knownAccounts?.find(
+          (account) => account.id === data.account_id,
+        );
+  if (data.account_id !== null && knownAccount === undefined) return null;
   if (
     data.card_name !== null &&
     (!knownCard || normalized(data.card_name) !== normalized(knownCard.name))
   ) {
     throw new Error("card id/name mismatch");
+  }
+  if (
+    data.account_name !== null &&
+    (!knownAccount ||
+      normalized(data.account_name) !== normalized(knownAccount.name))
+  ) {
+    throw new Error("account id/name mismatch");
+  }
+  if (data.card_id !== null && data.account_id !== null) {
+    throw new Error("multiple payment instruments");
   }
   if (data.occurred_on !== null && !isCalendarDate(data.occurred_on)) {
     throw new Error("invalid calendar date");
@@ -562,6 +589,7 @@ function mapResult(
         amountCents: data.amount_cents ?? undefined,
         occurredOn: data.occurred_on ?? undefined,
         cardKeyword: knownCard?.name,
+        accountKeyword: knownAccount?.name,
         ...common,
       },
     };
@@ -695,8 +723,8 @@ export function createCodexMessageClassifier(args: {
   };
 }
 
-/** One unified Anthropic completion used only after a Codex failure. */
-export function createUnifiedAnthropicMessageClassifier(
+/** One unified completion used after a primary structured worker fails. */
+export function createUnifiedCompletionMessageClassifier(
   client: AiCompletionClient,
 ): MessageClassifier {
   return async (text, options) => {
@@ -718,11 +746,50 @@ export function createUnifiedAnthropicMessageClassifier(
   };
 }
 
+/** @deprecated Use createUnifiedCompletionMessageClassifier. */
+export const createUnifiedAnthropicMessageClassifier =
+  createUnifiedCompletionMessageClassifier;
+
+/**
+ * Bound the WHOLE classifier chain with one deadline. Each provider keeps its
+ * own timeout, but `withClassifierFallback` awaits them in sequence, so without
+ * this the timeouts add up on the Telegram webhook hot path — every extra paid
+ * fallback tier would cost one more full timeout before the bot can answer. On
+ * expiry the caller falls back to the deterministic parser; the in-flight call
+ * is abandoned, not awaited.
+ */
+export function withClassifierDeadline(
+  classifier: MessageClassifier | undefined,
+  budgetMs: number,
+  telemetry: (event: Record<string, unknown>) => void = (event) =>
+    console.log(JSON.stringify(event)),
+): MessageClassifier | undefined {
+  if (!classifier) return undefined;
+  return async (text, options) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        telemetry({ type: "ai_call", role: "chain", outcome: "deadline" });
+        resolve(null);
+      }, budgetMs);
+    });
+    try {
+      return await Promise.race([
+        classifier(text, options).catch(() => null),
+        expired,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
 export function withClassifierFallback(
   primary: MessageClassifier | undefined,
   fallback: MessageClassifier | undefined,
   telemetry: (event: Record<string, unknown>) => void = (event) =>
     console.log(JSON.stringify(event)),
+  labels: { from: string; to: string } = { from: "codex", to: "anthropic" },
 ): MessageClassifier | undefined {
   if (!primary) return fallback;
   return async (text, options) => {
@@ -730,8 +797,8 @@ export function withClassifierFallback(
     if (result !== null || !fallback) return result;
     telemetry({
       type: "ai_fallback",
-      from: "codex",
-      to: "anthropic",
+      from: labels.from,
+      to: labels.to,
       role: "fallback",
     });
     return fallback(text, options);
