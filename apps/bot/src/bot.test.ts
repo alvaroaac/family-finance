@@ -856,6 +856,47 @@ describe("LLM text interpretation (always runs; LLM owns structured fields)", ()
     ]);
   });
 
+  it("says so briefly when every classifier tier fails (Codex error/timeout)", async () => {
+    // A null chain result means Codex failed AND the paid fallbacks failed or
+    // ran out of budget. The draft still comes from the parser.
+    const classifyMessage = vi.fn<MessageClassifier>(async () => null);
+    const { deps, createTransaction } = buildDeps({ classifyMessage });
+
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.reply).toContain("modo simples");
+    expect(outcome.reply).toContain("Confirme o lançamento:");
+    expect(outcome.state.draft.amountCents).toBe(3200);
+    expect(outcome.state.draft.needsAttention).toBe(true);
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet about the AI when the classifier answers normally", async () => {
+    const classifyMessage = vi.fn<MessageClassifier>(async () => ({
+      intent: "plain",
+      expense: {
+        amountCents: 3200,
+        description: "Uber",
+        unifiedPrimary: true,
+        categoryCandidates: [],
+      },
+    }));
+    const { deps } = buildDeps({ classifyMessage });
+
+    const outcome = await startConversation(
+      { text: "Uber 32 reais ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.reply).not.toContain("modo simples");
+  });
+
   it("interpreter returns null -> today's rephrase behavior (needs_amount)", async () => {
     const interpretText = vi.fn<TextInterpreter>(async () => null);
     const { deps, createTransaction } = buildDeps({ interpretText });

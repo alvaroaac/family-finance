@@ -83,6 +83,14 @@ export function needsAmountMessage(description: string): string {
   ].join("\n");
 }
 
+/**
+ * Prefix shown when every AI tier failed (Codex error/timeout, then the paid
+ * fallbacks) and the deterministic parser filled the draft alone. The entry
+ * still works — the reader just needs to know it was read the simple way.
+ */
+export const AI_UNAVAILABLE_NOTICE =
+  "A leitura inteligente falhou agora; li sua mensagem no modo simples. Confira os campos abaixo.";
+
 /** Confirmation that a correction was applied. */
 export function correctionAppliedMessage(field: string): string {
   return `Atualizei ${field}.`;

@@ -6,6 +6,7 @@ import {
   createCodexMessageClassifier,
   createUnifiedCompletionMessageClassifier,
   buildCodexExecArgs,
+  withClassifierDeadline,
   withClassifierFallback,
   type CodexProcessRunner,
 } from "./codex.js";
@@ -14,6 +15,7 @@ import {
   startConversation,
   type ConversationDeps,
 } from "./conversation.js";
+import type { MessageClassifier } from "./interpret.js";
 
 const OPTIONS = {
   today: "2026-07-09",
@@ -424,5 +426,71 @@ describe("Codex unified primary", () => {
     expect(selected.state.draft.categoryId).toBe("cat-food");
     expect(selected.state.draft.subcategoryId).toBe("sub-market");
     expect(selected.state.categoryCandidates).toBeUndefined();
+  });
+});
+
+describe("withClassifierDeadline", () => {
+  const never: MessageClassifier = () => new Promise(() => {});
+
+  it("bounds the whole chain instead of one timeout per fallback tier", async () => {
+    vi.useFakeTimers();
+    try {
+      // Two stalled tiers behind one 8s budget: the chain must give up at 8s,
+      // not burn 8s on the fallback after the primary already spent its own.
+      const chain = withClassifierFallback(never, never, () => {});
+      const bounded = withClassifierDeadline(chain, 8_000, () => {});
+      const pending = bounded?.("giassi 123,45", OPTIONS);
+
+      await vi.advanceTimersByTimeAsync(7_999);
+      let settled = false;
+      void pending?.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns a fallback result that lands inside the shared budget", async () => {
+    const slowPrimary: MessageClassifier = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return null;
+    };
+    const fallback = vi.fn<MessageClassifier>(async () => ({
+      intent: "non_financial" as const,
+    }));
+    const bounded = withClassifierDeadline(
+      withClassifierFallback(slowPrimary, fallback, () => {}),
+      1_000,
+      () => {},
+    );
+
+    await expect(bounded?.("bom dia", OPTIONS)).resolves.toEqual({
+      intent: "non_financial",
+    });
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the expiry through telemetry", async () => {
+    vi.useFakeTimers();
+    try {
+      const telemetry = vi.fn();
+      const bounded = withClassifierDeadline(never, 5_000, telemetry);
+      const pending = bounded?.("giassi 123,45", OPTIONS);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await pending;
+      expect(telemetry).toHaveBeenCalledWith({
+        type: "ai_call",
+        role: "chain",
+        outcome: "deadline",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

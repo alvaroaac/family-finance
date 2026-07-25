@@ -61,6 +61,7 @@ import {
   cardBillZeroMessage,
   categoryCreatedMessage,
   categoryReusedMessage,
+  AI_UNAVAILABLE_NOTICE,
   chooseCardBillMessage,
   chooseCategoryMessage,
   chooseResponsibleMessage,
@@ -1257,6 +1258,9 @@ export async function startConversation(
   // Unified intent classification: when configured it sees every NEW message
   // with parser/DB context. A null result falls back to the parser path below.
   let classifiedExpense: InterpretedExpense | null = null;
+  // True when the classifier was configured but every tier failed or timed out.
+  // The draft still gets built from the parser — the reply just says so.
+  let aiUnavailable = false;
   if (deps.classifyMessage !== undefined) {
     const classified = await deps
       .classifyMessage(input.text, {
@@ -1276,6 +1280,7 @@ export async function startConversation(
         merchantAliases: deps.merchantAliases,
       })
       .catch(() => null);
+    aiUnavailable = classified === null;
     if (classified?.intent === "non_financial") {
       // Successful unified abstention: do not call Anthropic interpretation or
       // categorization. The deterministic parser still owns the safe fallback
@@ -1342,9 +1347,11 @@ export async function startConversation(
     inputKind,
     needsAttention:
       // Audio always merits a closer look (transcription can be imperfect),
-      // and so do an uncertain amount or date. The interpreter running is
-      // NOT a signal by itself — it runs on every message.
+      // and so do an uncertain amount or date, or a parser-only draft after
+      // every AI tier failed. The interpreter running is NOT a signal by
+      // itself — it runs on every message.
       inputKind === "audio" ||
+      aiUnavailable ||
       amountDisagreement ||
       dateDisagreement ||
       parsed.uncertainFields.includes("amount") ||
@@ -1470,12 +1477,13 @@ export async function startConversation(
     paymentCandidates:
       paymentCandidates.length > 1 ? paymentCandidates : undefined,
   };
+  const reply =
+    state.status === "awaiting_payment_choice"
+      ? "Qual forma de pagamento você quis dizer?"
+      : replyForState(state, deps);
   return {
     state,
-    reply:
-      state.status === "awaiting_payment_choice"
-        ? "Qual forma de pagamento você quis dizer?"
-        : replyForState(state, deps),
+    reply: aiUnavailable ? `${AI_UNAVAILABLE_NOTICE}\n\n${reply}` : reply,
     keyboard: keyboardForState(state),
   };
 }

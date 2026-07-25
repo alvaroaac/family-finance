@@ -750,6 +750,40 @@ export function createUnifiedCompletionMessageClassifier(
 export const createUnifiedAnthropicMessageClassifier =
   createUnifiedCompletionMessageClassifier;
 
+/**
+ * Bound the WHOLE classifier chain with one deadline. Each provider keeps its
+ * own timeout, but `withClassifierFallback` awaits them in sequence, so without
+ * this the timeouts add up on the Telegram webhook hot path — every extra paid
+ * fallback tier would cost one more full timeout before the bot can answer. On
+ * expiry the caller falls back to the deterministic parser; the in-flight call
+ * is abandoned, not awaited.
+ */
+export function withClassifierDeadline(
+  classifier: MessageClassifier | undefined,
+  budgetMs: number,
+  telemetry: (event: Record<string, unknown>) => void = (event) =>
+    console.log(JSON.stringify(event)),
+): MessageClassifier | undefined {
+  if (!classifier) return undefined;
+  return async (text, options) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        telemetry({ type: "ai_call", role: "chain", outcome: "deadline" });
+        resolve(null);
+      }, budgetMs);
+    });
+    try {
+      return await Promise.race([
+        classifier(text, options).catch(() => null),
+        expired,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
 export function withClassifierFallback(
   primary: MessageClassifier | undefined,
   fallback: MessageClassifier | undefined,
