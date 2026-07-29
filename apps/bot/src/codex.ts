@@ -134,8 +134,9 @@ export const CODEX_OUTPUT_SCHEMA = {
     "proposed_taxonomy_change",
   ],
   properties: {
-    action: { const: "interpret_only" },
+    action: { type: "string", const: "interpret_only" },
     intent: {
+      type: "string",
       enum: [
         "plain",
         "obligation",
@@ -158,7 +159,10 @@ export const CODEX_OUTPUT_SCHEMA = {
     card_name: { type: ["string", "null"] },
     account_id: { type: ["string", "null"] },
     account_name: { type: ["string", "null"] },
-    mark_paid_target: { enum: ["card", "obligation", null] },
+    mark_paid_target: {
+      type: ["string", "null"],
+      enum: ["card", "obligation", null],
+    },
     category_hint: { type: ["string", "null"] },
     category_candidates: {
       type: "array",
@@ -183,7 +187,7 @@ export const CODEX_OUTPUT_SCHEMA = {
           additionalProperties: false,
           required: ["kind", "category", "subcategory"],
           properties: {
-            kind: { enum: ["category", "subcategory"] },
+            kind: { type: "string", enum: ["category", "subcategory"] },
             category: { type: "string" },
             subcategory: { type: ["string", "null"] },
           },
