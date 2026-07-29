@@ -38,6 +38,7 @@ import {
   createTransactionDraft,
   createInstallmentPlan,
   brl,
+  currentHouseholdDate,
 } from "@family-finance/domain";
 import {
   confirmImportV2 as confirmImportBatchV2,
@@ -958,8 +959,7 @@ export async function suggestImportCategories(input: {
               key: item.requestKey,
               description: item.description,
               amountCents: item.amountCents ?? 1,
-              occurredOn:
-                item.occurredOn ?? new Date().toISOString().slice(0, 10),
+              occurredOn: item.occurredOn ?? currentHouseholdDate(),
               merchantKey: item.merchantKey || undefined,
             })),
           },

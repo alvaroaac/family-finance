@@ -88,3 +88,10 @@ export {
   projectObligations,
   paidKey,
 } from "./obligations.js";
+
+// Household-local calendar semantics shared by server and browser entry points.
+export {
+  HOUSEHOLD_TIME_ZONE,
+  currentHouseholdDate,
+  currentHouseholdMonth,
+} from "./calendar.js";

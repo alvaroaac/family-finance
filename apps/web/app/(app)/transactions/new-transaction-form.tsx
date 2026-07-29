@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { currentHouseholdDate } from "@family-finance/domain";
 
 import { Button, Card, Field, Input, Select, useToast } from "../../../components/ui";
 import { parseReaisToCents } from "../../../lib/format";
@@ -18,10 +19,6 @@ import type {
  * renders it open. Client-side pre-checks give instant pt-BR feedback, but
  * the server action re-validates everything through the domain draft.
  */
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export function NewTransactionForm({
   accounts,
@@ -44,7 +41,7 @@ export function NewTransactionForm({
   const [kind, setKind] = useState<"expense" | "income">("expense");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [occurredOn, setOccurredOn] = useState(todayIso());
+  const [occurredOn, setOccurredOn] = useState(currentHouseholdDate());
   const [categoryId, setCategoryId] = useState("");
   const [subcategoryId, setSubcategoryId] = useState("");
   const [payment, setPayment] = useState(
@@ -68,7 +65,7 @@ export function NewTransactionForm({
     setKind("expense");
     setAmount("");
     setDescription("");
-    setOccurredOn(todayIso());
+    setOccurredOn(currentHouseholdDate());
     setCategoryId("");
     setSubcategoryId("");
     setPayment(accounts[0] !== undefined ? `account:${accounts[0].id}` : "");

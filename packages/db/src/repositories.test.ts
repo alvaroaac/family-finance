@@ -332,9 +332,9 @@ describe("installment plan inserts", () => {
 // --- Task 10: dashboard aggregation ----------------------------------------
 
 describe("currentMonth", () => {
-  it("formats a date as YYYY-MM in UTC with zero-padding", () => {
+  it("formats a date as YYYY-MM in the Casa timezone", () => {
     expect(currentMonth(new Date("2026-03-09T12:00:00Z"))).toBe("2026-03");
-    expect(currentMonth(new Date("2026-12-31T23:59:59Z"))).toBe("2026-12");
+    expect(currentMonth(new Date("2027-01-01T01:30:00Z"))).toBe("2026-12");
   });
 });
 
