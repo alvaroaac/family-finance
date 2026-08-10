@@ -14,6 +14,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   brl,
+  currentHouseholdMonth,
   paidKey,
   projectObligations,
   type MoneyAmount,
@@ -193,11 +194,9 @@ export function summarizeMonth(
 // show, so the aggregation stays unit-testable without a database.
 // ---------------------------------------------------------------------------
 
-/** Current `YYYY-MM` month string in UTC. Pure given `now`. */
+/** Current Casa `YYYY-MM` month string. Pure given `now`. */
 export function currentMonth(now: Date = new Date()): string {
-  const year = now.getUTCFullYear();
-  const monthNum = now.getUTCMonth() + 1;
-  return `${year}-${String(monthNum).padStart(2, "0")}`;
+  return currentHouseholdMonth(now);
 }
 
 export type CardPressure = {

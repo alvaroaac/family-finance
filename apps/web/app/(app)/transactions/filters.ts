@@ -129,6 +129,7 @@ export type ManualEntryInput = {
   amountCents: number;
   description: string;
   occurredOn: string;
+  installmentCount: number;
   categoryId?: string;
   subcategoryId?: string;
   payment:
@@ -156,6 +157,18 @@ function requirePositiveCents(raw: string): number {
   return cents;
 }
 
+function parseInstallmentCount(formData: FormData): number {
+  const mode = String(formData.get("purchaseMode") ?? "avista");
+  if (mode !== "parcelado") {
+    return 1;
+  }
+  const value = Number.parseInt(String(formData.get("installmentCount") ?? ""), 10);
+  if (!Number.isInteger(value) || value < 2 || value > 48) {
+    throw new Error("Informe um número de parcelas entre 2 e 48.");
+  }
+  return value;
+}
+
 /**
  * Translate the "Novo lançamento" FormData into a validated manual-entry
  * input. Throws pt-BR errors the action surfaces to the household as-is.
@@ -180,6 +193,10 @@ export function manualEntryFromFormData(formData: FormData): ManualEntryInput {
   if (kind === "income" && payment.type === "card") {
     throw new Error("Entrada é sempre numa conta — escolha uma conta.");
   }
+  const installmentCount =
+    kind === "expense" && payment.type === "card"
+      ? parseInstallmentCount(formData)
+      : 1;
 
   const categoryId = String(formData.get("categoryId") ?? "");
   const subcategoryId = String(formData.get("subcategoryId") ?? "");
@@ -190,6 +207,7 @@ export function manualEntryFromFormData(formData: FormData): ManualEntryInput {
     amountCents,
     description,
     occurredOn,
+    installmentCount,
     ...(categoryId !== "" ? { categoryId } : {}),
     ...(subcategoryId !== "" ? { subcategoryId } : {}),
     payment,

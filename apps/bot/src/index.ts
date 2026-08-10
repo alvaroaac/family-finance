@@ -57,6 +57,7 @@ import {
   type CategorizationMemoryEntry,
   type AiCategorizer,
 } from "@family-finance/categorization";
+import { currentHouseholdDate } from "@family-finance/domain";
 
 import {
   createHttpTelegramClient,
@@ -124,7 +125,7 @@ const UNKNOWN_USER_REPLY =
   "Oi! Eu ainda não conheço você por aqui — peça pro Alvaro vincular seu Telegram nas Configurações.";
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return currentHouseholdDate();
 }
 
 // Telegram delivers webhook updates over parallel connections, so two taps in

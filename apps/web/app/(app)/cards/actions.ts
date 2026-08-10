@@ -129,6 +129,7 @@ export type PurchaseInput = {
   purchasedOn: string;
   categoryId?: string;
   subcategoryId?: string;
+  responsibleUserId?: string;
 };
 
 export type PreviewResult =
@@ -241,6 +242,7 @@ export async function saveCardPurchase(
         description: input.description,
         createdByUserId,
         payment: { type: "card", creditCardId: input.creditCardId },
+        responsibleUserId: input.responsibleUserId,
         category,
       });
       if (!draftResult.ok) {
@@ -273,6 +275,7 @@ export async function saveCardPurchase(
       installmentCount: input.installmentCount,
       purchasedOn: input.purchasedOn,
       createdByUserId,
+      responsibleUserId: input.responsibleUserId,
       category,
       closingDay,
     });

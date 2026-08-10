@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  CODEX_OUTPUT_SCHEMA,
   createCodexMessageClassifier,
   createUnifiedCompletionMessageClassifier,
   buildCodexExecArgs,
@@ -16,6 +17,30 @@ import {
   type ConversationDeps,
 } from "./conversation.js";
 import type { MessageClassifier } from "./interpret.js";
+
+function findConstrainedSchemasWithoutType(
+  value: unknown,
+  path = "$",
+): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      findConstrainedSchemasWithoutType(item, `${path}[${index}]`),
+    );
+  }
+  if (value === null || typeof value !== "object") return [];
+
+  const schema = value as Record<string, unknown>;
+  const missing =
+    ("const" in schema || "enum" in schema) && !("type" in schema)
+      ? [path]
+      : [];
+  return [
+    ...missing,
+    ...Object.entries(schema).flatMap(([key, child]) =>
+      findConstrainedSchemasWithoutType(child, `${path}.${key}`),
+    ),
+  ];
+}
 
 const OPTIONS = {
   today: "2026-07-09",
@@ -72,6 +97,10 @@ function classifier(runner: CodexProcessRunner) {
 }
 
 describe("Codex unified primary", () => {
+  it("declares explicit types for every provider-constrained schema field", () => {
+    expect(findConstrainedSchemasWithoutType(CODEX_OUTPUT_SCHEMA)).toEqual([]);
+  });
+
   it("uses fail-closed CLI argv with every tool surface disabled", () => {
     const argv = buildCodexExecArgs({
       prompt: "x",

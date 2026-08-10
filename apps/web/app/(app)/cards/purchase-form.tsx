@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { currentHouseholdDate } from "@family-finance/domain";
 
 import {
   previewCardPurchase,
@@ -49,10 +50,6 @@ function parsePositiveReaisToCents(value: string): number | null {
   return cents === null || cents === 0 ? null : cents;
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 export function CardPurchaseForm({
   cards,
   categories,
@@ -67,7 +64,9 @@ export function CardPurchaseForm({
   const [amount, setAmount] = useState<string>("");
   const [mode, setMode] = useState<"avista" | "parcelado">("avista");
   const [installmentCount, setInstallmentCount] = useState<number>(2);
-  const [purchasedOn, setPurchasedOn] = useState<string>(todayIso());
+  const [purchasedOn, setPurchasedOn] = useState<string>(
+    currentHouseholdDate(),
+  );
   const [categoryId, setCategoryId] = useState<string>("");
   const [subcategoryId, setSubcategoryId] = useState<string>("");
 

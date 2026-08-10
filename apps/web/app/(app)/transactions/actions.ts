@@ -12,6 +12,7 @@ import { brl, createTransactionDraft } from "@family-finance/domain";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { transactionPatchFromFormData, manualEntryFromFormData } from "./filters";
+import { saveCardPurchase } from "../cards/actions";
 
 /**
  * Server actions for the "Transações" screen (inline edit + guarded delete).
@@ -96,6 +97,28 @@ export async function createManualTransactionAction(
     } = await client.auth.getUser();
     if (user === null) {
       return { ok: false, error: "Sessão inválida. Faça login novamente." };
+    }
+
+    if (
+      input.kind === "expense" &&
+      input.payment.type === "card" &&
+      input.installmentCount > 1
+    ) {
+      const result = await saveCardPurchase({
+        creditCardId: input.payment.creditCardId,
+        description: input.description,
+        totalCents: input.amountCents,
+        installmentCount: input.installmentCount,
+        purchasedOn: input.occurredOn,
+        responsibleUserId:
+          input.responsible === "household" ? undefined : input.responsible,
+        categoryId: input.categoryId,
+        subcategoryId: input.subcategoryId,
+      });
+      revalidatePath("/transactions");
+      return result.ok
+        ? { ok: true }
+        : { ok: false, error: result.message };
     }
 
     const draftResult = createTransactionDraft({
