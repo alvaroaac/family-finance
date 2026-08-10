@@ -403,6 +403,11 @@
   box-shadow: 0 24px 70px rgb(42 32 24 / 24%);
 }
 
+.ff-dialog--transaction {
+  width: min(94vw, 720px);
+  max-width: 720px;
+}
+
 .ff-dialog::backdrop {
   background: rgb(42 32 24 / 48%);
   backdrop-filter: blur(2px);
@@ -475,6 +480,12 @@
 }
 
 @media (max-width: 520px) {
+  .ff-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+  }
+
   .ff-dialog__surface {
     padding: 20px;
   }

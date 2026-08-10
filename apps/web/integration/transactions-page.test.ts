@@ -73,6 +73,22 @@ describe("NewTransactionForm", () => {
     expect(html).toContain("Cartão: Nubank");
   });
 
+  it("shows à vista/parcelado controls when a card is selected", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ToastProvider,
+        null,
+        createElement(NewTransactionForm, {
+          ...formProps,
+          accounts: [],
+        }),
+      ),
+    );
+    expect(html).toContain("À vista");
+    expect(html).toContain("Parcelado");
+    expect(html).toContain('name="purchaseMode"');
+  });
+
   it("starts collapsed (button only) when initiallyOpen is false", () => {
     const html = renderToStaticMarkup(
       createElement(
@@ -266,6 +282,15 @@ describe("parseTransactionsSearchParams", () => {
       search: "pizza",
     });
   });
+
+  it("defaults to the Sao Paulo month near a UTC boundary", () => {
+    const parsed = parseTransactionsSearchParams(
+      {},
+      new Date("2026-08-01T01:30:00Z"),
+    );
+    expect(parsed.month).toBe("2026-07");
+    expect(parsed.filters).toEqual({ month: "2026-07" });
+  });
 });
 
 describe("shiftMonth", () => {
@@ -369,6 +394,7 @@ describe("manualEntryFromFormData", () => {
     expect(input.amountCents).toBe(5613);
     expect(input.payment).toEqual({ type: "account", accountId: "acct-1" });
     expect(input.kind).toBe("expense");
+    expect(input.installmentCount).toBe(1);
   });
 
   it("decodes a card payment", () => {
@@ -376,6 +402,33 @@ describe("manualEntryFromFormData", () => {
       form({ ...base, payment: "card:card-1" }),
     );
     expect(input.payment).toEqual({ type: "card", creditCardId: "card-1" });
+    expect(input.installmentCount).toBe(1);
+  });
+
+  it("parses installment count for a parcelado card expense", () => {
+    const input = manualEntryFromFormData(
+      form({
+        ...base,
+        payment: "card:card-1",
+        purchaseMode: "parcelado",
+        installmentCount: "6",
+      }),
+    );
+    expect(input.payment).toEqual({ type: "card", creditCardId: "card-1" });
+    expect(input.installmentCount).toBe(6);
+  });
+
+  it("rejects invalid parcel counts", () => {
+    expect(() =>
+      manualEntryFromFormData(
+        form({
+          ...base,
+          payment: "card:card-1",
+          purchaseMode: "parcelado",
+          installmentCount: "1",
+        }),
+      ),
+    ).toThrow(/parcelas/i);
   });
 
   it("rejects a non-positive or unparseable amount in pt-BR", () => {

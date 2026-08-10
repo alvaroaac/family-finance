@@ -15,7 +15,7 @@
  * `settleCardBillRpc`.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import { handleWebhook } from "./index.js";
 import { createInMemoryConversationStore } from "./store.js";
@@ -438,6 +438,42 @@ const CARD_SEED: FakeRow = {
 };
 
 describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
+  it("defaults plain bot expenses to the Sao Paulo date near a UTC boundary", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T01:30:00Z"));
+    try {
+      const { client, tables } = fakeSupabase();
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+
+      await handleWebhook({
+        rawBody: textUpdate(777, "mercado 10"),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+      });
+
+      await handleWebhook({
+        rawBody: textUpdate(777, "confirmar"),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+      });
+
+      const transactions = tables.transactions ?? [];
+      expect(transactions).toHaveLength(1);
+      expect(transactions[0]?.occurred_on).toBe("2026-07-31");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("story 1: card installment purchase -> confirmar persists group + 12 parcels, closing_day respected", async () => {
     const { client, tables } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
     const { telegram, sent } = fakeTelegram();
