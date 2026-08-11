@@ -1724,6 +1724,36 @@ export type TransactionListItem = PersistedTransaction & {
   responsibleUserId: string | null;
 };
 
+/** A parent card purchase shown in ledger-like screens as a read-only entry. */
+export type InstallmentPurchaseListItem = {
+  id: string;
+  householdId: string;
+  description: string;
+  purchasedOn: string;
+  totalAmountCents: number;
+  installmentCount: number;
+  creditCardId: string;
+  categoryId: string | null;
+  subcategoryId: string | null;
+  responsibilityScope: ResponsibilityScope;
+  responsibleUserId: string | null;
+  createdByUserId: string;
+  firstDueMonth: string | null;
+  lastDueMonth: string | null;
+  firstInstallmentCents: number | null;
+};
+
+export type TransactionLedgerItem =
+  | ({ itemType: "transaction" } & TransactionListItem)
+  | ({ itemType: "installment_purchase" } & InstallmentPurchaseListItem);
+
+export type TransactionLedgerPage = {
+  rows: TransactionLedgerItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 /** Map a raw row to a `TransactionListItem`. Pure. */
 export function mapTransactionListItem(
   row: TransactionRow,
@@ -1735,6 +1765,34 @@ export function mapTransactionListItem(
     installmentId: row.installment_id,
     responsibilityScope: row.responsibility_scope,
     responsibleUserId: row.responsible_user_id,
+  };
+}
+
+function mapInstallmentPurchaseListItem(
+  group: InstallmentGroupRow,
+  installments: InstallmentRow[],
+): InstallmentPurchaseListItem {
+  const groupInstallments = installments
+    .filter((parcel) => parcel.installment_group_id === group.id)
+    .sort((a, b) => a.number - b.number);
+  const first = groupInstallments[0] ?? null;
+  const last = groupInstallments[groupInstallments.length - 1] ?? null;
+  return {
+    id: group.id,
+    householdId: group.household_id,
+    description: group.description,
+    purchasedOn: group.purchased_on,
+    totalAmountCents: group.total_amount_cents,
+    installmentCount: group.installment_count,
+    creditCardId: group.credit_card_id,
+    categoryId: group.category_id,
+    subcategoryId: group.subcategory_id,
+    responsibilityScope: group.responsibility_scope,
+    responsibleUserId: group.responsible_user_id,
+    createdByUserId: group.created_by_user_id,
+    firstDueMonth: first?.due_month ?? null,
+    lastDueMonth: last?.due_month ?? null,
+    firstInstallmentCents: first?.amount_cents ?? null,
   };
 }
 
@@ -1811,6 +1869,150 @@ export async function findTransactionsFiltered(
   return {
     rows: ((data ?? []) as TransactionRow[]).map(mapTransactionListItem),
     total: count ?? 0,
+    page,
+    pageSize,
+  };
+}
+
+async function findAllTransactionsFiltered(
+  client: AppSupabaseClient,
+  householdId: string,
+  filters: TransactionFilters,
+): Promise<TransactionListItem[]> {
+  const rows: TransactionListItem[] = [];
+  let page = 1;
+  while (true) {
+    const batch = await findTransactionsFiltered(
+      client,
+      householdId,
+      filters,
+      page,
+      PAGE_SIZE,
+    );
+    rows.push(...batch.rows);
+    if (rows.length >= batch.total || batch.rows.length === 0) {
+      return rows;
+    }
+    page += 1;
+  }
+}
+
+export async function findInstallmentPurchasesFiltered(
+  client: AppSupabaseClient,
+  householdId: string,
+  filters: TransactionFilters = {},
+): Promise<InstallmentPurchaseListItem[]> {
+  if (filters.accountId !== undefined) {
+    return [];
+  }
+
+  let query = client
+    .from("installment_groups")
+    .select("*")
+    .eq("household_id", householdId);
+
+  if (filters.month !== undefined) {
+    const { start, end } = monthDateRange(filters.month);
+    query = query.gte("purchased_on", start).lte("purchased_on", end);
+  }
+  if (filters.creditCardId !== undefined) {
+    query = query.eq("credit_card_id", filters.creditCardId);
+  }
+  if (filters.categoryId !== undefined) {
+    query = query.eq("category_id", filters.categoryId);
+  }
+  if (filters.responsible !== undefined) {
+    if (filters.responsible === "household") {
+      query = query.eq("responsibility_scope", "household");
+    } else {
+      query = query.eq("responsible_user_id", filters.responsible);
+    }
+  }
+  if (filters.pendingOnly === true) {
+    query = query.is("category_id", null);
+  }
+  if (filters.search !== undefined && filters.search.trim() !== "") {
+    query = query.ilike(
+      "description",
+      `%${escapeIlikePattern(filters.search.trim())}%`,
+    );
+  }
+
+  const { data, error } = await query
+    .order("purchased_on", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error !== null) {
+    throw new Error(
+      `findInstallmentPurchasesFiltered failed: ${error.message}`,
+    );
+  }
+
+  const groups = (data ?? []) as InstallmentGroupRow[];
+  if (groups.length === 0) {
+    return [];
+  }
+
+  const installments = await fetchAllRows<InstallmentRow>(
+    "findInstallmentPurchasesFiltered(installments)",
+    (from, to) =>
+      client
+        .from("installments")
+        .select("*")
+        .eq("household_id", householdId)
+        .range(from, to),
+  );
+  const groupIds = new Set(groups.map((group) => group.id));
+  const matchingInstallments = installments.filter((parcel) =>
+    groupIds.has(parcel.installment_group_id),
+  );
+
+  return groups.map((group) =>
+    mapInstallmentPurchaseListItem(group, matchingInstallments),
+  );
+}
+
+function ledgerItemDate(item: TransactionLedgerItem): string {
+  return item.itemType === "transaction" ? item.occurredOn : item.purchasedOn;
+}
+
+function sortLedgerItems(
+  items: TransactionLedgerItem[],
+): TransactionLedgerItem[] {
+  return [...items].sort((a, b) => {
+    const dateA = ledgerItemDate(a);
+    const dateB = ledgerItemDate(b);
+    if (dateA !== dateB) {
+      return dateA < dateB ? 1 : -1;
+    }
+    return a.description.localeCompare(b.description, "pt-BR");
+  });
+}
+
+export async function findTransactionLedgerFiltered(
+  client: AppSupabaseClient,
+  householdId: string,
+  filters: TransactionFilters,
+  page = 1,
+  pageSize = 50,
+): Promise<TransactionLedgerPage> {
+  const [transactions, installmentPurchases] = await Promise.all([
+    findAllTransactionsFiltered(client, householdId, filters),
+    findInstallmentPurchasesFiltered(client, householdId, filters),
+  ]);
+  const rows = sortLedgerItems([
+    ...transactions.map((row) => ({
+      ...row,
+      itemType: "transaction" as const,
+    })),
+    ...installmentPurchases.map((row) => ({
+      ...row,
+      itemType: "installment_purchase" as const,
+    })),
+  ]);
+  const from = (page - 1) * pageSize;
+  return {
+    rows: rows.slice(from, from + pageSize),
+    total: rows.length,
     page,
     pageSize,
   };

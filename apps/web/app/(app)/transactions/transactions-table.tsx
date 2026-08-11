@@ -2,7 +2,10 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 
-import type { TransactionListItem } from "@family-finance/db";
+import type {
+  TransactionLedgerItem,
+  TransactionListItem,
+} from "@family-finance/db";
 
 import {
   Badge,
@@ -36,12 +39,16 @@ import { updateTransactionAction, deleteTransactionAction } from "./actions";
  */
 
 export type CategoryOption = { id: string; name: string };
-export type SubcategoryOption = { id: string; categoryId: string; name: string };
+export type SubcategoryOption = {
+  id: string;
+  categoryId: string;
+  name: string;
+};
 export type ResponsibleOption = { value: string; label: string };
 export type PaymentOption = { id: string; name: string };
 
 type Props = {
-  rows: TransactionListItem[];
+  rows: TransactionTableRow[];
   categories: CategoryOption[];
   subcategories: SubcategoryOption[];
   /** "household" (Casa) + one entry per member (display name or "Membro"). */
@@ -52,6 +59,12 @@ type Props = {
   /** Server-rendered "N lançamentos em <mês>" + pagination (desktop foot). */
   footer?: ReactNode;
 };
+
+type TransactionTableRow = TransactionListItem | TransactionLedgerItem;
+type InstallmentPurchaseRow = Extract<
+  TransactionLedgerItem,
+  { itemType: "installment_purchase" }
+>;
 
 const COLUMNS = [
   { key: "dia", label: "Dia" },
@@ -85,16 +98,35 @@ function formatDayMonth(iso: string): string {
   return `${day}/${month}`;
 }
 
+function formatMonth(ym: string): string {
+  const [year, month] = ym.split("-");
+  return `${month}/${year}`;
+}
+
+function isInstallmentPurchase(
+  row: TransactionTableRow,
+): row is InstallmentPurchaseRow {
+  return "itemType" in row && row.itemType === "installment_purchase";
+}
+
 /** Same rule as the db `needsReview` helper. */
-function isPending(row: TransactionListItem): boolean {
-  return row.kind !== "transfer" && row.categoryId === null;
+function isPending(row: TransactionTableRow): boolean {
+  return !isInstallmentPurchase(row) && row.kind === "transfer"
+    ? false
+    : row.categoryId === null;
 }
 
 /** Signed display: despesas negative, receitas positive, transfer neutral. */
-function amountDisplay(row: TransactionListItem): {
+function amountDisplay(row: TransactionTableRow): {
   text: string;
   className: string;
 } {
+  if (isInstallmentPurchase(row)) {
+    return {
+      text: `− ${formatBrl(row.totalAmountCents)}`,
+      className: "ff-amount--neg",
+    };
+  }
   if (row.kind === "expense") {
     return {
       text: `− ${formatBrl(row.amount.cents)}`,
@@ -108,6 +140,22 @@ function amountDisplay(row: TransactionListItem): {
     };
   }
   return { text: formatBrl(row.amount.cents), className: "ff-dim" };
+}
+
+function rowDate(row: TransactionTableRow): string {
+  return isInstallmentPurchase(row) ? row.purchasedOn : row.occurredOn;
+}
+
+function installmentSummary(row: InstallmentPurchaseRow): string {
+  const perInstallment =
+    row.firstInstallmentCents !== null
+      ? ` de ${formatBrl(row.firstInstallmentCents)}`
+      : "";
+  const range =
+    row.firstDueMonth !== null && row.lastDueMonth !== null
+      ? ` · parcelas ${formatMonth(row.firstDueMonth)} a ${formatMonth(row.lastDueMonth)}`
+      : "";
+  return `${row.installmentCount}x${perInstallment}${range}`;
 }
 
 export function TransactionsTable({
@@ -170,7 +218,8 @@ export function TransactionsTable({
       formData.set("transactionId", row.id);
       const result = await deleteTransactionAction(formData);
       if (!result.ok) {
-        const message = result.error ?? "Não foi possível excluir o lançamento.";
+        const message =
+          result.error ?? "Não foi possível excluir o lançamento.";
         setError(message);
         toast.error(message);
       } else {
@@ -187,7 +236,10 @@ export function TransactionsTable({
     patchRow(row.id, { amount: trimmed });
   }
 
-  function paymentName(row: TransactionListItem): string {
+  function paymentName(row: TransactionTableRow): string {
+    if (isInstallmentPurchase(row)) {
+      return cards.find((c) => c.id === row.creditCardId)?.name ?? "cartão";
+    }
     if (row.creditCardId !== null) {
       return cards.find((c) => c.id === row.creditCardId)?.name ?? "cartão";
     }
@@ -197,14 +249,14 @@ export function TransactionsTable({
     return "—";
   }
 
-  function categoryName(row: TransactionListItem): string {
+  function categoryName(row: TransactionTableRow): string {
     if (row.categoryId === null) return "sem categoria";
     return (
       categories.find((c) => c.id === row.categoryId)?.name ?? "sem categoria"
     );
   }
 
-  function responsibleLabel(row: TransactionListItem): string {
+  function responsibleLabel(row: TransactionTableRow): string {
     const value =
       row.responsibilityScope === "user" && row.responsibleUserId !== null
         ? row.responsibleUserId
@@ -213,7 +265,33 @@ export function TransactionsTable({
     return label === "Casa" ? "a casa" : label;
   }
 
-  function descriptionCell(row: TransactionListItem) {
+  function descriptionCell(row: TransactionTableRow) {
+    if (isInstallmentPurchase(row)) {
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+            fontWeight: 500,
+          }}
+        >
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {row.description}
+          </span>
+          <Badge tone="accent">parcelado</Badge>
+          {isPending(row) ? <Badge tone="warn">Pendente</Badge> : null}
+        </span>
+      );
+    }
     if (editingId === row.id) {
       return (
         <Input
@@ -266,13 +344,22 @@ export function TransactionsTable({
         >
           {row.description}
         </span>
-        {row.installmentId !== null ? <Badge tone="accent">parcela</Badge> : null}
+        {row.installmentId !== null ? (
+          <Badge tone="accent">parcela</Badge>
+        ) : null}
         {isPending(row) ? <Badge tone="warn">Pendente</Badge> : null}
       </button>
     );
   }
 
-  function categorySelect(row: TransactionListItem, compact: boolean) {
+  function categorySelect(row: TransactionTableRow, compact: boolean) {
+    if (isInstallmentPurchase(row)) {
+      return (
+        <span className={row.categoryId === null ? "ff-warn" : undefined}>
+          {categoryName(row)}
+        </span>
+      );
+    }
     return (
       <Select
         className={`${compact ? "ff-select--compact" : ""}${
@@ -296,7 +383,15 @@ export function TransactionsTable({
     );
   }
 
-  function subcategorySelect(row: TransactionListItem, compact: boolean) {
+  function subcategorySelect(row: TransactionTableRow, compact: boolean) {
+    if (isInstallmentPurchase(row)) {
+      if (row.subcategoryId === null) return <span className="ff-dim">—</span>;
+      return (
+        <span>
+          {subcategories.find((s) => s.id === row.subcategoryId)?.name ?? "—"}
+        </span>
+      );
+    }
     const rowSubcategories = subcategories.filter(
       (s) => s.categoryId === row.categoryId,
     );
@@ -318,7 +413,10 @@ export function TransactionsTable({
     );
   }
 
-  function responsibleSelect(row: TransactionListItem, compact: boolean) {
+  function responsibleSelect(row: TransactionTableRow, compact: boolean) {
+    if (isInstallmentPurchase(row)) {
+      return <span>{responsibleLabel(row)}</span>;
+    }
     const responsibleValue =
       row.responsibilityScope === "user" && row.responsibleUserId !== null
         ? row.responsibleUserId
@@ -339,7 +437,10 @@ export function TransactionsTable({
     );
   }
 
-  function paymentSelect(row: TransactionListItem, compact: boolean) {
+  function paymentSelect(row: TransactionTableRow, compact: boolean) {
+    if (isInstallmentPurchase(row)) {
+      return <span className="ff-dim">{paymentName(row)}</span>;
+    }
     if (row.installmentId !== null || row.kind === "transfer") {
       // Parcelas: managed via the group. Transfers (bill payments): both
       // instruments are fixed — delete the row to undo.
@@ -375,9 +476,20 @@ export function TransactionsTable({
   }
 
   function amountCell(
-    row: TransactionListItem,
+    row: TransactionTableRow,
     amount: { text: string; className: string },
   ) {
+    if (isInstallmentPurchase(row)) {
+      return (
+        <span
+          className={`ff-num ${amount.className}`}
+          title="Total da compra parcelada"
+          style={{ fontWeight: 600, whiteSpace: "nowrap" }}
+        >
+          {amount.text}
+        </span>
+      );
+    }
     if (row.installmentId === null && editingAmountId === row.id) {
       return (
         <Input
@@ -458,10 +570,13 @@ export function TransactionsTable({
         <Table columns={COLUMNS} gridTemplate={GRID}>
           {rows.map((row) => {
             const amount = amountDisplay(row);
+            const key = isInstallmentPurchase(row)
+              ? `installment-purchase-${row.id}`
+              : `transaction-${row.id}`;
 
-            if (confirmingId === row.id) {
+            if (!isInstallmentPurchase(row) && confirmingId === row.id) {
               return (
-                <div key={row.id} className="ff-row-confirm">
+                <div key={key} className="ff-row-confirm">
                   <span className="ff-row-confirm__text">
                     Excluir{" "}
                     <strong>
@@ -476,7 +591,9 @@ export function TransactionsTable({
                     onClick={() => removeRow(row)}
                   >
                     {isSaving ? (
-                      <span className="ff-btn__pending"><Spinner /> Excluindo…</span>
+                      <span className="ff-btn__pending">
+                        <Spinner /> Excluindo…
+                      </span>
                     ) : (
                       "Excluir"
                     )}
@@ -493,9 +610,12 @@ export function TransactionsTable({
             }
 
             return (
-              <TableRow key={row.id} pending={isPending(row)}>
-                <span className="ff-dim ff-num" style={{ whiteSpace: "nowrap" }}>
-                  {formatDayMonth(row.occurredOn)}
+              <TableRow key={key} pending={isPending(row)}>
+                <span
+                  className="ff-dim ff-num"
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {formatDayMonth(rowDate(row))}
                 </span>
                 <span style={{ minWidth: 0 }}>{descriptionCell(row)}</span>
                 <span
@@ -514,30 +634,42 @@ export function TransactionsTable({
                   {amountCell(row, amount)}
                 </span>
                 <span
-                  style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    justifyContent: "flex-end",
+                  }}
                 >
-                  <button
-                    type="button"
-                    className="ff-iconbtn"
-                    title="editar"
-                    aria-label={`Editar ${row.description}`}
-                    onClick={() => {
-                      setEditingId(row.id);
-                      setDraft(row.description);
-                    }}
-                  >
-                    <IconPencil size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="ff-iconbtn ff-iconbtn--danger"
-                    title="excluir"
-                    aria-label={`Excluir ${row.description}`}
-                    disabled={isSaving}
-                    onClick={() => setConfirmingId(row.id)}
-                  >
-                    <IconTrash size={14} />
-                  </button>
+                  {isInstallmentPurchase(row) ? (
+                    <span className="ff-dim" title={installmentSummary(row)}>
+                      {row.installmentCount}x
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="ff-iconbtn"
+                        title="editar"
+                        aria-label={`Editar ${row.description}`}
+                        onClick={() => {
+                          setEditingId(row.id);
+                          setDraft(row.description);
+                        }}
+                      >
+                        <IconPencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ff-iconbtn ff-iconbtn--danger"
+                        title="excluir"
+                        aria-label={`Excluir ${row.description}`}
+                        disabled={isSaving}
+                        onClick={() => setConfirmingId(row.id)}
+                      >
+                        <IconTrash size={14} />
+                      </button>
+                    </>
+                  )}
                 </span>
               </TableRow>
             );
@@ -550,10 +682,13 @@ export function TransactionsTable({
             const amount = amountDisplay(row);
             const pending = isPending(row);
             const expanded = expandedId === row.id;
+            const key = isInstallmentPurchase(row)
+              ? `installment-purchase-${row.id}`
+              : `transaction-${row.id}`;
 
             return (
               <Card
-                key={row.id}
+                key={key}
                 className={`ff-rowcard${pending ? " ff-rowcard--pending" : ""}`}
                 soft={false}
               >
@@ -574,7 +709,9 @@ export function TransactionsTable({
                       }}
                     >
                       <span className="ff-txrow__desc">{row.description}</span>
-                      {row.installmentId !== null ? (
+                      {isInstallmentPurchase(row) ? (
+                        <Badge tone="accent">parcelado</Badge>
+                      ) : row.installmentId !== null ? (
                         <Badge tone="accent">parcela</Badge>
                       ) : null}
                       {pending ? <Badge tone="warn">Pendente</Badge> : null}
@@ -584,11 +721,15 @@ export function TransactionsTable({
                     </span>
                   </div>
                   <div className="ff-txrow__meta">
-                    {formatDayMonth(row.occurredOn)} · {paymentName(row)} ·{" "}
+                    {formatDayMonth(rowDate(row))} · {paymentName(row)} ·{" "}
                     {categoryName(row)} · {responsibleLabel(row)}
+                    {isInstallmentPurchase(row)
+                      ? ` · ${installmentSummary(row)}`
+                      : ""}
                   </div>
 
-                  {confirmingId === row.id ? (
+                  {isInstallmentPurchase(row) ? null : confirmingId ===
+                    row.id ? (
                     <div className="ff-rowcard__panel">
                       <span className="ff-row-confirm__text">
                         Excluir{" "}
@@ -605,7 +746,9 @@ export function TransactionsTable({
                           onClick={() => removeRow(row)}
                         >
                           {isSaving ? (
-                            <span className="ff-btn__pending"><Spinner /> Excluindo…</span>
+                            <span className="ff-btn__pending">
+                              <Spinner /> Excluindo…
+                            </span>
                           ) : (
                             "Excluir"
                           )}

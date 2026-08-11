@@ -2,13 +2,13 @@ import Link from "next/link";
 
 import {
   findHouseholdIdForCurrentUser,
-  findTransactionsFiltered,
+  findTransactionLedgerFiltered,
   listAccounts,
   listCreditCards,
   listAllCategories,
   listAllSubcategories,
   listHouseholdMembers,
-  type TransactionPage,
+  type TransactionLedgerPage,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -73,7 +73,7 @@ function formatMonthLabel(month: string): string {
   return `${monthNamePt(month)} de ${match[1]}`;
 }
 
-const EMPTY_PAGE: TransactionPage = {
+const EMPTY_PAGE: TransactionLedgerPage = {
   rows: [],
   total: 0,
   page: 1,
@@ -96,26 +96,41 @@ export default async function TransactionsPage({
   let cards: { id: string; name: string }[] = [];
   let categories: CategoryOption[] = [];
   let subcategories: SubcategoryOption[] = [];
-  let responsibles: ResponsibleOption[] = [{ value: "household", label: "Casa" }];
+  let responsibles: ResponsibleOption[] = [
+    { value: "household", label: "Casa" },
+  ];
   let loadError: string | null = null;
 
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
       throw new Error("Nenhuma casa ativa para o usuário atual.");
     }
 
-    const [pageData, accountRows, cardRows, categoryRows, subcategoryRows, members] =
-      await Promise.all([
-        findTransactionsFiltered(client, householdId, filters, page, PAGE_SIZE),
-        listAccounts(client, householdId),
-        listCreditCards(client, householdId),
-        listAllCategories(client, householdId),
-        listAllSubcategories(client, householdId),
-        listHouseholdMembers(client, householdId),
-      ]);
+    const [
+      pageData,
+      accountRows,
+      cardRows,
+      categoryRows,
+      subcategoryRows,
+      members,
+    ] = await Promise.all([
+      findTransactionLedgerFiltered(
+        client,
+        householdId,
+        filters,
+        page,
+        PAGE_SIZE,
+      ),
+      listAccounts(client, householdId),
+      listCreditCards(client, householdId),
+      listAllCategories(client, householdId),
+      listAllSubcategories(client, householdId),
+      listHouseholdMembers(client, householdId),
+    ]);
 
     data = pageData;
     accounts = accountRows.map((a) => ({ id: a.id, name: a.name }));
@@ -215,11 +230,21 @@ export default async function TransactionsPage({
       <div className="ff-filterbar">
         <MonthStepper
           label={formatMonthLabel(month)}
-          prevHref={transactionsHref({ ...current, month: shiftMonth(month, -1) })}
-          nextHref={transactionsHref({ ...current, month: shiftMonth(month, 1) })}
+          prevHref={transactionsHref({
+            ...current,
+            month: shiftMonth(month, -1),
+          })}
+          nextHref={transactionsHref({
+            ...current,
+            month: shiftMonth(month, 1),
+          })}
         />
 
-        <form method="get" action="/transactions" className="ff-filterbar__form">
+        <form
+          method="get"
+          action="/transactions"
+          className="ff-filterbar__form"
+        >
           <input type="hidden" name="month" value={month} />
           {current.pending ? (
             <input type="hidden" name="pending" value="1" />

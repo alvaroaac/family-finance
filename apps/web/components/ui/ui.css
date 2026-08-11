@@ -1081,7 +1081,9 @@
 }
 
 .ff-themepicker__swatch--active {
-  box-shadow: 0 0 0 2px rgba(18, 26, 22, 0.92), 0 0 0 4px #d4af6a;
+  box-shadow:
+    0 0 0 2px rgba(18, 26, 22, 0.92),
+    0 0 0 4px #d4af6a;
 }
 
 .ff-themepicker__dot {
@@ -1310,7 +1312,10 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
-  font: 300 14px var(--ff-font-body), Inter, sans-serif;
+  font:
+    300 14px var(--ff-font-body),
+    Inter,
+    sans-serif;
   color: var(--ff-ink-soft);
 }
 
@@ -1719,6 +1724,47 @@ a.ff-callout:hover {
   }
 }
 
+.ff-card-purchases {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ff-card-purchase {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--ff-border);
+}
+
+.ff-card-purchase:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.ff-card-purchase__title {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ff-card-purchase__meta {
+  margin-top: 3px;
+  color: var(--ff-ink-soft);
+  font-size: 13px;
+}
+
+@media (max-width: 520px) {
+  .ff-card-purchase {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
 /* ---- Transações: filter bar, table cells, inline edit, delete confirm --- */
 
 /* Filter bar shell (Transacoes desktop: surface, radius 14, padding 14/16). */
@@ -1762,6 +1808,11 @@ a.ff-callout:hover {
 /* Dim table cell text (mockup rows: ink2 for dia/conta/categoria/quem). */
 .ff-dim {
   color: var(--ff-ink-soft);
+}
+
+.ff-warn {
+  color: var(--ff-warn);
+  font-style: italic;
 }
 
 /* Compact input for in-table editing (mockup inline edit: accent + tint ring). */
@@ -2678,10 +2729,18 @@ a.ff-callout:hover {
   gap: 10px;
 }
 
-.ff-skeleton-gap-xs { margin-top: 6px; }
-.ff-skeleton-gap-sm { margin-top: 10px; }
-.ff-skeleton-gap-md { margin-top: 14px; }
-.ff-skeleton-gap-lg { margin-top: 20px; }
+.ff-skeleton-gap-xs {
+  margin-top: 6px;
+}
+.ff-skeleton-gap-sm {
+  margin-top: 10px;
+}
+.ff-skeleton-gap-md {
+  margin-top: 14px;
+}
+.ff-skeleton-gap-lg {
+  margin-top: 20px;
+}
 
 .ff-skeleton-rows {
   display: flex;

@@ -1,9 +1,11 @@
 import {
   findHouseholdIdForCurrentUser,
   listCreditCards,
+  findInstallmentPurchasesFiltered,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   type CreditCardRow,
+  type InstallmentPurchaseListItem,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -14,7 +16,11 @@ import {
   PageTitle,
   SubmitButton,
 } from "../../../components/ui";
-import { createCardAction, updateCardAction, deleteCardAction } from "./actions";
+import {
+  createCardAction,
+  updateCardAction,
+  deleteCardAction,
+} from "./actions";
 import { CardPurchaseForm } from "./purchase-form";
 
 export const metadata = {
@@ -26,6 +32,7 @@ export const dynamic = "force-dynamic";
 
 type CardsData = {
   cards: CreditCardRow[];
+  purchases: InstallmentPurchaseListItem[];
   categories: { id: string; name: string }[];
   subcategories: { id: string; categoryId: string; name: string }[];
   loadError: string | null;
@@ -33,22 +40,33 @@ type CardsData = {
 
 async function loadData(): Promise<CardsData> {
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
-      return { cards: [], categories: [], subcategories: [], loadError: null };
+      return {
+        cards: [],
+        purchases: [],
+        categories: [],
+        subcategories: [],
+        loadError: null,
+      };
     }
-    const [cards, categories] = await Promise.all([
+    const [cards, categories, purchases] = await Promise.all([
       listCreditCards(client, householdId),
       findCategoriesByHousehold(client, householdId),
+      findInstallmentPurchasesFiltered(client, householdId),
     ]);
     const subLists = await Promise.all(
-      categories.map((c) => findSubcategoriesByCategory(client, householdId, c.id)),
+      categories.map((c) =>
+        findSubcategoriesByCategory(client, householdId, c.id),
+      ),
     );
     const subcategories = subLists.flat();
     return {
       cards,
+      purchases,
       categories: categories.map((c) => ({ id: c.id, name: c.name })),
       subcategories: subcategories.map((s) => ({
         id: s.id,
@@ -60,6 +78,7 @@ async function loadData(): Promise<CardsData> {
   } catch (error) {
     return {
       cards: [],
+      purchases: [],
       categories: [],
       subcategories: [],
       loadError:
@@ -82,9 +101,45 @@ function cardDaysLabel(card: CreditCardRow): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+function formatBrl(cents: number): string {
+  return (cents / 100).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function formatDate(iso: string): string {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function formatMonth(ym: string): string {
+  const [year, month] = ym.split("-");
+  return `${month}/${year}`;
+}
+
+function purchaseInstallmentLabel(
+  purchase: InstallmentPurchaseListItem,
+): string {
+  const perInstallment =
+    purchase.firstInstallmentCents !== null
+      ? ` de ${formatBrl(purchase.firstInstallmentCents)}`
+      : "";
+  const range =
+    purchase.firstDueMonth !== null && purchase.lastDueMonth !== null
+      ? ` · ${formatMonth(purchase.firstDueMonth)} a ${formatMonth(purchase.lastDueMonth)}`
+      : "";
+  return `${purchase.installmentCount}x${perInstallment}${range}`;
+}
+
 export default async function CardsPage() {
   await requireAuthorizedUser();
-  const { cards, categories, subcategories, loadError } = await loadData();
+  const { cards, purchases, categories, subcategories, loadError } =
+    await loadData();
+  const cardNames = new Map(cards.map((card) => [card.id, card.name]));
+  const categoryNames = new Map(
+    categories.map((category) => [category.id, category.name]),
+  );
 
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
@@ -93,14 +148,22 @@ export default async function CardsPage() {
         title="Cartões"
         lead="Faturas, fechamentos e as compras parceladas."
         actions={
-          <a href="#compra" className="ff-btn ff-btn--primary" style={{ textDecoration: "none" }}>
+          <a
+            href="#compra"
+            className="ff-btn ff-btn--primary"
+            style={{ textDecoration: "none" }}
+          >
             + Compra parcelada
           </a>
         }
       />
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
+        <div
+          role="alert"
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 20 }}
+        >
           {loadError}
         </div>
       ) : null}
@@ -168,7 +231,10 @@ export default async function CardsPage() {
                         />
                       </Field>
                     </div>
-                    <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
+                    <SubmitButton
+                      className="ff-btn--ghost-sm"
+                      pendingLabel="Salvando…"
+                    >
                       Salvar
                     </SubmitButton>
                   </form>
@@ -183,6 +249,58 @@ export default async function CardsPage() {
             );
           })
         )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <Card>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "baseline",
+              flexWrap: "wrap",
+            }}
+          >
+            <h2 className="ff-h2">Compras no cartão</h2>
+            <span className="ff-note ff-num">
+              {purchases.length === 1
+                ? "1 compra parcelada"
+                : `${purchases.length} compras parceladas`}
+            </span>
+          </div>
+          {purchases.length === 0 ? (
+            <p className="ff-muted" style={{ marginTop: 14 }}>
+              Nenhuma compra parcelada registrada ainda.
+            </p>
+          ) : (
+            <div className="ff-card-purchases" style={{ marginTop: 14 }}>
+              {purchases.map((purchase) => (
+                <div key={purchase.id} className="ff-card-purchase">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="ff-card-purchase__title">
+                      {purchase.description}
+                    </div>
+                    <div className="ff-card-purchase__meta">
+                      {formatDate(purchase.purchasedOn)} ·{" "}
+                      {cardNames.get(purchase.creditCardId) ?? "cartão"} ·{" "}
+                      {purchase.categoryId !== null
+                        ? (categoryNames.get(purchase.categoryId) ??
+                          "categoria")
+                        : "sem categoria"}
+                    </div>
+                    <div className="ff-card-purchase__meta">
+                      {purchaseInstallmentLabel(purchase)}
+                    </div>
+                  </div>
+                  <strong className="ff-num">
+                    {formatBrl(purchase.totalAmountCents)}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
       </div>
 
       {/* Create card */}

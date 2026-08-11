@@ -18,10 +18,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   findTransactionsFiltered,
+  findTransactionLedgerFiltered,
   updateTransaction,
   deleteTransaction,
   listHouseholdMembers,
   type AppSupabaseClient,
+  type TransactionLedgerItem,
   type TransactionListItem,
 } from "@family-finance/db";
 
@@ -61,7 +63,11 @@ describe("NewTransactionForm", () => {
 
   it("renders the open panel with every field and both payment options", () => {
     const html = renderToStaticMarkup(
-      createElement(ToastProvider, null, createElement(NewTransactionForm, formProps)),
+      createElement(
+        ToastProvider,
+        null,
+        createElement(NewTransactionForm, formProps),
+      ),
     );
     expect(html).toContain("Novo lançamento");
     expect(html).toContain('name="amount"');
@@ -94,7 +100,10 @@ describe("NewTransactionForm", () => {
       createElement(
         ToastProvider,
         null,
-        createElement(NewTransactionForm, { ...formProps, initiallyOpen: false }),
+        createElement(NewTransactionForm, {
+          ...formProps,
+          initiallyOpen: false,
+        }),
       ),
     );
     expect(html).toContain("+ Lançamento");
@@ -195,6 +204,46 @@ describe("TransactionsTable: payment select", () => {
     expect(html).not.toContain('aria-label="Pagamento"');
     expect(html).toContain("Nubank");
   });
+
+  it("renders a parcelado purchase as a read-only ledger item", () => {
+    const row: TransactionLedgerItem = {
+      itemType: "installment_purchase",
+      id: "group-1",
+      householdId: "00000000-0000-0000-0000-000000000001",
+      description: "Sofá novo",
+      purchasedOn: "2026-06-15",
+      totalAmountCents: 120000,
+      installmentCount: 6,
+      creditCardId: "card-1",
+      categoryId: "cat-1",
+      subcategoryId: null,
+      responsibilityScope: "household",
+      responsibleUserId: null,
+      createdByUserId: "11111111-1111-1111-1111-111111111111",
+      firstDueMonth: "2026-06",
+      lastDueMonth: "2026-11",
+      firstInstallmentCents: 20000,
+    };
+    const html = renderToStaticMarkup(
+      createElement(
+        ToastProvider,
+        null,
+        createElement(TransactionsTable, {
+          rows: [row],
+          categories: [{ id: "cat-1", name: "Casa" }],
+          subcategories: [],
+          responsibles: [{ value: "household", label: "Casa" }],
+          accounts: [{ id: "acct-1", name: "Conta Corrente" }],
+          cards: [{ id: "card-1", name: "Nubank" }],
+        }),
+      ),
+    );
+    expect(html).toContain("Sofá novo");
+    expect(html).toContain("parcelado");
+    expect(html).toContain("6x");
+    expect(html).not.toContain("Excluir Sofá novo");
+    expect(html).not.toContain("Editar Sofá novo");
+  });
 });
 
 describe("TransactionsTable: amount edit", () => {
@@ -203,13 +252,19 @@ describe("TransactionsTable: amount edit", () => {
     expect(normal).toContain("56,13");
 
     // For normal (non-parcela) row: assert button exists with correct title and is NOT disabled.
-    const editableBtn = /<button[^>]*title="Clique para editar o valor"[^>]*>/.exec(normal)?.[0] ?? "";
+    const editableBtn =
+      /<button[^>]*title="Clique para editar o valor"[^>]*>/.exec(
+        normal,
+      )?.[0] ?? "";
     expect(editableBtn).not.toBe("");
     expect(editableBtn).not.toContain("disabled");
 
     const parcela = renderTable({ installmentId: "inst-1", kind: "expense" });
     // For parcela row: assert button exists with correct title and IS disabled.
-    const parcelaBtn = /<button[^>]*title="Valor de parcela — edite o parcelamento"[^>]*>/.exec(parcela)?.[0] ?? "";
+    const parcelaBtn =
+      /<button[^>]*title="Valor de parcela — edite o parcelamento"[^>]*>/.exec(
+        parcela,
+      )?.[0] ?? "";
     expect(parcelaBtn).not.toBe("");
     expect(parcelaBtn).toContain("disabled");
   });
@@ -583,6 +638,43 @@ function seedStore(): FakeSupabaseStore {
 
   const seed: FakeDatabaseSeed = {
     transactions: [...june, ...may],
+    installment_groups: [
+      {
+        id: "group-sofa",
+        household_id: HOUSEHOLD,
+        credit_card_id: CARD,
+        description: "Sofá novo",
+        total_amount_cents: 120000,
+        installment_count: 6,
+        purchased_on: "2026-06-15",
+        category_id: CAT_MERCADO,
+        subcategory_id: null,
+        responsibility_scope: "household",
+        responsible_user_id: null,
+        created_by_user_id: ALVARO,
+        import_batch_id: null,
+        created_at: "2026-06-15T13:00:00Z",
+        updated_at: "2026-06-15T13:00:00Z",
+      },
+    ],
+    installments: Array.from({ length: 6 }, (_, index) => ({
+      id: `inst-sofa-${index + 1}`,
+      household_id: HOUSEHOLD,
+      installment_group_id: "group-sofa",
+      credit_card_id: CARD,
+      number: index + 1,
+      installment_count: 6,
+      amount_cents: 20000,
+      due_month: `2026-${String(6 + index).padStart(2, "0")}`,
+      description: `Sofá novo ${index + 1}/6`,
+      category_id: CAT_MERCADO,
+      subcategory_id: null,
+      responsibility_scope: "household",
+      responsible_user_id: null,
+      created_by_user_id: ALVARO,
+      created_at: "2026-06-15T13:00:00Z",
+      updated_at: "2026-06-15T13:00:00Z",
+    })),
     household_members: [
       {
         id: "member-alvaro",
@@ -651,10 +743,7 @@ describe("/transactions listing via findTransactionsFiltered", () => {
 
   it("May (via month stepper) has the other 5 rows", async () => {
     const previous = shiftMonth("2026-06", -1);
-    const { filters } = parseTransactionsSearchParams(
-      { month: previous },
-      NOW,
-    );
+    const { filters } = parseTransactionsSearchParams({ month: previous }, NOW);
     const page = await findTransactionsFiltered(client, HOUSEHOLD, filters);
     expect(page.total).toBe(5);
   });
@@ -692,6 +781,67 @@ describe("/transactions listing via findTransactionsFiltered", () => {
       responsibilityScope: "household",
       responsibleUserId: null,
     });
+  });
+});
+
+describe("/transactions ledger via findTransactionLedgerFiltered", () => {
+  it("includes parcelado purchases bought in the selected month", async () => {
+    const { filters } = parseTransactionsSearchParams(
+      { month: "2026-06", q: "sofá" },
+      NOW,
+    );
+    const page = await findTransactionLedgerFiltered(
+      client,
+      HOUSEHOLD,
+      filters,
+      1,
+      PAGE_SIZE,
+    );
+    expect(page.total).toBe(1);
+    expect(page.rows[0]).toMatchObject({
+      itemType: "installment_purchase",
+      id: "group-sofa",
+      description: "Sofá novo",
+      purchasedOn: "2026-06-15",
+      totalAmountCents: 120000,
+      installmentCount: 6,
+      firstDueMonth: "2026-06",
+      lastDueMonth: "2026-11",
+      firstInstallmentCents: 20000,
+    });
+  });
+
+  it("counts transactions plus parcelado purchases in the month footnote total", async () => {
+    const { filters } = parseTransactionsSearchParams(
+      { month: "2026-06" },
+      NOW,
+    );
+    const page = await findTransactionLedgerFiltered(
+      client,
+      HOUSEHOLD,
+      filters,
+      1,
+      PAGE_SIZE,
+    );
+    expect(page.total).toBe(56);
+    expect(page.rows).toHaveLength(50);
+  });
+
+  it("keeps card filters applying to both transactions and parcelado purchases", async () => {
+    const { filters } = parseTransactionsSearchParams(
+      { month: "2026-06", card: CARD },
+      NOW,
+    );
+    const page = await findTransactionLedgerFiltered(
+      client,
+      HOUSEHOLD,
+      filters,
+    );
+    expect(page.rows.map((row) => row.id).sort()).toEqual([
+      "group-sofa",
+      "tx-farmacia",
+      "tx-parcela",
+    ]);
   });
 });
 
