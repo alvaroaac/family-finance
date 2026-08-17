@@ -157,6 +157,239 @@ describe("named payment instrument resolution", () => {
     expect(account.state.draft.accountId).toBe("acct-nubank");
   });
 
+  it("`Posto Marcio 200 credito` uses the only active credit card and still categorizes", async () => {
+    const suggestCategory = vi.fn(async () => ({
+      status: "matched" as const,
+      suggestion: {
+        macroCategoryId: "cat-transport",
+        confidence: 0.92,
+        explanation: "Posto de combustível entra em Transporte.",
+        source: "ai" as const,
+      },
+      requiresConfirmation: false,
+    }));
+    const deps = makeDeps({
+      suggestCategory,
+      listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
+      cardNameById: (id: string) =>
+        id === "card-nubank" ? "Nubank" : undefined,
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 credito", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.amountCents).toBe(20_000);
+    expect(outcome.state.draft.cardId).toBe("card-nubank");
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.state.draft.categoryId).toBe("cat-transport");
+    expect(suggestCategory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Posto Marcio",
+        amountCents: 20_000,
+      }),
+    );
+    expect(outcome.reply).toContain("Pagamento: Crédito Nubank");
+    expect(outcome.reply).toContain("Categoria: Transporte");
+  });
+
+  it("`Posto Marcio 200 credito ontem` resolves yesterday as the occurrence date", async () => {
+    const deps = makeDeps({
+      listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
+      cardNameById: (id: string) =>
+        id === "card-nubank" ? "Nubank" : undefined,
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 credito ontem", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.occurredOn).toBe("2026-07-03");
+    expect(outcome.reply).toContain("Data: 03/07/2026");
+  });
+
+  it("`Posto Marcio 200 credito 08/02` treats the date as DD/MM", async () => {
+    const deps = makeDeps({
+      listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
+      cardNameById: (id: string) =>
+        id === "card-nubank" ? "Nubank" : undefined,
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 credito 08/02", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.occurredOn).toBe("2026-02-08");
+    expect(outcome.reply).toContain("Data: 08/02/2026");
+  });
+
+  it("`Posto Marcio 200 credito` asks which card when multiple active cards exist", async () => {
+    const deps = makeDeps({
+      listActiveCards: () => [
+        { id: "card-nubank", name: "Nubank" },
+        { id: "card-itau", name: "Itaú" },
+      ],
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 credito", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_payment_choice");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.amountCents).toBe(20_000);
+    expect(outcome.state.draft.cardId).toBeUndefined();
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.state.paymentCandidates).toEqual([
+      { type: "card", id: "card-nubank", name: "Nubank" },
+      { type: "card", id: "card-itau", name: "Itaú" },
+    ]);
+    expect(
+      outcome.keyboard?.inline_keyboard.flat().map((button) => button.text),
+    ).toEqual(["Crédito Nubank", "Crédito Itaú"]);
+  });
+
+  it("`Posto Marcio 200 credito Nubank` resolves the named credit card without asking", async () => {
+    const deps = makeDeps({
+      listActiveAccounts: () => [{ id: "acct-nubank", name: "Nubank" }],
+      listActiveCards: () => [
+        { id: "card-nubank", name: "Nubank" },
+        { id: "card-itau", name: "Itaú" },
+      ],
+      cardNameById: (id: string) =>
+        id === "card-nubank" ? "Nubank" : undefined,
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 credito Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.cardId).toBe("card-nubank");
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.reply).toContain("Pagamento: Crédito Nubank");
+  });
+
+  it("`Posto Marcio 200 pix` uses the account path, not credit", async () => {
+    const deps = makeDeps({
+      defaultAccountId: "acct-main",
+      resolveAccountId: () => "acct-pix",
+      listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
+      accountNameById: (id: string) => (id === "acct-pix" ? "Pix" : undefined),
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 pix", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.accountId).toBe("acct-pix");
+    expect(outcome.state.draft.cardId).toBeUndefined();
+    expect(outcome.reply).toContain("Pagamento: Conta Pix");
+  });
+
+  it("`Posto Marcio 200 Mercado Pago` resolves the multi-word account and cleans the description", async () => {
+    const deps = makeDeps({
+      listActiveAccounts: () => [
+        { id: "acct-mercado-pago", name: "Mercado Pago" },
+      ],
+      listActiveCards: () => [],
+      accountNameById: (id: string) =>
+        id === "acct-mercado-pago" ? "Mercado Pago" : undefined,
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 Mercado Pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.amountCents).toBe(20_000);
+    expect(outcome.state.draft.accountId).toBe("acct-mercado-pago");
+    expect(outcome.state.draft.cardId).toBeUndefined();
+    expect(outcome.reply).toContain("Pagamento: Conta Mercado Pago");
+  });
+
+  it("`Posto Marcio 200 credito Mercado Pago` resolves the multi-word credit card", async () => {
+    const deps = makeDeps({
+      listActiveAccounts: () => [
+        { id: "acct-mercado-pago", name: "Mercado Pago" },
+      ],
+      listActiveCards: () => [
+        { id: "card-mercado-pago", name: "Mercado Pago" },
+        { id: "card-itau", name: "Itaú" },
+      ],
+      cardNameById: (id: string) =>
+        id === "card-mercado-pago" ? "Mercado Pago" : undefined,
+    });
+
+    const outcome = await startConversation(
+      {
+        text: "Posto Marcio 200 credito Mercado Pago",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.draft.description).toBe("Posto Marcio");
+    expect(outcome.state.draft.cardId).toBe("card-mercado-pago");
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.reply).toContain("Pagamento: Crédito Mercado Pago");
+  });
+
+  it("bare `Mercado Pago` asks account vs credit when both instruments exist", async () => {
+    const deps = makeDeps({
+      listActiveAccounts: () => [
+        { id: "acct-mercado-pago", name: "Mercado Pago" },
+      ],
+      listActiveCards: () => [
+        { id: "card-mercado-pago", name: "Mercado Pago" },
+      ],
+    });
+
+    const outcome = await startConversation(
+      { text: "Posto Marcio 200 Mercado Pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_payment_choice");
+    expect(outcome.state.draft.description).toBe("Posto Marcio Mercado Pago");
+    expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.state.draft.cardId).toBeUndefined();
+    expect(outcome.state.paymentCandidates).toEqual([
+      { type: "account", id: "acct-mercado-pago", name: "Mercado Pago" },
+      { type: "card", id: "card-mercado-pago", name: "Mercado Pago" },
+    ]);
+    expect(
+      outcome.keyboard?.inline_keyboard.flat().map((button) => button.text),
+    ).toEqual(["Conta Mercado Pago", "Crédito Mercado Pago"]);
+  });
+
   it("preserves the card resolver when active-card inventory is unavailable", async () => {
     const deps = makeDeps({ resolveCardId: () => "card-nubank" });
     const card = await startConversation(
@@ -181,6 +414,7 @@ describe("named payment instrument resolution", () => {
       today: TODAY,
     });
     expect(picked.state.status).toBe("awaiting_confirmation");
+    expect(picked.state.draft.description).toBe("posto");
     expect(picked.state.draft.cardId).toBe("card-nubank");
     expect(picked.reply).toContain("Crédito Nubank");
     expect(
@@ -225,6 +459,24 @@ describe("named payment instrument resolution", () => {
     expect(stale.state.status).toBe("awaiting_payment_choice");
     expect(stale.state.draft.cardId).toBeUndefined();
     expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("typed payment choices also remove the selected instrument from the description", async () => {
+    const deps = makeDeps(instruments);
+    const started = await startConversation(
+      { text: "posto 115 reais no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const picked = await applyMessage(started.state, "conta Nubank", deps, {
+      today: TODAY,
+    });
+
+    expect(picked.state.status).toBe("awaiting_confirmation");
+    expect(picked.state.draft.description).toBe("posto");
+    expect(picked.state.draft.accountId).toBe("acct-nubank");
+    expect(picked.state.draft.cardId).toBeUndefined();
+    expect(picked.reply).toContain("Pagamento: Conta Nubank");
   });
 });
 
@@ -406,6 +658,23 @@ const PROPOSAL: CategorizationResult = {
   requiresConfirmation: true,
 };
 
+const SUBCATEGORY_PROPOSAL: CategorizationResult = {
+  status: "pending_new_subcategory",
+  suggestion: {
+    macroCategoryId: "cat-food",
+    confidence: 0.9,
+    explanation: "Restaurante temático ainda não existe.",
+    source: "ai",
+  },
+  pendingCategory: {
+    categoryName: "Alimentação",
+    subcategoryName: "Restaurante temático",
+    confidence: 0.9,
+    explanation: "Restaurante temático ainda não existe.",
+  },
+  requiresConfirmation: true,
+};
+
 function proposalDeps(
   overrides: Partial<ConversationDeps> = {},
 ): ConversationDeps {
@@ -417,6 +686,9 @@ function proposalDeps(
     ]),
     createCategory: vi.fn(async () => ({ id: "cat-pets" })),
     restoreCategory: vi.fn(async () => undefined),
+    listAllSubcategories: vi.fn(async () => []),
+    createSubcategory: vi.fn(async () => ({ id: "sub-theme-restaurant" })),
+    restoreSubcategory: vi.fn(async () => undefined),
     seedCategorizationMemory: vi.fn(async () => undefined),
     ...overrides,
   });
@@ -653,6 +925,89 @@ describe("AI new-category proposal", () => {
     });
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(done.state.status).toBe("saved");
+  });
+
+  it("nca creates a proposed subcategory, seeds memory with it, and persists the transaction", async () => {
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => SUBCATEGORY_PROPOSAL),
+    });
+    const start = await startConversation(
+      { text: "restaurante peculiar 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(start.state.draft.categoryId).toBe("cat-food");
+    expect(start.state.draft.subcategoryId).toBeUndefined();
+    expect(start.state.proposedSubcategory).toEqual({
+      categoryId: "cat-food",
+      categoryName: "Alimentação",
+      subcategoryName: "Restaurante temático",
+      explanation: "Restaurante temático ainda não existe.",
+    });
+    expect(start.reply).toContain(
+      'Categoria: "Alimentação > Restaurante temático" (nova — sugerida)',
+    );
+    expect(start.keyboard?.inline_keyboard[0]?.[0]).toEqual({
+      text: '✅ Confirmar (cria "Alimentação > Restaurante temático")',
+      callback_data: "nca",
+    });
+
+    const outcome = await applyCallback(start.state, "nca", deps, {
+      today: TODAY,
+    });
+
+    expect(deps.createSubcategory).toHaveBeenCalledWith(
+      "cat-food",
+      "Restaurante temático",
+    );
+    expect(deps.seedCategorizationMemory).toHaveBeenCalledWith({
+      pattern: "restaurante peculiar",
+      categoryId: "cat-food",
+      subcategoryId: "sub-theme-restaurant",
+      confidence: 0.95,
+      explanation: `criada pelo usuário via bot em ${TODAY}`,
+    });
+    const draft = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(draft.category).toEqual({
+      categoryId: "cat-food",
+      subcategoryId: "sub-theme-restaurant",
+    });
+    expect(outcome.state.status).toBe("saved");
+  });
+
+  it("nca reuses an archived matching subcategory under the same parent", async () => {
+    const deps = proposalDeps({
+      suggestCategory: vi.fn(async () => SUBCATEGORY_PROPOSAL),
+      listAllSubcategories: vi.fn(async () => [
+        {
+          id: "sub-old-theme",
+          categoryId: "cat-food",
+          name: "restaurante temático",
+          isActive: false,
+        },
+      ]),
+    });
+    const start = await startConversation(
+      { text: "restaurante peculiar 90 reais", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    await applyCallback(start.state, "nca", deps, { today: TODAY });
+
+    expect(deps.createSubcategory).not.toHaveBeenCalled();
+    expect(deps.restoreSubcategory).toHaveBeenCalledWith(
+      "sub-old-theme",
+      "cat-food",
+      "restaurante temático",
+    );
+    const draft = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(draft.category).toEqual({
+      categoryId: "cat-food",
+      subcategoryId: "sub-old-theme",
+    });
   });
 });
 

@@ -219,6 +219,13 @@ export type PaymentInstrumentCandidate = {
   name: string;
 };
 
+export type PendingSubcategoryProposal = {
+  categoryId: string;
+  categoryName: string;
+  subcategoryName: string;
+  explanation: string;
+};
+
 export type ConversationState = {
   status: ConversationStatus;
   draft: DraftInProgress;
@@ -236,6 +243,8 @@ export type ConversationState = {
   paymentCandidates?: PaymentInstrumentCandidate[];
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
   proposedCategoryName?: string;
+  /** AI-proposed NEW subcategory under an existing macro category. */
+  proposedSubcategory?: PendingSubcategoryProposal;
   /** Ranked existing categories returned by the unified interpreter. */
   categoryCandidates?: Array<{
     categoryId: string;
@@ -353,10 +362,31 @@ export type ConversationDeps = {
   createCategory?: (name: string) => Promise<{ id: string }>;
   /** Reactivate an archived category (db restoreCategory). */
   restoreCategory?: (categoryId: string, categoryName: string) => Promise<void>;
+  /** ALL subcategories (active + archived) for subcategory proposal dedupe. */
+  listAllSubcategories?: () => Promise<
+    Array<{
+      id: string;
+      categoryId: string;
+      name: string;
+      isActive: boolean;
+    }>
+  >;
+  /** Create an ACTIVE subcategory under a macro category. */
+  createSubcategory?: (
+    categoryId: string,
+    name: string,
+  ) => Promise<{ id: string }>;
+  /** Reactivate an archived subcategory. */
+  restoreSubcategory?: (
+    subcategoryId: string,
+    categoryId: string,
+    subcategoryName: string,
+  ) => Promise<void>;
   /** Seed categorization_memory — ONLY the AI new-category accept path calls this. */
   seedCategorizationMemory?: (entry: {
     pattern: string;
     categoryId: string;
+    subcategoryId?: string;
     confidence: number;
     explanation: string;
   }) => Promise<void>;
@@ -417,6 +447,48 @@ function categoryLabel(
   return macro;
 }
 
+function taxonomyProposalLabel(
+  state: Pick<
+    ConversationState,
+    "proposedCategoryName" | "proposedSubcategory"
+  >,
+): string | undefined {
+  if (state.proposedCategoryName !== undefined) {
+    return state.proposedCategoryName;
+  }
+  if (state.proposedSubcategory !== undefined) {
+    return `${state.proposedSubcategory.categoryName} > ${state.proposedSubcategory.subcategoryName}`;
+  }
+  return undefined;
+}
+
+function pendingSubcategoryFromNames(
+  catalog: CategoryCatalog,
+  categoryName: string | undefined,
+  subcategoryName: string | null | undefined,
+  explanation: string,
+  categoryId?: string,
+): PendingSubcategoryProposal | undefined {
+  if (categoryName === undefined || subcategoryName == null) {
+    return undefined;
+  }
+  const category =
+    categoryId !== undefined
+      ? catalog.categories.find((item) => item.id === categoryId)
+      : catalog.categories.find(
+          (item) => normalizeText(item.name) === normalizeText(categoryName),
+        );
+  if (category === undefined) {
+    return undefined;
+  }
+  return {
+    categoryId: category.id,
+    categoryName: category.name,
+    subcategoryName,
+    explanation,
+  };
+}
+
 function paymentLabel(draft: DraftInProgress, deps: ConversationDeps): string {
   if (draft.cardId !== undefined) {
     return `Crédito ${deps.cardNameById?.(draft.cardId) ?? "Cartão"}`;
@@ -471,7 +543,7 @@ function replyForState(
     return needsAmountMessage(state.draft.description);
   }
   return confirmationMessage(
-    summaryView(state.draft, deps, state.proposedCategoryName),
+    summaryView(state.draft, deps, taxonomyProposalLabel(state)),
   );
 }
 
@@ -481,7 +553,7 @@ function keyboardForState(
 ): InlineKeyboardMarkup | undefined {
   if (state.status === "awaiting_confirmation") {
     return confirmationKeyboard(
-      state.proposedCategoryName,
+      taxonomyProposalLabel(state),
       state.categoryCandidates ?? [],
     );
   }
@@ -493,7 +565,7 @@ function keyboardForState(
   }
   if (state.status === "awaiting_obligation_confirmation") {
     return obligationConfirmationKeyboard(
-      state.proposedCategoryName,
+      taxonomyProposalLabel(state),
       state.categoryCandidates ?? [],
     );
   }
@@ -513,6 +585,27 @@ function textNamesInstrument(text: string, name: string): boolean {
   const haystack = ` ${normalizeText(text).replace(/[^a-z0-9]+/g, " ")} `;
   const needle = ` ${normalizeText(name).replace(/[^a-z0-9]+/g, " ")} `;
   return needle.trim().length > 0 && haystack.includes(needle);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripSelectedInstrumentFromDescription(
+  description: string,
+  instrumentName: string | undefined,
+): string {
+  const name = instrumentName?.trim();
+  if (name === undefined || name.length === 0) {
+    return description;
+  }
+  const stripped = stripEdgePunctuation(
+    description
+      .replace(new RegExp(`(^|\\s)${escapeRegExp(name)}(?=\\s|$)`, "i"), " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+  return stripped.length > 0 ? stripped : description;
 }
 
 function paymentCandidatesForText(
@@ -575,6 +668,36 @@ function resolveCategoryCandidates(
       ];
     })
     .slice(0, 3);
+}
+
+function applyTopCategoryCandidate(
+  draft: {
+    categoryId?: string;
+    subcategoryId?: string;
+    categoryExplanation?: string;
+  },
+  candidates: ConversationState["categoryCandidates"],
+): void {
+  const top = candidates?.[0];
+  if (top === undefined) {
+    return;
+  }
+  draft.categoryId = top.categoryId;
+  draft.subcategoryId = top.subcategoryId;
+  draft.categoryExplanation = top.explanation;
+}
+
+function pendingSubcategoryFromInterpreter(
+  catalog: CategoryCatalog,
+  proposal: InterpretedExpense["proposedSubcategory"],
+  explanation: string,
+): PendingSubcategoryProposal | undefined {
+  return pendingSubcategoryFromNames(
+    catalog,
+    proposal?.categoryName,
+    proposal?.subcategoryName,
+    explanation,
+  );
 }
 
 /** Meaningful tokens of a keyword/description (normalized, short words out). */
@@ -854,18 +977,36 @@ async function startInstallmentIntent(
     createdByUserId: input.fromUserId,
     responsibleUserId: input.fromUserId || undefined,
   };
+  installmentDraft.description = stripSelectedInstrumentFromDescription(
+    installmentDraft.description,
+    cards.find((card) => card.id === installmentDraft.cardId)?.name,
+  );
 
   // Same shared categorization engine as expenses/obligations; the hint is
   // free TEXT appended to the context description — never trusted as an id.
   let proposedCategoryName = purchase.proposedCategoryName;
+  let proposedSubcategory: PendingSubcategoryProposal | undefined;
   let categoryCandidates: ConversationState["categoryCandidates"];
   if (purchase.unifiedPrimary === true) {
     categoryCandidates = resolveCategoryCandidates(
       purchase.categoryCandidates ?? [],
       deps.catalog,
     );
-    if (purchase.proposedSubcategory) {
-      installmentDraft.categoryExplanation = `Subcategoria sugerida (pendente): ${purchase.proposedSubcategory.categoryName} > ${purchase.proposedSubcategory.subcategoryName}.`;
+    if (
+      purchase.proposedCategoryName === undefined &&
+      purchase.proposedSubcategory === undefined
+    ) {
+      applyTopCategoryCandidate(installmentDraft, categoryCandidates);
+    }
+    proposedSubcategory = pendingSubcategoryFromInterpreter(
+      deps.catalog,
+      purchase.proposedSubcategory,
+      "Subcategoria sugerida pela leitura inteligente.",
+    );
+    if (proposedSubcategory !== undefined) {
+      installmentDraft.categoryId = proposedSubcategory.categoryId;
+      installmentDraft.subcategoryId = undefined;
+      installmentDraft.categoryExplanation = proposedSubcategory.explanation;
     }
   } else {
     const result = await deps.suggestCategory({
@@ -889,6 +1030,24 @@ async function startInstallmentIntent(
       proposedCategoryName = result.pendingCategory.categoryName;
       installmentDraft.categoryExplanation = result.pendingCategory.explanation;
     }
+    if (
+      result.status === "pending_new_subcategory" &&
+      result.pendingCategory !== undefined &&
+      result.suggestion?.macroCategoryId !== undefined
+    ) {
+      proposedSubcategory = pendingSubcategoryFromNames(
+        deps.catalog,
+        result.pendingCategory.categoryName,
+        result.pendingCategory.subcategoryName,
+        result.pendingCategory.explanation,
+        result.suggestion.macroCategoryId,
+      );
+      if (proposedSubcategory !== undefined) {
+        installmentDraft.categoryId = proposedSubcategory.categoryId;
+        installmentDraft.subcategoryId = undefined;
+        installmentDraft.categoryExplanation = proposedSubcategory.explanation;
+      }
+    }
   }
 
   const state: ConversationState = {
@@ -896,12 +1055,13 @@ async function startInstallmentIntent(
     draft: ballast,
     installmentDraft,
     proposedCategoryName,
+    proposedSubcategory,
     categoryCandidates,
   };
   const view = installmentSummaryView(
     installmentDraft,
     deps,
-    proposedCategoryName,
+    taxonomyProposalLabel(state),
   );
   const reply =
     installmentDraft.cardId === undefined
@@ -910,8 +1070,8 @@ async function startInstallmentIntent(
   const keyboard =
     installmentDraft.cardId === undefined
       ? cardGridKeyboard(cards)
-      : proposedCategoryName !== undefined
-        ? installmentConfirmationKeyboard(proposedCategoryName)
+      : taxonomyProposalLabel(state) !== undefined
+        ? installmentConfirmationKeyboard(taxonomyProposalLabel(state))
         : installmentConfirmationKeyboard(undefined, categoryCandidates);
   return { state, reply, keyboard };
 }
@@ -1179,23 +1339,64 @@ async function startClassifiedIntent(
     extracted.categoryCandidates ?? [],
     deps.catalog,
   );
-  if (extracted.proposedCategoryName) {
-    obligationDraft.categoryExplanation = `Nova categoria sugerida (pendente; não será criada automaticamente): ${extracted.proposedCategoryName}.`;
+  if (extracted.unifiedPrimary === true) {
+    if (
+      extracted.proposedCategoryName === undefined &&
+      extracted.proposedSubcategory === undefined
+    ) {
+      applyTopCategoryCandidate(obligationDraft, unifiedCandidates);
+    }
+  }
+  const proposedSubcategory =
+    extracted.unifiedPrimary === true
+      ? pendingSubcategoryFromInterpreter(
+          deps.catalog,
+          extracted.proposedSubcategory,
+          "Subcategoria sugerida pela leitura inteligente.",
+        )
+      : result?.status === "pending_new_subcategory" &&
+          result.pendingCategory !== undefined &&
+          result.suggestion?.macroCategoryId !== undefined
+        ? pendingSubcategoryFromNames(
+            deps.catalog,
+            result.pendingCategory.categoryName,
+            result.pendingCategory.subcategoryName,
+            result.pendingCategory.explanation,
+            result.suggestion.macroCategoryId,
+          )
+        : undefined;
+  if (proposedSubcategory !== undefined) {
+    obligationDraft.categoryId = proposedSubcategory.categoryId;
+    obligationDraft.subcategoryId = undefined;
+    obligationDraft.categoryExplanation = proposedSubcategory.explanation;
+  }
+  const proposedCategoryName =
+    result?.status === "pending_new_category" && result.pendingCategory
+      ? result.pendingCategory.categoryName
+      : extracted.proposedCategoryName;
+  if (proposedCategoryName !== undefined) {
+    obligationDraft.categoryExplanation =
+      result?.status === "pending_new_category" && result.pendingCategory
+        ? result.pendingCategory.explanation
+        : `Nova categoria sugerida (pendente; não será criada automaticamente): ${proposedCategoryName}.`;
   }
 
+  const state: ConversationState = {
+    status: "awaiting_obligation_confirmation",
+    draft: ballast,
+    obligationDraft,
+    proposedCategoryName,
+    proposedSubcategory,
+    categoryCandidates: unifiedCandidates,
+  };
+
   return {
-    state: {
-      status: "awaiting_obligation_confirmation",
-      draft: ballast,
-      obligationDraft,
-      proposedCategoryName: extracted.proposedCategoryName,
-      categoryCandidates: unifiedCandidates,
-    },
+    state,
     reply: obligationConfirmationMessage(
       obligationSummaryView(obligationDraft, deps),
     ),
     keyboard: obligationConfirmationKeyboard(
-      extracted.proposedCategoryName,
+      taxonomyProposalLabel(state),
       unifiedCandidates,
     ),
   };
@@ -1370,6 +1571,7 @@ export async function startConversation(
   // provider names ("no Nubank") are safe only when they identify one real
   // instrument; account+card collisions become an explicit button choice.
   let paymentCandidates = paymentCandidatesForText(input.text, deps);
+  let selectedPaymentInstrumentName: string | undefined;
   if (
     paymentCandidates.length === 0 &&
     interpreted?.cardKeyword !== undefined
@@ -1400,6 +1602,7 @@ export async function startConversation(
   }
   if (paymentCandidates.length === 1) {
     const selected = paymentCandidates[0];
+    selectedPaymentInstrumentName = selected?.name;
     if (selected?.type === "card") draft.cardId = selected.id;
     if (selected?.type === "account") draft.accountId = selected.id;
   } else if (paymentCandidates.length === 0) {
@@ -1409,6 +1612,7 @@ export async function startConversation(
         draft.cardId = deps.resolveCardId() ?? undefined;
       } else if (cards.length === 1) {
         draft.cardId = cards[0]?.id;
+        selectedPaymentInstrumentName = cards[0]?.name;
       } else if (cards.length > 1) {
         paymentCandidates = cards.map((card) => ({
           type: "card" as const,
@@ -1423,11 +1627,16 @@ export async function startConversation(
         deps.defaultAccountId;
     }
   }
+  draft.description = stripSelectedInstrumentFromDescription(
+    draft.description,
+    selectedPaymentInstrumentName,
+  );
 
   // Ask the categorization engine for a suggestion (shared engine, both
   // channels). A category hint from the interpreter is free TEXT appended to
   // the context description — never trusted as a category id.
   let proposedCategoryName = interpreted?.proposedCategoryName;
+  let proposedSubcategory: PendingSubcategoryProposal | undefined;
   let categoryCandidates: ConversationState["categoryCandidates"];
   if (interpreted?.unifiedPrimary === true) {
     // A successful unified primary already categorized this message. Do not
@@ -1436,9 +1645,22 @@ export async function startConversation(
       interpreted.categoryCandidates ?? [],
       deps.catalog,
     );
-    draft.needsAttention = true;
-    if (interpreted.proposedSubcategory !== undefined) {
-      draft.categoryExplanation = `Subcategoria sugerida (pendente): ${interpreted.proposedSubcategory.categoryName} > ${interpreted.proposedSubcategory.subcategoryName}.`;
+    if (
+      interpreted.proposedCategoryName === undefined &&
+      interpreted.proposedSubcategory === undefined
+    ) {
+      applyTopCategoryCandidate(draft, categoryCandidates);
+    }
+    proposedSubcategory = pendingSubcategoryFromInterpreter(
+      deps.catalog,
+      interpreted.proposedSubcategory,
+      "Subcategoria sugerida pela leitura inteligente.",
+    );
+    if (proposedSubcategory !== undefined) {
+      draft.categoryId = proposedSubcategory.categoryId;
+      draft.subcategoryId = undefined;
+      draft.categoryExplanation = proposedSubcategory.explanation;
+      draft.needsAttention = true;
     }
   } else {
     const result = await deps.suggestCategory({
@@ -1464,6 +1686,25 @@ export async function startConversation(
       draft.categoryExplanation = result.pendingCategory.explanation;
       draft.needsAttention = true;
     }
+    if (
+      result.status === "pending_new_subcategory" &&
+      result.pendingCategory !== undefined &&
+      result.suggestion?.macroCategoryId !== undefined
+    ) {
+      proposedSubcategory = pendingSubcategoryFromNames(
+        deps.catalog,
+        result.pendingCategory.categoryName,
+        result.pendingCategory.subcategoryName,
+        result.pendingCategory.explanation,
+        result.suggestion.macroCategoryId,
+      );
+      if (proposedSubcategory !== undefined) {
+        draft.categoryId = proposedSubcategory.categoryId;
+        draft.subcategoryId = undefined;
+        draft.categoryExplanation = proposedSubcategory.explanation;
+        draft.needsAttention = true;
+      }
+    }
   }
 
   const state: ConversationState = {
@@ -1473,6 +1714,7 @@ export async function startConversation(
         : statusForDraft(draft),
     draft,
     proposedCategoryName,
+    proposedSubcategory,
     categoryCandidates,
     paymentCandidates:
       paymentCandidates.length > 1 ? paymentCandidates : undefined,
@@ -1583,6 +1825,8 @@ async function createCategoryForDraft(
     status: statusForDraft(draft),
     draft,
     proposedCategoryName: undefined,
+    proposedSubcategory: undefined,
+    categoryCandidates: undefined,
     // This path always runs mid-draft (never standalone name-mode), so there
     // is no standalone-creation flag to carry forward — explicit for clarity.
     standaloneCategoryCreation: undefined,
@@ -1929,21 +2173,35 @@ async function applyObligationMessage(
     if (deps.createObligation === undefined) {
       return { state, reply: obligationNotUnderstoodMessage() };
     }
+    let workingState = state;
+    let workingDraft = draft;
+    if (taxonomyProposalLabel(state) !== undefined) {
+      const resolved = await applyPendingTaxonomyToObligation(state, deps);
+      if (resolved === null) {
+        return { state, reply: notUnderstoodMessage() };
+      }
+      workingState = resolved.state;
+      workingDraft = resolved.draft;
+    }
+    const monthlyAmountCents = workingDraft.monthlyAmountCents;
+    if (monthlyAmountCents === undefined) {
+      return { state, reply: obligationNotUnderstoodMessage() };
+    }
     const built = createObligationDraft({
       householdId: deps.householdId,
-      description: draft.description,
-      amountCents: draft.monthlyAmountCents,
-      startMonth: draft.startMonth,
-      termMonths: draft.termMonths,
-      dueDay: draft.dueDay,
-      accountId: draft.accountId,
-      createdByUserId: draft.createdByUserId,
-      responsibleUserId: draft.responsibleUserId,
+      description: workingDraft.description,
+      amountCents: monthlyAmountCents,
+      startMonth: workingDraft.startMonth,
+      termMonths: workingDraft.termMonths,
+      dueDay: workingDraft.dueDay,
+      accountId: workingDraft.accountId,
+      createdByUserId: workingDraft.createdByUserId,
+      responsibleUserId: workingDraft.responsibleUserId,
       category:
-        draft.categoryId !== undefined
+        workingDraft.categoryId !== undefined
           ? {
-              categoryId: draft.categoryId,
-              subcategoryId: draft.subcategoryId,
+              categoryId: workingDraft.categoryId,
+              subcategoryId: workingDraft.subcategoryId,
             }
           : undefined,
     });
@@ -1956,17 +2214,17 @@ async function applyObligationMessage(
     }
     await deps.createObligation(built.value);
     await deps.logInteraction({
-      fromUserId: draft.createdByUserId,
+      fromUserId: workingDraft.createdByUserId,
       inputKind: state.draft.inputKind,
       messageText: message,
-      explanation: draft.categoryExplanation,
+      explanation: workingDraft.categoryExplanation,
     });
     return {
-      state: { status: "saved", draft: state.draft },
+      state: { status: "saved", draft: workingState.draft },
       reply: obligationSavedMessage({
-        description: draft.description,
-        monthlyAmountCents: draft.monthlyAmountCents,
-        termMonths: draft.termMonths,
+        description: workingDraft.description,
+        monthlyAmountCents,
+        termMonths: workingDraft.termMonths,
       }),
     };
   }
@@ -2037,7 +2295,8 @@ async function confirmInstallment(
   today: string,
   messageText: string,
 ): Promise<ConversationOutcome> {
-  const draft = state.installmentDraft;
+  let workingState = state;
+  let draft = state.installmentDraft;
   if (
     draft === undefined ||
     draft.totalCents === undefined ||
@@ -2048,17 +2307,35 @@ async function confirmInstallment(
     // guards each missing field individually before reaching here.
     return { state, reply: notUnderstoodMessage() };
   }
+  if (taxonomyProposalLabel(state) !== undefined) {
+    const resolved = await applyPendingTaxonomyToInstallment(state, deps);
+    if (resolved === null) {
+      return { state, reply: notUnderstoodMessage() };
+    }
+    workingState = resolved.state;
+    draft = resolved.draft;
+  }
+  const cardId = draft.cardId;
+  const totalCents = draft.totalCents;
+  const installmentCount = draft.installmentCount;
+  if (
+    cardId === undefined ||
+    totalCents === undefined ||
+    installmentCount === undefined
+  ) {
+    return { state, reply: notUnderstoodMessage() };
+  }
   if (deps.createInstallmentPurchase === undefined) {
     return { state, reply: obligationUnavailableMessage() };
   }
 
-  const card = findActiveCard(deps, draft.cardId);
+  const card = findActiveCard(deps, cardId);
   const built = createInstallmentPlan({
     householdId: deps.householdId,
-    creditCardId: draft.cardId,
+    creditCardId: cardId,
     description: draft.description,
-    totalAmount: { currency: "BRL", cents: draft.totalCents },
-    installmentCount: draft.installmentCount,
+    totalAmount: { currency: "BRL", cents: totalCents },
+    installmentCount,
     purchasedOn: draft.purchasedOn,
     createdByUserId: draft.createdByUserId,
     responsibleUserId: draft.responsibleUserId,
@@ -2086,7 +2363,7 @@ async function confirmInstallment(
       error,
     );
     return {
-      state: { status: "cancelled", draft: state.draft },
+      state: { status: "cancelled", draft: workingState.draft },
       reply: installmentSaveFailedMessage(draft.description),
     };
   }
@@ -2100,11 +2377,11 @@ async function confirmInstallment(
   const firstDueMonth =
     built.value.installments[0]?.dueMonth ?? draft.purchasedOn.slice(0, 7);
   return {
-    state: { status: "saved", draft: state.draft },
+    state: { status: "saved", draft: workingState.draft },
     reply: installmentSavedMessage({
       description: draft.description,
-      totalCents: draft.totalCents,
-      installmentCount: draft.installmentCount,
+      totalCents,
+      installmentCount,
       cardName: card?.name ?? "cartão",
       firstDueMonth,
     }),
@@ -2199,7 +2476,12 @@ async function applyInstallmentMessage(
     if (matches.length !== 1) {
       return { state, reply: `Não encontrei o cartão "${keyword}".` };
     }
-    next.cardId = matches[0]?.id;
+    const card = matches[0];
+    next.cardId = card?.id;
+    next.description = stripSelectedInstrumentFromDescription(
+      next.description,
+      card?.name,
+    );
     fieldLabel = "o cartão";
   }
 
@@ -2237,7 +2519,7 @@ async function applyInstallmentMessage(
     return {
       state,
       reply: installmentConfirmationMessage(
-        installmentSummaryView(draft, deps, state.proposedCategoryName),
+        installmentSummaryView(draft, deps, taxonomyProposalLabel(state)),
       ),
     };
   }
@@ -2248,10 +2530,14 @@ async function applyInstallmentMessage(
     installmentDraft: next,
     proposedCategoryName:
       catMatch !== null ? undefined : state.proposedCategoryName,
+    proposedSubcategory:
+      catMatch !== null ? undefined : state.proposedSubcategory,
+    categoryCandidates:
+      catMatch !== null ? undefined : state.categoryCandidates,
   };
   return {
     state: nextState,
-    reply: `${correctionAppliedMessage(fieldLabel)}\n\n${installmentConfirmationMessage(installmentSummaryView(next, deps, nextState.proposedCategoryName))}`,
+    reply: `${correctionAppliedMessage(fieldLabel)}\n\n${installmentConfirmationMessage(installmentSummaryView(next, deps, taxonomyProposalLabel(nextState)))}`,
   };
 }
 
@@ -2490,6 +2776,10 @@ export async function applyMessage(
       draft.accountId = candidate.id;
       draft.cardId = undefined;
     }
+    draft.description = stripSelectedInstrumentFromDescription(
+      draft.description,
+      candidate.name,
+    );
     const next: ConversationState = {
       ...state,
       status: statusForDraft(draft),
@@ -2582,7 +2872,11 @@ export async function applyMessage(
     // A typed category correction replaces any pending AI proposal — mirrors
     // the ct: tapped path so the UI never lies about which category is set.
     ...(correction.field === "category"
-      ? { proposedCategoryName: undefined }
+      ? {
+          proposedCategoryName: undefined,
+          proposedSubcategory: undefined,
+          categoryCandidates: undefined,
+        }
       : {}),
   };
   const fieldLabel =
@@ -2626,10 +2920,234 @@ async function createOrReuseCategory(
   return { categoryId: created.id, reused: false };
 }
 
+async function createOrReuseSubcategory(
+  proposal: PendingSubcategoryProposal,
+  deps: ConversationDeps,
+): Promise<{
+  categoryId: string;
+  subcategoryId: string;
+  reused: boolean;
+} | null> {
+  if (
+    deps.listAllSubcategories === undefined ||
+    deps.createSubcategory === undefined
+  ) {
+    return null;
+  }
+  const wanted = normalizeText(proposal.subcategoryName);
+  const existing = await deps.listAllSubcategories();
+  const match = existing.find(
+    (subcategory) =>
+      subcategory.categoryId === proposal.categoryId &&
+      normalizeText(subcategory.name) === wanted,
+  );
+  if (match !== undefined) {
+    if (!match.isActive) {
+      await deps.restoreSubcategory?.(
+        match.id,
+        proposal.categoryId,
+        match.name,
+      );
+    }
+    return {
+      categoryId: proposal.categoryId,
+      subcategoryId: match.id,
+      reused: true,
+    };
+  }
+  const created = await deps.createSubcategory(
+    proposal.categoryId,
+    proposal.subcategoryName,
+  );
+  return {
+    categoryId: proposal.categoryId,
+    subcategoryId: created.id,
+    reused: false,
+  };
+}
+
+async function applyPendingTaxonomyToDraft(
+  state: ConversationState,
+  deps: ConversationDeps,
+): Promise<{
+  state: ConversationState;
+  draft: DraftInProgress;
+  categoryId: string;
+  subcategoryId?: string;
+} | null> {
+  if (
+    state.proposedCategoryName !== undefined &&
+    state.draft.categoryId === undefined
+  ) {
+    const resolved = await createOrReuseCategory(
+      state.proposedCategoryName,
+      deps,
+    );
+    if (resolved === null) {
+      return null;
+    }
+    const draft: DraftInProgress = {
+      ...state.draft,
+      categoryId: resolved.categoryId,
+      subcategoryId: undefined,
+      categoryNameFallback: state.proposedCategoryName,
+    };
+    return {
+      state: {
+        ...state,
+        draft,
+        proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
+        categoryCandidates: undefined,
+      },
+      draft,
+      categoryId: resolved.categoryId,
+    };
+  }
+
+  if (state.proposedSubcategory !== undefined) {
+    const resolved = await createOrReuseSubcategory(
+      state.proposedSubcategory,
+      deps,
+    );
+    if (resolved === null) {
+      return null;
+    }
+    const draft: DraftInProgress = {
+      ...state.draft,
+      categoryId: resolved.categoryId,
+      subcategoryId: resolved.subcategoryId,
+      categoryNameFallback: state.proposedSubcategory.categoryName,
+      categoryExplanation: "Subcategoria criada pelo usuário.",
+    };
+    return {
+      state: {
+        ...state,
+        draft,
+        proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
+        categoryCandidates: undefined,
+      },
+      draft,
+      categoryId: resolved.categoryId,
+      subcategoryId: resolved.subcategoryId,
+    };
+  }
+
+  return null;
+}
+
+async function resolvePendingTaxonomy(
+  state: ConversationState,
+  deps: ConversationDeps,
+): Promise<{
+  categoryId: string;
+  subcategoryId?: string;
+  categoryNameFallback?: string;
+  explanation: string;
+} | null> {
+  if (state.proposedCategoryName !== undefined) {
+    const resolved = await createOrReuseCategory(
+      state.proposedCategoryName,
+      deps,
+    );
+    if (resolved === null) {
+      return null;
+    }
+    return {
+      categoryId: resolved.categoryId,
+      categoryNameFallback: state.proposedCategoryName,
+      explanation: "Categoria criada pelo usuário.",
+    };
+  }
+  if (state.proposedSubcategory !== undefined) {
+    const resolved = await createOrReuseSubcategory(
+      state.proposedSubcategory,
+      deps,
+    );
+    if (resolved === null) {
+      return null;
+    }
+    return {
+      categoryId: resolved.categoryId,
+      subcategoryId: resolved.subcategoryId,
+      categoryNameFallback: state.proposedSubcategory.categoryName,
+      explanation: "Subcategoria criada pelo usuário.",
+    };
+  }
+  return null;
+}
+
+async function applyPendingTaxonomyToObligation(
+  state: ConversationState,
+  deps: ConversationDeps,
+): Promise<{
+  state: ConversationState;
+  draft: ObligationDraftInProgress;
+} | null> {
+  const draft = state.obligationDraft;
+  if (draft === undefined || taxonomyProposalLabel(state) === undefined) {
+    return null;
+  }
+  const resolved = await resolvePendingTaxonomy(state, deps);
+  if (resolved === null) {
+    return null;
+  }
+  const nextDraft: ObligationDraftInProgress = {
+    ...draft,
+    categoryId: resolved.categoryId,
+    subcategoryId: resolved.subcategoryId,
+    categoryExplanation: resolved.explanation,
+  };
+  return {
+    state: {
+      ...state,
+      obligationDraft: nextDraft,
+      proposedCategoryName: undefined,
+      proposedSubcategory: undefined,
+      categoryCandidates: undefined,
+    },
+    draft: nextDraft,
+  };
+}
+
+async function applyPendingTaxonomyToInstallment(
+  state: ConversationState,
+  deps: ConversationDeps,
+): Promise<{
+  state: ConversationState;
+  draft: InstallmentDraftInProgress;
+} | null> {
+  const draft = state.installmentDraft;
+  if (draft === undefined || taxonomyProposalLabel(state) === undefined) {
+    return null;
+  }
+  const resolved = await resolvePendingTaxonomy(state, deps);
+  if (resolved === null) {
+    return null;
+  }
+  const nextDraft: InstallmentDraftInProgress = {
+    ...draft,
+    categoryId: resolved.categoryId,
+    subcategoryId: resolved.subcategoryId,
+    categoryExplanation: resolved.explanation,
+  };
+  return {
+    state: {
+      ...state,
+      installmentDraft: nextDraft,
+      proposedCategoryName: undefined,
+      proposedSubcategory: undefined,
+      categoryCandidates: undefined,
+    },
+    draft: nextDraft,
+  };
+}
+
 /**
- * Confirm the draft. With a pending AI category proposal and no category yet:
- * create/reuse the category, assign it, persist through the normal `persist`,
- * then seed categorization_memory (the ONLY path that seeds — spec §3).
+ * Confirm the draft. With a pending AI taxonomy proposal and enough data to
+ * save: create/reuse it, assign it, persist through the normal `persist`, then
+ * seed categorization_memory (the ONLY path that seeds — spec §3).
  */
 async function confirmDraft(
   state: ConversationState,
@@ -2639,30 +3157,20 @@ async function confirmDraft(
 ): Promise<ConversationOutcome> {
   let working = state;
   if (
-    state.proposedCategoryName !== undefined &&
-    state.draft.categoryId === undefined &&
+    taxonomyProposalLabel(state) !== undefined &&
     state.draft.amountCents !== undefined
   ) {
-    const resolved = await createOrReuseCategory(
-      state.proposedCategoryName,
-      deps,
-    );
+    const resolved = await applyPendingTaxonomyToDraft(state, deps);
     if (resolved === null) {
-      // Category creation is not wired here — keep the draft, explain.
+      // Taxonomy creation is not wired here — keep the draft, explain.
       return { state, reply: notUnderstoodMessage() };
     }
-    const draft: DraftInProgress = {
-      ...state.draft,
-      categoryId: resolved.categoryId,
-      subcategoryId: undefined,
-      categoryNameFallback: state.proposedCategoryName,
-    };
-    working = { ...state, draft, proposedCategoryName: undefined };
+    working = resolved.state;
 
     const outcome = await persist(working, deps, messageText);
     // Seed only after the transaction is durable; seeding is an optimization
     // and must never make a saved lançamento look failed to the user.
-    const pattern = normalizeText(draft.description);
+    const pattern = normalizeText(resolved.draft.description);
     if (
       outcome.state.status === "saved" &&
       deps.seedCategorizationMemory !== undefined &&
@@ -2672,6 +3180,9 @@ async function confirmDraft(
         await deps.seedCategorizationMemory({
           pattern,
           categoryId: resolved.categoryId,
+          ...(resolved.subcategoryId === undefined
+            ? {}
+            : { subcategoryId: resolved.subcategoryId }),
           confidence: 0.95,
           explanation: `criada pelo usuário via bot em ${today}`,
         });
@@ -2801,6 +3312,10 @@ export async function applyCallback(
       draft.accountId = id;
       draft.cardId = undefined;
     }
+    draft.description = stripSelectedInstrumentFromDescription(
+      draft.description,
+      candidate.name,
+    );
     const next: ConversationState = {
       ...state,
       status: statusForDraft(draft),
@@ -2845,16 +3360,23 @@ export async function applyCallback(
       if (card === undefined) {
         return expiredOutcome(state);
       }
-      const next: InstallmentDraftInProgress = { ...draft, cardId };
+      const next: InstallmentDraftInProgress = {
+        ...draft,
+        cardId,
+        description: stripSelectedInstrumentFromDescription(
+          draft.description,
+          card.name,
+        ),
+      };
       const nextState: ConversationState = { ...state, installmentDraft: next };
       return {
         state: nextState,
         reply: installmentConfirmationMessage(
-          installmentSummaryView(next, depsValue, state.proposedCategoryName),
+          installmentSummaryView(next, depsValue, taxonomyProposalLabel(state)),
         ),
         keyboard:
-          state.proposedCategoryName !== undefined
-            ? installmentConfirmationKeyboard(state.proposedCategoryName)
+          taxonomyProposalLabel(state) !== undefined
+            ? installmentConfirmationKeyboard(taxonomyProposalLabel(state))
             : installmentConfirmationKeyboard(
                 undefined,
                 state.categoryCandidates,
@@ -2893,6 +3415,7 @@ export async function applyCallback(
         installmentDraft: next,
         categoryCandidates: undefined,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
       };
       return {
         state: nextState,
@@ -2926,6 +3449,7 @@ export async function applyCallback(
         ...state,
         installmentDraft: next,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
         categoryCandidates: undefined,
       };
       return {
@@ -2935,44 +3459,34 @@ export async function applyCallback(
       };
     }
     if (token === TOKENS.acceptProposal) {
-      if (state.proposedCategoryName === undefined) {
+      if (taxonomyProposalLabel(state) === undefined) {
         return expiredOutcome(state);
       }
       const depsValue = await getDeps();
-      const resolved = await createOrReuseCategory(
-        state.proposedCategoryName,
+      const resolved = await applyPendingTaxonomyToInstallment(
+        state,
         depsValue,
       );
       if (resolved === null) {
         return { state, reply: notUnderstoodMessage() };
       }
-      const next: InstallmentDraftInProgress = {
-        ...draft,
-        categoryId: resolved.categoryId,
-        subcategoryId: undefined,
-        categoryExplanation: "Categoria criada pelo usuário.",
-      };
-      const nextState: ConversationState = {
-        ...state,
-        installmentDraft: next,
-        proposedCategoryName: undefined,
-      };
       return {
-        state: nextState,
+        state: resolved.state,
         reply: installmentConfirmationMessage(
-          installmentSummaryView(next, depsValue),
+          installmentSummaryView(resolved.draft, depsValue),
         ),
         keyboard: installmentConfirmationKeyboard(),
       };
     }
     if (token === TOKENS.dropProposal) {
-      if (state.proposedCategoryName === undefined) {
+      if (taxonomyProposalLabel(state) === undefined) {
         return expiredOutcome(state);
       }
       const depsValue = await getDeps();
       const nextState: ConversationState = {
         ...state,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
       };
       return {
         state: nextState,
@@ -3071,6 +3585,7 @@ export async function applyCallback(
         obligationDraft: nextDraft,
         categoryCandidates: undefined,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
       };
       return {
         state: nextState,
@@ -3096,6 +3611,7 @@ export async function applyCallback(
         obligationDraft: nextDraft,
         categoryCandidates: undefined,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
       };
       return {
         state: nextState,
@@ -3104,42 +3620,28 @@ export async function applyCallback(
       };
     }
     if (token === TOKENS.acceptProposal) {
-      if (state.proposedCategoryName === undefined) {
+      if (taxonomyProposalLabel(state) === undefined) {
         return expiredOutcome(state);
       }
       const depsValue = await getDeps();
-      const resolved = await createOrReuseCategory(
-        state.proposedCategoryName,
-        depsValue,
-      );
+      const resolved = await applyPendingTaxonomyToObligation(state, depsValue);
       if (!resolved) return { state, reply: notUnderstoodMessage() };
-      const nextDraft = {
-        ...obligationDraft,
-        categoryId: resolved.categoryId,
-        subcategoryId: undefined,
-        categoryExplanation: "Categoria criada pelo usuário.",
-      };
-      const nextState: ConversationState = {
-        ...state,
-        obligationDraft: nextDraft,
-        proposedCategoryName: undefined,
-        categoryCandidates: undefined,
-      };
       return {
-        state: nextState,
+        state: resolved.state,
         reply: obligationConfirmationMessage(
-          obligationSummaryView(nextDraft, depsValue),
+          obligationSummaryView(resolved.draft, depsValue),
         ),
         keyboard: obligationConfirmationKeyboard(),
       };
     }
     if (token === TOKENS.dropProposal) {
-      if (state.proposedCategoryName === undefined) {
+      if (taxonomyProposalLabel(state) === undefined) {
         return expiredOutcome(state);
       }
       const nextState: ConversationState = {
         ...state,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
       };
       return {
         state: nextState,
@@ -3227,6 +3729,7 @@ export async function applyCallback(
         draft,
         categoryCandidates: undefined,
         proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
       },
       depsValue,
       correctionAppliedMessage("a categoria"),
@@ -3258,6 +3761,7 @@ export async function applyCallback(
       status: statusForDraft(draft),
       draft,
       proposedCategoryName: undefined,
+      proposedSubcategory: undefined,
       categoryCandidates: undefined,
     };
     return summaryOutcome(
@@ -3317,26 +3821,27 @@ export async function applyCallback(
   }
 
   if (token === TOKENS.acceptProposal) {
-    if (state.proposedCategoryName === undefined) {
+    if (taxonomyProposalLabel(state) === undefined) {
       return expiredOutcome(state);
     }
     const depsValue = await getDeps();
     const outcome = await confirmDraft(
       state,
       depsValue,
-      `confirmar (botão, nova categoria "${state.proposedCategoryName}")`,
+      `confirmar (botão, nova taxonomia "${taxonomyProposalLabel(state)}")`,
       today,
     );
     return { ...outcome, keyboard: keyboardForState(outcome.state) };
   }
   if (token === TOKENS.dropProposal) {
-    if (state.proposedCategoryName === undefined) {
+    if (taxonomyProposalLabel(state) === undefined) {
       return expiredOutcome(state);
     }
     const depsValue = await getDeps();
     const next: ConversationState = {
       ...state,
       proposedCategoryName: undefined,
+      proposedSubcategory: undefined,
     };
     return summaryOutcome(next, depsValue);
   }

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { createTransactionDraft, createInstallmentPlan } from "@family-finance/domain";
+import {
+  createTransactionDraft,
+  createInstallmentPlan,
+} from "@family-finance/domain";
 import {
   transactionInsertFromDraft,
   mapTransactionRow,
@@ -31,17 +34,15 @@ import {
   summarizeObligationsPressure,
   obligationUpdateFromChanges,
   createCategory,
+  createSubcategory,
+  restoreSubcategory,
   settleCardBill,
   findCardBillSettlements,
   confirmImportV2,
   type AppSupabaseClient,
 } from "./repositories.js";
 import { createServiceRoleClient } from "./index.js";
-import type {
-  TransactionRow,
-  InstallmentRow,
-  ObligationRow,
-} from "./types.js";
+import type { TransactionRow, InstallmentRow, ObligationRow } from "./types.js";
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
 const USER = "11111111-1111-1111-1111-111111111111";
@@ -187,7 +188,11 @@ describe("summarizeMonth", () => {
 describe("accountInsert", () => {
   it("builds a household-scoped checking account insert payload", () => {
     expect(
-      accountInsert({ householdId: HOUSEHOLD, kind: "checking", name: "  Conta Nubank  " }),
+      accountInsert({
+        householdId: HOUSEHOLD,
+        kind: "checking",
+        name: "  Conta Nubank  ",
+      }),
     ).toEqual({
       household_id: HOUSEHOLD,
       kind: "checking",
@@ -197,7 +202,11 @@ describe("accountInsert", () => {
 
   it("builds an investment account insert payload", () => {
     expect(
-      accountInsert({ householdId: HOUSEHOLD, kind: "investment", name: "Tesouro" }),
+      accountInsert({
+        householdId: HOUSEHOLD,
+        kind: "investment",
+        name: "Tesouro",
+      }),
     ).toEqual({
       household_id: HOUSEHOLD,
       kind: "investment",
@@ -288,7 +297,11 @@ describe("installment plan inserts", () => {
     expect(rows.map((r) => r.amount_cents)).toEqual([33334, 33333, 33333]);
     expect(rows.reduce((sum, r) => sum + r.amount_cents, 0)).toBe(100000);
     // Due months are contiguous starting at the purchase month.
-    expect(rows.map((r) => r.due_month)).toEqual(["2026-06", "2026-07", "2026-08"]);
+    expect(rows.map((r) => r.due_month)).toEqual([
+      "2026-06",
+      "2026-07",
+      "2026-08",
+    ]);
     expect(rows.map((r) => r.number)).toEqual([1, 2, 3]);
     for (const row of rows) {
       expect(row.installment_group_id).toBe(groupId);
@@ -538,10 +551,14 @@ describe("transactionUpdateFromPatch", () => {
 
   it("rejects a payment patch with an empty id", () => {
     expect(() =>
-      transactionUpdateFromPatch({ payment: { type: "account", accountId: "" } }),
+      transactionUpdateFromPatch({
+        payment: { type: "account", accountId: "" },
+      }),
     ).toThrow(/conta/i);
     expect(() =>
-      transactionUpdateFromPatch({ payment: { type: "card", creditCardId: "" } }),
+      transactionUpdateFromPatch({
+        payment: { type: "card", creditCardId: "" },
+      }),
     ).toThrow(/cartão/i);
   });
 });
@@ -695,9 +712,10 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
       return Promise.resolve({ data: selectCalled ? row : null, error: null });
     },
     then(resolve: (value: { data: null; error: null }) => unknown) {
-      return Promise.resolve({ data: updateCalled ? null : null, error: null }).then(
-        resolve,
-      );
+      return Promise.resolve({
+        data: updateCalled ? null : null,
+        error: null,
+      }).then(resolve);
     },
   };
 
@@ -762,7 +780,10 @@ describe("updateTransaction with income+card guard", () => {
 
 describe("updateTransaction with transfer guard", () => {
   it("rejects a payment patch on a transfer row (card-bill settlement), pt-BR", async () => {
-    const client = fakeClientWithRow({ installment_id: null, kind: "transfer" });
+    const client = fakeClientWithRow({
+      installment_id: null,
+      kind: "transfer",
+    });
     await expect(
       updateTransaction(client, HOUSEHOLD, "tx-1", {
         payment: { type: "account", accountId: "a2" },
@@ -771,7 +792,10 @@ describe("updateTransaction with transfer guard", () => {
   });
 
   it("still allows an amountCents-only edit on a transfer row", async () => {
-    const client = fakeClientWithRow({ installment_id: null, kind: "transfer" });
+    const client = fakeClientWithRow({
+      installment_id: null,
+      kind: "transfer",
+    });
     await expect(
       updateTransaction(client, HOUSEHOLD, "tx-1", { amountCents: 5000 }),
     ).resolves.toBeUndefined();
@@ -896,7 +920,9 @@ describe("confirmImportV2", () => {
       },
     } as unknown as AppSupabaseClient;
 
-    await expect(confirmImportV2(client, batch, items)).resolves.toEqual(result);
+    await expect(confirmImportV2(client, batch, items)).resolves.toEqual(
+      result,
+    );
     expect(calls).toEqual([
       {
         name: "confirm_import_v2",
@@ -919,7 +945,11 @@ describe("findCardBillSettlements", () => {
   it("queries transfer rows for the household + month and maps the result", async () => {
     const { client, calls } = createRecordingClient({
       data: [
-        { credit_card_id: "card-1", amount_cents: 235000, occurred_on: "2026-07-06" },
+        {
+          credit_card_id: "card-1",
+          amount_cents: 235000,
+          occurred_on: "2026-07-06",
+        },
       ],
     });
     const out = await findCardBillSettlements(client, HOUSEHOLD, "2026-07");
@@ -1027,9 +1057,9 @@ describe("bot conversation store repositories", () => {
       /saveBotConversation failed: nope/,
     );
     const failingDelete = createRecordingClient({ error: { message: "nope" } });
-    await expect(deleteBotConversation(failingDelete.client, 1)).rejects.toThrow(
-      /deleteBotConversation failed: nope/,
-    );
+    await expect(
+      deleteBotConversation(failingDelete.client, 1),
+    ).rejects.toThrow(/deleteBotConversation failed: nope/);
   });
 });
 
@@ -1149,7 +1179,9 @@ describe("summarizeObligationsPressure", () => {
       },
     ];
     const paidRows = [{ amount_cents: 50000 }];
-    expect(summarizeObligationsPressure("2026-07", projected, paidRows)).toEqual({
+    expect(
+      summarizeObligationsPressure("2026-07", projected, paidRows),
+    ).toEqual({
       month: "2026-07",
       projectedUnpaidCents: 191044,
       paidCents: 50000,
@@ -1178,9 +1210,7 @@ describe("obligationUpdateFromChanges", () => {
   it("rejects invalid amounts and due days", () => {
     expect(() => obligationUpdateFromChanges({ amountCents: 0 })).toThrow();
     expect(() => obligationUpdateFromChanges({ dueDay: 29 })).toThrow();
-    expect(() =>
-      obligationUpdateFromChanges({ description: "  " }),
-    ).toThrow();
+    expect(() => obligationUpdateFromChanges({ description: "  " })).toThrow();
   });
 });
 
@@ -1252,11 +1282,121 @@ describe("createCategory", () => {
   });
 });
 
+describe("createSubcategory", () => {
+  it("inserts an active subcategory under the parent category", async () => {
+    let captured: unknown;
+    const client = {
+      from(table: string) {
+        expect(table).toBe("subcategories");
+        return {
+          insert(payload: unknown) {
+            captured = payload;
+            return {
+              select() {
+                return {
+                  async single() {
+                    return {
+                      data: {
+                        id: "sub-new",
+                        household_id: "house-1",
+                        category_id: "cat-food",
+                        name: "Restaurante temático",
+                        is_active: true,
+                        created_at: "2026-07-04T00:00:00Z",
+                        updated_at: "2026-07-04T00:00:00Z",
+                      },
+                      error: null,
+                    };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as AppSupabaseClient;
+
+    const row = await createSubcategory(
+      client,
+      "house-1",
+      "cat-food",
+      "Restaurante temático",
+    );
+
+    expect(captured).toEqual({
+      household_id: "house-1",
+      category_id: "cat-food",
+      name: "Restaurante temático",
+      is_active: true,
+    });
+    expect(row.id).toBe("sub-new");
+  });
+
+  it("throws a named error when subcategory insert fails", async () => {
+    const client = {
+      from() {
+        return {
+          insert() {
+            return {
+              select() {
+                return {
+                  async single() {
+                    return { data: null, error: { message: "boom" } };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as AppSupabaseClient;
+
+    await expect(
+      createSubcategory(client, "house-1", "cat-food", "Pets"),
+    ).rejects.toThrow(/createSubcategory failed: boom/);
+  });
+});
+
+describe("restoreSubcategory", () => {
+  it("reactivates a household-scoped subcategory", async () => {
+    const eqs: Array<[string, string]> = [];
+    let captured: unknown;
+    const client = {
+      from(table: string) {
+        expect(table).toBe("subcategories");
+        const builder = {
+          error: null,
+          update(payload: unknown) {
+            captured = payload;
+            return builder;
+          },
+          eq(field: string, value: string) {
+            eqs.push([field, value]);
+            return builder;
+          },
+        };
+        return builder;
+      },
+    } as unknown as AppSupabaseClient;
+
+    await restoreSubcategory(client, "house-1", "sub-old");
+
+    expect(captured).toEqual({ is_active: true });
+    expect(eqs).toEqual([
+      ["household_id", "house-1"],
+      ["id", "sub-old"],
+    ]);
+  });
+});
+
 describe("resolveTelegramMember (review: id back-fill clears username)", () => {
   /** Recording client: null on the id lookup, a member on the username lookup,
    * capturing the back-fill update payload. */
   function client() {
-    const updates: Array<{ payload: Record<string, unknown>; eq: Array<[string, unknown]> }> = [];
+    const updates: Array<{
+      payload: Record<string, unknown>;
+      eq: Array<[string, unknown]>;
+    }> = [];
     let call = 0;
     const build = () => {
       const eqs: Array<[string, unknown]> = [];
@@ -1321,7 +1461,10 @@ describe("resolveTelegramMember (review: id back-fill clears username)", () => {
 describe("getMonthlySummary pagination (review: no 1000-row cap on money sums)", () => {
   /** A fake that caps each .range() page like PostgREST's max_rows, so the
    * repository must page to see every row. */
-  function pagingClient(rows: Array<{ kind: string; amount_cents: number }>, cap = 1000) {
+  function pagingClient(
+    rows: Array<{ kind: string; amount_cents: number }>,
+    cap = 1000,
+  ) {
     const build = () => {
       let rangeFrom = 0;
       let rangeTo = Number.MAX_SAFE_INTEGER;

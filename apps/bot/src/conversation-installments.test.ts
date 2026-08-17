@@ -12,7 +12,10 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import type { CategoryCatalog, CategorizationResult } from "@family-finance/categorization";
+import type {
+  CategoryCatalog,
+  CategorizationResult,
+} from "@family-finance/categorization";
 import type { InstallmentPlan } from "@family-finance/domain";
 
 import {
@@ -27,7 +30,11 @@ import type {
   InterpretedIntent,
   MessageClassifier,
 } from "./interpret.js";
-import { CARD_TOKEN_PREFIX, TOKENS } from "./keyboards.js";
+import {
+  CARD_TOKEN_PREFIX,
+  CATEGORY_SUGGESTION_TOKEN_PREFIX,
+  TOKENS,
+} from "./keyboards.js";
 
 const TODAY = "2026-07-06";
 
@@ -40,7 +47,9 @@ const CATALOG: CategoryCatalog = {
   subcategories: [],
 };
 
-function classifierReturning(result: InterpretedIntent | null): MessageClassifier {
+function classifierReturning(
+  result: InterpretedIntent | null,
+): MessageClassifier {
   return async () => result;
 }
 
@@ -122,6 +131,60 @@ describe("card installment start: card resolution", () => {
     expect(reply).toMatch(/1ª parcela jul\/2026/);
   });
 
+  it("starts from total form: `Notebook 3600 em 12x no Nubank`", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          cardKeyword: "Nubank",
+        }),
+      ),
+    });
+
+    const outcome = await startConversation(
+      { text: "Notebook 3600 em 12x no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(outcome.state.draft.amountCents).toBeUndefined();
+    expect(outcome.state.installmentDraft?.description).toBe("Notebook");
+    expect(outcome.state.installmentDraft?.totalCents).toBe(360000);
+    expect(outcome.state.installmentDraft?.installmentCount).toBe(12);
+    expect(outcome.state.installmentDraft?.cardId).toBe("card-1");
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+    expect(deps.createInstallmentPurchase).not.toHaveBeenCalled();
+    expect(outcome.reply).toContain("Confirme a compra parcelada:");
+    expect(outcome.reply).not.toContain("Confirme o lançamento:");
+  });
+
+  it("starts from per-parcel form: `Notebook 12x de 300 no Nubank`", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          perInstallmentCents: 30000,
+          installmentCount: 12,
+          cardKeyword: "Nubank",
+        }),
+      ),
+    });
+
+    const outcome = await startConversation(
+      { text: "Notebook 12x de 300 no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(outcome.state.installmentDraft?.description).toBe("Notebook");
+    expect(outcome.state.installmentDraft?.totalCents).toBe(360000);
+    expect(outcome.state.installmentDraft?.installmentCount).toBe(12);
+    expect(outcome.state.installmentDraft?.cardId).toBe("card-1");
+    expect(outcome.reply).toContain("R$ 3.600,00 em 12× de R$ 300,00");
+  });
+
   it("keyword match picks the right card among two", async () => {
     const { deps } = buildDeps({
       listActiveCards: () => [
@@ -195,6 +258,94 @@ describe("card installment start: card resolution", () => {
       ],
     });
   });
+
+  it("`Notebook 3600 parcelado` asks which card when multiple active cards exist", async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "Inter" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+
+    const { state, reply, keyboard } = await startConversation(
+      { text: "Notebook 3600 parcelado", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("awaiting_installment_confirmation");
+    expect(state.installmentDraft?.cardId).toBeUndefined();
+    expect(reply).toContain("Qual cartão?");
+    expect(
+      keyboard?.inline_keyboard.flat().map((button) => button.text),
+    ).toEqual(["Inter", "Nubank"]);
+  });
+
+  it("parcelado only offers credit cards when Mercado Pago is both account and card", async () => {
+    const { deps } = buildDeps({
+      listActiveAccounts: () => [
+        { id: "acct-mercado-pago", name: "Mercado Pago" },
+      ],
+      listActiveCards: () => [
+        { id: "card-mercado-pago", name: "Mercado Pago" },
+        { id: "card-itau", name: "Itaú" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          cardKeyword: "Mercado Pago",
+        }),
+      ),
+    });
+
+    const outcome = await startConversation(
+      { text: "Notebook 3600 em 12x Mercado Pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(outcome.state.installmentDraft?.cardId).toBe("card-mercado-pago");
+    expect(outcome.state.paymentCandidates).toBeUndefined();
+    expect(
+      outcome.keyboard?.inline_keyboard.flat().map((button) => button.text),
+    ).not.toContain("Conta Mercado Pago");
+  });
+
+  it("multi-word Mercado Pago credit card is stripped from installment description", async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-mercado-pago", name: "Mercado Pago" },
+        { id: "card-itau", name: "Itaú" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          description: "Notebook Mercado Pago",
+          totalCents: 360000,
+          installmentCount: 12,
+          cardKeyword: "Mercado Pago",
+        }),
+      ),
+    });
+
+    const outcome = await startConversation(
+      {
+        text: "Notebook 3600 em 12x credito Mercado Pago",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(outcome.state.installmentDraft?.description).toBe("Notebook");
+    expect(outcome.state.installmentDraft?.cardId).toBe("card-mercado-pago");
+    expect(outcome.reply).toContain("no Mercado Pago");
+  });
 });
 
 describe("card installment start: amount normalization + summary", () => {
@@ -257,42 +408,56 @@ describe("card installment start: amount normalization + summary", () => {
 describe("card installment start: missing installment count", () => {
   it("confirmar without count asks 'Em quantas parcelas?'", async () => {
     const { deps } = buildDeps({
-      classifyMessage: classifierReturning(purchaseIntent({ totalCents: 360000 })),
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000 }),
+      ),
     });
     const { state } = await startConversation(
       { text: "notebook 3600", fromUserId: "user-alvaro" },
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(state, "confirmar", deps, { today: TODAY });
-    expect(outcome.reply).toBe("Em quantas parcelas? Responda com \"parcelas 12\".");
+    const outcome = await applyMessage(state, "confirmar", deps, {
+      today: TODAY,
+    });
+    expect(outcome.reply).toBe(
+      'Em quantas parcelas? Responda com "parcelas 12".',
+    );
     expect(outcome.state.status).toBe("awaiting_installment_confirmation");
   });
 
   it('"parcelas 12" fills the count', async () => {
     const { deps } = buildDeps({
-      classifyMessage: classifierReturning(purchaseIntent({ totalCents: 360000 })),
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000 }),
+      ),
     });
     const { state } = await startConversation(
       { text: "notebook 3600", fromUserId: "user-alvaro" },
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(state, "parcelas 12", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "parcelas 12", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.installmentDraft?.installmentCount).toBe(12);
     expect(outcome.reply).toContain("Atualizei");
   });
 
   it('"parcelas 1" is rejected (needs at least 2)', async () => {
     const { deps } = buildDeps({
-      classifyMessage: classifierReturning(purchaseIntent({ totalCents: 360000 })),
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000 }),
+      ),
     });
     const { state } = await startConversation(
       { text: "notebook 3600", fromUserId: "user-alvaro" },
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(state, "parcelas 1", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "parcelas 1", deps, {
+      today: TODAY,
+    });
     expect(outcome.reply).toBe(
       "O parcelamento precisa de pelo menos 2 parcelas.",
     );
@@ -301,7 +466,9 @@ describe("card installment start: missing installment count", () => {
 });
 
 describe("card installment corrections", () => {
-  async function startDraft(deps: ConversationDeps): Promise<ConversationState> {
+  async function startDraft(
+    deps: ConversationDeps,
+  ): Promise<ConversationState> {
     const { state } = await startConversation(
       { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
       deps,
@@ -317,7 +484,9 @@ describe("card installment corrections", () => {
       ),
     });
     const state = await startDraft(deps);
-    const outcome = await applyMessage(state, "valor 3.700", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "valor 3.700", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.installmentDraft?.totalCents).toBe(370000);
     expect(outcome.reply).toContain("Atualizei");
   });
@@ -337,7 +506,9 @@ describe("card installment corrections", () => {
       ),
     });
     const state = await startDraft(deps);
-    const outcome = await applyMessage(state, "cartão inter", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "cartão inter", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.installmentDraft?.cardId).toBe("card-2");
     expect(outcome.reply).toContain("Atualizei");
   });
@@ -363,9 +534,26 @@ describe("card installment corrections", () => {
       ),
     });
     const state = await startDraft(deps);
-    const outcome = await applyMessage(state, "data 12/06", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "data 12/06", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.installmentDraft?.purchasedOn).toBe("2026-06-12");
     expect(outcome.reply).toContain("Atualizei");
+  });
+
+  it('"dia 08/02" corrects the purchase date as DD/MM', async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const state = await startDraft(deps);
+    const outcome = await applyMessage(state, "dia 08/02", deps, {
+      today: TODAY,
+    });
+    expect(outcome.state.installmentDraft?.purchasedOn).toBe("2026-02-08");
+    expect(outcome.reply).toContain("Atualizei a data");
+    expect(outcome.reply).toContain("1ª parcela fev/2026");
   });
 
   it('"cartão c6" switches to a short-named card (whole-string fallback)', async () => {
@@ -383,7 +571,9 @@ describe("card installment corrections", () => {
       ),
     });
     const state = await startDraft(deps);
-    const outcome = await applyMessage(state, "cartão c6", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "cartão c6", deps, {
+      today: TODAY,
+    });
     expect(outcome.state.installmentDraft?.cardId).toBe("card-2");
     expect(outcome.reply).toContain("Atualizei");
   });
@@ -395,7 +585,9 @@ describe("card installment corrections", () => {
       ),
     });
     const state = await startDraft(deps);
-    const outcome = await applyMessage(state, "cartão xyz", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "cartão xyz", deps, {
+      today: TODAY,
+    });
     expect(outcome.reply).toContain('Não encontrei o cartão "xyz"');
   });
 });
@@ -417,11 +609,14 @@ describe("card installment confirm: persistence", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(state, "confirmar", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "confirmar", deps, {
+      today: TODAY,
+    });
 
     expect(outcome.state.status).toBe("saved");
     expect(createInstallmentPurchase).toHaveBeenCalledTimes(1);
-    const plan = createInstallmentPurchase.mock.calls[0]?.[0] as InstallmentPlan;
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
     expect(plan.group.totalAmount.cents).toBe(360000);
     expect(plan.group.installmentCount).toBe(12);
     expect(plan.group.creditCardId).toBe("card-1");
@@ -447,7 +642,9 @@ describe("card installment confirm: persistence", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(state, "confirmar", deps, { today: TODAY });
+    const outcome = await applyMessage(state, "confirmar", deps, {
+      today: TODAY,
+    });
 
     expect(outcome.state.status).toBe("cancelled");
     expect(outcome.reply).toBe(
@@ -473,13 +670,16 @@ describe("card installment confirm: persistence", () => {
       { today: TODAY },
     );
     await applyMessage(state, "confirmar", deps, { today: TODAY });
-    const plan = createInstallmentPurchase.mock.calls[0]?.[0] as InstallmentPlan;
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
     expect(plan.installments[0]?.dueMonth).toBe("2026-07");
   });
 });
 
 describe("card installment confirmation keyboard has no responsável button", () => {
-  function flatten(keyboard: { inline_keyboard: { callback_data: string }[][] } | undefined) {
+  function flatten(
+    keyboard: { inline_keyboard: { callback_data: string }[][] } | undefined,
+  ) {
     return (keyboard?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
   }
 
@@ -512,9 +712,14 @@ describe("card installment confirmation keyboard has no responsável button", ()
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(state, `${CARD_TOKEN_PREFIX}card-2`, deps, {
-      today: TODAY,
-    });
+    const outcome = await applyCallback(
+      state,
+      `${CARD_TOKEN_PREFIX}card-2`,
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(flatten(outcome.keyboard)).not.toContain(TOKENS.responsible);
   });
 
@@ -587,7 +792,9 @@ describe("card installment callback parity", () => {
     expect(outcome.state.status).toBe("saved");
     expect(createInstallmentPurchase).toHaveBeenCalledTimes(1);
 
-    const second = await applyCallback(outcome.state, "cf", deps, { today: TODAY });
+    const second = await applyCallback(outcome.state, "cf", deps, {
+      today: TODAY,
+    });
     expect(second.silent).toBe(true);
     expect(second.toast).toBe("Já salvo ✅");
     expect(createInstallmentPurchase).toHaveBeenCalledTimes(1);
@@ -610,9 +817,14 @@ describe("card installment callback parity", () => {
     );
     expect(state.installmentDraft?.cardId).toBeUndefined();
 
-    const outcome = await applyCallback(state, `${CARD_TOKEN_PREFIX}card-2`, deps, {
-      today: TODAY,
-    });
+    const outcome = await applyCallback(
+      state,
+      `${CARD_TOKEN_PREFIX}card-2`,
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(outcome.state.installmentDraft?.cardId).toBe("card-2");
     expect(outcome.reply).toContain("Inter");
   });
@@ -642,9 +854,118 @@ describe("card installment callback parity", () => {
   });
 });
 
+describe("card installment category suggestions", () => {
+  it("prefills the top existing subcategory suggestion while keeping suggestion buttons", async () => {
+    const { deps } = buildDeps({
+      catalog: {
+        ...CATALOG,
+        subcategories: [
+          { id: "sub-notebook", categoryId: "cat-tech", name: "Notebook" },
+        ],
+      },
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          unifiedPrimary: true,
+          categoryCandidates: [
+            {
+              categoryName: "Eletrônicos",
+              subcategoryName: "Notebook",
+              confidence: 0.94,
+              explanation: "Notebook é eletrônico.",
+            },
+          ],
+        }),
+      ),
+    });
+
+    const outcome = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.installmentDraft?.categoryId).toBe("cat-tech");
+    expect(outcome.state.installmentDraft?.subcategoryId).toBe("sub-notebook");
+    expect(outcome.reply).toContain("Categoria: Eletrônicos > Notebook");
+    expect(outcome.keyboard?.inline_keyboard.flat()).toContainEqual({
+      text: "📂 Eletrônicos › Notebook",
+      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}0`,
+    });
+  });
+
+  it("accepts a proposed new subcategory into the installment draft without saving immediately", async () => {
+    const pendingSubcategory: CategorizationResult = {
+      status: "pending_new_subcategory",
+      suggestion: {
+        macroCategoryId: "cat-tech",
+        confidence: 0.91,
+        explanation: "Notebook gamer ainda não existe.",
+        source: "ai",
+      },
+      pendingCategory: {
+        categoryName: "Eletrônicos",
+        subcategoryName: "Notebook gamer",
+        confidence: 0.91,
+        explanation: "Notebook gamer ainda não existe.",
+      },
+      requiresConfirmation: true,
+    };
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+      suggestCategory: vi.fn(async () => pendingSubcategory),
+      listAllSubcategories: vi.fn(async () => []),
+      createSubcategory: vi.fn(async () => ({ id: "sub-gamer" })),
+      restoreSubcategory: vi.fn(async () => undefined),
+    });
+
+    const start = await startConversation(
+      { text: "notebook gamer 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(start.state.installmentDraft?.categoryId).toBe("cat-tech");
+    expect(start.state.installmentDraft?.subcategoryId).toBeUndefined();
+    expect(start.state.proposedSubcategory).toEqual({
+      categoryId: "cat-tech",
+      categoryName: "Eletrônicos",
+      subcategoryName: "Notebook gamer",
+      explanation: "Notebook gamer ainda não existe.",
+    });
+    expect(start.reply).toContain(
+      'Categoria: "Eletrônicos > Notebook gamer" (nova — sugerida)',
+    );
+
+    const accepted = await applyCallback(
+      start.state,
+      TOKENS.acceptProposal,
+      deps,
+      { today: TODAY },
+    );
+
+    expect(deps.createSubcategory).toHaveBeenCalledWith(
+      "cat-tech",
+      "Notebook gamer",
+    );
+    expect(accepted.state.status).toBe("awaiting_installment_confirmation");
+    expect(accepted.state.installmentDraft?.categoryId).toBe("cat-tech");
+    expect(accepted.state.installmentDraft?.subcategoryId).toBe("sub-gamer");
+    expect(accepted.state.proposedSubcategory).toBeUndefined();
+    expect(deps.createInstallmentPurchase).not.toHaveBeenCalled();
+  });
+});
+
 const PROPOSAL: CategorizationResult = {
   status: "pending_new_category",
-  suggestion: { confidence: 0.9, explanation: "Petz é um pet shop.", source: "ai" },
+  suggestion: {
+    confidence: 0.9,
+    explanation: "Petz é um pet shop.",
+    source: "ai",
+  },
   pendingCategory: {
     categoryName: "Pets",
     subcategoryName: null,
@@ -654,7 +975,9 @@ const PROPOSAL: CategorizationResult = {
   requiresConfirmation: true,
 };
 
-function proposalDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
+function proposalDeps(
+  overrides: Partial<ConversationDeps> = {},
+): ConversationDeps {
   const { deps } = buildDeps({
     catalog: {
       ...CATALOG,
@@ -685,7 +1008,9 @@ describe("card installment: AI new-category proposal sub-flow", () => {
     expect(outcome.state.proposedCategoryName).toBe("Pets");
     expect(outcome.reply).toContain('Categoria: "Pets" (nova — sugerida)');
 
-    const flat = (outcome.keyboard?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
+    const flat = (outcome.keyboard?.inline_keyboard ?? [])
+      .flat()
+      .map((b) => b.callback_data);
     expect(flat).toContain(TOKENS.acceptProposal);
     expect(flat).toContain(TOKENS.categories);
     expect(flat).toContain(TOKENS.dropProposal);
@@ -700,9 +1025,14 @@ describe("card installment: AI new-category proposal sub-flow", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(start.state, TOKENS.acceptProposal, deps, {
-      today: TODAY,
-    });
+    const outcome = await applyCallback(
+      start.state,
+      TOKENS.acceptProposal,
+      deps,
+      {
+        today: TODAY,
+      },
+    );
 
     expect(deps.createCategory).toHaveBeenCalledWith("Pets");
     expect(outcome.state.installmentDraft?.categoryId).toBe("cat-pets");
@@ -728,9 +1058,14 @@ describe("card installment: AI new-category proposal sub-flow", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(start.state, TOKENS.acceptProposal, deps, {
-      today: TODAY,
-    });
+    const outcome = await applyCallback(
+      start.state,
+      TOKENS.acceptProposal,
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(deps.createCategory).not.toHaveBeenCalled();
     expect(outcome.state.installmentDraft?.categoryId).toBe("cat-pets-x");
   });
@@ -742,12 +1077,19 @@ describe("card installment: AI new-category proposal sub-flow", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(start.state, TOKENS.dropProposal, deps, {
-      today: TODAY,
-    });
+    const outcome = await applyCallback(
+      start.state,
+      TOKENS.dropProposal,
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(outcome.state.proposedCategoryName).toBeUndefined();
     expect(outcome.reply).not.toContain("(nova — sugerida)");
-    const flat = (outcome.keyboard?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
+    const flat = (outcome.keyboard?.inline_keyboard ?? [])
+      .flat()
+      .map((b) => b.callback_data);
     expect(flat).toContain(TOKENS.confirm);
     expect(deps.createCategory).not.toHaveBeenCalled();
     expect(deps.createInstallmentPurchase).not.toHaveBeenCalled();
@@ -763,9 +1105,14 @@ describe("card installment: AI new-category proposal sub-flow", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyCallback(start.state, TOKENS.acceptProposal, deps, {
-      today: TODAY,
-    });
+    const outcome = await applyCallback(
+      start.state,
+      TOKENS.acceptProposal,
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(outcome.state.proposedCategoryName).toBe("Pets");
     expect(outcome.state.installmentDraft?.categoryId).toBeUndefined();
     expect(outcome.state.status).toBe("awaiting_installment_confirmation");
