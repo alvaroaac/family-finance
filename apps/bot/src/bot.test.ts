@@ -815,6 +815,8 @@ describe("LLM text interpretation (always runs; LLM owns structured fields)", ()
     expect(outcome.state.draft.amountCents).toBe(20000);
     expect(outcome.state.draft.cardId).toBe("card-nubank");
     expect(outcome.state.draft.accountId).toBeUndefined();
+    expect(outcome.state.draft.categoryId).toBe("cat-food");
+    expect(outcome.reply).toContain("Categoria: Alimentação");
     expect(outcome.state.categoryCandidates).toEqual([
       {
         categoryId: "cat-food",

@@ -837,6 +837,22 @@ export async function restoreCategory(
   }
 }
 
+/** Re-activate an archived subcategory under its household. */
+export async function restoreSubcategory(
+  client: AppSupabaseClient,
+  householdId: string,
+  subcategoryId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("subcategories")
+    .update({ is_active: true })
+    .eq("household_id", householdId)
+    .eq("id", subcategoryId);
+  if (error !== null) {
+    throw new Error(`restoreSubcategory failed: ${error.message}`);
+  }
+}
+
 /**
  * Create a new ACTIVE macro category for a household. Used by the Telegram
  * bot's category-creation flows (AI proposal accept + "nova categoria"); the
@@ -858,6 +874,32 @@ export async function createCategory(
     throw new Error(`createCategory failed: ${error.message}`);
   }
   return data as CategoryRow;
+}
+
+/**
+ * Create a new ACTIVE subcategory under an existing macro category. The caller
+ * is responsible for deduping names under the parent before inserting.
+ */
+export async function createSubcategory(
+  client: AppSupabaseClient,
+  householdId: string,
+  categoryId: string,
+  name: string,
+): Promise<SubcategoryRow> {
+  const { data, error } = await client
+    .from("subcategories")
+    .insert({
+      household_id: householdId,
+      category_id: categoryId,
+      name,
+      is_active: true,
+    })
+    .select("*")
+    .single();
+  if (error !== null) {
+    throw new Error(`createSubcategory failed: ${error.message}`);
+  }
+  return data as SubcategoryRow;
 }
 
 /**

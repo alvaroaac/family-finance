@@ -40,8 +40,11 @@ import {
   listObligations,
   materializeObligationPayment as dbMaterializeObligationPayment,
   listAllCategories as dbListAllCategories,
+  listAllSubcategories as dbListAllSubcategories,
   createCategory as dbCreateCategory,
+  createSubcategory as dbCreateSubcategory,
   restoreCategory as dbRestoreCategory,
+  restoreSubcategory as dbRestoreSubcategory,
   createCategorizationMemory,
   getCardPressureForCard,
   settleCardBill as dbSettleCardBill,
@@ -342,12 +345,60 @@ async function buildDeps(
         });
       }
     },
+    listAllSubcategories: async () =>
+      (await dbListAllSubcategories(client, householdId)).map((s) => ({
+        id: s.id,
+        categoryId: s.category_id,
+        name: s.name,
+        isActive: s.is_active,
+      })),
+    createSubcategory: async (categoryId: string, name: string) => {
+      const row = await dbCreateSubcategory(
+        client,
+        householdId,
+        categoryId,
+        name,
+      );
+      (
+        catalog.subcategories as Array<{
+          id: string;
+          categoryId: string;
+          name: string;
+        }>
+      ).push({
+        id: row.id,
+        categoryId: row.category_id,
+        name: row.name,
+      });
+      return { id: row.id };
+    },
+    restoreSubcategory: async (
+      subcategoryId: string,
+      categoryId: string,
+      subcategoryName: string,
+    ) => {
+      await dbRestoreSubcategory(client, householdId, subcategoryId);
+      const known = catalog.subcategories.some((s) => s.id === subcategoryId);
+      if (!known) {
+        (
+          catalog.subcategories as Array<{
+            id: string;
+            categoryId: string;
+            name: string;
+          }>
+        ).push({
+          id: subcategoryId,
+          categoryId,
+          name: subcategoryName,
+        });
+      }
+    },
     seedCategorizationMemory: async (entry) => {
       await createCategorizationMemory(client, {
         household_id: householdId,
         pattern: entry.pattern,
         category_id: entry.categoryId,
-        subcategory_id: null,
+        subcategory_id: entry.subcategoryId ?? null,
         confidence: entry.confidence,
         explanation: entry.explanation,
         is_active: true,
