@@ -90,11 +90,15 @@ function fakeQueryBuilder(rows: FakeRow[]) {
     // paging with .range() — the real repos chain these on transactions and
     // installments reads.
     gte(column: string, value: unknown) {
-      filtered = filtered.filter((r) => (r[column] as string) >= (value as string));
+      filtered = filtered.filter(
+        (r) => (r[column] as string) >= (value as string),
+      );
       return api;
     },
     lte(column: string, value: unknown) {
-      filtered = filtered.filter((r) => (r[column] as string) <= (value as string));
+      filtered = filtered.filter(
+        (r) => (r[column] as string) <= (value as string),
+      );
       return api;
     },
     not(column: string, _operator: string, value: unknown) {
@@ -202,8 +206,7 @@ function settleCardBillRpc(
     };
   }
 
-  const transactions =
-    tables.transactions ?? (tables.transactions = []);
+  const transactions = tables.transactions ?? (tables.transactions = []);
   const existing = transactions.find(
     (r) =>
       r.kind === "transfer" &&
@@ -260,7 +263,12 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
     ],
     subcategories: [],
     accounts: [
-      { id: "acct-1", household_id: "house-1", kind: "checking", name: "Conta" },
+      {
+        id: "acct-1",
+        household_id: "house-1",
+        kind: "checking",
+        name: "Conta",
+      },
     ],
     credit_cards: [],
     categorization_memory: [],
@@ -333,7 +341,11 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
 }
 
 const IDENTITIES: Record<string, BotMemberIdentity> = {
-  "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
+  "777": {
+    householdId: "house-1",
+    userId: "user-alvaro",
+    displayName: "Alvaro",
+  },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
   "@karolzinha": {
     householdId: "house-1",
@@ -425,7 +437,9 @@ function callbackUpdate(
 // Classifier stubs (Task 4 intent payloads) — the real LLM is never called.
 // ---------------------------------------------------------------------------
 
-function classifierReturning(result: InterpretedIntent | null): MessageClassifier {
+function classifierReturning(
+  result: InterpretedIntent | null,
+): MessageClassifier {
   return async () => result;
 }
 
@@ -438,6 +452,84 @@ const CARD_SEED: FakeRow = {
 };
 
 describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
+  it.each([
+    ["returns null", null],
+    [
+      "incorrectly returns plain",
+      {
+        intent: "plain" as const,
+        expense: { description: "Notebook 12x", amountCents: 30000 },
+      },
+    ],
+  ])(
+    "creates the canonical installment plan when the classifier %s",
+    async (_label, classified) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const classifyMessage = classifierReturning(classified);
+
+      for (const text of [
+        "Notebook em 12x de 300 no credito nubank",
+        "confirmar",
+      ]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage,
+        });
+      }
+
+      expect(tables.installment_groups).toHaveLength(1);
+      expect(tables.installments).toHaveLength(12);
+      expect(tables.transactions ?? []).toHaveLength(0);
+      expect(tables.installment_groups?.[0]?.description).toBe("Notebook");
+      expect(
+        tables.installments?.every((row) => row.description === "Notebook"),
+      ).toBe(true);
+    },
+  );
+
+  it("creates one flat card transaction for 1x even when AI says installment", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
+    const { telegram } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook 12x",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+
+    for (const text of ["Notebook 3600 em 1x no Nubank", "confirmar"]) {
+      await handleWebhook({
+        rawBody: textUpdate(777, text),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+    }
+
+    expect(tables.transactions).toHaveLength(1);
+    expect(tables.installment_groups ?? []).toHaveLength(0);
+    expect(tables.installments ?? []).toHaveLength(0);
+  });
+
   it("defaults plain bot expenses to the Sao Paulo date near a UTC boundary", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T01:30:00Z"));
@@ -475,7 +567,9 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
   });
 
   it("story 1: card installment purchase -> confirmar persists group + 12 parcels, closing_day respected", async () => {
-    const { client, tables } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
     const { telegram, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
     const classifyMessage = classifierReturning({
@@ -580,7 +674,10 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     // Before: the month's expense total from the direct card charge alone.
     const beforeSummary = summarizeMonth(
       month,
-      tables.transactions as Array<{ kind: string; amount_cents: number }> as never,
+      tables.transactions as Array<{
+        kind: string;
+        amount_cents: number;
+      }> as never,
     );
     expect(beforeSummary.expenseCents).toBe(15000);
 
@@ -624,7 +721,10 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     // excluded from summarizeMonth (no double count of the card spend).
     const afterSummary = summarizeMonth(
       month,
-      tables.transactions as Array<{ kind: string; amount_cents: number }> as never,
+      tables.transactions as Array<{
+        kind: string;
+        amount_cents: number;
+      }> as never,
     );
     expect(afterSummary.expenseCents).toBe(beforeSummary.expenseCents);
     expect(afterSummary.expenseCents).toBe(15000);
@@ -727,7 +827,9 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
   });
 
   it("story 5: callback path parity — confirm installment via cf button; double-tap cf is a silent no-op with no second group", async () => {
-    const { client, tables } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
     const { telegram, answered } = fakeTelegram();
     const store = createInMemoryConversationStore();
     const classifyMessage = classifierReturning({
@@ -786,7 +888,13 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     const { client, tables } = fakeSupabase({
       credit_cards: [
         { ...CARD_SEED },
-        { id: "card-2", household_id: "house-1", name: "Inter", closing_day: 10, due_day: 20 },
+        {
+          id: "card-2",
+          household_id: "house-1",
+          name: "Inter",
+          closing_day: 10,
+          due_day: 20,
+        },
       ],
     });
     const { telegram, sent } = fakeTelegram();
@@ -837,8 +945,6 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(tables.installment_groups).toHaveLength(1);
     expect(
       ((tables.installment_groups as FakeRow[])[0] as FakeRow).credit_card_id,
-    ).toBe(
-      "card-1",
-    );
+    ).toBe("card-1");
   });
 });

@@ -95,6 +95,61 @@ function purchaseIntent(
 }
 
 describe("card installment start: card resolution", () => {
+  it.each([
+    ["classifier unavailable", null],
+    [
+      "classifier incorrectly says plain",
+      {
+        intent: "plain" as const,
+        expense: { description: "Notebook 12x", amountCents: 30000 },
+      },
+    ],
+  ])(
+    "routes the exact Notebook regression when %s",
+    async (_label, classified) => {
+      const { deps } = buildDeps({
+        classifyMessage: classifierReturning(classified),
+      });
+      const outcome = await startConversation(
+        {
+          text: "Notebook em 12x de 300 no credito nubank",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+      expect(outcome.state.installmentDraft).toMatchObject({
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+        cardId: "card-1",
+      });
+      expect(outcome.reply).toContain("Notebook");
+      expect(outcome.reply).not.toMatch(
+        /Notebook\s+(?:12x|cr[eé]dito|Nubank)/i,
+      );
+    },
+  );
+
+  it("keeps an explicit 1x credit purchase out of installment routing even when AI is wrong", async () => {
+    const { deps, createInstallmentPurchase } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const outcome = await startConversation(
+      { text: "Notebook 3600 em 1x no Nubank", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_confirmation");
+    expect(outcome.state.installmentDraft).toBeUndefined();
+    expect(createInstallmentPurchase).not.toHaveBeenCalled();
+  });
+
   it("no active card -> terminal refusal", async () => {
     const { deps, createInstallmentPurchase } = buildDeps({
       listActiveCards: () => [],
@@ -593,6 +648,29 @@ describe("card installment corrections", () => {
 });
 
 describe("card installment confirm: persistence", () => {
+  it("persists the canonical description on the group and every installment", async () => {
+    const { deps, createInstallmentPurchase } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Notebook em 12x de 300 no credito nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
+    expect(plan.group.description).toBe("Notebook");
+    expect(plan.installments).toHaveLength(12);
+    expect(
+      plan.installments.every((item) => item.description === "Notebook"),
+    ).toBe(true);
+  });
+
   it("confirm persists a plan matching the draft, with closingDay shift", async () => {
     const { deps, createInstallmentPurchase, logInteraction } = buildDeps({
       listActiveCards: () => [{ id: "card-1", name: "Nubank", closingDay: 5 }],

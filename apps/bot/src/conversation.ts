@@ -38,6 +38,10 @@ import type {
 } from "@family-finance/categorization";
 
 import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
+import {
+  applyDeterministicPrecedence,
+  detectFinancialRoute,
+} from "./financial-routing.js";
 import type {
   InterpretedCardPurchase,
   InterpretedExpense,
@@ -1455,6 +1459,20 @@ export async function startConversation(
   // Deterministic parsing runs first only to provide hints and a final fallback.
   // A successful unified interpreter owns the structured plain-expense fields.
   const parsed = parseExpenseText(input.text, { today: options.today });
+  const deterministic = detectFinancialRoute(input.text, {
+    knownCards: deps.listActiveCards?.() ?? [],
+    knownAccounts: deps.listActiveAccounts?.() ?? [],
+    merchantAliases: deps.merchantAliases,
+  });
+
+  if (deterministic.route === "ambiguous") {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply:
+        "Não consegui separar com segurança uma compra parcelada de uma obrigação ou pagamento. Diga se foi uma compra no cartão e informe o número de parcelas.",
+    };
+  }
 
   // Unified intent classification: when configured it sees every NEW message
   // with parser/DB context. A null result falls back to the parser path below.
@@ -1463,7 +1481,7 @@ export async function startConversation(
   // The draft still gets built from the parser — the reply just says so.
   let aiUnavailable = false;
   if (deps.classifyMessage !== undefined) {
-    const classified = await deps
+    const aiClassified = await deps
       .classifyMessage(input.text, {
         today: options.today,
         parserHints: parsed,
@@ -1481,7 +1499,11 @@ export async function startConversation(
         merchantAliases: deps.merchantAliases,
       })
       .catch(() => null);
-    aiUnavailable = classified === null;
+    const classified = applyDeterministicPrecedence(
+      deterministic,
+      aiClassified,
+    );
+    aiUnavailable = aiClassified === null;
     if (classified?.intent === "non_financial") {
       // Successful unified abstention: do not call Anthropic interpretation or
       // categorization. The deterministic parser still owns the safe fallback
@@ -1506,6 +1528,16 @@ export async function startConversation(
     if (classified?.intent === "plain") {
       classifiedExpense = classified.expense;
     }
+  } else {
+    const classified = applyDeterministicPrecedence(deterministic, null);
+    if (
+      classified !== null &&
+      classified.intent !== "plain" &&
+      classified.intent !== "non_financial"
+    ) {
+      return startClassifiedIntent(classified, input, deps, options, inputKind);
+    }
+    if (classified?.intent === "plain") classifiedExpense = classified.expense;
   }
 
   // LLM interpretation (spec §3.4): ALWAYS consulted when configured — its
