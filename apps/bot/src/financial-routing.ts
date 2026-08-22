@@ -23,6 +23,18 @@ export type DeterministicFinancialDecision = {
   installmentCount?: number;
   totalCents?: number;
   perInstallmentCents?: number;
+  monthlyAmountCents?: number;
+  dueDay?: number;
+  startDate?: { day: number; month: number };
+  paymentTarget?: "obligation" | "card";
+  suppressAiPaymentAmount?: boolean;
+  ambiguousPaymentNumber?: number;
+  billMonth?: string;
+  invalidBillMonth?: string;
+  settlementAccountKeyword?: string;
+  explicitAccountEvidence?: boolean;
+  explicitCardEvidence?: boolean;
+  accountKeyword?: string;
   cardKeyword?: string;
   reason?: string;
 };
@@ -32,6 +44,26 @@ type RoutingContext = {
   knownAccounts?: ReadonlyArray<{ id: string; name: string }>;
   merchantAliases?: Record<string, readonly string[]>;
 };
+
+type RoutedMarkPaidIntent = Extract<
+  InterpretedIntent,
+  { intent: "mark_paid" }
+> & { billMonth?: string };
+type RoutedMarkPaidWithSettlementAccount = RoutedMarkPaidIntent & {
+  settlementAccountKeyword?: string;
+};
+type RoutedInterpretedObligation = InterpretedObligation & {
+  accountKeyword?: string;
+};
+type RoutedObligationIntent = Omit<
+  Extract<InterpretedIntent, { intent: "obligation" }>,
+  "obligation"
+> & { obligation: RoutedInterpretedObligation };
+
+export type RoutedInterpretedIntent =
+  | Exclude<InterpretedIntent, { intent: "mark_paid" } | { intent: "obligation" }>
+  | RoutedObligationIntent
+  | RoutedMarkPaidWithSettlementAccount;
 
 const NUMBER_WORDS: Record<string, number> = {
   uma: 1,
@@ -51,8 +83,10 @@ const NUMBER_WORDS: Record<string, number> = {
 };
 
 const FINANCING_RE =
-  /\b(financiamento|emprestimo|consorcio|todo mes|mensal|por\s+\d+\s+mes(?:es)?|\d+\s+boletos?|debitad[ao]s?\s+na\s+conta|a partir de\s+\d{1,2}\/\d{1,2})\b/;
+  /\b(financiamento|emprestimo|consorcio|credito\s+(?:consignado|pessoal|imobiliario|habitacional|veicular|com\s+garantia|com\s+desconto\s+em\s+folha)|todo mes|mensal|por\s+\d+\s+mes(?:es)?|\d+\s+boletos?|debitad[ao]s?\s+na\s+conta|a partir de\s+\d{1,2}\/\d{1,2})\b/;
 const CARD_WORD_RE = /\b(cartao(?: de credito)?|credito)\b/;
+const LOAN_CREDIT_RE =
+  /\bcredito\s+(?:consignado|pessoal|imobiliario|habitacional|veicular|com\s+garantia|com\s+desconto\s+em\s+folha)\b/;
 const ACCOUNT_WORD_RE = /\b(pix|dinheiro|debito|na conta|no boleto)\b/;
 const INSTALLMENT_WORD_RE =
   /\b(parcelad[ao]s?|parcelei|parcelas?|prestacoes?|divid(?:i|ido|ida)\b|sem juros|com juros)\b/;
@@ -72,7 +106,7 @@ function titleCaseDescription(value: string): string | undefined {
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length === 0) return undefined;
-  if (/^iphone$/i.test(cleaned)) return "iPhone";
+  if (/^iphone(?:\s|$)/i.test(cleaned)) return `iPhone${cleaned.slice(6)}`;
   return cleaned[0]?.toLocaleUpperCase("pt-BR") + cleaned.slice(1);
 }
 
@@ -121,6 +155,28 @@ function knownCardKeyword(
   const normalized = normalize(text);
   const matches = (cards ?? []).filter((card) => {
     const escaped = normalize(card.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return [
+      ...normalized.matchAll(
+        new RegExp(`(?:^|\\s)${escaped}(?=$|[\\s,.;:!?-])`, "g"),
+      ),
+    ].some((match) => {
+      const before = normalized.slice(0, match.index ?? 0);
+      return !/\bpel[ao]\s+conta\s*$/u.test(before);
+    });
+  });
+  return matches.length === 1 ? matches[0]?.name : undefined;
+}
+
+function knownAccountKeyword(
+  text: string,
+  accounts: RoutingContext["knownAccounts"],
+): string | undefined {
+  const normalized = normalize(text);
+  const matches = (accounts ?? []).filter((account) => {
+    const escaped = normalize(account.name).replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&",
+    );
     return new RegExp(`(?:^|\\s)${escaped}(?=$|[\\s,.;:!?-])`).test(normalized);
   });
   return matches.length === 1 ? matches[0]?.name : undefined;
@@ -143,6 +199,295 @@ function stripKnownNames(text: string, context: RoutingContext): string {
   return result;
 }
 
+function maskNonMonetaryNumberSpans(text: string): string {
+  return text
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/giu, (match) =>
+      " ".repeat(match.length),
+    )
+    .replace(/(?<!\d\/)\b\d{1,2}\/\d{4}\b/giu, (match) =>
+      " ".repeat(match.length),
+    )
+    .replace(
+      /\b(?:a partir de\s+|dia\s+)?\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/giu,
+      (match) => " ".repeat(match.length),
+    )
+    .replace(/\bdia\s+\d{1,2}\b/giu, (match) => " ".repeat(match.length));
+}
+
+function stripPurchaseDateSpans(text: string): string {
+  return text
+    .replace(
+      /\b(?:hoje(?:\s+cedo)?|ontem|anteontem)\b/giu,
+      " ",
+    )
+    .replace(
+      /\b(?:a\s+partir\s+de\s+|(?:no\s+)?dia\s+|em\s+)?\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/giu,
+      " ",
+    );
+}
+
+function maskPaymentOrdinalSpans(text: string): {
+  text: string;
+  foundOrdinal: boolean;
+} {
+  let foundOrdinal = false;
+  const mask = (match: string) => {
+    foundOrdinal = true;
+    return " ".repeat(match.length);
+  };
+  const masked = text
+    .replace(
+      /(\b(?:paguei|quitei)\s+)([1-9]|1[0-2])(?=\s+(?:da|de|do)\s+(?:parcela|fatura|financiamento|empr[eé]stimo|cons[oó]rcio)\b)/giu,
+      (_match, prefix: string, ordinal: string) => `${prefix}${mask(ordinal)}`,
+    )
+    .replace(/\bn[uú]mero\s+\d+\b/giu, mask)
+    .replace(/\b\d+\s*[ªº]\s*(?=parcela\b)/giu, mask)
+    .replace(
+      /(\b(?:parcela solar|financiamento|empr[eé]stimo|cons[oó]rcio)\b[\p{L}\s]*?)\s+(?:[1-9]|1[0-2])\s+(?=por\s+(?:r\$\s*)?[\d.,]+)/giu,
+      (_match, target: string) =>
+        `${target}${mask(_match.slice(target.length))}`,
+    )
+    .replace(
+      /(\bparcela\s+(?:da|de|do)\s+[\p{L}\s]+?)\s+(?:[1-9]|1[0-2])\s*$/iu,
+      (_match, target: string) =>
+        `${target}${mask(_match.slice(target.length))}`,
+    )
+    .replace(
+      /(\b(?:parcela solar|financiamento|empr[eé]stimo|cons[oó]rcio)\b[\p{L}\s]*?)\s+(?:[1-9]|1[0-2])\s*$/iu,
+      (_match, target: string) =>
+        `${target}${mask(_match.slice(target.length))}`,
+    );
+  return { text: masked, foundOrdinal };
+}
+
+function leadingPaymentAmountCents(text: string): number | undefined {
+  const match =
+    /\b(?:paguei|quitei)\s+(r\$\s*)?([\d.,]+)(\s+reais)?\s+(?:da|de|do)\s+(?:parcela|fatura|financiamento|empr[eé]stimo|cons[oó]rcio)\b/iu.exec(
+      text,
+    );
+  if (match === null) return undefined;
+  const raw = match[2] ?? "";
+  const numericValue = Number(raw);
+  const bareSmallOrdinal =
+    match[1] === undefined &&
+    match[3] === undefined &&
+    !/[,.]/.test(raw) &&
+    Number.isInteger(numericValue) &&
+    numericValue >= 1 &&
+    numericValue <= 12;
+  return bareSmallOrdinal ? undefined : parseBrl(raw);
+}
+
+function explicitKnownCardSettlementAmountCents(
+  text: string,
+): number | undefined {
+  const masked = maskNonMonetaryNumberSpans(text);
+  const matches = [...masked.matchAll(/(?:r\$\s*)?\d[\d.,]*/giu)].filter(
+    (match) => {
+      const index = match.index ?? 0;
+      const before = masked.slice(0, index);
+      const after = masked.slice(index + match[0].length);
+      return !/[\p{L}\d]$/u.test(before) && !/^[\p{L}\d]/u.test(after);
+    },
+  );
+  return parseBrl(matches.at(-1)?.[0] ?? "");
+}
+
+function paymentSourceAccountKeyword(
+  text: string,
+  context: RoutingContext,
+): string | undefined {
+  const source = /\bpel[ao]\s+conta\s+(.+?)(?=\s+(?:(?:via|no)\s+pix\b|(?:r\$\s*)?\d[\d.,]*(?:\s+reais)?\b|pago\b|paga\b|quitado\b|quitada\b|hoje\b|ontem\b|dia\s+\d)|\s*$)/iu.exec(
+    text,
+  )?.[1];
+  if (source !== undefined) {
+    return (
+      knownAccountKeyword(source, context.knownAccounts) ??
+      titleCaseDescription(source)
+    );
+  }
+  return /\b(?:via|no)\s+pix\b/iu.test(text) ? "Pix" : undefined;
+}
+
+function ambiguousBarePaymentNumber(text: string): number | undefined {
+  const normalized = normalize(text);
+  const leading =
+    /\b(?:paguei|quitei)\s+(\d+)\s+(?:da|de|do)\s+(?:parcela|financiamento|emprestimo|consorcio)\b/.exec(
+      normalized,
+    );
+  if (leading !== null) return Number(leading[1]);
+
+  let core = normalized.trim();
+  let previous: string;
+  do {
+    previous = core;
+    core = core
+      .replace(/\s+(?:(?:via|no)\s+pix)\s*$/u, "")
+      .replace(
+        /\s+(?:hoje|ontem|anteontem|dia\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|pago|paga|quitado|quitada)\s*$/u,
+        "",
+      )
+      .replace(/\s+pel[ao]\s+conta\s+[\p{L}][\p{L}\d\s-]*\s*$/u, "")
+      .trim();
+  } while (core !== previous);
+
+  const trailing =
+    /\b(?:parcela\s+(?:da|de|do)|parcela solar|financiamento|emprestimo|consorcio)\b(.+?)\s+(\d+)\s*$/.exec(
+      core,
+    );
+  if (trailing === null) return undefined;
+  const beforeNumber = trailing[1]?.trim() ?? "";
+  return /(?:\bnumero|\bpor|\bno valor de|\bvalor de|r\$|\bpago|\bpaga|\bquitado|\bquitada)$/.test(
+    beforeNumber,
+  )
+    ? undefined
+    : Number(trailing[2]);
+}
+
+function explicitBillMonth(
+  text: string,
+):
+  | { kind: "absent" }
+  | { kind: "invalid"; raw: string }
+  | { kind: "valid"; value: string } {
+  const matches = text.matchAll(
+    /(?<!\d\/)\b(\d{1,2})\/(\d{2}(?:\d{2})?)\b(?!\/\d)/g,
+  );
+  for (const match of matches) {
+    const before = text.slice(0, match.index ?? 0);
+    const rawYear = match[2] ?? "";
+    const contextualOccurrenceDate =
+      /\b(?:a\s+partir\s+de|(?:no\s+)?dia)\s*$/u.test(before) ||
+      (rawYear.length === 2 && /\bem\s*$/u.test(before));
+    if (contextualOccurrenceDate) {
+      continue;
+    }
+    const month = Number(match[1]);
+    if (month < 1 || month > 12)
+      return { kind: "invalid", raw: match[0] };
+    const year = rawYear.length === 2 ? `20${rawYear}` : rawYear;
+    return {
+      kind: "valid",
+      value: `${year}-${String(month).padStart(2, "0")}`,
+    };
+  }
+  return { kind: "absent" };
+}
+
+function explicitValueAmountMatch(text: string): RegExpExecArray | null {
+  return /\b(?:no\s+valor\s+de|valor\s+de|custou|custava|ficou(?:\s+em)?|saiu(?:\s+por)?|por)\s+(?:r\$\s*)?([\d.,]+)(?:\s+reais)?\b(?!\s*(?:x\b|vezes\b|parcelas?\b|presta[cç][oõ]es\b|mes(?:es)?\b))/iu.exec(
+    text,
+  );
+}
+
+function hasInstrumentThenTrailingAmount(
+  after: string,
+  context: RoutingContext,
+): boolean {
+  const knownInstruments = [
+    ...(context.knownCards ?? []),
+    ...(context.knownAccounts ?? []),
+  ]
+    .map((instrument) =>
+      normalize(instrument.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .filter((name, index, names) => names.indexOf(name) === index);
+  const instrumentPattern = [
+    "pix",
+    "dinheiro",
+    "debito",
+    "cartao(?: de credito)?",
+    "credito",
+    ...knownInstruments,
+  ].join("|");
+  return new RegExp(
+    `^\\s*(?:(?:no|na|via|em)\\s+)?(?:${instrumentPattern})\\b[\\s,;:-]*(?:(?:por|no\\s+valor\\s+de|valor\\s+de)\\s+)?(?:r\\$\\s*)?\\d[\\d.,]*(?:\\s+reais)?(?:\\s+(?:hoje|ontem|anteontem))?[\\s.!?]*$`,
+  ).test(normalize(after));
+}
+
+function inferredMoneyMatches(
+  text: string,
+  count: number | undefined,
+  context: RoutingContext = {},
+) {
+  const masked = maskNonMonetaryNumberSpans(text);
+  const explicitValue = explicitValueAmountMatch(masked);
+  return [...masked.matchAll(/(?:R\$\s*)?\d[\d.,]*/gi)].filter((match) => {
+    const raw = match[0];
+    const index = match.index ?? 0;
+    const before = masked.slice(0, index);
+    const after = masked.slice(index + raw.length);
+    if (/[\p{L}\d]$/u.test(before) || /^[\p{L}\d]/u.test(after)) return false;
+    const numeric = parseBrl(raw);
+    if (numeric === undefined) return false;
+
+    // A later explicit value predicate outranks an earlier number that merely
+    // sits beside a payment instrument, such as the model in
+    // "iPhone 15 no Pix por 5000".
+    if (explicitValue !== null && index < (explicitValue.index ?? 0)) {
+      return false;
+    }
+    if (hasInstrumentThenTrailingAmount(after, context)) return false;
+
+    // Counts and ordinal references are structural numbers, never prices.
+    if (/^\s*x\b/i.test(after)) return false;
+    if (
+      /^\s+(?:vezes|parcelas?|prestacoes?|boletos?|mes(?:es)?)\b/i.test(after)
+    )
+      return false;
+    if (/\bparcela\s*$/i.test(before)) return false;
+    if (count !== undefined && Number(raw.replace(/\D/g, "")) === count) {
+      if (
+        /^\s*(?:x\b|vezes|parcelas?|prestacoes?|boletos?|mes(?:es)?)/i.test(
+          after,
+        )
+      )
+        return false;
+    }
+
+    // Currency/decimal notation is explicit. Integer amounts need to sit in an
+    // amount clause, so specifications such as "400 litros" remain untouched.
+    if (/^R\$/i.test(raw) || /[,.]/.test(raw)) return true;
+    const knownInstrumentFollows = [
+      ...(context.knownCards ?? []),
+      ...(context.knownAccounts ?? []),
+    ].some((instrument) => {
+      const escaped = normalize(instrument.name).replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      return new RegExp(
+        `^\\s*(?:(?:no|na|em)\\s+)?${escaped}(?=$|[\\s,.;:!?-])`,
+      ).test(
+        normalize(after),
+      );
+    });
+    // A standalone four-digit year is metadata, not an inferred price. Keep it
+    // monetary only when the user marks it as such (currency/value wording) or
+    // places it directly beside a named instrument, an existing terse-expense
+    // contract. This prevents "IPTU 2026 no débito 1200" from charging R$ 2.026.
+    const bareInteger = raw.replace(/\s/gu, "");
+    const plausibleYear = /^(?:19|20)\d{2}$/.test(bareInteger);
+    const explicitValueContext =
+      /\b(?:valor(?:\s+total)?\s+de|total(?:\s+de)?|por)\s*$/iu.test(before) ||
+      /^\s*reais\b/iu.test(after);
+    if (
+      plausibleYear &&
+      !/^R\$/i.test(raw) &&
+      !/[,.]/.test(raw) &&
+      !explicitValueContext &&
+      !knownInstrumentFollows
+    )
+      return false;
+    return (
+      knownInstrumentFollows ||
+      /^(?:\s*(?:reais\b|em\s+(?:-?\d+\s*x|\w+\s+(?:vez(?:es)?|parcelas?|presta[cç][aã]o|presta[cç][oõ]es))|parcelad[ao]\b|dividid[ao]\b|(?:pix|dinheiro|d[eé]bito|cart[aã]o|cr[eé]dito)\b|no\s+(?:cart[aã]o|cr[eé]dito|pix|d[eé]bito|boleto|\p{L}[\p{L}\s]*\b)|na\s+conta\b|em\s+dinheiro\b|[aà]\s+vista\b|todo\s+m[eê]s\b|mensal\b|por\s+\d+\s+mes(?:es)?\b|com\s+desconto\b)|\s*$)/iu.test(
+        after,
+      )
+    );
+  });
+}
+
 export function canonicalFinancialDescription(
   rawText: string,
   route: DeterministicFinancialRoute,
@@ -154,17 +499,49 @@ export function canonicalFinancialDescription(
     return undefined;
 
   if (route === "mark_paid") {
+    const obligationPayment =
+      /\b(financiamento|emprestimo|consorcio|aluguel|seguro|parcela solar|parcela\s+(?:da|de|do)\b)/.test(
+        normalized,
+      );
     const resolvedCard = knownCardKeyword(rawText, context.knownCards);
-    if (resolvedCard !== undefined) return resolvedCard;
+    if (resolvedCard !== undefined && !obligationPayment) return resolvedCard;
+    if (/\bparcela solar\b/i.test(rawText)) return "Parcela solar";
+    const installmentTarget =
+      /\bparcela\s+(?:da|de|do)\s+(.+?)(?=\s+(?:n[uú]mero\s+\d+|(?:por|no\s+valor\s+de)\s+(?:r\$\s*)?[\d.,]+|(?:r\$\s*)?[\d.,]+|este\s+m[eê]s|hoje|ontem|pag[ao]|quitad[ao])\b|$)/iu.exec(
+        rawText,
+      )?.[1];
+    if (installmentTarget !== undefined)
+      return titleCaseDescription(installmentTarget);
+    if (obligationPayment) {
+      const cleanedTarget = rawText
+        .replace(/^\s*(?:paguei|quitei)\s+(?:(?:a|o)\s+)?/iu, "")
+        .replace(/^\s*(?:r\$\s*)?[\d.,]+(?:\s+reais)?\s+(?:da|de|do)\s+/iu, "")
+        .replace(/\s+pel[ao]\s+conta\s+.+$/iu, " ")
+        .replace(
+          /\s+(?:n[uú]mero\s+)?\d{1,2}\s+por\s+(?=(?:r\$\s*)?[\d.,]+\s*$)/iu,
+          " ",
+        )
+        .replace(/\s+(?:r\$\s*)?[\d.,]+\s*$/iu, "")
+        .replace(/\s+n[uú]mero\s*$/iu, "")
+        .replace(/\s+(?:este\s+m[eê]s|hoje|ontem)\s*$/iu, "")
+        .replace(/\b(?:pago|paga|quitado|quitada)\b/giu, " ")
+        .replace(/\b(?:via|no)\s+pix\b/giu, " ");
+      const description = titleCaseDescription(cleanedTarget);
+      if (description !== undefined) return description;
+    }
     if (/fatura.*mercado pago/i.test(rawText)) return "Mercado Pago";
     if (/fatura.*inter/i.test(rawText)) return "Inter";
-    if (/parcela solar/i.test(rawText)) return "Parcela solar";
     if (/financiamento do carro/i.test(rawText))
       return "Financiamento do carro";
     if (/nubank/i.test(rawText)) return "Nubank";
   }
 
-  if (/\bcada parcela da cadeira\b/.test(normalized)) return "Cadeira";
+  const eachInstallmentTarget =
+    /\bcada parcela\s+(?:da|de|do)\s+(.+?)\s+(?:ficou|custa|custou|era|no valor de)\b/iu.exec(
+      rawText,
+    )?.[1];
+  if (eachInstallmentTarget !== undefined)
+    return titleCaseDescription(eachInstallmentTarget);
   if (/\btotal\s+[^ ]+\s+pelo celular\b/.test(normalized)) return "Celular";
   if (/\bparcela\s+3\s+de\s+10\s+do notebook\b/.test(normalized))
     return "Notebook";
@@ -198,36 +575,58 @@ export function canonicalFinancialDescription(
   if (/^conta de luz\b/.test(normalized)) return "Conta de luz";
   if (
     /^passei\s+\d/.test(normalized) ||
+    /^paguei\s+(?:r\$\s*)?\d/.test(normalized) ||
     /^comprei no credito\b/.test(normalized)
   )
     return undefined;
 
-  // Most messages put the meaningful item/merchant first. Stop at the first
-  // financial clause instead of repeatedly deleting tokens (which used to
-  // leave fragments such as "Notebook 12x" or "Farmácia cartão").
-  const boundary =
-    /\s+(?=(?:R\$\s*)?(?<![\p{L}\d])\d[\d.,]*(?:\s|$)|\d+\s*x\b|em\s+(?:-?\d+\s*x|(?:uma|duas|nove|doze)\s+(?:vezes|parcelas?))|parcelad[ao]\b|parcelei\b|dividido\b|no\s+(?:cart[aã]o|cr[eé]dito|pix|d[eé]bito|boleto)|na\s+conta\b|em\s+dinheiro\b|sem\s+parcelar\b|n[aã]o\s+foi\s+parcelad[ao]\b)/iu;
-  let prefix = rawText.split(boundary, 1)[0] ?? rawText;
-  prefix = stripKnownNames(prefix, context)
+  // Stop at the first financially-supported number. Earlier unsupported
+  // numbers can legitimately be product models ("iPhone 15 Pro").
+  const count = countFromText(rawText);
+  const moneyMatch = inferredMoneyMatches(rawText, count, context).at(0);
+  const explicitValueBoundary = explicitValueAmountMatch(rawText);
+  const ambiguousBareAmountBoundary =
+    /\s+(?=(?:r\$\s*)?\d[\d.,]*\s+\d+\s*x\b)/iu.exec(rawText);
+  const syntaxBoundary =
+    /\s+(?=(?<![\p{L}\d])\d+\s*(?:x\b|parcelas?\b|presta[cç][oõ]es\b|boletos?\b)|em\s+(?:-?\d+\s*x|\d+\s+(?:vez(?:es)?|parcelas?|presta[cç][oõ]es)|(?:uma|duas|nove|doze)\s+(?:vez(?:es)?|parcelas?|presta[cç][aã]o|presta[cç][oõ]es))|parcelad[ao]\b|parcelei\b|dividido\b|no\s+(?:cart[aã]o|cr[eé]dito|pix|d[eé]bito|boleto)|na\s+conta\b|em\s+dinheiro\b|[aà]\s+vista\b|compra\s+unica\b|pagamento\s+unico\b|sem\s+parcelar\b|n[aã]o\s+foi\s+parcelad[ao]\b)/iu.exec(
+      rawText,
+    );
+  const boundaryIndex = Math.min(
+    moneyMatch?.index ?? rawText.length,
+    explicitValueBoundary?.index ?? rawText.length,
+    ambiguousBareAmountBoundary?.index ?? rawText.length,
+    syntaxBoundary?.index ?? rawText.length,
+  );
+  let prefix = rawText.slice(0, boundaryIndex);
+  prefix = stripPurchaseDateSpans(stripKnownNames(prefix, context))
     .replace(/[🛏️]/gu, " ")
+    .replace(
+      /^\s*(?:eu\s+)?(?:paguei|comprei|gastei|passei|lancei|registrei)\s+(?:com\s+)?(?:(?:um|uma|o|a|os|as)\s+)?/iu,
+      " ",
+    )
     .replace(
       /\b(Karol comprou|eu comprei|comprei|compra de|ontem gastei)\b/giu,
       " ",
     )
+    .replace(
+      /^\s*(?:no|na|em)\s+(?:cart[aã]o(?: de cr[eé]dito)?|cr[eé]dito|pix|d[eé]bito|conta)\s+/iu,
+      " ",
+    )
+    .replace(/^\s*(?:no|na|em)\s+/iu, " ")
     .replace(/^\s*[AaOo]\s+/u, "")
     .replace(/^\s*(um|uma)\s+/iu, "")
     .replace(/\s+(de|por|em|no|na)\s*$/iu, "");
   const prefixDescription = titleCaseDescription(prefix);
   if (prefixDescription !== undefined) return prefixDescription;
 
-  let text = rawText
+  let text = stripPurchaseDateSpans(rawText)
     .replace(/[🛏️]/gu, " ")
-    .replace(/\b(Karol comprou|eu comprei|comprei|compra de|gastei)\b/giu, " ")
-    .replace(/\b(um|uma)\b/giu, " ")
     .replace(
-      /\b(ontem|hoje cedo|dia\s+\d{1,2}\/\d{1,2}|a partir de\s+\d{1,2}\/\d{1,2})\b/giu,
+      /^\s*(?:eu\s+)?(?:paguei|comprei|gastei|passei|lancei|registrei)\s+(?:com\s+)?(?:(?:um|uma|o|a|os|as)\s+)?/iu,
       " ",
     )
+    .replace(/\b(Karol comprou|eu comprei|comprei|compra de|gastei)\b/giu, " ")
+    .replace(/\b(um|uma)\b/giu, " ")
     .replace(/\b(categoria\s+\p{L}+|responsavel\s+\p{L}+)\b/giu, " ")
     .replace(
       /\b(no|na)\s+(Mercado Livre|Leroy Merlin|Magazine Luiza)\b/giu,
@@ -272,35 +671,52 @@ export function canonicalFinancialDescription(
   return titleCaseDescription(text);
 }
 
-function extractAmounts(text: string, count: number | undefined) {
+function extractAmounts(
+  text: string,
+  count: number | undefined,
+  context: RoutingContext = {},
+) {
   const normalized = normalize(text);
-  const perMatch =
-    /(?:\b\d+\s*x|\b\d+\s+(?:parcelas?|prestacoes?|boletos?))\s+de\s+(r\$\s*)?([\d.,]+)/i.exec(
+  const perRaw =
+    /(?:\b\d+\s*x\s+(?:de\s+)?|\b\d+\s+(?:parcelas?|presta[cç][oõ]es|boletos?)\s+de\s+)(?:r\$\s*)?([\d.,]+)/i.exec(
       text,
-    ) ??
-    /cada parcela[^\d]*([\d.,]+)/i.exec(text) ??
-    /parcela de\s+(r\$\s*)?([\d.,]+)/i.exec(text);
-  const perRaw = perMatch?.[2] ?? perMatch?.[1];
+    )?.[1] ??
+    /cada parcela[\s\S]*?\b(?:ficou|custa|custou|era|no valor de)\s*(?:r\$\s*)?([\d.,]+)/i.exec(
+      text,
+    )?.[1] ??
+    /parcela de\s+(?:r\$\s*)?([\d.,]+)/i.exec(text)?.[1] ??
+    /(?:r\$\s*)?([\d.,]+)\s+(?:por\s+parcela|cada\s+(?:parcela|presta[cç][aã]o))/i.exec(
+      text,
+    )?.[1] ??
+    /\b\d+\s+(?:parcelas?|presta[cç][oõ]es|boletos?)\s+(?:de\s+)?r\$\s*([\d.,]+)/i.exec(
+      text,
+    )?.[1] ??
+    /\b\d+\s+(?:parcelas?|presta[cç][oõ]es|boletos?)\s+(?:de\s+)?([\d.,]+)\s+reais\b/i.exec(
+      text,
+    )?.[1] ??
+    /\b\d+\s+(?:parcelas?|presta[cç][oõ]es|boletos?)\s+(?:de\s+)?(\d+(?:\.\d{3})*,\d{1,2})\b/i.exec(
+      text,
+    )?.[1] ??
+    /(?:parcelas?|presta[cç][oõ]es)[\s\S]*?(?:r\$\s*)?([\d.,]+)\s+cada\b/i.exec(
+      text,
+    )?.[1] ??
+    /r\$\s*([\d.,]+)\s+\d+\s*x\b/i.exec(text)?.[1] ??
+    /([\d.,]+)\s+reais\s+\d+\s*x\b/i.exec(text)?.[1] ??
+    /(\d+(?:\.\d{3})*,\d{1,2})\s+\d+\s*x\b/i.exec(text)?.[1];
   const perInstallmentCents =
     perRaw === undefined ? undefined : parseBrl(perRaw);
   const totalMatch = /\btotal\s+(?:de\s+)?(r\$\s*)?([\d.,]+)/i.exec(text);
-  const explicitTotal = parseBrl(totalMatch?.[2] ?? "");
+  const clauseTotalMatch =
+    /(?:r\$\s*)?([\d.,]+)\s+em\s+\d+\s*x\s+de\s+(?:r\$\s*)?[\d.,]+/i.exec(text);
+  const explicitTotal =
+    parseBrl(totalMatch?.[2] ?? "") ?? parseBrl(clauseTotalMatch?.[1] ?? "");
 
-  const candidates = [...text.matchAll(/(?:R\$\s*)?\d[\d.,]*/gi)]
-    .map((match) => match[0])
-    .filter(
-      (raw) =>
-        !/^\d+\s*x$/i.test(raw) && !/^\d+$/.test(raw) && raw !== String(count),
-    );
-  // Integers are valid money too; remove dates and the installment count by position.
-  const allNumbers = [...text.matchAll(/(?:R\$\s*)?\d[\d.,]*/gi)]
-    .map((m) => m[0])
-    .filter(
-      (raw) => !raw.includes("/") && Number(raw.replace(/\D/g, "")) !== count,
-    );
+  const candidates = inferredMoneyMatches(text, count, context);
   const inferredTotal =
     perInstallmentCents === undefined
-      ? (parseBrl(candidates[0] ?? allNumbers[0] ?? "") ?? wordMoney(text))
+      ? (parseBrl(explicitValueAmountMatch(text)?.[1] ?? "") ??
+        parseBrl(candidates.at(0)?.[0] ?? "") ??
+        wordMoney(text))
       : undefined;
   const totalCents = explicitTotal ?? inferredTotal;
   const conflict =
@@ -334,32 +750,131 @@ export function detectFinancialRoute(
   const paymentLanguage = /\b(quitad[ao]|quitei|pago|paga|paguei)\b/.test(
     withoutKnownCard,
   );
+  const settlementAmount = String.raw`(?:r\$\s*)?\d[\d.,]*(?:\s+reais)?`;
+  const settlementStatus = String.raw`(?:pago|paga|quitado|quitada)`;
+  const settlementDate = String.raw`(?:hoje|ontem|anteontem|dia\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)`;
+  const settlementSource = String.raw`(?:(?:via|no)\s+pix|pel[ao]\s+conta(?:\s+\p{L}[\p{L}\d-]*){0,3})`;
+  const benignSettlementTail = String.raw`(?:(?:${settlementStatus}|${settlementDate}|${settlementSource}|${settlementAmount})[\s,]*)*`;
+  const verbFirstKnownCardSettlement =
+    cardKeyword !== undefined &&
+    new RegExp(
+      String.raw`^\s*(?:paguei|quitei)\s+(?:(?:o|a)\s+)?(?:cartao\s+)?${benignSettlementTail}\s*$`,
+      "u",
+    ).test(withoutKnownCard);
+  const cardFirstKnownCardSettlement =
+    cardKeyword !== undefined &&
+    new RegExp(
+      String.raw`^\s*(?:(?:o|a)\s+)?(?:cartao\s+)?(?:${settlementAmount}\s+)?${settlementStatus}[\s,]*${benignSettlementTail}\s*$`,
+      "u",
+    ).test(withoutKnownCard);
   const paymentTarget =
-    /\b(fatura|parcela solar|financiamento|parcela do carro)\b/.test(
+    /\b(fatura|financiamento|emprestimo|consorcio|aluguel|seguro|parcela solar|parcela\s+(?:da|de|do)\b)/.test(
       normalized,
     ) ||
-    (cardKeyword !== undefined &&
-      !/\b(paguei\s+(?:trinta|\d|r\$))\b/.test(normalized));
+    verbFirstKnownCardSettlement ||
+    cardFirstKnownCardSettlement;
+  const obligationPayment =
+    /\b(financiamento|emprestimo|consorcio|aluguel|seguro|parcela solar|parcela\s+(?:da|de|do)\b)/.test(
+      normalized,
+    );
+  const ambiguousPaymentNumber = ambiguousBarePaymentNumber(text);
+  if (
+    paymentLanguage &&
+    paymentTarget &&
+    ambiguousPaymentNumber !== undefined
+  ) {
+    return {
+      route: "ambiguous",
+      description: canonicalFinancialDescription(text, "mark_paid", context),
+      amountCents: undefined,
+      paymentTarget: obligationPayment ? "obligation" : "card",
+      suppressAiPaymentAmount: true,
+      ambiguousPaymentNumber,
+      reason: "ambiguous_payment_number_semantics",
+    };
+  }
   if (/\bpaguei a parcela do carro\b/.test(normalized)) {
+    const paymentText = maskPaymentOrdinalSpans(text);
+    const amountCents = extractAmounts(
+      paymentText.text,
+      undefined,
+      context,
+    ).totalCents;
     return {
       route: "ambiguous",
       description: "Carro",
+      amountCents,
+      suppressAiPaymentAmount:
+        paymentText.foundOrdinal && amountCents === undefined
+          ? true
+          : undefined,
       reason: "unresolved_existing_payment",
     };
   }
   if (paymentLanguage && paymentTarget) {
+    const paymentText = maskPaymentOrdinalSpans(text);
+    const settlementAccountKeyword = paymentSourceAccountKeyword(text, context);
+    const deterministicPaymentTarget = obligationPayment
+      ? "obligation"
+      : "card";
+    const parsedBillMonth =
+      deterministicPaymentTarget === "card"
+        ? explicitBillMonth(normalized)
+        : { kind: "absent" as const };
+    if (parsedBillMonth.kind === "invalid") {
+      return {
+        route: "ambiguous",
+        description: canonicalFinancialDescription(text, "mark_paid", context),
+        amountCents: undefined,
+        suppressAiPaymentAmount: true,
+        cardKeyword,
+        paymentTarget: "card",
+        settlementAccountKeyword,
+        invalidBillMonth: parsedBillMonth.raw,
+        reason: "invalid_bill_month",
+      };
+    }
+    const paymentAmountCents =
+      leadingPaymentAmountCents(text) ??
+      extractAmounts(paymentText.text, undefined, context).totalCents ??
+      (verbFirstKnownCardSettlement || cardFirstKnownCardSettlement
+        ? explicitKnownCardSettlementAmountCents(paymentText.text)
+        : undefined);
+    const hasDateOrMonth =
+      /\b\d{1,2}\/\d{2,4}(?:\/\d{2,4})?\b/.test(normalized);
     return {
       route: "mark_paid",
       description: canonicalFinancialDescription(text, "mark_paid", context),
-      amountCents: extractAmounts(text, undefined).totalCents,
+      amountCents: paymentAmountCents,
+      suppressAiPaymentAmount:
+        (paymentText.foundOrdinal || hasDateOrMonth) &&
+        paymentAmountCents === undefined
+          ? true
+          : undefined,
       cardKeyword,
+      paymentTarget: deterministicPaymentTarget,
+      settlementAccountKeyword,
+      billMonth:
+        parsedBillMonth.kind === "valid" ? parsedBillMonth.value : undefined,
     };
   }
 
   const count = countFromText(text);
   const hasAccount = ACCOUNT_WORD_RE.test(normalized);
+  const accountKeyword =
+    knownAccountKeyword(text, context.knownAccounts) ??
+    (/\bpix\b/.test(normalized)
+      ? "Pix"
+      : /\bdinheiro\b/.test(normalized)
+        ? "Dinheiro"
+        : undefined);
+  const hasLoanCredit = LOAN_CREDIT_RE.test(normalized);
+  const hasExplicitCardWord =
+    /\bcartao(?: de credito)?\b/.test(normalized) ||
+    (CARD_WORD_RE.test(normalized) && !hasLoanCredit);
   const hasCard =
-    CARD_WORD_RE.test(normalized) || (cardKeyword !== undefined && !hasAccount);
+    hasExplicitCardWord ||
+    (cardKeyword !== undefined && !hasAccount && !hasLoanCredit);
   const hasFinancing = FINANCING_RE.test(normalized);
   const hasInstallmentWords = INSTALLMENT_WORD_RE.test(normalized);
   const single = SINGLE_RE.test(normalized) || count === 1;
@@ -368,7 +883,28 @@ export function detectFinancialRoute(
     normalized,
   );
   const compoundEntry = /\bentrada\b.*\bmais\b.*\d+\s*x\b/.test(normalized);
-  const amounts = extractAmounts(text, count);
+  const amounts = extractAmounts(text, count, context);
+  const recurringAmount =
+    amounts.explicitTotal === undefined &&
+    /\b(todo mes|mensal|por\s+\d+\s+mes(?:es)?)\b/.test(normalized)
+      ? amounts.totalCents
+      : undefined;
+  const clearObligationMonthlyEvidence =
+    /\b(parcela solar|financiamento|emprestimo|consorcio|prestacao|prestacoes)\b/.test(
+      normalized,
+    );
+  const bareMonthlyRaw = /(?:^|\s)(?:r\$\s*)?([\d.,]+)\s+\d+\s*x\b/.exec(
+    normalized,
+  )?.[1];
+  const obligationBareMonthlyAmount = clearObligationMonthlyEvidence
+    ? parseBrl(bareMonthlyRaw ?? "")
+    : undefined;
+  const dueDayRaw = /\bdia\s+(\d{1,2})\b(?!\/)/.exec(normalized)?.[1];
+  const dueDay = dueDayRaw === undefined ? undefined : Number(dueDayRaw);
+  const startDateMatch =
+    /\ba partir de\s+(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?\b/.exec(normalized);
+  const startDateDay = Number(startDateMatch?.[1]);
+  const startDateMonth = Number(startDateMatch?.[2]);
 
   let route: DeterministicFinancialRoute;
   let reason: string | undefined;
@@ -398,7 +934,9 @@ export function detectFinancialRoute(
   } else if (single && hasCard) {
     route = "single_credit";
   } else if (
-    (hasFinancing || (hasAccount && /\b\d+\s*x\b/.test(normalized))) &&
+    (hasFinancing ||
+      (hasAccount &&
+        ((count !== undefined && count >= 2) || hasInstallmentWords))) &&
     !hasCard
   ) {
     route = "obligation";
@@ -439,6 +977,19 @@ export function detectFinancialRoute(
     installmentCount: count !== undefined && count > 0 ? count : undefined,
     totalCents,
     perInstallmentCents: amounts.perInstallmentCents,
+    monthlyAmountCents:
+      amounts.perInstallmentCents ??
+      recurringAmount ??
+      (route === "obligation" ? obligationBareMonthlyAmount : undefined),
+    dueDay:
+      dueDay !== undefined && dueDay >= 1 && dueDay <= 28 ? dueDay : undefined,
+    startDate:
+      startDateDay >= 1 &&
+      startDateDay <= 31 &&
+      startDateMonth >= 1 &&
+      startDateMonth <= 12
+        ? { day: startDateDay, month: startDateMonth }
+        : undefined,
     amountCents:
       route === "single_credit" || route === "plain_account"
         ? amounts.totalCents
@@ -452,14 +1003,29 @@ export function detectFinancialRoute(
             ? "total"
             : undefined,
     cardKeyword,
+    explicitAccountEvidence: hasAccount || undefined,
+    explicitCardEvidence: hasCard || undefined,
+    accountKeyword,
     reason,
   };
 }
 
 export function applyDeterministicPrecedence(
   decision: DeterministicFinancialDecision,
-  classified: InterpretedIntent | null,
-): InterpretedIntent | null {
+  classified: RoutedInterpretedIntent | null,
+): RoutedInterpretedIntent | null {
+  if (decision.route === "plain_account" && decision.explicitAccountEvidence) {
+    const aiExpense =
+      classified?.intent === "plain" ? classified.expense : undefined;
+    const expense: InterpretedExpense = {
+      ...aiExpense,
+      description: decision.description ?? aiExpense?.description ?? "",
+      amountCents: decision.amountCents ?? aiExpense?.amountCents,
+      cardKeyword: undefined,
+      accountKeyword: decision.accountKeyword ?? aiExpense?.accountKeyword,
+    };
+    return { intent: "plain", expense };
+  }
   if (decision.route === "single_credit") {
     if (classified?.intent === "plain") return classified;
     if (classified === null) return null;
@@ -471,6 +1037,22 @@ export function applyDeterministicPrecedence(
     return { intent: "plain", expense };
   }
   if (decision.route === "installment") {
+    if (classified?.intent === "obligation" && !decision.explicitCardEvidence) {
+      const obligation: RoutedInterpretedObligation = {
+        ...classified.obligation,
+        description: decision.description ?? classified.obligation.description,
+        monthlyAmountCents:
+          decision.perInstallmentCents ??
+          decision.monthlyAmountCents ??
+          classified.obligation.monthlyAmountCents,
+        termMonths:
+          decision.installmentCount ?? classified.obligation.termMonths,
+        dueDay: decision.dueDay ?? classified.obligation.dueDay,
+        accountKeyword:
+          decision.accountKeyword ?? classified.obligation.accountKeyword,
+      };
+      return { intent: "obligation", obligation };
+    }
     const aiPurchase =
       classified?.intent === "card_installment"
         ? classified.purchase
@@ -481,43 +1063,87 @@ export function applyDeterministicPrecedence(
       installmentCount:
         decision.installmentCount ?? aiPurchase?.installmentCount,
       totalCents:
-        aiPurchase !== undefined
-          ? aiPurchase.totalCents
-          : decision.perInstallmentCents === undefined
-            ? decision.totalCents
-            : undefined,
+        decision.perInstallmentCents !== undefined
+          ? undefined
+          : (decision.totalCents ?? aiPurchase?.totalCents),
       perInstallmentCents:
-        aiPurchase !== undefined
-          ? aiPurchase.perInstallmentCents
-          : decision.perInstallmentCents,
+        decision.totalCents !== undefined &&
+        decision.perInstallmentCents === undefined
+          ? undefined
+          : (decision.perInstallmentCents ?? aiPurchase?.perInstallmentCents),
       cardKeyword: decision.cardKeyword ?? aiPurchase?.cardKeyword,
     };
     return { intent: "card_installment", purchase };
   }
-  if (decision.route === "obligation" && classified?.intent === "obligation") {
-    return classified;
-  }
   if (decision.route === "obligation") {
-    const obligation: InterpretedObligation = {
+    const aiObligation =
+      classified?.intent === "obligation" ? classified.obligation : undefined;
+    const obligation: RoutedInterpretedObligation = {
+      ...aiObligation,
       description:
         decision.description ??
+        aiObligation?.description ??
         (classified?.intent === "card_installment"
           ? classified.purchase.description
           : "Obrigação"),
-      monthlyAmountCents: decision.perInstallmentCents ?? decision.totalCents,
-      termMonths: decision.installmentCount,
+      monthlyAmountCents:
+        decision.monthlyAmountCents ?? aiObligation?.monthlyAmountCents,
+      termMonths: decision.installmentCount ?? aiObligation?.termMonths,
+      dueDay: decision.dueDay ?? aiObligation?.dueDay,
+      accountKeyword:
+        decision.accountKeyword ?? aiObligation?.accountKeyword,
     };
     return { intent: "obligation", obligation };
   }
   if (decision.route === "non_financial") return { intent: "non_financial" };
   if (decision.route === "mark_paid" && decision.description !== undefined) {
-    if (classified?.intent === "mark_paid") return classified;
+    const aiPayment =
+      classified?.intent === "mark_paid" ? classified : undefined;
+    const settlementAccountKeyword =
+      decision.settlementAccountKeyword ??
+      aiPayment?.settlementAccountKeyword;
     return {
       intent: "mark_paid",
-      target: decision.cardKeyword === undefined ? "obligation" : "card",
+      target:
+        decision.paymentTarget ??
+        (decision.cardKeyword === undefined ? "obligation" : "card"),
       keyword: decision.description,
-      amountCents: decision.amountCents,
+      amountCents: decision.suppressAiPaymentAmount
+        ? undefined
+        : (decision.amountCents ?? aiPayment?.amountCents),
+      ...((decision.billMonth ?? aiPayment?.billMonth)
+        ? { billMonth: decision.billMonth ?? aiPayment?.billMonth }
+        : {}),
+      ...(settlementAccountKeyword
+        ? { settlementAccountKeyword }
+        : {}),
     };
+  }
+  if (
+    decision.route === "ambiguous" &&
+    decision.reason === "unresolved_existing_payment" &&
+    classified?.intent === "mark_paid"
+  ) {
+    return {
+      ...classified,
+      keyword:
+        decision.description !== undefined &&
+        normalize(decision.description) === "carro" &&
+        normalize(classified.keyword) !== "carro" &&
+        /\bcarro\b/.test(normalize(classified.keyword))
+          ? classified.keyword
+          : (decision.description ?? classified.keyword),
+      amountCents: decision.suppressAiPaymentAmount
+        ? undefined
+        : (decision.amountCents ?? classified.amountCents),
+    };
+  }
+  if (
+    decision.route === "ambiguous" &&
+    (decision.reason === "ambiguous_payment_number_semantics" ||
+      decision.reason === "invalid_bill_month")
+  ) {
+    return null;
   }
   return classified;
 }

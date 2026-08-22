@@ -35,7 +35,9 @@ const CATALOG: CategoryCatalog = {
   subcategories: [],
 };
 
-function classifierReturning(result: InterpretedIntent | null): MessageClassifier {
+function classifierReturning(
+  result: InterpretedIntent | null,
+): MessageClassifier {
   return async () => result;
 }
 
@@ -64,10 +66,12 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
     createTransaction: vi.fn(async () => ({ id: "txn-1" })),
     logInteraction,
     listActiveCards: () => [{ id: "card-1", name: "Nubank" }],
-    resolveAccountIdByName: (name: string) =>
-      name.toLowerCase() === "itau" || name.toLowerCase() === "itaú"
-        ? "acct-2"
-        : undefined,
+    resolveAccountIdByName: (name: string) => {
+      const normalized = name.toLowerCase();
+      if (normalized === "itau" || normalized === "itaú") return "acct-2";
+      if (normalized === "pix") return "acct-1";
+      return undefined;
+    },
     accountNameById: (accountId: string) =>
       accountId === "acct-1"
         ? "Conta Corrente"
@@ -80,9 +84,8 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
   };
   return {
     deps,
-    getCardBillAmount: (deps.getCardBillAmount ?? getCardBillAmount) as ReturnType<
-      typeof vi.fn
-    >,
+    getCardBillAmount: (deps.getCardBillAmount ??
+      getCardBillAmount) as ReturnType<typeof vi.fn>,
     settleCardBill: (deps.settleCardBill ?? settleCardBill) as ReturnType<
       typeof vi.fn
     >,
@@ -153,7 +156,9 @@ describe("card-bill start: card resolution", () => {
         { id: "card-1", name: "Nubank" },
         { id: "card-2", name: "C6" },
       ],
-      classifyMessage: classifierReturning(markPaidCardIntent({ keyword: "c6" })),
+      classifyMessage: classifierReturning(
+        markPaidCardIntent({ keyword: "c6" }),
+      ),
     });
     const { state, reply } = await startConversation(
       { text: "c6 pago", fromUserId: "user-alvaro" },
@@ -232,6 +237,108 @@ describe("card-bill start: card resolution", () => {
 });
 
 describe("card-bill start: computed amount / override", () => {
+  it("routes `Cartão Nubank pago` to computed bill settlement despite wrong plain AI", async () => {
+    const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 45000),
+      classifyMessage: classifierReturning({
+        intent: "plain",
+        expense: { description: "Cartão Nubank", amountCents: 99900 },
+      }),
+    });
+
+    const started = await startConversation(
+      { text: "Cartão Nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
+    expect(started.state.cardBillDraft).toMatchObject({
+      cardId: "card-1",
+      month: "2026-07",
+      amountCents: 45000,
+    });
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creditCardId: "card-1",
+        billMonth: "2026-07",
+        amountCents: 45000,
+      }),
+    );
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicit R$ 500 override for `Cartão Nubank pago`", async () => {
+    const { deps, getCardBillAmount } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 45000),
+      classifyMessage: classifierReturning({
+        intent: "plain",
+        expense: { description: "Cartão Nubank", amountCents: 99900 },
+      }),
+    });
+
+    const started = await startConversation(
+      { text: "Cartão Nubank pago R$ 500", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
+    expect(started.state.cardBillDraft).toMatchObject({
+      cardId: "card-1",
+      overrideAmountCents: 50000,
+      amountCents: 50000,
+    });
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Paguei o Nubank", undefined, 45000],
+    ["Nubank pago ontem", undefined, 45000],
+    ["Paguei o cartão Nubank via Pix 2000", 200000, 200000],
+  ])(
+    "keeps `%s` on the Nubank bill path despite a wrong plain classification",
+    async (text, expectedOverride, expectedAmount) => {
+      const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+        getCardBillAmount: vi.fn(async () => 45000),
+        classifyMessage: classifierReturning({
+          intent: "plain",
+          expense: { description: "Despesa comum", amountCents: 99900 },
+        }),
+      });
+
+      const started = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
+      expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+      expect(started.state.cardBillDraft?.cardId).toBe("card-1");
+      expect(started.state.cardBillDraft?.overrideAmountCents).toBe(
+        expectedOverride,
+      );
+      expect(started.state.cardBillDraft?.amountCents).toBe(expectedAmount);
+      expect(started.reply).toContain("Fatura Nubank");
+
+      if (expectedOverride !== undefined) {
+        await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+        expect(settleCardBill).toHaveBeenCalledWith(
+          expect.objectContaining({
+            creditCardId: "card-1",
+            amountCents: 200000,
+          }),
+        );
+      }
+    },
+  );
+
   it("shows the computed amount when no trailing amount is given", async () => {
     const { deps } = buildDeps({
       getCardBillAmount: vi.fn(async () => 45000),
@@ -264,6 +371,334 @@ describe("card-bill start: computed amount / override", () => {
     expect(reply).toContain("R$ 2.350,00");
   });
 
+  it("extracts a leading actual payment amount without AI and persists the override", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 123000),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei 1500 da fatura Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(started.state.cardBillDraft?.overrideAmountCents).toBe(150000);
+    expect(started.state.cardBillDraft?.amountCents).toBe(150000);
+    expect(started.reply).toContain("R$ 1.500,00");
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 150000 }),
+    );
+  });
+
+  it("extracts a card payment amount after the card name without AI", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 123000),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei o cartão Nubank 2350",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(started.state.cardBillDraft?.overrideAmountCents).toBe(235000);
+    expect(started.state.cardBillDraft?.amountCents).toBe(235000);
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 235000 }),
+    );
+  });
+
+  it("does not treat a bill reference month as the payment amount", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 45000),
+      classifyMessage: classifierReturning(
+        markPaidCardIntent({ amountCents: 202600 }),
+      ),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank de 08/2026",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(started.state.cardBillDraft?.overrideAmountCents).toBeUndefined();
+    expect(started.state.cardBillDraft?.amountCents).toBe(45000);
+    expect(started.reply).toContain("R$ 450,00");
+    expect(started.reply).not.toContain("R$ 2.026,00");
+    expect(settleCardBill).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicit amount alongside a bill reference month", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 45000),
+      classifyMessage: classifierReturning(
+        markPaidCardIntent({ amountCents: 202600 }),
+      ),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank de 08/2026 por 2350",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(started.state.cardBillDraft?.overrideAmountCents).toBe(235000);
+    expect(started.state.cardBillDraft?.amountCents).toBe(235000);
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 235000 }),
+    );
+  });
+
+  it("uses an explicit prior bill month through confirmation and settlement", async () => {
+    const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 45000),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank de 07/2026",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
+    expect(started.state.cardBillDraft?.month).toBe("2026-07");
+
+    await applyMessage(started.state, "confirmar", deps, {
+      today: "2026-08-22",
+    });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ billMonth: "2026-07" }),
+    );
+  });
+
+  it("recognizes `em MM/AAAA` as an explicit prior bill month", async () => {
+    const { deps, getCardBillAmount } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 71000),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank em 07/2026",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
+    expect(started.state.cardBillDraft?.month).toBe("2026-07");
+  });
+
+  it("uses an explicit Itaú settlement source through confirmation", async () => {
+    const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => 200000),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank pela conta Itaú R$ 2000",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(started.state.cardBillDraft?.accountId).toBe("acct-2");
+    expect(started.reply).toContain("Itaú");
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "acct-2", amountCents: 200000 }),
+    );
+  });
+
+  it("rejects an unknown explicit settlement source before bill calculation", async () => {
+    const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank pela conta Inter R$ 2000",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("cancelled");
+    expect(started.reply).toContain("Inter");
+    expect(started.reply).toMatch(/não encontrei a conta/i);
+    expect(getCardBillAmount).not.toHaveBeenCalled();
+    expect(settleCardBill).not.toHaveBeenCalled();
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("expands a standalone short-year bill month through computation and settlement", async () => {
+    const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async (_cardId, month) =>
+        month === "2026-07" ? 71000 : 82000,
+      ),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank de 07/26",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-07");
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(started.state.cardBillDraft?.month).toBe("2026-07");
+    expect(started.state.cardBillDraft?.amountCents).toBe(71000);
+
+    await applyMessage(started.state, "confirmar", deps, {
+      today: "2026-08-22",
+    });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ billMonth: "2026-07", amountCents: 71000 }),
+    );
+  });
+
+  it.each(["13/2026", "00/26"])(
+    "rejects invalid bill month %s before computing or settling despite AI output",
+    async (invalidBillMonth) => {
+      const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+        classifyMessage: classifierReturning(
+          markPaidCardIntent({ amountCents: 235000 }),
+        ),
+      });
+
+      const started = await startConversation(
+        {
+          text: `Paguei a fatura Nubank de ${invalidBillMonth}`,
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: "2026-08-22" },
+      );
+
+      expect(started.state.status).toBe("cancelled");
+      expect(started.reply).toBe(
+        `O mês da fatura “${invalidBillMonth}” é inválido. Envie no formato MM/AAAA, com mês entre 01 e 12.`,
+      );
+      expect(getCardBillAmount).not.toHaveBeenCalled();
+      expect(settleCardBill).not.toHaveBeenCalled();
+      expect(deps.createTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("treats a full calendar date as occurrence context, not a prior bill month", async () => {
+    const getCardBillAmount = vi.fn(async (_cardId: string, month: string) =>
+      month === "2026-07" ? 71000 : 82000,
+    );
+    const { deps } = buildDeps({
+      getCardBillAmount,
+      classifyMessage: classifierReturning(null),
+    });
+
+    const fullDate = await startConversation(
+      {
+        text: "Paguei a fatura Nubank dia 15/07/26",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+    expect(fullDate.state.cardBillDraft?.month).toBe("2026-08");
+    expect(fullDate.state.cardBillDraft?.amountCents).toBe(82000);
+
+    const standaloneMonth = await startConversation(
+      {
+        text: "Paguei a fatura Nubank de 07/26",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+    expect(standaloneMonth.state.cardBillDraft?.month).toBe("2026-07");
+    expect(standaloneMonth.state.cardBillDraft?.amountCents).toBe(71000);
+  });
+
+  it.each(["Nubank pago dia 10/08", "Paguei a fatura Nubank em 15/07"])(
+    "keeps the current bill month when `%s` contains only an occurrence date",
+    async (text) => {
+      const { deps, getCardBillAmount } = buildDeps({
+        getCardBillAmount: vi.fn(async () => 82000),
+        classifyMessage: classifierReturning(null),
+      });
+
+      const started = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: "2026-08-22" },
+      );
+
+      expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-08");
+      expect(getCardBillAmount).not.toHaveBeenCalledWith("card-1", "2008-10");
+      expect(started.state.cardBillDraft?.month).toBe("2026-08");
+      expect(started.state.cardBillDraft?.amountCents).toBe(82000);
+    },
+  );
+
+  it("uses an explicit short-year bill month alongside a separate occurrence date", async () => {
+    const { deps, getCardBillAmount, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async (_cardId, month) =>
+        month === "2026-06" ? 61000 : 82000,
+      ),
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Paguei a fatura Nubank dia 15/07 de 06/26",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+
+    expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-06");
+    expect(started.state.cardBillDraft?.month).toBe("2026-06");
+    expect(started.state.cardBillDraft?.amountCents).toBe(61000);
+
+    await applyMessage(started.state, "confirmar", deps, {
+      today: "2026-08-22",
+    });
+    expect(settleCardBill).toHaveBeenCalledWith(
+      expect.objectContaining({ billMonth: "2026-06", amountCents: 61000 }),
+    );
+  });
+
   it("computed zero with no override -> terminal zero message, nothing written", async () => {
     const { deps, settleCardBill } = buildDeps({
       getCardBillAmount: vi.fn(async () => 0),
@@ -276,7 +711,9 @@ describe("card-bill start: computed amount / override", () => {
     );
     expect(state.status).toBe("cancelled");
     expect(settleCardBill).not.toHaveBeenCalled();
-    expect(reply).toBe("Fatura do Nubank está zerada este mês — nada pra pagar. 👍");
+    expect(reply).toBe(
+      "Fatura do Nubank está zerada este mês — nada pra pagar. 👍",
+    );
   });
 
   it("deps.getCardBillAmount undefined -> unavailable terminal", async () => {
@@ -298,7 +735,7 @@ describe("card-bill start: computed amount / override", () => {
 describe("card-bill picker: cd: tap and typed card name", () => {
   async function openPicker(deps: ConversationDeps) {
     return startConversation(
-      { text: "nubank pago", fromUserId: "user-alvaro" },
+      { text: "santander pago", fromUserId: "user-alvaro" },
       deps,
       { today: TODAY },
     );
@@ -421,9 +858,14 @@ describe("card-bill confirmation: corrections", () => {
       deps,
       { today: TODAY },
     );
-    const outcome = await applyMessage(started.state, "conta Inexistente", deps, {
-      today: TODAY,
-    });
+    const outcome = await applyMessage(
+      started.state,
+      "conta Inexistente",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(outcome.state.cardBillDraft?.accountId).toBe("acct-1");
     expect(outcome.reply).toBe('Não encontrei a conta "Inexistente".');
   });

@@ -452,6 +452,30 @@ const CARD_SEED: FakeRow = {
 };
 
 describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
+  it("keeps unresolved payment ambiguity write-free and asks a focused question", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+
+    await handleWebhook({
+      rawBody: textUpdate(777, "Paguei a parcela do carro 900"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage: classifierReturning(null),
+    });
+
+    expect(sent[0]?.text).toContain(
+      "Não ficou claro se 900 é o valor pago ou o número da parcela.",
+    );
+    expect(tables.transactions).toHaveLength(0);
+    expect(tables.installment_groups).toHaveLength(0);
+    expect(tables.installments).toHaveLength(0);
+  });
+
   it.each([
     ["returns null", null],
     [

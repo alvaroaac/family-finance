@@ -2796,6 +2796,7 @@ export async function materializeObligationPayment(
     month: string;
     paidOn?: string;
     amountCents?: number;
+    accountId?: string;
   },
 ): Promise<MaterializeObligationPaymentResult> {
   const { data, error } = await client.rpc("materialize_obligation_payment", {
@@ -2803,6 +2804,7 @@ export async function materializeObligationPayment(
     target_month: args.month,
     paid_on: args.paidOn ?? null,
     target_amount_cents: args.amountCents ?? null,
+    target_account_id: args.accountId ?? null,
   });
   if (error !== null) {
     throw new Error(`materializeObligationPayment failed: ${error.message}`);

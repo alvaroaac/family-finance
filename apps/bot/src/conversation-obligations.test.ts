@@ -74,14 +74,22 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
     ],
     createObligation,
     materializeObligationPayment,
-    resolveAccountIdByName: (name: string) =>
-      name.trim().toLowerCase() === "nubank" ? "acct-nubank" : undefined,
+    resolveAccountIdByName: (name: string) => {
+      const normalized = name.trim().toLowerCase();
+      return normalized === "nubank"
+        ? "acct-nubank"
+        : normalized === "pix"
+          ? "acct-pix"
+          : undefined;
+    },
     accountNameById: (id: string) =>
       id === "acct-1"
         ? "Conta corrente"
         : id === "acct-nubank"
           ? "Nubank"
-          : undefined,
+          : id === "acct-pix"
+            ? "Pix"
+            : undefined,
     ...overrides,
   };
   return {
@@ -105,6 +113,54 @@ const SOLAR_INTENT: InterpretedIntent = {
 };
 
 describe("obligation create flow", () => {
+  it.each([
+    [
+      "an incorrect classified obligation",
+      {
+        intent: "obligation" as const,
+        obligation: {
+          description: "Empréstimo incorreto",
+          monthlyAmountCents: 99900,
+          termMonths: 3,
+        },
+      },
+    ],
+    ["deterministic fallback", null],
+  ])(
+    "keeps crédito consignado on the canonical obligation path with %s",
+    async (_label, classified) => {
+      const { deps, createObligation } = buildDeps({
+        classifyMessage: classifierReturning(classified),
+      });
+      const started = await startConversation(
+        {
+          text: "Crédito consignado 24 parcelas de 500",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(started.state.status).toBe("awaiting_obligation_confirmation");
+      expect(started.state.installmentDraft).toBeUndefined();
+      expect(started.state.obligationDraft).toMatchObject({
+        description: "Crédito consignado",
+        monthlyAmountCents: 50000,
+        termMonths: 24,
+      });
+      expect(createObligation).not.toHaveBeenCalled();
+
+      await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+      expect(createObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Crédito consignado",
+          amountCents: 50000,
+          termMonths: 24,
+        }),
+      );
+    },
+  );
+
   it("replies with a SUMMARY confirmation (never 72 lines) and does not persist", async () => {
     const { deps, createObligation } = buildDeps({
       classifyMessage: classifierReturning(SOLAR_INTENT),
@@ -120,7 +176,7 @@ describe("obligation create flow", () => {
 
     expect(state.status).toBe("awaiting_obligation_confirmation");
     expect(createObligation).not.toHaveBeenCalled();
-    expect(reply).toContain("Solar");
+    expect(reply).toContain("Parcela solar");
     expect(reply).toContain("R$ 710,44/mês × 72");
     expect(reply).toContain("out/2026 → set/2032");
     expect(reply).toContain("Vence dia 5");
@@ -154,7 +210,7 @@ describe("obligation create flow", () => {
     >;
     expect(draft).toMatchObject({
       householdId: "house-1",
-      description: "Solar",
+      description: "Parcela solar",
       amountCents: 71044,
       startMonth: "2026-10",
       termMonths: 72,
@@ -164,6 +220,159 @@ describe("obligation create flow", () => {
     });
     expect(logInteraction).toHaveBeenCalledTimes(1);
     expect(confirmed.reply).toMatch(/salv/i);
+  });
+
+  it("carries an explicit start date into deterministic obligation fallback", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_obligation_confirmation");
+    expect(started.state.obligationDraft).toMatchObject({
+      startMonth: "2026-10",
+      dueDay: 5,
+    });
+    expect(started.reply).toContain("out/2026");
+    expect(started.reply).toContain("Vence dia 5");
+    expect(createObligation).not.toHaveBeenCalled();
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(createObligation).toHaveBeenCalledWith(
+      expect.objectContaining({ startMonth: "2026-10", dueDay: 5 }),
+    );
+  });
+
+  it("preserves a valid classified future start month", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "obligation",
+        obligation: {
+          description: "Parcela solar",
+          monthlyAmountCents: 71044,
+          termMonths: 72,
+          startMonth: "2027-10",
+          dueDay: 5,
+        },
+      }),
+    });
+    const started = await startConversation(
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-11-03" },
+    );
+
+    expect(started.state.obligationDraft).toMatchObject({
+      startMonth: "2027-10",
+      dueDay: 5,
+    });
+
+    await applyMessage(started.state, "confirmar", deps, {
+      today: "2026-11-03",
+    });
+    expect(createObligation).toHaveBeenCalledWith(
+      expect.objectContaining({ startMonth: "2027-10", dueDay: 5 }),
+    );
+  });
+
+  it("rolls a past yearless start date to its next calendar occurrence", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-11-03" },
+    );
+
+    expect(started.state.obligationDraft).toMatchObject({
+      startMonth: "2027-10",
+      dueDay: 5,
+    });
+    expect(createObligation).not.toHaveBeenCalled();
+
+    await applyMessage(started.state, "confirmar", deps, {
+      today: "2026-11-03",
+    });
+    expect(createObligation).toHaveBeenCalledWith(
+      expect.objectContaining({ startMonth: "2027-10", dueDay: 5 }),
+    );
+  });
+
+  it.each([
+    ["the current month", "05/08", "2026-08"],
+    ["an earlier month", "05/07", "2027-07"],
+  ])(
+    "resolves a yearless start in %s using obligation month chronology",
+    async (_label, rawDate, expectedStartMonth) => {
+      const { deps, createObligation } = buildDeps({
+        classifyMessage: classifierReturning(null),
+      });
+      const started = await startConversation(
+        {
+          text: `Parcela solar 710,44 72x a partir de ${rawDate}`,
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: "2026-08-22" },
+      );
+
+      expect(started.state.obligationDraft).toMatchObject({
+        startMonth: expectedStartMonth,
+        dueDay: 5,
+      });
+      expect(createObligation).not.toHaveBeenCalled();
+
+      await applyMessage(started.state, "confirmar", deps, {
+        today: "2026-08-22",
+      });
+      expect(createObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startMonth: expectedStartMonth,
+          dueDay: 5,
+        }),
+      );
+    },
+  );
+
+  it("preserves an explicit past start year in deterministic fallback", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Parcela solar 710,44 72x a partir de 05/10/2025",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: "2026-08-22" },
+    );
+
+    expect(started.state.obligationDraft).toMatchObject({
+      startMonth: "2025-10",
+      dueDay: 5,
+    });
+    expect(createObligation).not.toHaveBeenCalled();
+
+    await applyMessage(started.state, "confirmar", deps, {
+      today: "2026-08-22",
+    });
+    expect(createObligation).toHaveBeenCalledWith(
+      expect.objectContaining({ startMonth: "2025-10", dueDay: 5 }),
+    );
   });
 
   it("defaults startMonth to the current month and dueDay to 1 when unstated", async () => {
@@ -187,7 +396,105 @@ describe("obligation create flow", () => {
       startMonth: "2026-07",
       dueDay: 1,
       termMonths: null,
+      accountId: "acct-1",
     });
+  });
+
+  it.each([
+    [
+      "an incorrect AI Pix account",
+      {
+        intent: "obligation",
+        obligation: {
+          description: "Aluguel",
+          monthlyAmountCents: 150000,
+          accountKeyword: "Pix",
+        },
+      } as unknown as InterpretedIntent,
+    ],
+    ["classifier fallback", null],
+  ])(
+    "creates an Itaú obligation from explicit text despite %s and no default account",
+    async (_label, classified) => {
+      const { deps, createObligation } = buildDeps({
+        defaultAccountId: undefined,
+        classifyMessage: classifierReturning(classified),
+        listActiveAccounts: () => [
+          { id: "acct-itau", name: "Itaú" },
+          { id: "acct-pix", name: "Pix" },
+        ],
+        resolveAccountIdByName: (name: string) =>
+          name.trim().toLowerCase() === "itaú"
+            ? "acct-itau"
+            : name.trim().toLowerCase() === "pix"
+              ? "acct-pix"
+              : undefined,
+      });
+      const started = await startConversation(
+        {
+          text: "Aluguel 1500 todo mês pela conta Itaú",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(started.state.status).toBe("awaiting_obligation_confirmation");
+      expect(started.state.obligationDraft?.accountId).toBe("acct-itau");
+      await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+      expect(createObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Aluguel",
+          amountCents: 150000,
+          accountId: "acct-itau",
+        }),
+      );
+    },
+  );
+
+  it("creates a Pix-backed obligation when Pix is explicit", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const started = await startConversation(
+      {
+        text: "Aluguel 1500 todo mês no Pix",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.obligationDraft?.accountId).toBe("acct-pix");
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    expect(createObligation).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "acct-pix" }),
+    );
+  });
+
+  it("clarifies an unknown explicit obligation account without creating", async () => {
+    const { deps, createObligation } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "obligation",
+        obligation: {
+          description: "Aluguel",
+          monthlyAmountCents: 150000,
+          accountKeyword: "Fantasma",
+        },
+      } as unknown as InterpretedIntent),
+    });
+    const { state, reply } = await startConversation(
+      {
+        text: "Aluguel 1500 todo mês pela conta Fantasma",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toContain("Fantasma");
+    expect(createObligation).not.toHaveBeenCalled();
   });
 
   it("asks for the amount when missing, and 'valor X' fills it", async () => {
@@ -344,6 +651,426 @@ describe("mark_paid{obligation} flow", () => {
     expect(reply).not.toContain("710,44");
   });
 
+  it("uses an explicitly named Pix account instead of the obligation default", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "aluguel",
+        amountCents: 150000,
+      }),
+      resolveAccountIdByName: (name: string) =>
+        name.trim().toLowerCase() === "pix" ? "acct-pix" : undefined,
+    });
+
+    const { state } = await startConversation(
+      { text: "Aluguel pago no Pix 1500", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-rent",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 150000,
+      accountId: "acct-pix",
+    });
+  });
+
+  it("resolves another named account for an obligation payment", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "solar",
+      }),
+      listActiveAccounts: () => [{ id: "acct-itau", name: "Itaú" }],
+      resolveAccountIdByName: (name: string) =>
+        name.trim().toLowerCase() === "itaú" ? "acct-itau" : undefined,
+    });
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei a parcela solar pela conta Itaú",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-solar",
+      month: "2026-07",
+      paidOn: TODAY,
+      accountId: "acct-itau",
+    });
+  });
+
+  it("settles rent with a clean target, explicit amount, and named account", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveAccounts: () => [{ id: "acct-itau", name: "Itaú" }],
+      resolveAccountIdByName: (name: string) =>
+        name.trim().toLowerCase() === "itaú" ? "acct-itau" : undefined,
+      listActiveObligations: async () => [
+        { id: "ob-rent", description: "Aluguel", amountCents: 120000 },
+      ],
+    });
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei aluguel R$ 1500 pela conta Itaú",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-rent",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 150000,
+      accountId: "acct-itau",
+    });
+  });
+
+  it("prefers the named Itaú account over a later generic Pix mention", async () => {
+    const { deps, createTransaction, materializeObligationPayment } = buildDeps(
+      {
+        classifyMessage: classifierReturning(null),
+        listActiveAccounts: () => [
+          { id: "acct-itau", name: "Itaú" },
+          { id: "acct-pix", name: "Pix" },
+        ],
+        resolveAccountIdByName: (name: string) =>
+          name.trim().toLowerCase() === "itaú"
+            ? "acct-itau"
+            : name.trim().toLowerCase() === "pix"
+              ? "acct-pix"
+              : undefined,
+        listActiveObligations: async () => [
+          { id: "ob-rent", description: "Aluguel", amountCents: 120000 },
+        ],
+      },
+    );
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei aluguel pela conta Itaú via Pix R$1500",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-rent",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 150000,
+      accountId: "acct-itau",
+    });
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("clarifies an unknown explicit payment account without writing", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "aluguel",
+      }),
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Aluguel pago pela Conta inexistente",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toContain("Inexistente");
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an installment sequence number as the actual payment amount", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "televisão",
+        amountCents: 300,
+      }),
+      listActiveObligations: async () => [
+        {
+          id: "ob-televisao",
+          description: "Televisão",
+          amountCents: 120000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei a parcela da televisão número 3",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-televisao",
+      month: "2026-07",
+      paidOn: TODAY,
+    });
+    expect(reply).toContain("1.200,00");
+    expect(reply).not.toContain("3,00");
+  });
+
+  it("clarifies whether a bare payment number is an amount or installment position", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "internet",
+        amountCents: 5000,
+      }),
+      listActiveObligations: async () => [
+        {
+          id: "ob-internet",
+          description: "Internet",
+          amountCents: 11990,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei a parcela da internet 50",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toBe(
+      "Não ficou claro se 50 é o valor pago ou o número da parcela. Envie “R$ 50” para informar o valor ou “parcela número 50” para informar a posição.",
+    );
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it("keeps a bare installment number ambiguous despite an incorrect AI amount and Pix source", async () => {
+    const { deps, createTransaction, materializeObligationPayment } = buildDeps(
+      {
+        classifyMessage: classifierReturning({
+          intent: "mark_paid",
+          target: "obligation",
+          keyword: "Casa",
+          amountCents: 1000,
+        }),
+        listActiveObligations: async () => [
+          { id: "ob-casa", description: "Casa", amountCents: 180000 },
+        ],
+      },
+    );
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei a parcela da casa 10 via Pix",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toBe(
+      "Não ficou claro se 10 é o valor pago ou o número da parcela. Envie “R$ 10” para informar o valor ou “parcela número 10” para informar a posição.",
+    );
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["R$ 10", "por 10"])(
+    "materializes an explicit Casa payment expressed as %s through Pix",
+    async (amountText) => {
+      const { deps, createTransaction, materializeObligationPayment } =
+        buildDeps({
+          classifyMessage: classifierReturning(null),
+          listActiveObligations: async () => [
+            { id: "ob-casa", description: "Casa", amountCents: 180000 },
+          ],
+        });
+
+      const { state } = await startConversation(
+        {
+          text: `Paguei a parcela da casa ${amountText} via Pix`,
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(state.status).toBe("saved");
+      expect(materializeObligationPayment).toHaveBeenCalledWith({
+        obligationId: "ob-casa",
+        month: "2026-07",
+        paidOn: TODAY,
+        amountCents: 1000,
+        accountId: "acct-pix",
+      });
+      expect(createTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["R$ 50", 5000, "50,00"],
+    ["número 50", undefined, "119,90"],
+  ])(
+    "settles an explicitly disambiguated Internet payment using %s",
+    async (paymentDetail, expectedAmountCents, expectedReplyAmount) => {
+      const { deps, materializeObligationPayment } = buildDeps({
+        classifyMessage: classifierReturning(null),
+        listActiveObligations: async () => [
+          {
+            id: "ob-internet",
+            description: "Internet",
+            amountCents: 11990,
+          },
+        ],
+      });
+
+      const { state, reply } = await startConversation(
+        {
+          text: `Paguei a parcela da internet ${paymentDetail}`,
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(state.status).toBe("saved");
+      expect(materializeObligationPayment).toHaveBeenCalledWith({
+        obligationId: "ob-internet",
+        month: "2026-07",
+        paidOn: TODAY,
+        ...(expectedAmountCents === undefined
+          ? {}
+          : { amountCents: expectedAmountCents }),
+      });
+      expect(reply).toContain(expectedReplyAmount);
+    },
+  );
+
+  it("extracts an actual payment amount before the obligation target without AI", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-casa",
+          description: "Casa",
+          amountCents: 180000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei R$ 1500 da parcela da casa",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-casa",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 150000,
+    });
+    expect(reply).toContain("1.500,00");
+    expect(reply).not.toContain("1.800,00");
+  });
+
+  it("lets a valid AI payment intent resolve deterministic ambiguity", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "financiamento carro",
+        amountCents: 90000,
+      }),
+    });
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei a parcela do carro R$ 900",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-carro",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 90000,
+    });
+  });
+
+  it.each([
+    ["the classifier is unavailable", null],
+    [
+      "AI incorrectly classifies it as plain",
+      {
+        intent: "plain" as const,
+        expense: { description: "Parcela do carro", amountCents: 90000 },
+      },
+    ],
+  ])(
+    "keeps unresolved deterministic payment ambiguity terminal and write-free when %s",
+    async (_label, classified) => {
+      const { deps, createTransaction, materializeObligationPayment } =
+        buildDeps({
+          classifyMessage: classifierReturning(classified),
+        });
+
+      const { state, reply } = await startConversation(
+        {
+          text: "Paguei a parcela do carro 900",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(state.status).toBe("cancelled");
+      expect(reply).toContain(
+        "Não ficou claro se 900 é o valor pago ou o número da parcela.",
+      );
+      expect(reply).toContain("R$ 900");
+      expect(reply).toContain("parcela número 900");
+      expect(materializeObligationPayment).not.toHaveBeenCalled();
+      expect(createTransaction).not.toHaveBeenCalled();
+    },
+  );
+
   it("an already-paid month replies as a friendly no-op", async () => {
     const { deps } = buildDeps({
       classifyMessage: classifierReturning(MARK_SOLAR),
@@ -436,6 +1163,41 @@ describe("mark_paid{obligation} flow", () => {
     });
   });
 
+  it("preserves an explicit account while resolving an ambiguous obligation", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-rent-home",
+          description: "Aluguel casa",
+          amountCents: 120000,
+        },
+        {
+          id: "ob-rent-office",
+          description: "Aluguel sala",
+          amountCents: 80000,
+        },
+      ],
+    });
+    const asked = await startConversation(
+      {
+        text: "Aluguel pago no Pix",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+    expect(asked.state.markPaidAccountId).toBe("acct-pix");
+
+    await applyMessage(asked.state, "sala", deps, { today: TODAY });
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-rent-office",
+      month: "2026-07",
+      paidOn: TODAY,
+      accountId: "acct-pix",
+    });
+  });
+
   it("no keyword match replies not-found and stays terminal", async () => {
     const { deps, materializeObligationPayment } = buildDeps({
       classifyMessage: classifierReturning({
@@ -498,6 +1260,389 @@ describe("classifier fallback", () => {
 // ---------------------------------------------------------------------------
 
 describe("mark_paid keyword matching robustness", () => {
+  it.each([
+    [
+      "a truncated AI keyword",
+      {
+        intent: "mark_paid" as const,
+        target: "obligation" as const,
+        keyword: "Luguel",
+        amountCents: 100,
+      },
+    ],
+    ["no classifier result", null],
+  ])(
+    "settles the existing Aluguel template with the deterministic amount when there is %s",
+    async (_label, classified) => {
+      const { deps, createTransaction, materializeObligationPayment } =
+        buildDeps({
+          classifyMessage: classifierReturning(classified),
+          listActiveObligations: async () => [
+            {
+              id: "ob-rent",
+              description: "Aluguel",
+              amountCents: 120000,
+            },
+          ],
+        });
+
+      const { state } = await startConversation(
+        {
+          text: "Paguei aluguel 1200",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(state.status).toBe("saved");
+      expect(materializeObligationPayment).toHaveBeenCalledWith({
+        obligationId: "ob-rent",
+        month: "2026-07",
+        paidOn: TODAY,
+        amountCents: 120000,
+      });
+      expect(createTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses the AI-specific financing target to resolve a deterministic car ambiguity", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "Financiamento do carro",
+        amountCents: 100,
+      }),
+      listActiveObligations: async () => [
+        {
+          id: "ob-car-financing",
+          description: "Financiamento do carro",
+          amountCents: 90000,
+        },
+        {
+          id: "ob-car-insurance",
+          description: "Seguro do carro",
+          amountCents: 50000,
+        },
+      ],
+    });
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei a parcela do carro por R$ 900",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledTimes(1);
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-car-financing",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 90000,
+    });
+  });
+
+  it("settles an existing rent template from a Pix-marked payment without rerouting to an expense", async () => {
+    const { deps, createTransaction, materializeObligationPayment } = buildDeps(
+      {
+        classifyMessage: classifierReturning(null),
+        listActiveObligations: async () => [
+          {
+            id: "ob-rent",
+            description: "Aluguel",
+            amountCents: 120000,
+          },
+        ],
+      },
+    );
+
+    const { state } = await startConversation(
+      {
+        text: "Aluguel pago no Pix 1500",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-rent",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 150000,
+      accountId: "acct-pix",
+    });
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not cross-settle insurance when the query explicitly names financing", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-car-insurance",
+          description: "Seguro do carro",
+          amountCents: 50000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei o financiamento do carro R$ 900",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toMatch(/não encontrei/i);
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+    expect(deps.createTransaction).not.toHaveBeenCalled();
+  });
+
+  it("settles a same-subject obligation when its explicit type also matches", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-car-financing",
+          description: "Financiamento do carro",
+          amountCents: 90000,
+        },
+      ],
+    });
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei o financiamento do carro R$ 900",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        obligationId: "ob-car-financing",
+        amountCents: 90000,
+      }),
+    );
+  });
+
+  it("allows a unique subject-only shorthand without inventing a target type", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning({
+        intent: "mark_paid",
+        target: "obligation",
+        keyword: "carro",
+      }),
+      listActiveObligations: async () => [
+        {
+          id: "ob-car-insurance",
+          description: "Seguro do carro",
+          amountCents: 50000,
+        },
+      ],
+    });
+
+    const { state } = await startConversation(
+      { text: "Paguei o carro", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ obligationId: "ob-car-insurance" }),
+    );
+  });
+
+  it("does not settle a broader qualified target from a partial token match", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-car",
+          description: "Financiamento do carro",
+          amountCents: 90000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei a parcela do seguro do carro R$ 500",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toMatch(/não encontrei/i);
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a shared Portuguese article as an identifying target", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-house",
+          description: "Financiamento de uma casa",
+          amountCents: 180000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei a parcela de uma moto R$ 500",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toMatch(/não encontrei/i);
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["casa", "ob-house"],
+    ["moto", "ob-motorcycle"],
+  ])(
+    "selects the correct %s target after removing Portuguese function words",
+    async (target, expectedObligationId) => {
+      const { deps, materializeObligationPayment } = buildDeps({
+        classifyMessage: classifierReturning(null),
+        listActiveObligations: async () => [
+          {
+            id: "ob-house",
+            description: "Financiamento de uma casa",
+            amountCents: 180000,
+          },
+          {
+            id: "ob-motorcycle",
+            description: "Financiamento de uma moto",
+            amountCents: 50000,
+          },
+        ],
+      });
+
+      const { state } = await startConversation(
+        {
+          text: `Paguei a parcela de uma ${target} R$ 500`,
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(state.status).toBe("saved");
+      expect(materializeObligationPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          obligationId: expectedObligationId,
+          amountCents: 50000,
+        }),
+      );
+    },
+  );
+
+  it("does not auto-settle a sole match based only on a generic token", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-house",
+          description: "Financiamento da casa",
+          amountCents: 180000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      { text: "financiamento pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("awaiting_mark_paid_choice");
+    expect(reply).toContain("Financiamento da casa");
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not settle from a sole generic financing-token overlap", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-house",
+          description: "Financiamento da casa",
+          amountCents: 180000,
+        },
+      ],
+    });
+
+    const { state, reply } = await startConversation(
+      {
+        text: "Paguei o financiamento do carro R$ 900",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("cancelled");
+    expect(reply).toMatch(/não encontrei/i);
+    expect(materializeObligationPayment).not.toHaveBeenCalled();
+  });
+
+  it("selects the correct target among obligations sharing a generic token", async () => {
+    const { deps, materializeObligationPayment } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveObligations: async () => [
+        {
+          id: "ob-house",
+          description: "Financiamento da casa",
+          amountCents: 180000,
+        },
+        {
+          id: "ob-car",
+          description: "Financiamento do carro",
+          amountCents: 90000,
+        },
+      ],
+    });
+
+    const { state } = await startConversation(
+      {
+        text: "Paguei o financiamento do carro R$ 900",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(state.status).toBe("saved");
+    expect(materializeObligationPayment).toHaveBeenCalledWith({
+      obligationId: "ob-car",
+      month: "2026-07",
+      paidOn: TODAY,
+      amountCents: 90000,
+    });
+  });
+
   it("matches on token overlap: 'placa solar' finds 'Parcela solar'", async () => {
     const { deps, materializeObligationPayment } = buildDeps({
       classifyMessage: classifierReturning({

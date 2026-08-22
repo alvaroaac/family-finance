@@ -42,10 +42,10 @@ import {
   applyDeterministicPrecedence,
   detectFinancialRoute,
 } from "./financial-routing.js";
+import type { RoutedInterpretedIntent } from "./financial-routing.js";
 import type {
   InterpretedCardPurchase,
   InterpretedExpense,
-  InterpretedIntent,
   MessageClassifier,
   TextInterpreter,
 } from "./interpret.js";
@@ -243,6 +243,8 @@ export type ConversationState = {
   markPaidCandidates?: MarkPaidCandidate[];
   /** Actual amount supplied with an ambiguous obligation payment. */
   markPaidAmountCents?: number;
+  /** Explicit settlement account resolved before an ambiguous obligation choice. */
+  markPaidAccountId?: string;
   /** Valid callback choices while status = awaiting_payment_choice. */
   paymentCandidates?: PaymentInstrumentCandidate[];
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
@@ -349,6 +351,7 @@ export type ConversationDeps = {
     month: string;
     paidOn: string;
     amountCents?: number;
+    accountId?: string;
   }) => Promise<{ alreadyPaid: boolean }>;
   /** Map a spoken account name ("conta Nubank") to an account id. */
   resolveAccountIdByName?: (name: string) => string | undefined;
@@ -704,26 +707,135 @@ function pendingSubcategoryFromInterpreter(
   );
 }
 
-/** Meaningful tokens of a keyword/description (normalized, short words out). */
+/** Searchable tokens of a keyword/description (normalized, short words out). */
 function matchTokens(value: string): string[] {
   return normalizeText(value)
     .split(/\s+/)
     .filter((token) => token.length >= 3);
 }
 
+const GENERIC_OBLIGATION_MATCH_TOKENS = new Set([
+  "aquela",
+  "aquele",
+  "aquelas",
+  "aqueles",
+  "com",
+  "consorcio",
+  "consorcios",
+  "das",
+  "dos",
+  "emprestimo",
+  "emprestimos",
+  "essa",
+  "essas",
+  "esse",
+  "esses",
+  "esta",
+  "estas",
+  "este",
+  "estes",
+  "financiamento",
+  "financiamentos",
+  "meu",
+  "meus",
+  "minha",
+  "minhas",
+  "nossa",
+  "nossas",
+  "nosso",
+  "nossos",
+  "obrigacao",
+  "obrigacoes",
+  "pagamento",
+  "pagamentos",
+  "paga",
+  "pago",
+  "paguei",
+  "parcela",
+  "parcelas",
+  "para",
+  "pela",
+  "pelas",
+  "pelo",
+  "pelos",
+  "por",
+  "prestacao",
+  "prestacoes",
+  "quitada",
+  "quitado",
+  "sem",
+  "seu",
+  "seus",
+  "sua",
+  "suas",
+  "uma",
+  "umas",
+  "uns",
+]);
+
+function obligationMatchTokens(value: string): string[] {
+  return matchTokens(value).filter(
+    (token) => !GENERIC_OBLIGATION_MATCH_TOKENS.has(token),
+  );
+}
+
+type ObligationTargetType =
+  | "financing"
+  | "insurance"
+  | "rent"
+  | "loan"
+  | "consortium"
+  | "solar_installment";
+
+function explicitObligationTargetType(
+  value: string,
+): ObligationTargetType | undefined {
+  const normalized = normalizeText(value);
+  if (/\bparcela\s+solar\b/.test(normalized)) return "solar_installment";
+  const tokens = new Set(matchTokens(value));
+  if (tokens.has("financiamento") || tokens.has("financiamentos"))
+    return "financing";
+  if (tokens.has("seguro") || tokens.has("seguros")) return "insurance";
+  if (tokens.has("aluguel") || tokens.has("alugueis")) return "rent";
+  if (tokens.has("emprestimo") || tokens.has("emprestimos")) return "loan";
+  if (tokens.has("consorcio") || tokens.has("consorcios")) return "consortium";
+  return undefined;
+}
+
+function hasCompatibleObligationType(keyword: string, name: string): boolean {
+  const keywordType = explicitObligationTargetType(keyword);
+  if (keywordType === undefined) return true;
+  if (normalizeText(keyword) === normalizeText(name)) return true;
+  return explicitObligationTargetType(name) === keywordType;
+}
+
 /**
- * Keyword ↔ description match on TOKEN overlap, not whole-string containment:
- * the classifier extracts the keyword verbatim from the message ("placa
- * solar"), while the stored description may differ ("Parcela solar") — a
- * shared token like "solar" is what actually links them. Shared by obligation
- * mark-paid matching and card-name resolution (PR-2).
+ * Obligation matching requires every discriminating query token to be covered by
+ * the stored target. Generic
+ * finance words cannot authorize a payment by themselves: "financiamento do
+ * carro" must not settle the only stored "Financiamento da casa" merely because
+ * both contain "financiamento". Wording variants such as "placa solar" and
+ * "Parcela solar" still meet on the meaningful token "solar".
  */
 function keywordMatch(keyword: string, name: string): boolean {
-  const keywordTokens = matchTokens(keyword);
-  const nameTokens = matchTokens(name);
+  if (!hasCompatibleObligationType(keyword, name)) return false;
+  const keywordTokens = obligationMatchTokens(keyword);
+  const nameTokens = obligationMatchTokens(name);
   if (keywordTokens.length === 0 || nameTokens.length === 0) {
     return false;
   }
+  // Historical wording calls the solar obligation both "placa solar" and
+  // "Parcela solar". Once "solar" is present, "placa" is not an independent
+  // qualifier; unlike "seguro" in "seguro do carro", it may be omitted safely.
+  const requiredKeywordTokens = keywordTokens.filter(
+    (token) => !(token === "placa" && keywordTokens.includes("solar")),
+  );
+  return requiredKeywordTokens.every((token) => nameTokens.includes(token));
+}
+
+function genericKeywordMatch(keyword: string, name: string): boolean {
+  const keywordTokens = matchTokens(keyword);
+  const nameTokens = matchTokens(name);
   return keywordTokens.some((token) => nameTokens.includes(token));
 }
 
@@ -876,6 +988,7 @@ async function settleObligation(
   deps: ConversationDeps,
   today: string,
   amountCents?: number,
+  accountId?: string,
 ): Promise<ConversationOutcome> {
   if (deps.materializeObligationPayment === undefined) {
     // The obligation WAS found — the settle capability just is not wired.
@@ -892,6 +1005,7 @@ async function settleObligation(
       month,
       paidOn: today,
       ...(amountCents === undefined ? {} : { amountCents }),
+      ...(accountId === undefined ? {} : { accountId }),
     }));
   } catch (error) {
     // The RPC rejects months outside [start_month, term end] and non-active
@@ -1160,6 +1274,8 @@ async function resolveBillCard(
 async function startCardBillIntent(
   keyword: string,
   overrideAmountCents: number | undefined,
+  billMonth: string | undefined,
+  settlementAccountKeyword: string | undefined,
   input: StartInput,
   deps: ConversationDeps,
   options: StartOptions,
@@ -1172,7 +1288,20 @@ async function startCardBillIntent(
       reply: "A casa ainda não tem cartão cadastrado.",
     };
   }
-  if (deps.defaultAccountId === undefined) {
+  const settlementAccountId =
+    settlementAccountKeyword === undefined
+      ? deps.defaultAccountId
+      : deps.resolveAccountIdByName?.(settlementAccountKeyword);
+  if (
+    settlementAccountKeyword !== undefined &&
+    settlementAccountId === undefined
+  ) {
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `Não encontrei a conta “${settlementAccountKeyword}” para pagar a fatura. Diga o nome de uma conta cadastrada.`,
+    };
+  }
+  if (settlementAccountId === undefined) {
     return {
       state: { status: "cancelled", draft: ballast },
       reply:
@@ -1180,10 +1309,10 @@ async function startCardBillIntent(
     };
   }
 
-  const month = options.today.slice(0, 7);
+  const month = billMonth ?? options.today.slice(0, 7);
   const draft: CardBillDraftInProgress = {
     overrideAmountCents,
-    accountId: deps.defaultAccountId,
+    accountId: settlementAccountId,
     month,
     createdByUserId: input.fromUserId,
   };
@@ -1222,7 +1351,7 @@ async function startCardBillIntent(
 /** Route a classified non-plain intent to its flow. */
 async function startClassifiedIntent(
   classified: Exclude<
-    InterpretedIntent,
+    RoutedInterpretedIntent,
     { intent: "plain" } | { intent: "non_financial" }
   >,
   input: StartInput,
@@ -1247,6 +1376,8 @@ async function startClassifiedIntent(
     return startCardBillIntent(
       classified.keyword,
       classified.amountCents,
+      classified.billMonth,
+      classified.settlementAccountKeyword,
       input,
       deps,
       options,
@@ -1255,12 +1386,29 @@ async function startClassifiedIntent(
   }
 
   if (classified.intent === "mark_paid") {
+    const settlementAccountId =
+      classified.settlementAccountKeyword === undefined
+        ? undefined
+        : deps.resolveAccountIdByName?.(classified.settlementAccountKeyword);
+    if (
+      classified.settlementAccountKeyword !== undefined &&
+      settlementAccountId === undefined
+    ) {
+      return {
+        state: { status: "cancelled", draft: ballast },
+        reply: `Não encontrei a conta “${classified.settlementAccountKeyword}” para registrar o pagamento. Diga o nome de uma conta cadastrada.`,
+      };
+    }
     const obligations =
       deps.listActiveObligations !== undefined
         ? await deps.listActiveObligations()
         : [];
+    const hasDiscriminatingTarget =
+      obligationMatchTokens(classified.keyword).length > 0;
     const matches = obligations.filter((o) =>
-      keywordMatch(classified.keyword, o.description),
+      hasDiscriminatingTarget
+        ? keywordMatch(classified.keyword, o.description)
+        : genericKeywordMatch(classified.keyword, o.description),
     );
 
     if (matches.length === 0) {
@@ -1269,7 +1417,7 @@ async function startClassifiedIntent(
         reply: obligationNotFoundMessage(classified.keyword),
       };
     }
-    if (matches.length === 1) {
+    if (matches.length === 1 && hasDiscriminatingTarget) {
       return settleObligation(
         matches[0] as MarkPaidCandidate,
         ballast,
@@ -1277,6 +1425,7 @@ async function startClassifiedIntent(
         deps,
         options.today,
         classified.amountCents,
+        settlementAccountId,
       );
     }
     return {
@@ -1287,6 +1436,9 @@ async function startClassifiedIntent(
         ...(classified.amountCents === undefined
           ? {}
           : { markPaidAmountCents: classified.amountCents }),
+        ...(settlementAccountId === undefined
+          ? {}
+          : { markPaidAccountId: settlementAccountId }),
       },
       reply: obligationAmbiguousMessage(matches.map((m) => m.description)),
     };
@@ -1296,7 +1448,20 @@ async function startClassifiedIntent(
   // An obligation is account-paid, so a household with no account at all
   // cannot hold one — refuse with a clear message (mirrors `persist`).
   const extracted = classified.obligation;
-  if (deps.defaultAccountId === undefined) {
+  const obligationAccountId =
+    extracted.accountKeyword === undefined
+      ? deps.defaultAccountId
+      : deps.resolveAccountIdByName?.(extracted.accountKeyword);
+  if (
+    extracted.accountKeyword !== undefined &&
+    obligationAccountId === undefined
+  ) {
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `Não encontrei a conta “${extracted.accountKeyword}” para registrar a obrigação. Diga o nome de uma conta cadastrada.`,
+    };
+  }
+  if (obligationAccountId === undefined) {
     return {
       state: { status: "cancelled", draft: ballast },
       reply:
@@ -1312,7 +1477,7 @@ async function startClassifiedIntent(
       extracted.dueDay !== undefined
         ? Math.min(28, Math.max(1, extracted.dueDay))
         : 1,
-    accountId: deps.defaultAccountId,
+    accountId: obligationAccountId,
     createdByUserId: input.fromUserId,
   };
   if (extracted.responsibleHint !== undefined) {
@@ -1465,14 +1630,77 @@ export async function startConversation(
     merchantAliases: deps.merchantAliases,
   });
 
-  if (deterministic.route === "ambiguous") {
+  const withParsedFinancialDates = (
+    classified: RoutedInterpretedIntent | null,
+  ): RoutedInterpretedIntent | null => {
+    if (
+      classified?.intent === "card_installment" &&
+      classified.purchase.purchasedOn === undefined &&
+      parsed.occurredOn !== undefined &&
+      !parsed.uncertainFields.includes("date")
+    ) {
+      const hasExplicitPurchaseYear = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(
+        input.text,
+      );
+      let purchasedOn = parsed.occurredOn;
+      if (!hasExplicitPurchaseYear && purchasedOn > options.today) {
+        purchasedOn = `${Number(purchasedOn.slice(0, 4)) - 1}${purchasedOn.slice(4)}`;
+      }
+      return {
+        ...classified,
+        purchase: { ...classified.purchase, purchasedOn },
+      };
+    }
+    if (
+      classified?.intent === "obligation" &&
+      deterministic.startDate !== undefined &&
+      parsed.occurredOn !== undefined &&
+      !parsed.uncertainFields.includes("date")
+    ) {
+      const classifiedStartMonth = classified.obligation.startMonth;
+      const validClassifiedStartMonth =
+        classifiedStartMonth !== undefined &&
+        /^\d{4}-(0[1-9]|1[0-2])$/.test(classifiedStartMonth);
+      const hasExplicitStartYear =
+        /\ba\s+partir\s+de\s+\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(input.text);
+      let fallbackStartMonth = parsed.occurredOn.slice(0, 7);
+      if (
+        !hasExplicitStartYear &&
+        fallbackStartMonth < options.today.slice(0, 7)
+      ) {
+        fallbackStartMonth = `${Number(parsed.occurredOn.slice(0, 4)) + 1}-${parsed.occurredOn.slice(5, 7)}`;
+      }
+      return {
+        ...classified,
+        obligation: {
+          ...classified.obligation,
+          startMonth: validClassifiedStartMonth
+            ? classifiedStartMonth
+            : fallbackStartMonth,
+          dueDay: deterministic.startDate.day,
+        },
+      };
+    }
+    return classified;
+  };
+
+  const unresolvedAmbiguity = (): ConversationOutcome => {
     const ballast = placeholderDraft(input, inputKind, options.today);
+    const reply =
+      deterministic.reason === "invalid_bill_month" &&
+      deterministic.invalidBillMonth !== undefined
+        ? `O mês da fatura “${deterministic.invalidBillMonth}” é inválido. Envie no formato MM/AAAA, com mês entre 01 e 12.`
+        : deterministic.reason === "ambiguous_payment_number_semantics" &&
+            deterministic.ambiguousPaymentNumber !== undefined
+          ? `Não ficou claro se ${deterministic.ambiguousPaymentNumber} é o valor pago ou o número da parcela. Envie “R$ ${deterministic.ambiguousPaymentNumber}” para informar o valor ou “parcela número ${deterministic.ambiguousPaymentNumber}” para informar a posição.`
+          : deterministic.reason === "unresolved_existing_payment"
+            ? "Não consegui identificar com segurança qual obrigação foi paga. Diga o nome exato da obrigação e o valor pago."
+            : "Não consegui separar com segurança uma compra parcelada de uma obrigação. Diga se foi uma compra no cartão e informe o número de parcelas.";
     return {
       state: { status: "cancelled", draft: ballast },
-      reply:
-        "Não consegui separar com segurança uma compra parcelada de uma obrigação ou pagamento. Diga se foi uma compra no cartão e informe o número de parcelas.",
+      reply,
     };
-  }
+  };
 
   // Unified intent classification: when configured it sees every NEW message
   // with parser/DB context. A null result falls back to the parser path below.
@@ -1499,11 +1727,18 @@ export async function startConversation(
         merchantAliases: deps.merchantAliases,
       })
       .catch(() => null);
-    const classified = applyDeterministicPrecedence(
-      deterministic,
-      aiClassified,
+    const classified = withParsedFinancialDates(
+      applyDeterministicPrecedence(deterministic, aiClassified),
     );
     aiUnavailable = aiClassified === null;
+    if (deterministic.route === "ambiguous") {
+      const validExistingPaymentResolution =
+        deterministic.reason === "unresolved_existing_payment" &&
+        classified?.intent === "mark_paid";
+      if (!validExistingPaymentResolution) {
+        return unresolvedAmbiguity();
+      }
+    }
     if (classified?.intent === "non_financial") {
       // Successful unified abstention: do not call Anthropic interpretation or
       // categorization. The deterministic parser still owns the safe fallback
@@ -1529,7 +1764,12 @@ export async function startConversation(
       classifiedExpense = classified.expense;
     }
   } else {
-    const classified = applyDeterministicPrecedence(deterministic, null);
+    const classified = withParsedFinancialDates(
+      applyDeterministicPrecedence(deterministic, null),
+    );
+    if (deterministic.route === "ambiguous") {
+      return unresolvedAmbiguity();
+    }
     if (
       classified !== null &&
       classified.intent !== "plain" &&
@@ -2163,6 +2403,7 @@ async function applyMarkPaidChoice(
     deps,
     today,
     state.markPaidAmountCents,
+    state.markPaidAccountId,
   );
 }
 

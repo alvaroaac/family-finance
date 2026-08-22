@@ -30,7 +30,10 @@ const ACCOUNT = "acc-corrente";
 // Inside July 2026.
 const NOW = new Date("2026-07-15T12:00:00Z");
 
-function seededClient(): { client: AppSupabaseClient; store: FakeSupabaseStore } {
+function seededClient(): {
+  client: AppSupabaseClient;
+  store: FakeSupabaseStore;
+} {
   const store = new FakeSupabaseStore({
     obligations: [
       {
@@ -83,7 +86,9 @@ function seededClient(): { client: AppSupabaseClient; store: FakeSupabaseStore }
       },
     ],
   });
-  const client = createFakeSupabaseClient(store) as unknown as AppSupabaseClient;
+  const client = createFakeSupabaseClient(
+    store,
+  ) as unknown as AppSupabaseClient;
   return { client, store };
 }
 
@@ -290,5 +295,23 @@ describe("mark-paid actual amount", () => {
         (entry) => entry.obligationId === "ob-rent",
       )?.amountCents,
     ).toBe(120000);
+  });
+
+  it("uses an account override only for the materialized payment", async () => {
+    const { client, store } = seededClient();
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+      accountId: "acc-pix",
+    });
+
+    const transaction = store
+      .table("transactions")
+      .find((row) => row.obligation_id === "ob-rent");
+    const obligation = store
+      .table("obligations")
+      .find((row) => row.id === "ob-rent");
+    expect(transaction?.account_id).toBe("acc-pix");
+    expect(obligation?.account_id).toBe(ACCOUNT);
   });
 });

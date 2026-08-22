@@ -52,7 +52,10 @@ function ilikePatternToRegExp(pattern: string): RegExp {
   while (i < pattern.length) {
     const ch = pattern[i] as string;
     if (ch === "\\" && i + 1 < pattern.length) {
-      regex += (pattern[i + 1] as string).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      regex += (pattern[i + 1] as string).replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
       i += 2;
       continue;
     }
@@ -249,7 +252,8 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
           return cell !== null && cell !== undefined;
         case "ilike":
           return (
-            typeof cell === "string" && ilikePatternToRegExp(f.pattern).test(cell)
+            typeof cell === "string" &&
+            ilikePatternToRegExp(f.pattern).test(cell)
           );
         default:
           return true;
@@ -527,6 +531,7 @@ function materializeObligationPaymentRpc(
     target_month: string;
     paid_on?: string | null;
     target_amount_cents?: number | null;
+    target_account_id?: string | null;
   },
 ): Result<Row> {
   const obligation = store
@@ -568,7 +573,7 @@ function materializeObligationPaymentRpc(
     description: obligation.description,
     category_id: obligation.category_id ?? null,
     subcategory_id: obligation.subcategory_id ?? null,
-    account_id: obligation.account_id,
+    account_id: args.target_account_id ?? obligation.account_id,
     credit_card_id: null,
     installment_id: null,
     responsibility_scope: obligation.responsibility_scope ?? "household",
@@ -694,6 +699,7 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
               target_month: string;
               paid_on?: string | null;
               target_amount_cents?: number | null;
+              target_account_id?: string | null;
             },
           ),
         );

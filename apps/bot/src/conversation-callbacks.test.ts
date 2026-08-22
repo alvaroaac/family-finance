@@ -139,6 +139,72 @@ describe("named payment instrument resolution", () => {
     expect(card.state.draft.cardId).toBe("card-nubank");
   });
 
+  it("keeps a merchant payment on the normal single-card expense path", async () => {
+    const deps = makeDeps({
+      ...instruments,
+      listActiveAccounts: () => [],
+      classifyMessage: async () => null,
+    });
+
+    const started = await startConversation(
+      {
+        text: "Paguei o mercado 50 no Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_confirmation");
+    expect(started.state.cardBillDraft).toBeUndefined();
+    expect(started.state.draft).toMatchObject({
+      amountCents: 5_000,
+      cardId: "card-nubank",
+    });
+
+    await applyCallback(started.state, "cf", deps, { today: TODAY });
+    const persisted = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(persisted.amount.cents).toBe(5_000);
+    expect(persisted.payment).toEqual({
+      type: "card",
+      creditCardId: "card-nubank",
+    });
+  });
+
+  it("keeps `Cartão Nubank compra mercado 50` on the ordinary credit-expense path", async () => {
+    const deps = makeDeps({
+      ...instruments,
+      listActiveAccounts: () => [],
+      classifyMessage: async () => null,
+    });
+
+    const started = await startConversation(
+      {
+        text: "Cartão Nubank compra mercado 50",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_confirmation");
+    expect(started.state.cardBillDraft).toBeUndefined();
+    expect(started.state.draft).toMatchObject({
+      amountCents: 5_000,
+      cardId: "card-nubank",
+    });
+
+    await applyCallback(started.state, "cf", deps, { today: TODAY });
+    const persisted = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(persisted.amount.cents).toBe(5_000);
+    expect(persisted.payment).toEqual({
+      type: "card",
+      creditCardId: "card-nubank",
+    });
+  });
+
   it("uses an explicit type without asking", async () => {
     const deps = makeDeps(instruments);
     const card = await startConversation(
@@ -155,6 +221,176 @@ describe("named payment instrument resolution", () => {
       { today: TODAY },
     );
     expect(account.state.draft.accountId).toBe("acct-nubank");
+  });
+
+  it("keeps deterministic IPTU details and the debit-account path when the classifier is wrong", async () => {
+    const deps = makeDeps({
+      classifyMessage: async () => ({
+        intent: "plain" as const,
+        expense: { description: "IPTU 2026", amountCents: 202_600 },
+      }),
+    });
+
+    const started = await startConversation(
+      { text: "IPTU 2026 no débito 1200", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_confirmation");
+    expect(started.state.draft.description).toBe("IPTU");
+    expect(started.state.draft.amountCents).toBe(120_000);
+    expect(started.state.draft.accountId).toBe("acct-1");
+    expect(started.state.draft.cardId).toBeUndefined();
+
+    const confirmed = await applyCallback(started.state, "cf", deps, {
+      today: TODAY,
+    });
+
+    expect(confirmed.state.status).toBe("saved");
+    const persisted = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(persisted.description).toBe("IPTU");
+    expect(persisted.amount.cents).toBe(120_000);
+    expect(persisted.payment).toEqual({
+      type: "account",
+      accountId: "acct-1",
+    });
+  });
+
+  it("keeps the explicit iPhone model and Pix amount on the account path when the classifier is wrong", async () => {
+    const deps = makeDeps({
+      classifyMessage: async () => ({
+        intent: "plain" as const,
+        expense: {
+          description: "iPhone",
+          amountCents: 150_000,
+          cardKeyword: "Pix",
+        },
+      }),
+    });
+
+    const started = await startConversation(
+      {
+        text: "iPhone 15 no Pix por 5000",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_confirmation");
+    expect(started.state.draft).toMatchObject({
+      description: "iPhone 15",
+      amountCents: 500_000,
+      accountId: "acct-1",
+    });
+    expect(started.state.draft.cardId).toBeUndefined();
+
+    const confirmed = await applyCallback(started.state, "cf", deps, {
+      today: TODAY,
+    });
+
+    expect(confirmed.state.status).toBe("saved");
+    const persisted = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(persisted.description).toBe("iPhone 15");
+    expect(persisted.amount.cents).toBe(500_000);
+    expect(persisted.payment).toEqual({
+      type: "account",
+      accountId: "acct-1",
+    });
+  });
+
+  it.each([
+    ["iPhone 15 no Pix 5000", "iPhone 15", 500_000, "iPhone", 1_500],
+    ["TV 55 no Pix 3000", "TV 55", 300_000, "TV", 5_500],
+    ["Pneu aro 17 no Pix 800", "Pneu aro 17", 80_000, "Pneu", 1_700],
+  ])(
+    "keeps the product model and trailing Pix amount for `%s` despite first-number AI output",
+    async (
+      text,
+      expectedDescription,
+      expectedAmount,
+      aiDescription,
+      aiAmount,
+    ) => {
+      const deps = makeDeps({
+        classifyMessage: async () => ({
+          intent: "plain" as const,
+          expense: {
+            description: aiDescription,
+            amountCents: aiAmount,
+            cardKeyword: "Pix",
+          },
+        }),
+      });
+
+      const started = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(started.state.status).toBe("awaiting_confirmation");
+      expect(started.state.draft).toMatchObject({
+        description: expectedDescription,
+        amountCents: expectedAmount,
+        accountId: "acct-1",
+      });
+      expect(started.state.draft.cardId).toBeUndefined();
+
+      await applyCallback(started.state, "cf", deps, { today: TODAY });
+      const persisted = (deps.createTransaction as ReturnType<typeof vi.fn>)
+        .mock.calls[0]?.[0];
+      expect(persisted.description).toBe(expectedDescription);
+      expect(persisted.amount.cents).toBe(expectedAmount);
+      expect(persisted.payment).toEqual({
+        type: "account",
+        accountId: "acct-1",
+      });
+    },
+  );
+
+  it("canonicalizes a paid lunch expense and persists it on the debit account", async () => {
+    const deps = makeDeps({
+      classifyMessage: async () => ({
+        intent: "plain" as const,
+        expense: {
+          description: "Paguei almoço 75 no débito",
+          amountCents: 750_000,
+        },
+      }),
+    });
+
+    const started = await startConversation(
+      {
+        text: "Paguei almoço 75 no débito",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.status).toBe("awaiting_confirmation");
+    expect(started.state.draft.description).toBe("Almoço");
+    expect(started.state.draft.amountCents).toBe(7_500);
+    expect(started.state.draft.accountId).toBe("acct-1");
+    expect(started.state.draft.cardId).toBeUndefined();
+
+    const confirmed = await applyCallback(started.state, "cf", deps, {
+      today: TODAY,
+    });
+
+    expect(confirmed.state.status).toBe("saved");
+    const persisted = (deps.createTransaction as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    expect(persisted.description).toBe("Almoço");
+    expect(persisted.amount.cents).toBe(7_500);
+    expect(persisted.payment).toEqual({
+      type: "account",
+      accountId: "acct-1",
+    });
   });
 
   it("`Posto Marcio 200 credito` uses the only active credit card and still categorizes", async () => {

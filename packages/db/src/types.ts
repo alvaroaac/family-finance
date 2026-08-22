@@ -808,6 +808,7 @@ export type Database = {
           target_month: string;
           paid_on?: string | null;
           target_amount_cents?: number | null;
+          target_account_id?: string | null;
         };
         Returns: MaterializeObligationPaymentResult;
       };

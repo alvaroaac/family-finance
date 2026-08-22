@@ -292,12 +292,14 @@ async function buildDeps(
       month,
       paidOn,
       amountCents,
+      accountId,
     }) => {
       const result = await dbMaterializeObligationPayment(client, {
         obligationId,
         month,
         paidOn,
         ...(amountCents === undefined ? {} : { amountCents }),
+        ...(accountId === undefined ? {} : { accountId }),
       });
       return { alreadyPaid: result.already_paid };
     },

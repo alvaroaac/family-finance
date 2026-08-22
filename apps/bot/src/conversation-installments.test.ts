@@ -95,6 +95,29 @@ function purchaseIntent(
 }
 
 describe("card installment start: card resolution", () => {
+  it("keeps explicit card credit on the installment path", async () => {
+    const { deps } = buildDeps({
+      classifyMessage: classifierReturning(null),
+    });
+    const outcome = await startConversation(
+      {
+        text: "Notebook 3000 em 12x no crédito Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.state.status).toBe("awaiting_installment_confirmation");
+    expect(outcome.state.obligationDraft).toBeUndefined();
+    expect(outcome.state.installmentDraft).toMatchObject({
+      description: "Notebook",
+      totalCents: 300000,
+      installmentCount: 12,
+      cardId: "card-1",
+    });
+  });
+
   it.each([
     ["classifier unavailable", null],
     [
@@ -149,6 +172,100 @@ describe("card installment start: card resolution", () => {
     expect(outcome.state.installmentDraft).toBeUndefined();
     expect(createInstallmentPurchase).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["conflicting totals", "Notebook 3x de 50, total 200, no Nubank"],
+    ["an invalid installment count", "Notebook 3600 em 0x no Nubank"],
+  ])(
+    "keeps %s terminal and write-free even when AI returns an installment",
+    async (_label, text) => {
+      const { deps, createInstallmentPurchase } = buildDeps({
+        classifyMessage: classifierReturning(
+          purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+        ),
+      });
+
+      const outcome = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(outcome.state.status).toBe("cancelled");
+      expect(outcome.reply).toMatch(/não consegui separar com segurança/i);
+      expect(createInstallmentPurchase).not.toHaveBeenCalled();
+      expect(deps.createTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("carries an explicit parser date into a deterministic installment fallback", async () => {
+    const { deps, createInstallmentPurchase } = buildDeps({
+      classifyMessage: classifierReturning(null),
+      listActiveCards: () => [{ id: "card-1", name: "Nubank", closingDay: 5 }],
+    });
+    const started = await startConversation(
+      {
+        text: "Notebook 3600 em 12x no Nubank dia 12/06",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.installmentDraft?.purchasedOn).toBe("2026-06-12");
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
+    expect(plan.group.purchasedOn).toBe("2026-06-12");
+    expect(plan.installments[0]?.dueMonth).toBe("2026-07");
+  });
+
+  it.each([
+    [
+      "classifier result without a date",
+      purchaseIntent({ totalCents: 120000, installmentCount: 12 }),
+      "Comprei TV 1200 em 12x no Nubank dia 31/12",
+      "2025-12-31",
+    ],
+    [
+      "deterministic fallback",
+      null,
+      "Comprei TV 1200 em 12x no Nubank dia 31/12",
+      "2025-12-31",
+    ],
+    [
+      "deterministic fallback with an explicit year",
+      null,
+      "Comprei TV 1200 em 12x no Nubank dia 31/12/2024",
+      "2024-12-31",
+    ],
+  ])(
+    "persists purchase chronology for %s",
+    async (_label, classified, text, expectedPurchasedOn) => {
+      const { deps, createInstallmentPurchase } = buildDeps({
+        classifyMessage: classifierReturning(classified),
+      });
+      const started = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: "2026-01-02" },
+      );
+
+      expect(started.state.installmentDraft?.purchasedOn).toBe(
+        expectedPurchasedOn,
+      );
+
+      await applyMessage(started.state, "confirmar", deps, {
+        today: "2026-01-02",
+      });
+      expect(createInstallmentPurchase).toHaveBeenCalledWith(
+        expect.objectContaining({
+          group: expect.objectContaining({ purchasedOn: expectedPurchasedOn }),
+        }),
+      );
+    },
+  );
 
   it("no active card -> terminal refusal", async () => {
     const { deps, createInstallmentPurchase } = buildDeps({
@@ -422,7 +539,7 @@ describe("card installment start: amount normalization + summary", () => {
       ),
     });
     const perOutcome = await startConversation(
-      { text: "sofa 12000 em 10x", fromUserId: "user-alvaro" },
+      { text: "sofa 10x de 120", fromUserId: "user-alvaro" },
       depsPer,
       { today: TODAY },
     );
@@ -669,6 +786,158 @@ describe("card installment confirm: persistence", () => {
     expect(
       plan.installments.every((item) => item.description === "Notebook"),
     ).toBe(true);
+  });
+
+  it.each([
+    [
+      "classified installment",
+      purchaseIntent({
+        description: "Geladeira",
+        totalCents: 300000,
+        installmentCount: 10,
+        cardKeyword: "Nubank",
+      }),
+    ],
+    ["deterministic fallback", null],
+  ])(
+    "persists the canonical Geladeira description through %s",
+    async (_label, classified) => {
+      const { deps, createInstallmentPurchase } = buildDeps({
+        classifyMessage: classifierReturning(classified),
+      });
+      const started = await startConversation(
+        {
+          text: "Comprei no Nubank uma geladeira por 3000 em 10x",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(started.state.installmentDraft?.description).toBe("Geladeira");
+
+      await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+      const plan = createInstallmentPurchase.mock
+        .calls[0]?.[0] as InstallmentPlan;
+      expect(plan.group.description).toBe("Geladeira");
+      expect(plan.installments).toHaveLength(10);
+      expect(
+        plan.installments.every((item) => item.description === "Geladeira"),
+      ).toBe(true);
+    },
+  );
+
+  it("persists an explicit reverse-order per-installment amount despite inconsistent AI total", async () => {
+    const { deps, createInstallmentPurchase } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          description: "Notebook",
+          totalCents: 30000,
+          installmentCount: 12,
+          cardKeyword: "Nubank",
+        }),
+      ),
+    });
+    const started = await startConversation(
+      {
+        text: "Notebook R$ 300 12x no Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.installmentDraft).toMatchObject({
+      description: "Notebook",
+      totalCents: 360000,
+      installmentCount: 12,
+    });
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
+    expect(plan.group.totalAmount.cents).toBe(360000);
+    expect(plan.installments).toHaveLength(12);
+    expect(plan.installments.every((item) => item.amount.cents === 30000)).toBe(
+      true,
+    );
+  });
+
+  it("persists `12 parcelas R$ 300` as twelve R$ 300 installments despite an inconsistent AI total", async () => {
+    const { deps, createInstallmentPurchase } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          description: "Notebook",
+          totalCents: 30000,
+          installmentCount: 12,
+          cardKeyword: "Nubank",
+        }),
+      ),
+    });
+    const started = await startConversation(
+      {
+        text: "Notebook 12 parcelas R$ 300 no Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.installmentDraft).toMatchObject({
+      description: "Notebook",
+      totalCents: 360000,
+      installmentCount: 12,
+    });
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
+    expect(plan.group.description).toBe("Notebook");
+    expect(plan.group.totalAmount.cents).toBe(360000);
+    expect(plan.installments).toHaveLength(12);
+    expect(plan.installments.every((item) => item.amount.cents === 30000)).toBe(
+      true,
+    );
+  });
+
+  it("strips an explicit purchase date from the description while preserving it through persistence", async () => {
+    const { deps, createInstallmentPurchase } = buildDeps({
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          description: "Notebook dia 10/08",
+          totalCents: 360000,
+          installmentCount: 12,
+          purchasedOn: "2026-08-10",
+          cardKeyword: "Nubank",
+        }),
+      ),
+    });
+    const started = await startConversation(
+      {
+        text: "Comprei notebook dia 10/08 por 3600 em 12x no Nubank",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(started.state.installmentDraft).toMatchObject({
+      description: "Notebook",
+      totalCents: 360000,
+      installmentCount: 12,
+      purchasedOn: "2026-08-10",
+    });
+
+    await applyMessage(started.state, "confirmar", deps, { today: TODAY });
+    const plan = createInstallmentPurchase.mock
+      .calls[0]?.[0] as InstallmentPlan;
+    expect(plan.group.description).toBe("Notebook");
+    expect(plan.group.purchasedOn).toBe("2026-08-10");
+    expect(plan.installments).toHaveLength(12);
+    expect(
+      plan.installments.every((item) => item.description === "Notebook"),
+    ).toBe(true);
+    expect(plan.installments[0]?.dueMonth).toBe("2026-08");
   });
 
   it("confirm persists a plan matching the draft, with closingDay shift", async () => {
