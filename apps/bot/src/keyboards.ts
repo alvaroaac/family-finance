@@ -142,6 +142,15 @@ export function installmentConfirmationKeyboard(
   };
 }
 
+/** Retry-only keyboard for an installment whose write outcome is uncertain. */
+export function installmentReconciliationKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "🔄 Verificar e concluir", callback_data: TOKENS.confirm }],
+    ],
+  };
+}
+
 /**
  * Category-pick grid: active categories alphabetically (pt-BR collation),
  * 2 per row, ending with the new-category button. Household scale — tens of

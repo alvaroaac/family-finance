@@ -1119,6 +1119,7 @@ export function creditCardInsert(input: {
  */
 export function installmentGroupInsertFromPlan(
   plan: InstallmentPlan,
+  options: { idempotencyKey?: string } = {},
 ): InstallmentGroupInsertPayload {
   const { group } = plan;
   const isUser = group.responsibility.scope === "user";
@@ -1137,6 +1138,7 @@ export function installmentGroupInsertFromPlan(
         ? group.responsibility.userId
         : null,
     created_by_user_id: group.createdByUserId,
+    idempotency_key: options.idempotencyKey ?? null,
   };
 }
 
@@ -1505,9 +1507,10 @@ export async function deleteCreditCard(
 export async function createInstallmentPurchase(
   client: AppSupabaseClient,
   plan: InstallmentPlan,
+  options: { idempotencyKey?: string } = {},
 ): Promise<{ group: InstallmentGroupRow; installments: InstallmentRow[] }> {
   const { data, error } = await client.rpc("create_installment_purchase", {
-    group_payload: installmentGroupInsertFromPlan(plan),
+    group_payload: installmentGroupInsertFromPlan(plan, options),
     installments_payload: installmentInsertPayloadsFromPlan(plan),
   });
   if (error !== null) {

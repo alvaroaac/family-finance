@@ -1417,6 +1417,92 @@ describe("conversation stores", () => {
     expect(tables.bot_conversations).toHaveLength(0);
   });
 
+  it("retains stale post-write installment uncertainty and its stable key", async () => {
+    const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const uncertainState: ConversationState = {
+      ...sampleState(),
+      status: "installment_outcome_uncertain",
+      installmentDraft: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+        purchasedOn: TODAY,
+        createdByUserId: "user-alvaro",
+        idempotencyKey: "stable-notebook-key",
+      },
+    };
+    const { client, tables } = fakeSupabase({
+      bot_conversations: [
+        { chat_id: 555, state: uncertainState, updated_at: staleAt },
+      ],
+    });
+    const store = createDbConversationStore(client);
+
+    const loaded = await store.load("555");
+
+    expect(loaded?.status).toBe("installment_outcome_uncertain");
+    expect(loaded?.installmentDraft?.idempotencyKey).toBe(
+      "stable-notebook-key",
+    );
+    expect(tables.bot_conversations).toHaveLength(1);
+  });
+
+  it("retains a stale awaiting installment draft when it has a stable key", async () => {
+    const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const awaitingState: ConversationState = {
+      ...sampleState(),
+      status: "awaiting_installment_confirmation",
+      installmentDraft: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+        purchasedOn: TODAY,
+        createdByUserId: "user-alvaro",
+        idempotencyKey: "stable-awaiting-notebook-key",
+      },
+    };
+    const { client, tables } = fakeSupabase({
+      bot_conversations: [
+        { chat_id: 555, state: awaitingState, updated_at: staleAt },
+      ],
+    });
+    const store = createDbConversationStore(client);
+
+    const loaded = await store.load("555");
+
+    expect(loaded?.status).toBe("awaiting_installment_confirmation");
+    expect(loaded?.installmentDraft?.idempotencyKey).toBe(
+      "stable-awaiting-notebook-key",
+    );
+    expect(tables.bot_conversations).toHaveLength(1);
+  });
+
+  it("turns stale uncertain state without a stable key into durable no-write recovery", async () => {
+    const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const { client, tables } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: {
+            ...sampleState(),
+            status: "installment_outcome_uncertain",
+            installmentDraft: { description: "Notebook" },
+          },
+          updated_at: staleAt,
+        },
+      ],
+    });
+    const store = createDbConversationStore(client);
+
+    const loaded = await store.load("555");
+
+    expect(loaded?.status).toBe("installment_recovery_required");
+    expect(
+      (tables.bot_conversations?.[0]?.state as ConversationState).status,
+    ).toBe("installment_recovery_required");
+    expect(tables.bot_conversations).toHaveLength(1);
+  });
+
   it("treats a malformed persisted state as absent", async () => {
     const { client } = fakeSupabase({
       bot_conversations: [
@@ -1443,5 +1529,42 @@ describe("conversation stores", () => {
     });
     const store = createDbConversationStore(client);
     expect(await store.load("555")).toBeUndefined();
+  });
+
+  it("converts a legacy pending installment into explicit no-write recovery", async () => {
+    const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const { client, tables } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: {
+            ...sampleState(),
+            status: "awaiting_installment_confirmation",
+            installmentDraft: { description: "Notebook" },
+          },
+          updated_at: staleAt,
+        },
+      ],
+    });
+    const store = createDbConversationStore(client);
+    const loaded = await store.load("555");
+    expect(loaded?.status).toBe("installment_recovery_required");
+    expect(
+      (tables.bot_conversations?.[0]?.state as ConversationState).status,
+    ).toBe("installment_recovery_required");
+
+    const createInstallmentPurchase = vi.fn(async () => {
+      throw new Error("legacy recovery must never write");
+    });
+    const { deps } = buildDeps({ createInstallmentPurchase });
+    const recovered = await applyMessage(
+      loaded as ConversationState,
+      "confirmar",
+      deps,
+      { today: TODAY },
+    );
+    expect(recovered.state.status).toBe("cancelled");
+    expect(recovered.reply).toContain("pode já ter sido salvo");
+    expect(createInstallmentPurchase).not.toHaveBeenCalled();
   });
 });

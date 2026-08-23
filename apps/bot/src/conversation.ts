@@ -36,15 +36,18 @@ import type {
   CategorizationResult,
   CategoryCatalog,
 } from "@family-finance/categorization";
+import { randomUUID } from "node:crypto";
 
 import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
 import {
   applyDeterministicPrecedence,
   detectFinancialRoute,
+  isCompleteAuthoritativeInstrumentMetadataTail,
+  registeredNormalFaturaTargetMatch,
+  splitAuthoritativeInstrumentNameAndMetadata,
 } from "./financial-routing.js";
 import type { RoutedInterpretedIntent } from "./financial-routing.js";
 import type {
-  InterpretedCardPurchase,
   InterpretedExpense,
   MessageClassifier,
   TextInterpreter,
@@ -107,6 +110,7 @@ import {
   RESPONSIBLE_TOKEN_PREFIX,
   confirmationKeyboard,
   installmentConfirmationKeyboard,
+  installmentReconciliationKeyboard,
   categoryGridKeyboard,
   cardGridKeyboard,
   paymentInstrumentKeyboard,
@@ -129,6 +133,12 @@ export type ConversationStatus =
   | "awaiting_obligation_confirmation"
   /** A card-installment purchase draft awaits its "confirmar" (PR-2). */
   | "awaiting_installment_confirmation"
+  /** Confirmation started durably; edits/cancel are no longer safe. */
+  | "installment_submission_started"
+  /** A prior write may have committed; only same-key reconciliation is safe. */
+  | "installment_outcome_uncertain"
+  /** Legacy pending installment without a durable identity; never writable. */
+  | "installment_recovery_required"
   /** A card-bill payment draft awaits its "confirmar" (PR-2, "nubank pago"). */
   | "awaiting_card_bill_confirmation"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
@@ -186,6 +196,8 @@ export type ObligationDraftInProgress = {
 
 /** The editable, in-progress CARD INSTALLMENT purchase draft (PR-2). */
 export type InstallmentDraftInProgress = {
+  /** Stable across confirmation retries; enforced by the database write. */
+  idempotencyKey: string;
   description: string;
   /** Total purchase amount in cents; undefined until "valor X" fills it. */
   totalCents?: number;
@@ -193,6 +205,8 @@ export type InstallmentDraftInProgress = {
   /** ISO date (YYYY-MM-DD) of the original purchase. */
   purchasedOn: string;
   cardId?: string;
+  /** Closing-day snapshot used to rebuild the same plan on every retry. */
+  cardClosingDay?: number;
   categoryId?: string;
   subcategoryId?: string;
   categoryExplanation?: string;
@@ -207,6 +221,8 @@ export type CardBillDraftInProgress = {
   amountCents?: number; // resolved (override ?? computed) once the card is known
   accountId: string;
   month: string; // YYYY-MM, calendar month of the message
+  /** Explicit payment occurrence date; defaults to confirmation day. */
+  paidOn?: string;
   createdByUserId: string;
 };
 
@@ -245,6 +261,8 @@ export type ConversationState = {
   markPaidAmountCents?: number;
   /** Explicit settlement account resolved before an ambiguous obligation choice. */
   markPaidAccountId?: string;
+  /** Explicit payment occurrence date carried through an obligation picker. */
+  markPaidPaidOn?: string;
   /** Valid callback choices while status = awaiting_payment_choice. */
   paymentCandidates?: PaymentInstrumentCandidate[];
   /** AI-proposed NEW category name (spec §3) — never placed in callback data. */
@@ -344,7 +362,8 @@ export type ConversationDeps = {
   createObligation?: (draft: ObligationDraft) => Promise<{ id: string }>;
   /**
    * Materialize one obligation month (db materializeObligationPayment).
-   * `paidOn` is the message send date; idempotent per (obligation, month).
+   * `paidOn` is the explicit occurrence date, or the message date by default;
+   * idempotent per (obligation, month).
    */
   materializeObligationPayment?: (args: {
     obligationId: string;
@@ -408,7 +427,15 @@ export type ConversationDeps = {
   /** Persist a validated installment plan (db createInstallmentPurchase). */
   createInstallmentPurchase?: (
     plan: InstallmentPlan,
-  ) => Promise<{ groupId: string }>;
+    idempotencyKey: string,
+  ) => Promise<{
+    groupId: string;
+    creditCardId: string;
+    description: string;
+    totalCents: number;
+    installmentCount: number;
+    firstDueMonth: string;
+  }>;
   /** Computed bill amount (cents) for one card/month (card-bill flow, PR-2). */
   getCardBillAmount?: (creditCardId: string, month: string) => Promise<number>;
   /** Persist a validated card-bill settlement (db settleCardBill). */
@@ -588,6 +615,13 @@ function normalizeText(value: string): string {
   return value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 }
 
+function trimAuthoritativeInstrumentName(value: string): string {
+  return value
+    .trim()
+    .replace(/[.,;:!?]+$/u, "")
+    .trim();
+}
+
 function textNamesInstrument(text: string, name: string): boolean {
   const haystack = ` ${normalizeText(text).replace(/[^a-z0-9]+/g, " ")} `;
   const needle = ` ${normalizeText(name).replace(/[^a-z0-9]+/g, " ")} `;
@@ -615,6 +649,80 @@ function stripSelectedInstrumentFromDescription(
   return stripped.length > 0 ? stripped : description;
 }
 
+function isTemporalInstrumentCandidate(
+  text: string,
+  instrumentName: string,
+  type: "account" | "card",
+): boolean {
+  const normalizedName = normalizeText(instrumentName);
+  if (!/^(?:hoje|ontem|anteontem|dia)$/.test(normalizedName)) return false;
+  const normalized = normalizeText(text);
+  const escapedName = escapeRegExp(normalizedName);
+  const explicitEscape =
+    type === "card"
+      ? new RegExp(
+          `\\bcartao(?:\\s+de\\s+credito)?\\s+(?:chamado|de\\s+nome)\\s+${escapedName}(?=$|[^a-z0-9])`,
+        ).test(normalized)
+      : new RegExp(
+          `\\b(?:conta|(?:pela?|com(?:\\s+a)?|usando(?:\\s+a)?|na|da|de)\\s+(?:a\\s+)?conta)\\s+(?:chamada?|de\\s+nome)\\s+${escapedName}(?=$|[^a-z0-9])`,
+        ).test(normalized);
+  if (explicitEscape) return false;
+  if (
+    normalizedName !== "dia" &&
+    new RegExp(`^\\s*${escapeRegExp(normalizedName)}(?=$|[\\s,.;:!?-])`).test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  const instrument =
+    type === "card"
+      ? String.raw`(?:cartao(?:\s+de\s+credito)?|credito)`
+      : String.raw`(?:conta|debito|dinheiro|pix|boleto)`;
+  const tail =
+    normalizedName === "dia"
+      ? String.raw`\s+\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?)?`
+      : String.raw`(?=$|[\s,.;:!?-])`;
+  return new RegExp(
+    String.raw`\b${instrument}\s+${escapeRegExp(normalizedName)}${tail}`,
+  ).test(normalized);
+}
+
+function isStructuralCardCandidate(text: string, cardName: string): boolean {
+  const normalizedName = normalizeText(cardName);
+  const normalized = normalizeText(text);
+  const escapedName = escapeRegExp(normalizedName);
+  const explicitlyNamed = new RegExp(
+    `\\bcartao(?:\\s+de\\s+credito)?\\s+(?:chamado|de\\s+nome)\\s+${escapedName}(?=$|[^a-z0-9])`,
+  ).test(normalized);
+  if (explicitlyNamed) return false;
+  if (/^(?:cartao|credito)$/.test(normalizedName)) return true;
+  if (
+    /^(?:uma|um|duas|dois|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)$/.test(
+      normalizedName,
+    ) &&
+    new RegExp(
+      `\\b(?:cartao(?:\\s+de\\s+credito)?|credito)\\s+${escapedName}(?=$|[^a-z0-9])`,
+    ).test(normalized)
+  ) {
+    return true;
+  }
+  if (
+    /^(?:parcelado|parcelada|parcelei|parcelas?|prestacoes?)$/.test(
+      normalizedName,
+    )
+  ) {
+    return true;
+  }
+  if (normalizedName === "juros")
+    return /\b(?:com|sem)\s+juros\b/.test(normalized);
+  if (normalizedName === "unica") {
+    return /\b(?:parcela|prestacao)\s+unica\b/.test(normalized);
+  }
+  if (normalizedName === "vez") return /\buma\s+vez\b/.test(normalized);
+  return false;
+}
+
 function paymentCandidatesForText(
   text: string,
   deps: ConversationDeps,
@@ -628,19 +736,274 @@ function paymentCandidatesForText(
     id: item.id,
     name: item.name,
   }));
-  const named = [...accounts, ...cards].filter((item) =>
-    textNamesInstrument(text, item.name),
+  const authoritativeAccountName = explicitAuthoritativeInstrumentFromText(
+    text,
+    "account",
+    accounts,
   );
+  const authoritativeCardName = explicitAuthoritativeInstrumentFromText(
+    text,
+    "card",
+    cards,
+  );
+  if (
+    authoritativeAccountName !== undefined ||
+    authoritativeCardName !== undefined
+  ) {
+    return [...accounts, ...cards].filter((item) => {
+      const authoritativeName =
+        item.type === "account"
+          ? authoritativeAccountName
+          : authoritativeCardName;
+      return (
+        authoritativeName !== undefined &&
+        normalizeText(item.name) === normalizeText(authoritativeName)
+      );
+    });
+  }
   const normalized = normalizeText(text);
+  const explicitlyEscaped = [...accounts, ...cards].filter((item) => {
+    const name = escapeRegExp(normalizeText(item.name));
+    const introducer =
+      item.type === "card"
+        ? String.raw`cartao(?:\s+de\s+credito)?`
+        : String.raw`(?:conta|(?:pela?|com(?:\s+a)?|usando(?:\s+a)?|na|da|de)\s+(?:a\s+)?conta)`;
+    return new RegExp(
+      String.raw`\b${introducer}\s+(?:chamad[ao]|de\s+nome)\s+${name}(?=$|[^a-z0-9])`,
+    ).test(normalized);
+  });
+  if (explicitlyEscaped.length > 0) {
+    const longestLength = Math.max(
+      ...explicitlyEscaped.map((item) => normalizeText(item.name).length),
+    );
+    return explicitlyEscaped.filter(
+      (item) => normalizeText(item.name).length === longestLength,
+    );
+  }
+  const pixIsExplicitAccount = /\bconta\s+pix\b/.test(normalized);
+  const pixIsPaymentMethod =
+    /\b(?:via|no|pelo|pela|com|usando|por)\s+(?:o\s+|a\s+)?pix\b/.test(
+      normalized,
+    );
+  const explicitlyNamedSourceAccounts = accounts.filter((account) => {
+    if (isTemporalInstrumentCandidate(text, account.name, "account")) {
+      return false;
+    }
+    const escaped = normalizeText(account.name)
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 0)
+      .map(escapeRegExp)
+      .join("\\s+");
+    if (escaped.length === 0) return false;
+    return new RegExp(
+      `\\b(?:pela?|com(?:\\s+a)?|usando(?:\\s+a)?|na|da|de)\\s+conta\\s+(?:(?:chamada?|de\\s+nome)\\s+)?${escaped}(?=$|[^a-z0-9])`,
+    ).test(normalized);
+  });
+  if (pixIsPaymentMethod && !pixIsExplicitAccount) {
+    return explicitlyNamedSourceAccounts;
+  }
+  const named = [...accounts, ...cards].filter((item) => {
+    if (isTemporalInstrumentCandidate(text, item.name, item.type)) return false;
+    if (item.type === "card" && isStructuralCardCandidate(text, item.name)) {
+      return false;
+    }
+    if (!textNamesInstrument(text, item.name)) return false;
+    return !(
+      item.type === "account" &&
+      normalizeText(item.name) === "pix" &&
+      pixIsPaymentMethod &&
+      !pixIsExplicitAccount
+    );
+  });
   const explicitlyCard = /\b(cartao|credito|fatura)\b/.test(normalized);
-  const explicitlyAccount = /\b(conta|debito|pix|dinheiro|corrente)\b/.test(
-    normalized,
-  );
+  const explicitlyAccount =
+    /\b(conta|debito|pix|dinheiro|corrente|boleto)\b/.test(normalized);
   if (explicitlyCard && !explicitlyAccount)
     return named.filter((item) => item.type === "card");
   if (explicitlyAccount && !explicitlyCard)
     return named.filter((item) => item.type === "account");
   return named;
+}
+
+type AuthoritativeInstrumentMatch = {
+  keyword: string;
+  index: number;
+  length: number;
+  registered: boolean;
+};
+
+function matchingRawPrefixLength(
+  value: string,
+  normalizedPrefix: string,
+): number | undefined {
+  for (let length = 1; length <= value.length; length += 1) {
+    if (normalizeText(value.slice(0, length)) === normalizedPrefix) {
+      return length;
+    }
+  }
+  return undefined;
+}
+
+function explicitAuthoritativeInstrumentMatchFromText(
+  text: string,
+  type: "account" | "card",
+  instruments?: ReadonlyArray<{ name: string }>,
+): AuthoritativeInstrumentMatch | undefined {
+  const escapedIntroducer =
+    type === "account"
+      ? String.raw`(?:conta|(?:pela?|com|usando|na|da|de)\s+(?:a\s+)?conta)`
+      : String.raw`(?:no|na|pelo|pela|com|usando)?\s*(?:o\s+|a\s+)?cart[aã]o(?:\s+de\s+cr[eé]dito)?`;
+  const broadMatch = new RegExp(
+    String.raw`\b${escapedIntroducer}\s+(?:chamad[ao]|de\s+nome)\s+(.+)$`,
+    "iu",
+  ).exec(text);
+  if (broadMatch !== null) {
+    const broadCaptured = broadMatch[1] as string;
+    const registeredPrefixes = (instruments ?? [])
+      .map((instrument) => {
+        const length = matchingRawPrefixLength(
+          broadCaptured,
+          normalizeText(instrument.name),
+        );
+        if (length === undefined) return undefined;
+        const remainder = broadCaptured.slice(length);
+        if (!isCompleteAuthoritativeInstrumentMetadataTail(remainder))
+          return undefined;
+        return { instrument, length };
+      })
+      .filter(
+        (
+          candidate,
+        ): candidate is { instrument: { name: string }; length: number } =>
+          candidate !== undefined,
+      )
+      .sort((left, right) => right.length - left.length);
+    const registeredPrefix = registeredPrefixes[0];
+    if (registeredPrefix !== undefined) {
+      const rawCaptureOffset = broadMatch[0].indexOf(broadCaptured);
+      return {
+        keyword: broadCaptured.slice(0, registeredPrefix.length),
+        index: broadMatch.index + Math.max(0, rawCaptureOffset),
+        length: registeredPrefix.length,
+        registered: true,
+      };
+    }
+  }
+  const escapedMatch = new RegExp(
+    String.raw`\b${escapedIntroducer}\s+(?:chamad[ao]|de\s+nome)\s+(.+)$`,
+    "iu",
+  ).exec(text);
+  const rawCaptured = escapedMatch?.[1];
+  const captured =
+    rawCaptured === undefined
+      ? undefined
+      : splitAuthoritativeInstrumentNameAndMetadata(rawCaptured).name;
+  const exactRegisteredName = (instruments ?? []).some(
+    (instrument) =>
+      normalizeText(instrument.name) === normalizeText(captured ?? ""),
+  );
+  const escapedKeyword =
+    captured === undefined
+      ? undefined
+      : exactRegisteredName
+        ? captured
+        : trimAuthoritativeInstrumentName(captured);
+  if (escapedKeyword !== undefined && escapedKeyword.length > 0) {
+    const rawCaptureOffset = escapedMatch?.[0].indexOf(rawCaptured ?? "") ?? -1;
+    const leadingWhitespace = rawCaptured?.indexOf(captured ?? "") ?? -1;
+    return {
+      keyword: escapedKeyword,
+      index:
+        (escapedMatch?.index ?? 0) +
+        Math.max(0, rawCaptureOffset) +
+        Math.max(0, leadingWhitespace),
+      length: captured?.length ?? escapedKeyword.length,
+      registered: exactRegisteredName,
+    };
+  }
+  return undefined;
+}
+
+function explicitAuthoritativeInstrumentFromText(
+  text: string,
+  type: "account" | "card",
+  instruments?: ReadonlyArray<{ name: string }>,
+): string | undefined {
+  return explicitAuthoritativeInstrumentMatchFromText(text, type, instruments)
+    ?.keyword;
+}
+
+/**
+ * Keep registered instrument metadata out of the payment-date grammar. Only
+ * the authoritative capture is blanked, rather than every matching word, so
+ * `conta chamada Ontem ontem` still exposes the second `ontem` as the actual
+ * occurrence date.
+ */
+function maskAuthoritativeRegisteredInstrumentNames(
+  text: string,
+  deps: ConversationDeps,
+): string {
+  const normalFaturaCardMatch = registeredNormalFaturaTargetMatch(
+    text,
+    deps.listActiveCards?.() ?? [],
+  );
+  const matches = [
+    explicitAuthoritativeInstrumentMatchFromText(
+      text,
+      "account",
+      deps.listActiveAccounts?.() ?? [],
+    ),
+    explicitAuthoritativeInstrumentMatchFromText(
+      text,
+      "card",
+      deps.listActiveCards?.() ?? [],
+    ),
+    normalFaturaCardMatch === undefined
+      ? undefined
+      : { ...normalFaturaCardMatch, registered: true },
+  ]
+    .filter(
+      (match): match is AuthoritativeInstrumentMatch =>
+        match !== undefined && match.registered,
+    )
+    .sort((left, right) => right.index - left.index);
+
+  let masked = text;
+  for (const match of matches) {
+    masked = `${masked.slice(0, match.index)}${" ".repeat(match.length)}${masked.slice(match.index + match.length)}`;
+  }
+  return masked;
+}
+
+function explicitNamedInstrumentFromText(
+  text: string,
+  type: "account" | "card",
+  instruments?: ReadonlyArray<{ name: string }>,
+): string | undefined {
+  const authoritativeKeyword = explicitAuthoritativeInstrumentFromText(
+    text,
+    type,
+    instruments,
+  );
+  if (authoritativeKeyword !== undefined) return authoritativeKeyword;
+  const introducer =
+    type === "account"
+      ? String.raw`(?:pela?|com|usando|na|da|de)\s+(?:a\s+)?conta`
+      : String.raw`(?:no|na|pelo|pela|com|usando)\s+(?:o\s+|a\s+)?cart[aã]o`;
+  const match = new RegExp(
+    String.raw`\b${introducer}\s+(.+?)(?=\s+(?:(?:por|no\s+valor\s+de|valor\s+de)\s+)?(?:r\$\s*)?\d|\s+(?:hoje|ontem|anteontem)\b|[.,;!?]|$)`,
+    "iu",
+  ).exec(text);
+  const keyword = match?.[1]?.trim();
+  if (keyword === undefined || keyword.length === 0) return undefined;
+  const normalized = normalizeText(keyword);
+  if (
+    type === "card" &&
+    (normalized === "credito" || normalized === "de credito")
+  ) {
+    return undefined;
+  }
+  return keyword;
 }
 
 function resolveCategoryCandidates(
@@ -715,15 +1078,25 @@ function matchTokens(value: string): string[] {
 }
 
 const GENERIC_OBLIGATION_MATCH_TOKENS = new Set([
+  "a",
+  "ao",
+  "aos",
+  "as",
   "aquela",
   "aquele",
   "aquelas",
   "aqueles",
   "com",
+  "conta",
+  "contas",
   "consorcio",
   "consorcios",
   "das",
+  "da",
+  "de",
+  "do",
   "dos",
+  "em",
   "emprestimo",
   "emprestimos",
   "essa",
@@ -740,12 +1113,18 @@ const GENERIC_OBLIGATION_MATCH_TOKENS = new Set([
   "meus",
   "minha",
   "minhas",
+  "na",
+  "nas",
+  "no",
+  "nos",
   "nossa",
   "nossas",
   "nosso",
   "nossos",
   "obrigacao",
   "obrigacoes",
+  "o",
+  "os",
   "pagamento",
   "pagamentos",
   "paga",
@@ -833,6 +1212,342 @@ function keywordMatch(keyword: string, name: string): boolean {
   return requiredKeywordTokens.every((token) => nameTokens.includes(token));
 }
 
+/** Typed picker abbreviations supported as explicit, stable identifiers. */
+const MARK_PAID_CHOICE_SHORT_IDENTIFIERS = new Set(["sp", "rj"]);
+
+/**
+ * Resolve a typed reply against an already-presented obligation choice.
+ * Full displayed descriptions are explicit selections. The only supported
+ * partial replies are the stable regional identifiers SP and RJ.
+ */
+
+function markPaidChoiceMatch(reply: string, description: string): boolean {
+  const normalizedReply = normalizeText(reply);
+  if (normalizedReply.length < 2) return false;
+
+  const normalizedDescription = normalizeText(description);
+  // A verbatim displayed option is explicit, including a one-word candidate.
+  if (normalizedReply === normalizedDescription) return true;
+
+  if (!MARK_PAID_CHOICE_SHORT_IDENTIFIERS.has(normalizedReply)) {
+    return false;
+  }
+
+  const descriptionTokens =
+    normalizedDescription.match(/[a-z0-9]+(?:[-_][a-z0-9]+)*/gu) ?? [];
+  return descriptionTokens.some((token) => token === normalizedReply);
+}
+
+type ExplicitPaymentDate =
+  | { kind: "absent" }
+  | { kind: "valid"; iso: string }
+  | { kind: "invalid"; raw: string };
+
+type ExplicitObligationStartDate =
+  | { kind: "absent" }
+  | {
+      kind: "valid";
+      raw: string;
+      day: number;
+      month: number;
+      resolvedStartMonth: string;
+      hasExplicitYear: boolean;
+    }
+  | { kind: "invalid"; raw: string };
+
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  const calendar = new Date(Date.UTC(2000, 0, 1));
+  calendar.setUTCFullYear(year, month - 1, day);
+  return (
+    calendar.getUTCFullYear() === year &&
+    calendar.getUTCMonth() + 1 === month &&
+    calendar.getUTCDate() === day
+  );
+}
+
+function isRealIsoCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return false;
+  return isRealCalendarDate(
+    Number.parseInt(match[1] as string, 10),
+    Number.parseInt(match[2] as string, 10),
+    Number.parseInt(match[3] as string, 10),
+  );
+}
+
+/**
+ * Validate the explicit start date before classification can turn it into an
+ * obligation draft. Yearless dates resolve by obligation-month chronology;
+ * 29 February advances to the next leap year instead of being rejected.
+ */
+function explicitObligationStartDate(
+  text: string,
+  today: string,
+): ExplicitObligationStartDate {
+  const match =
+    /\ba\s+partir\s+de\s*(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+  if (match === null) return { kind: "absent" };
+
+  const raw = match[0];
+  const day = Number.parseInt(match[1] as string, 10);
+  const month = Number.parseInt(match[2] as string, 10);
+  const rawYear = match[3];
+  const hasExplicitYear = rawYear !== undefined;
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return { kind: "invalid", raw };
+  }
+
+  if (hasExplicitYear) {
+    const parsedYear = Number.parseInt(rawYear, 10);
+    const year = parsedYear < 100 ? 2000 + parsedYear : parsedYear;
+    if (!isRealCalendarDate(year, month, day)) {
+      return { kind: "invalid", raw };
+    }
+    return {
+      kind: "valid",
+      raw,
+      day,
+      month,
+      resolvedStartMonth: `${year}-${String(month).padStart(2, "0")}`,
+      hasExplicitYear,
+    };
+  }
+
+  const todayYear = Number.parseInt(today.slice(0, 4), 10);
+  const todayMonth = Number.parseInt(today.slice(5, 7), 10);
+  let year = month < todayMonth ? todayYear + 1 : todayYear;
+  while (!isRealCalendarDate(year, month, day) && year <= todayYear + 8) {
+    year += 1;
+  }
+  if (!isRealCalendarDate(year, month, day)) {
+    return { kind: "invalid", raw };
+  }
+  return {
+    kind: "valid",
+    raw,
+    day,
+    month,
+    resolvedStartMonth: `${year}-${String(month).padStart(2, "0")}`,
+    hasExplicitYear,
+  };
+}
+
+function isBareFinancingInstallmentPosition(
+  text: string,
+  candidate: RegExpMatchArray,
+): boolean {
+  if (candidate[3] !== undefined) return false;
+
+  const current = Number.parseInt(candidate[1] as string, 10);
+  const total = Number.parseInt(candidate[2] as string, 10);
+  if (current < 1 || total < 1 || current > total) return false;
+
+  const prefix = text.slice(0, candidate.index);
+  return (
+    /\b(?:financiamento|empr[eé]stimo|cons[oó]rcio)\b/i.test(prefix) &&
+    !/\b(?:em|dia|data|no\s+dia|na\s+data)\s*$/i.test(prefix)
+  );
+}
+
+function hasBareFinancingInstallmentPosition(text: string): boolean {
+  return [...text.matchAll(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g)].some(
+    (candidate) => isBareFinancingInstallmentPosition(text, candidate),
+  );
+}
+
+/**
+ * Read an explicit relative or DD/MM[/YYYY] payment occurrence date using the
+ * shared parser's resolved value. MM/YYYY bill selectors are deliberately
+ * excluded.
+ */
+function explicitPaymentDate(
+  text: string,
+  today: string,
+  billMonth?: string,
+): ExplicitPaymentDate {
+  // A standalone settlement day is metadata, not a complete occurrence date:
+  // valid values keep the normal `today` fallback. Reject impossible values
+  // here so they cannot leak into an amount/target or be rescued by AI.
+  const bareDayMatch = /\b(?:no\s+)?dia\s*(\d+)\b(?!\/)/i.exec(text);
+  if (bareDayMatch !== null) {
+    const day = Number.parseInt(bareDayMatch[1] as string, 10);
+    if (day < 1 || day > 31) {
+      return { kind: "invalid", raw: bareDayMatch[0] };
+    }
+  }
+  const matches = [
+    ...text.matchAll(
+      /\b(?:(?:em|(?:no\s+)?dia|(?:na\s+)?data)\s*)?(\d{1,2})\/(\d{1,2})(?:(?:\/|\s+(?:(?:do\s+)?ano\s+de|de)\s*)(\d{2,4})(?!\s*\/\d))?\b/gi,
+    ),
+  ].filter((candidate) => {
+    const prefix = text.slice(0, candidate.index);
+    const hasTemporalIntroducer = /^(?:em|(?:no\s+)?dia|(?:na\s+)?data)/i.test(
+      candidate[0],
+    );
+    // `parcela 10/12` is an installment position, not 10 December. Keep it
+    // out of the occurrence-date parser even when the surrounding sentence
+    // says that the installment was paid.
+    if (
+      !hasTemporalIntroducer &&
+      /\b(?:parcela|presta[cç][aã]o)\s+(?:(?:n(?:[uú]mero)?|n[º°])\.?\s*)?$/i.test(
+        prefix,
+      )
+    ) {
+      return false;
+    }
+
+    // A bare fraction following financing language normally identifies the
+    // installment position (`financiamento do carro 10/12`), not a payment
+    // date. An explicit temporal introducer still wins, including when it
+    // appears after an earlier structural fraction (`10/12 em 05/08`).
+    if (
+      !hasTemporalIntroducer &&
+      isBareFinancingInstallmentPosition(text, candidate)
+    ) {
+      return false;
+    }
+
+    // Compact fractions such as `24/7` commonly describe availability. An
+    // unpadded month is accepted only when date language makes the temporal
+    // meaning explicit (`em 24/7`, `dia 24/7`, ...). Padded bare dates such
+    // as `fatura ... 10/08` remain supported.
+    const isCompactTwoPartFraction =
+      candidate[3] === undefined && (candidate[2] as string).length === 1;
+    if (
+      isCompactTwoPartFraction &&
+      !hasTemporalIntroducer &&
+      !/\b(?:em|dia|data|no\s+dia|na\s+data)\s*$/i.test(prefix)
+    ) {
+      return false;
+    }
+    return true;
+  });
+  // Rank dates by how clearly the user presented them as the occurrence date.
+  // Strong introducers (`data`, `na data`, `dia`, `no dia`) and spoken full
+  // dates win over relative words. Relative words win over the weaker `em`
+  // form, which is also commonly used for installment structure
+  // (`parcela em 10/12/2025`). Incidental bare dates remain a last resort.
+  const eligibleYearlessMatches = matches.filter((candidate) => {
+    if (Number.parseInt(candidate[2] as string, 10) > 12) return false;
+    if (billMonth === undefined) return true;
+
+    const rawMonth = Number.parseInt(candidate[1] as string, 10);
+    const rawYear = Number.parseInt(candidate[2] as string, 10);
+    const selectorYear = rawYear < 100 ? 2000 + rawYear : rawYear;
+    const selector = `${selectorYear}-${String(rawMonth).padStart(2, "0")}`;
+    return selector !== billMonth;
+  });
+  const eligibleMatches = matches.filter(
+    (candidate) =>
+      candidate[3] !== undefined || eligibleYearlessMatches.includes(candidate),
+  );
+  const relativeMatches = [...text.matchAll(/\b(anteontem|ontem|hoje)\b/gi)];
+  const rankedCandidates = [
+    ...eligibleMatches.map((candidate) => ({
+      kind: "numeric" as const,
+      candidate,
+      intentTier:
+        /^(?:(?:no\s+)?dia|(?:na\s+)?data)/i.test(candidate[0]) ||
+        /\d{1,2}\s+(?:(?:do\s+)?ano\s+de|de)\s*\d{2,4}\b/i.test(candidate[0])
+          ? 3
+          : /^em/i.test(candidate[0])
+            ? 1
+            : 0,
+      explicitYear: candidate[3] === undefined ? 0 : 1,
+      index: candidate.index ?? 0,
+    })),
+    ...relativeMatches.map((candidate) => ({
+      kind: "relative" as const,
+      candidate,
+      intentTier: 2,
+      explicitYear: 0,
+      index: candidate.index ?? 0,
+    })),
+  ].sort(
+    (left, right) =>
+      right.intentTier - left.intentTier ||
+      right.explicitYear - left.explicitYear ||
+      left.index - right.index,
+  );
+  const selected = rankedCandidates[0];
+  if (selected === undefined) return { kind: "absent" };
+
+  // Two different dates in the strongest active syntax tier are both
+  // authoritative. This includes relative wording (`ontem ou anteontem`):
+  // never silently choose the first one. Repeated references to the same date
+  // remain harmless.
+  const strongestIntentTier = rankedCandidates[0]?.intentTier;
+  const strongestCandidates = rankedCandidates.filter(
+    (candidate) => candidate.intentTier === strongestIntentTier,
+  );
+  if (strongestCandidates.length > 1) {
+    const distinctDates = new Set(
+      strongestCandidates.map(({ kind, candidate }) => {
+        if (kind === "relative") {
+          return (
+            parseExpenseText(candidate[0], { today }).occurredOn ??
+            candidate[0].trim().toLowerCase()
+          );
+        }
+        const canonical = `${candidate[1]}/${candidate[2]}${candidate[3] === undefined ? "" : `/${candidate[3]}`}`;
+        const parsed = parseExpenseText(canonical, { today }).occurredOn;
+        if (parsed === undefined) return canonical;
+        return candidate[3] === undefined && parsed > today
+          ? `${Number.parseInt(parsed.slice(0, 4), 10) - 1}${parsed.slice(4)}`
+          : parsed;
+      }),
+    );
+    if (distinctDates.size > 1) {
+      return {
+        kind: "invalid",
+        raw: strongestCandidates
+          .map(({ candidate }) => candidate[0].trim())
+          .join(" / "),
+      };
+    }
+  }
+  if (selected.kind === "relative") {
+    const parsed = parseExpenseText(selected.candidate[0], { today });
+    if (
+      parsed.occurredOn === undefined ||
+      parsed.uncertainFields.includes("date") ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(parsed.occurredOn)
+    ) {
+      return { kind: "invalid", raw: selected.candidate[0] };
+    }
+    return { kind: "valid", iso: parsed.occurredOn };
+  }
+  const match = selected.candidate;
+
+  const canonicalDate = `${match[1]}/${match[2]}${match[3] === undefined ? "" : `/${match[3]}`}`;
+  const parsed = parseExpenseText(canonicalDate, { today });
+  const iso = parsed.occurredOn;
+  if (
+    iso === undefined ||
+    parsed.uncertainFields.includes("date") ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(iso)
+  ) {
+    return { kind: "invalid", raw: match[0] };
+  }
+  const [yearPart, monthPart, dayPart] = iso.split("-");
+  const year = Number(yearPart);
+  const resolvedMonth = Number(monthPart);
+  const day = Number(dayPart);
+  const calendar = new Date(Date.UTC(year, resolvedMonth - 1, day));
+  if (
+    calendar.getUTCFullYear() !== year ||
+    calendar.getUTCMonth() + 1 !== resolvedMonth ||
+    calendar.getUTCDate() !== day
+  ) {
+    return { kind: "invalid", raw: match[0] };
+  }
+  const hasExplicitYear = match[3] !== undefined;
+  const mostRecentIso =
+    !hasExplicitYear && iso > today ? `${year - 1}${iso.slice(4)}` : iso;
+  return { kind: "valid", iso: mostRecentIso };
+}
+
 function genericKeywordMatch(keyword: string, name: string): boolean {
   const keywordTokens = matchTokens(keyword);
   const nameTokens = matchTokens(name);
@@ -858,10 +1573,14 @@ function cardKeywordMatch(keyword: string, name: string): boolean {
   if (normalizedKeyword.length === 0 || normalizedName.length === 0) {
     return false;
   }
-  return (
-    normalizedKeyword.includes(normalizedName) ||
-    normalizedName.includes(normalizedKeyword)
-  );
+  // Short card names are common (XP, C6). A containment fallback made a
+  // one-character reply such as "x" select XP. Exact normalized equality is
+  // the only safe fallback when either side has no meaningful (3+ char) token.
+  return normalizedKeyword === normalizedName;
+}
+
+function authoritativeCardNameMatch(keyword: string, name: string): boolean {
+  return normalizeText(keyword) === normalizeText(name);
 }
 
 function valuesDisagree<T>(left: T | undefined, right: T | undefined): boolean {
@@ -978,8 +1697,8 @@ function installmentSummaryView(
 
 /**
  * Settle ONE matched obligation for the message's current month, with the
- * message send date as `paidOn`. Idempotent: an already-paid month is a
- * friendly no-op. Terminal either way.
+ * explicit occurrence date as `paidOn` (or message date by default).
+ * Idempotent: an already-paid month is a friendly no-op. Terminal either way.
  */
 async function settleObligation(
   candidate: MarkPaidCandidate,
@@ -989,6 +1708,7 @@ async function settleObligation(
   today: string,
   amountCents?: number,
   accountId?: string,
+  paidOn: string = today,
 ): Promise<ConversationOutcome> {
   if (deps.materializeObligationPayment === undefined) {
     // The obligation WAS found — the settle capability just is not wired.
@@ -997,13 +1717,13 @@ async function settleObligation(
       reply: obligationUnavailableMessage(),
     };
   }
-  const month = today.slice(0, 7);
+  const month = paidOn.slice(0, 7);
   let alreadyPaid: boolean;
   try {
     ({ alreadyPaid } = await deps.materializeObligationPayment({
       obligationId: candidate.id,
       month,
-      paidOn: today,
+      paidOn,
       ...(amountCents === undefined ? {} : { amountCents }),
       ...(accountId === undefined ? {} : { accountId }),
     }));
@@ -1048,12 +1768,17 @@ async function settleObligation(
  * candidates) leaves `cardId` unset so the confirmation asks "Qual cartão?".
  */
 function resolveInstallmentCardId(
-  purchase: InterpretedCardPurchase,
+  purchase: Extract<
+    RoutedInterpretedIntent,
+    { intent: "card_installment" }
+  >["purchase"],
   cards: Array<{ id: string; name: string; closingDay?: number }>,
 ): string | undefined {
   if (purchase.cardKeyword !== undefined) {
     const matches = cards.filter((c) =>
-      cardKeywordMatch(purchase.cardKeyword as string, c.name),
+      purchase.authoritativeCardName === undefined
+        ? cardKeywordMatch(purchase.cardKeyword as string, c.name)
+        : authoritativeCardNameMatch(purchase.authoritativeCardName, c.name),
     );
     return matches.length === 1 ? matches[0]?.id : undefined;
   }
@@ -1065,7 +1790,10 @@ function resolveInstallmentCardId(
  * `card_installment` classified intent (flow requirements 1–2).
  */
 async function startInstallmentIntent(
-  purchase: InterpretedCardPurchase,
+  purchase: Extract<
+    RoutedInterpretedIntent,
+    { intent: "card_installment" }
+  >["purchase"],
   input: StartInput,
   deps: ConversationDeps,
   options: StartOptions,
@@ -1078,6 +1806,20 @@ async function startInstallmentIntent(
       reply: noActiveCardMessage(),
     };
   }
+  if (
+    purchase.cardKeyword !== undefined &&
+    !cards.some((card) =>
+      purchase.authoritativeCardName === undefined
+        ? cardKeywordMatch(purchase.cardKeyword as string, card.name)
+        : authoritativeCardNameMatch(purchase.authoritativeCardName, card.name),
+    )
+  ) {
+    const availableCardNames = cards.map((card) => card.name).join(", ");
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `Não encontrei o cartão “${purchase.cardKeyword}”. Cartões cadastrados: ${availableCardNames}.`,
+    };
+  }
 
   const totalCents =
     purchase.totalCents ??
@@ -1086,12 +1828,16 @@ async function startInstallmentIntent(
       ? purchase.perInstallmentCents * purchase.installmentCount
       : undefined);
 
+  const resolvedCardId = resolveInstallmentCardId(purchase, cards);
   const installmentDraft: InstallmentDraftInProgress = {
+    idempotencyKey: randomUUID(),
     description: stripEdgePunctuation(purchase.description),
     totalCents,
     installmentCount: purchase.installmentCount,
     purchasedOn: purchase.purchasedOn ?? options.today,
-    cardId: resolveInstallmentCardId(purchase, cards),
+    cardId: resolvedCardId,
+    cardClosingDay: cards.find((card) => card.id === resolvedCardId)
+      ?.closingDay,
     createdByUserId: input.fromUserId,
     responsibleUserId: input.fromUserId || undefined,
   };
@@ -1220,6 +1966,7 @@ function cardBillConfirmationOutcome(
       month: next.month,
       amountCents: amount,
       accountLabel: deps.accountNameById?.(next.accountId) ?? "Conta",
+      paidOn: next.paidOn ?? ballast.occurredOn,
     }),
     keyboard: confirmCancelKeyboard(),
   };
@@ -1273,8 +2020,10 @@ async function resolveBillCard(
  */
 async function startCardBillIntent(
   keyword: string,
+  authoritativeCardName: string | undefined,
   overrideAmountCents: number | undefined,
   billMonth: string | undefined,
+  paidOn: string | undefined,
   settlementAccountKeyword: string | undefined,
   input: StartInput,
   deps: ConversationDeps,
@@ -1314,10 +2063,20 @@ async function startCardBillIntent(
     overrideAmountCents,
     accountId: settlementAccountId,
     month,
+    paidOn: paidOn ?? options.today,
     createdByUserId: input.fromUserId,
   };
 
-  const matches = cards.filter((c) => cardKeywordMatch(keyword, c.name));
+  const genericCardKeyword = /^(?:cartao|fatura)$/u.test(
+    normalizeText(keyword),
+  );
+  const matches = genericCardKeyword
+    ? cards
+    : cards.filter((c) =>
+        authoritativeCardName === undefined
+          ? cardKeywordMatch(keyword, c.name)
+          : authoritativeCardNameMatch(authoritativeCardName, c.name),
+      );
   if (matches.length === 0) {
     return {
       state: {
@@ -1358,6 +2117,7 @@ async function startClassifiedIntent(
   deps: ConversationDeps,
   options: StartOptions,
   inputKind: BotInputKind,
+  paidOn?: string,
 ): Promise<ConversationOutcome> {
   const ballast = placeholderDraft(input, inputKind, options.today);
 
@@ -1375,8 +2135,10 @@ async function startClassifiedIntent(
   if (classified.intent === "mark_paid" && classified.target === "card") {
     return startCardBillIntent(
       classified.keyword,
+      classified.authoritativeCardName,
       classified.amountCents,
       classified.billMonth,
+      paidOn,
       classified.settlementAccountKeyword,
       input,
       deps,
@@ -1426,6 +2188,7 @@ async function startClassifiedIntent(
         options.today,
         classified.amountCents,
         settlementAccountId,
+        paidOn,
       );
     }
     return {
@@ -1439,6 +2202,7 @@ async function startClassifiedIntent(
         ...(settlementAccountId === undefined
           ? {}
           : { markPaidAccountId: settlementAccountId }),
+        ...(paidOn === undefined ? {} : { markPaidPaidOn: paidOn }),
       },
       reply: obligationAmbiguousMessage(matches.map((m) => m.description)),
     };
@@ -1561,12 +2325,94 @@ async function startClassifiedIntent(
 
   return {
     state,
-    reply: obligationConfirmationMessage(
-      obligationSummaryView(obligationDraft, deps),
-    ),
+    reply: `${
+      extracted.requestedDueDay !== undefined
+        ? `Ajustei o vencimento solicitado (dia ${extracted.requestedDueDay}) para o dia 28, que é o último dia aceito para obrigações.\n\n`
+        : ""
+    }${obligationConfirmationMessage(obligationSummaryView(obligationDraft, deps))}`,
     keyboard: obligationConfirmationKeyboard(
       taxonomyProposalLabel(state),
       unifiedCandidates,
+    ),
+  };
+}
+
+/**
+ * An unresolved deterministic payment route is never safe to materialize from
+ * the classifier alone. The classifier may put its preferred obligation first,
+ * but the user must still choose one of every obligation matching the broader
+ * deterministic target before any write occurs.
+ */
+async function startUnresolvedExistingPaymentChoice(
+  classified: Extract<RoutedInterpretedIntent, { intent: "mark_paid" }>,
+  deterministicKeyword: string | undefined,
+  input: StartInput,
+  deps: ConversationDeps,
+  options: StartOptions,
+  inputKind: BotInputKind,
+  paidOn?: string,
+): Promise<ConversationOutcome> {
+  const ballast = placeholderDraft(input, inputKind, options.today);
+  const settlementAccountId =
+    classified.settlementAccountKeyword === undefined
+      ? undefined
+      : deps.resolveAccountIdByName?.(classified.settlementAccountKeyword);
+  if (
+    classified.settlementAccountKeyword !== undefined &&
+    settlementAccountId === undefined
+  ) {
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `Não encontrei a conta “${classified.settlementAccountKeyword}” para registrar o pagamento. Diga o nome de uma conta cadastrada.`,
+    };
+  }
+
+  const obligations =
+    deps.listActiveObligations !== undefined
+      ? await deps.listActiveObligations()
+      : [];
+  const broadKeyword = deterministicKeyword ?? classified.keyword;
+  const hasDiscriminatingTarget =
+    obligationMatchTokens(broadKeyword).length > 0;
+  const broadMatches = obligations.filter((obligation) =>
+    hasDiscriminatingTarget
+      ? keywordMatch(broadKeyword, obligation.description)
+      : genericKeywordMatch(broadKeyword, obligation.description),
+  );
+  if (broadMatches.length === 0) {
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: obligationNotFoundMessage(broadKeyword),
+    };
+  }
+
+  const preferredIds = new Set(
+    broadMatches
+      .filter((obligation) =>
+        keywordMatch(classified.keyword, obligation.description),
+      )
+      .map((obligation) => obligation.id),
+  );
+  const candidates = [
+    ...broadMatches.filter((obligation) => preferredIds.has(obligation.id)),
+    ...broadMatches.filter((obligation) => !preferredIds.has(obligation.id)),
+  ];
+
+  return {
+    state: {
+      status: "awaiting_mark_paid_choice",
+      draft: ballast,
+      markPaidCandidates: candidates,
+      ...(classified.amountCents === undefined
+        ? {}
+        : { markPaidAmountCents: classified.amountCents }),
+      ...(settlementAccountId === undefined
+        ? {}
+        : { markPaidAccountId: settlementAccountId }),
+      ...(paidOn === undefined ? {} : { markPaidPaidOn: paidOn }),
+    },
+    reply: obligationAmbiguousMessage(
+      candidates.map((candidate) => candidate.description),
     ),
   };
 }
@@ -1623,19 +2469,120 @@ export async function startConversation(
 
   // Deterministic parsing runs first only to provide hints and a final fallback.
   // A successful unified interpreter owns the structured plain-expense fields.
-  const parsed = parseExpenseText(input.text, { today: options.today });
+  const textWithAuthoritativeInstrumentNamesMasked =
+    maskAuthoritativeRegisteredInstrumentNames(input.text, deps);
+  const parsed = parseExpenseText(textWithAuthoritativeInstrumentNamesMasked, {
+    today: options.today,
+  });
   const deterministic = detectFinancialRoute(input.text, {
     knownCards: deps.listActiveCards?.() ?? [],
     knownAccounts: deps.listActiveAccounts?.() ?? [],
     merchantAliases: deps.merchantAliases,
   });
+  const obligationStartDate = explicitObligationStartDate(
+    input.text,
+    options.today,
+  );
+  if (obligationStartDate.kind === "invalid") {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `A data de início “${obligationStartDate.raw}” é inválida. Envie uma data real no formato DD/MM ou DD/MM/AAAA.`,
+    };
+  }
+  const paymentDate = explicitPaymentDate(
+    textWithAuthoritativeInstrumentNamesMasked,
+    options.today,
+    deterministic.billMonth,
+  );
+  const invalidPaymentDate = (raw: string): ConversationOutcome => {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `A data de pagamento “${raw}” é inválida. Envie no formato DD/MM ou DD/MM/AAAA.`,
+    };
+  };
+  const invalidInstallmentPurchaseDate = (raw: string): ConversationOutcome => {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply: `A data da compra “${raw}” é inválida. Envie uma data real no formato DD/MM ou DD/MM/AAAA.`,
+    };
+  };
+  const paymentPaidOn =
+    paymentDate.kind === "valid" ? paymentDate.iso : undefined;
+  const financingInstallmentPosition = hasBareFinancingInstallmentPosition(
+    input.text,
+  );
+  const authoritativeCardNameFromText =
+    explicitAuthoritativeInstrumentFromText(
+      input.text,
+      "card",
+      deps.listActiveCards?.() ?? [],
+    ) ??
+    registeredNormalFaturaTargetMatch(
+      input.text,
+      deps.listActiveCards?.() ?? [],
+    )?.keyword;
 
   const withParsedFinancialDates = (
     classified: RoutedInterpretedIntent | null,
   ): RoutedInterpretedIntent | null => {
     if (
+      classified?.intent === "mark_paid" &&
+      classified.target === "card" &&
+      authoritativeCardNameFromText !== undefined
+    ) {
+      classified = {
+        ...classified,
+        keyword: authoritativeCardNameFromText,
+        authoritativeCardName: authoritativeCardNameFromText,
+      };
+    } else if (
       classified?.intent === "card_installment" &&
-      classified.purchase.purchasedOn === undefined &&
+      authoritativeCardNameFromText !== undefined
+    ) {
+      classified = {
+        ...classified,
+        purchase: {
+          ...classified.purchase,
+          cardKeyword: authoritativeCardNameFromText,
+          authoritativeCardName: authoritativeCardNameFromText,
+        },
+      };
+    }
+    if (
+      classified?.intent === "mark_paid" &&
+      (paymentPaidOn !== undefined || financingInstallmentPosition)
+    ) {
+      const keyword =
+        classified.target === "card" &&
+        authoritativeCardNameFromText !== undefined
+          ? authoritativeCardNameFromText
+          : classified.keyword
+              .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, " ")
+              .replace(/\b(?:hoje|ontem|anteontem)\b/gi, " ")
+              .replace(/\b(?:em|no\s+dia)\s*$/i, "")
+              .replace(/\s+/g, " ")
+              .trim();
+      return { ...classified, keyword };
+    }
+    if (
+      classified?.intent === "card_installment" &&
+      paymentDate.kind === "valid"
+    ) {
+      return {
+        ...classified,
+        purchase: {
+          ...classified.purchase,
+          purchasedOn: paymentDate.iso,
+        },
+      };
+    }
+    if (
+      classified?.intent === "card_installment" &&
+      (classified.purchase.purchasedOn === undefined ||
+        !isRealIsoCalendarDate(classified.purchase.purchasedOn)) &&
       parsed.occurredOn !== undefined &&
       !parsed.uncertainFields.includes("date")
     ) {
@@ -1653,31 +2600,29 @@ export async function startConversation(
     }
     if (
       classified?.intent === "obligation" &&
-      deterministic.startDate !== undefined &&
-      parsed.occurredOn !== undefined &&
-      !parsed.uncertainFields.includes("date")
+      obligationStartDate.kind === "valid"
     ) {
+      const hasIndependentExplicitDueDay = deterministic.dueDay !== undefined;
       const classifiedStartMonth = classified.obligation.startMonth;
       const validClassifiedStartMonth =
         classifiedStartMonth !== undefined &&
         /^\d{4}-(0[1-9]|1[0-2])$/.test(classifiedStartMonth);
-      const hasExplicitStartYear =
-        /\ba\s+partir\s+de\s+\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(input.text);
-      let fallbackStartMonth = parsed.occurredOn.slice(0, 7);
-      if (
-        !hasExplicitStartYear &&
-        fallbackStartMonth < options.today.slice(0, 7)
-      ) {
-        fallbackStartMonth = `${Number(parsed.occurredOn.slice(0, 4)) + 1}-${parsed.occurredOn.slice(5, 7)}`;
-      }
       return {
         ...classified,
         obligation: {
           ...classified.obligation,
-          startMonth: validClassifiedStartMonth
-            ? classifiedStartMonth
-            : fallbackStartMonth,
-          dueDay: deterministic.startDate.day,
+          startMonth:
+            !obligationStartDate.hasExplicitYear && validClassifiedStartMonth
+              ? classifiedStartMonth
+              : obligationStartDate.resolvedStartMonth,
+          dueDay: hasIndependentExplicitDueDay
+            ? deterministic.dueDay
+            : obligationStartDate.day,
+          requestedDueDay: hasIndependentExplicitDueDay
+            ? deterministic.requestedDueDay
+            : obligationStartDate.day > 28
+              ? obligationStartDate.day
+              : undefined,
         },
       };
     }
@@ -1690,12 +2635,18 @@ export async function startConversation(
       deterministic.reason === "invalid_bill_month" &&
       deterministic.invalidBillMonth !== undefined
         ? `O mês da fatura “${deterministic.invalidBillMonth}” é inválido. Envie no formato MM/AAAA, com mês entre 01 e 12.`
-        : deterministic.reason === "ambiguous_payment_number_semantics" &&
-            deterministic.ambiguousPaymentNumber !== undefined
-          ? `Não ficou claro se ${deterministic.ambiguousPaymentNumber} é o valor pago ou o número da parcela. Envie “R$ ${deterministic.ambiguousPaymentNumber}” para informar o valor ou “parcela número ${deterministic.ambiguousPaymentNumber}” para informar a posição.`
-          : deterministic.reason === "unresolved_existing_payment"
-            ? "Não consegui identificar com segurança qual obrigação foi paga. Diga o nome exato da obrigação e o valor pago."
-            : "Não consegui separar com segurança uma compra parcelada de uma obrigação. Diga se foi uma compra no cartão e informe o número de parcelas.";
+        : deterministic.reason === "invalid_installment_ordinal"
+          ? "O número da parcela precisa ser maior ou igual a 1. Informe uma posição válida para registrar o pagamento."
+          : deterministic.reason === "invalid_payment_amount"
+            ? "O valor pago precisa ser maior que R$ 0. Informe um valor positivo para registrar o pagamento."
+            : deterministic.reason === "invalid_due_day"
+              ? "O dia de vencimento é inválido. Informe um dia entre 1 e 31; vencimentos após o dia 28 são ajustados para 28."
+              : deterministic.reason === "ambiguous_payment_number_semantics" &&
+                  deterministic.ambiguousPaymentNumber !== undefined
+                ? `Não ficou claro se ${deterministic.ambiguousPaymentNumber} é o valor pago ou o número da parcela. Envie “R$ ${deterministic.ambiguousPaymentNumber}” para informar o valor ou “parcela número ${deterministic.ambiguousPaymentNumber}” para informar a posição.`
+                : deterministic.reason === "unresolved_existing_payment"
+                  ? "Não consegui identificar com segurança qual obrigação foi paga. Diga o nome exato da obrigação e o valor pago."
+                  : "Não consegui separar com segurança uma compra parcelada de uma obrigação. Diga se foi uma compra no cartão e informe o número de parcelas.";
     return {
       state: { status: "cancelled", draft: ballast },
       reply,
@@ -1727,17 +2678,52 @@ export async function startConversation(
         merchantAliases: deps.merchantAliases,
       })
       .catch(() => null);
+    const resolvedFinancingInstallmentPayment =
+      deterministic.route === "ambiguous" &&
+      deterministic.reason === "ambiguous_payment_number_semantics" &&
+      aiClassified?.intent === "mark_paid" &&
+      aiClassified.target === "obligation" &&
+      financingInstallmentPosition;
     const classified = withParsedFinancialDates(
-      applyDeterministicPrecedence(deterministic, aiClassified),
+      resolvedFinancingInstallmentPayment
+        ? aiClassified
+        : applyDeterministicPrecedence(deterministic, aiClassified),
     );
     aiUnavailable = aiClassified === null;
-    if (deterministic.route === "ambiguous") {
-      const validExistingPaymentResolution =
-        deterministic.reason === "unresolved_existing_payment" &&
-        classified?.intent === "mark_paid";
-      if (!validExistingPaymentResolution) {
-        return unresolvedAmbiguity();
+    if (classified?.intent === "card_installment") {
+      if (paymentDate.kind === "invalid") {
+        return invalidInstallmentPurchaseDate(paymentDate.raw);
       }
+      if (
+        classified.purchase.purchasedOn !== undefined &&
+        !isRealIsoCalendarDate(classified.purchase.purchasedOn)
+      ) {
+        return invalidInstallmentPurchaseDate(classified.purchase.purchasedOn);
+      }
+    }
+    if (classified?.intent === "mark_paid" && paymentDate.kind === "invalid") {
+      return invalidPaymentDate(paymentDate.raw);
+    }
+    if (
+      deterministic.route === "ambiguous" &&
+      !resolvedFinancingInstallmentPayment
+    ) {
+      const unresolvedExistingPayment =
+        deterministic.reason === "unresolved_existing_payment" &&
+        classified?.intent === "mark_paid" &&
+        classified.target === "obligation";
+      if (unresolvedExistingPayment) {
+        return startUnresolvedExistingPaymentChoice(
+          classified,
+          deterministic.description,
+          input,
+          deps,
+          options,
+          inputKind,
+          paymentPaidOn,
+        );
+      }
+      return unresolvedAmbiguity();
     }
     if (classified?.intent === "non_financial") {
       // Successful unified abstention: do not call Anthropic interpretation or
@@ -1757,6 +2743,7 @@ export async function startConversation(
           deps,
           options,
           inputKind,
+          paymentPaidOn,
         );
       }
     }
@@ -1767,6 +2754,20 @@ export async function startConversation(
     const classified = withParsedFinancialDates(
       applyDeterministicPrecedence(deterministic, null),
     );
+    if (classified?.intent === "card_installment") {
+      if (paymentDate.kind === "invalid") {
+        return invalidInstallmentPurchaseDate(paymentDate.raw);
+      }
+      if (
+        classified.purchase.purchasedOn !== undefined &&
+        !isRealIsoCalendarDate(classified.purchase.purchasedOn)
+      ) {
+        return invalidInstallmentPurchaseDate(classified.purchase.purchasedOn);
+      }
+    }
+    if (classified?.intent === "mark_paid" && paymentDate.kind === "invalid") {
+      return invalidPaymentDate(paymentDate.raw);
+    }
     if (deterministic.route === "ambiguous") {
       return unresolvedAmbiguity();
     }
@@ -1775,7 +2776,14 @@ export async function startConversation(
       classified.intent !== "plain" &&
       classified.intent !== "non_financial"
     ) {
-      return startClassifiedIntent(classified, input, deps, options, inputKind);
+      return startClassifiedIntent(
+        classified,
+        input,
+        deps,
+        options,
+        inputKind,
+        paymentPaidOn,
+      );
     }
     if (classified?.intent === "plain") classifiedExpense = classified.expense;
   }
@@ -1794,7 +2802,14 @@ export async function startConversation(
   }
 
   const description = stripEdgePunctuation(
-    interpreted?.description ?? parsed.description,
+    interpreted?.description ??
+      ((deterministic.route === "single_credit" ||
+        deterministic.route === "plain_account") &&
+      (deterministic.explicitCardInstrumentLanguage ||
+        deterministic.explicitAccountEvidence)
+        ? deterministic.description
+        : undefined) ??
+      parsed.description,
   );
   const dateUncertain = parsed.uncertainFields.includes("date");
   const amountDisagreement = valuesDisagree(
@@ -1807,7 +2822,11 @@ export async function startConversation(
   const draft: DraftInProgress = {
     // The unified LLM path owns structured interpretation; the parser is a
     // validator/hint source and final fallback.
-    amountCents: interpreted?.amountCents ?? parsed.amountCents,
+    amountCents:
+      deterministic.explicitMetadataYearEvidence &&
+      deterministic.amountCents === undefined
+        ? undefined
+        : (interpreted?.amountCents ?? parsed.amountCents),
     description,
     occurredOn: dateUncertain
       ? (interpreted?.occurredOn ?? parsed.occurredOn ?? options.today)
@@ -1843,10 +2862,18 @@ export async function startConversation(
   // provider names ("no Nubank") are safe only when they identify one real
   // instrument; account+card collisions become an explicit button choice.
   let paymentCandidates = paymentCandidatesForText(input.text, deps);
+  if (
+    deterministic.explicitCardInstrumentLanguage &&
+    deterministic.cardKeyword === undefined
+  ) {
+    paymentCandidates = [];
+  }
   let selectedPaymentInstrumentName: string | undefined;
   if (
     paymentCandidates.length === 0 &&
-    interpreted?.cardKeyword !== undefined
+    interpreted?.cardKeyword !== undefined &&
+    !deterministic.explicitCardInstrumentLanguage &&
+    !deterministic.explicitDefaultSettlementAccount
   ) {
     paymentCandidates = (deps.listActiveCards?.() ?? [])
       .filter(
@@ -1858,7 +2885,8 @@ export async function startConversation(
   }
   if (
     paymentCandidates.length === 0 &&
-    interpreted?.accountKeyword !== undefined
+    interpreted?.accountKeyword !== undefined &&
+    !deterministic.explicitDefaultSettlementAccount
   ) {
     paymentCandidates = (deps.listActiveAccounts?.() ?? [])
       .filter(
@@ -1872,13 +2900,78 @@ export async function startConversation(
         name: account.name,
       }));
   }
+  const authoritativeCardKeyword = explicitAuthoritativeInstrumentFromText(
+    input.text,
+    "card",
+    deps.listActiveCards?.() ?? [],
+  );
+  const authoritativeAccountKeyword = explicitAuthoritativeInstrumentFromText(
+    input.text,
+    "account",
+    deps.listActiveAccounts?.() ?? [],
+  );
+  const explicitCardKeyword =
+    authoritativeCardKeyword ??
+    (deterministic.explicitCardInstrumentLanguage
+      ? deterministic.cardKeyword
+      : (deterministic.cardKeyword ??
+        explicitNamedInstrumentFromText(
+          input.text,
+          "card",
+          deps.listActiveCards?.() ?? [],
+        )));
+  const explicitAccountKeyword =
+    authoritativeAccountKeyword ??
+    deterministic.accountKeyword ??
+    explicitNamedInstrumentFromText(
+      input.text,
+      "account",
+      deps.listActiveAccounts?.() ?? [],
+    );
+  if (
+    explicitCardKeyword !== undefined &&
+    !(deps.listActiveCards?.() ?? []).some((card) =>
+      authoritativeCardKeyword === undefined
+        ? cardKeywordMatch(explicitCardKeyword, card.name)
+        : normalizeText(card.name) === normalizeText(authoritativeCardKeyword),
+    )
+  ) {
+    return {
+      state: { status: "cancelled", draft },
+      reply: `Não encontrei o cartão “${explicitCardKeyword}”. Diga o nome de um cartão cadastrado.`,
+    };
+  }
+  if (
+    explicitAccountKeyword !== undefined &&
+    (authoritativeAccountKeyword !== undefined
+      ? !(deps.listActiveAccounts?.() ?? []).some(
+          (account) =>
+            normalizeText(account.name) ===
+            normalizeText(authoritativeAccountKeyword),
+        )
+      : deps.resolveAccountIdByName?.(explicitAccountKeyword) === undefined &&
+        !(deps.listActiveAccounts?.() ?? []).some(
+          (account) =>
+            normalizeText(account.name) ===
+            normalizeText(explicitAccountKeyword),
+        ))
+  ) {
+    return {
+      state: { status: "cancelled", draft },
+      reply: `Não encontrei a conta “${explicitAccountKeyword}”. Diga o nome de uma conta cadastrada.`,
+    };
+  }
   if (paymentCandidates.length === 1) {
     const selected = paymentCandidates[0];
     selectedPaymentInstrumentName = selected?.name;
     if (selected?.type === "card") draft.cardId = selected.id;
     if (selected?.type === "account") draft.accountId = selected.id;
   } else if (paymentCandidates.length === 0) {
-    if (parsed.cardHint) {
+    if (
+      parsed.cardHint ||
+      (deterministic.route === "single_credit" &&
+        deterministic.explicitCardInstrumentLanguage)
+    ) {
       const cards = deps.listActiveCards?.();
       if (cards === undefined) {
         draft.cardId = deps.resolveCardId() ?? undefined;
@@ -2042,6 +3135,13 @@ export async function startConversationFromAudio(
 
 const CONFIRM_RE = /^\s*(confirmar|confirma|confirmo|sim|ok|salvar|salva)\b/i;
 const CANCEL_RE = /^\s*(cancelar|cancela|nao|não|descartar|apagar)\b/i;
+const MARK_PAID_CHOICE_CANCEL_RE =
+  /^\s*(cancelar|cancela|descartar|apagar)\s*[!.…]*\s*$/i;
+
+/** True for every typed command that enters a confirmation save path. */
+export function isConfirmationCommand(message: string): boolean {
+  return CONFIRM_RE.test(message);
+}
 
 /**
  * True when the message is ONLY a confirmation word (optionally punctuated).
@@ -2380,16 +3480,20 @@ async function applyMarkPaidChoice(
   deps: ConversationDeps,
   today: string,
 ): Promise<ConversationOutcome> {
-  if (CANCEL_RE.test(message)) {
+  const candidates = state.markPaidCandidates ?? [];
+  const matches = candidates.filter((c) =>
+    markPaidChoiceMatch(message, c.description),
+  );
+  // A complete displayed description is always an explicit selection, even
+  // when it begins with conversational vocabulary such as "Não". Within the
+  // picker, only an unambiguous standalone cancellation command cancels;
+  // "não" is an ordinary non-identifying reply and keeps the choice open.
+  if (matches.length !== 1 && MARK_PAID_CHOICE_CANCEL_RE.test(message)) {
     return {
       state: { status: "cancelled", draft: state.draft },
       reply: cancelledMessage(),
     };
   }
-  const candidates = state.markPaidCandidates ?? [];
-  const matches = candidates.filter((c) =>
-    keywordMatch(message, c.description),
-  );
   if (matches.length !== 1) {
     return {
       state,
@@ -2404,6 +3508,7 @@ async function applyMarkPaidChoice(
     today,
     state.markPaidAmountCents,
     state.markPaidAccountId,
+    state.markPaidPaidOn,
   );
 }
 
@@ -2516,17 +3621,20 @@ async function applyObligationMessage(
     fieldLabel = `o valor para R$ ${formatBrl(parsed.amountCents)}/mês`;
   }
 
-  const dayMatch = /^dia\b\s*(\d{1,2})\s*$/i.exec(message.trim());
+  const dayMatch = /^dia\b\s*(\d+)\s*$/i.exec(message.trim());
   if (fieldLabel === null && dayMatch !== null) {
     const day = Number.parseInt(dayMatch[1] as string, 10);
-    if (day < 1 || day > 28) {
+    if (day < 1 || day > 31) {
       return {
         state,
-        reply: "O dia de vencimento precisa estar entre 1 e 28.",
+        reply: "O dia de vencimento precisa estar entre 1 e 31.",
       };
     }
-    next.dueDay = day;
-    fieldLabel = "o dia de vencimento";
+    next.dueDay = Math.min(28, day);
+    fieldLabel =
+      day > 28
+        ? `o vencimento solicitado (dia ${day}) para o dia 28, que é o último dia aceito para obrigações`
+        : "o dia de vencimento";
   }
 
   const accountMatch = /^conta\b\s*(.+)$/i.exec(message.trim());
@@ -2570,15 +3678,32 @@ async function confirmInstallment(
 ): Promise<ConversationOutcome> {
   let workingState = state;
   let draft = state.installmentDraft;
-  if (
-    draft === undefined ||
-    draft.totalCents === undefined ||
-    draft.installmentCount === undefined ||
-    draft.cardId === undefined
-  ) {
-    // Defensive: the CONFIRM_RE branch in applyInstallmentMessage already
-    // guards each missing field individually before reaching here.
+  if (draft === undefined) {
     return { state, reply: notUnderstoodMessage() };
+  }
+  // Keep typed and button confirmation on the same validation path. Incomplete
+  // drafts deliberately retain their correction UI, so a premature tap must
+  // explain the first missing field instead of falling through to a generic
+  // error.
+  if (draft.totalCents === undefined) {
+    return {
+      state,
+      reply: 'Ainda falta o valor. Informe com "valor 3.600".',
+    };
+  }
+  if (draft.installmentCount === undefined) {
+    return {
+      state,
+      reply: 'Em quantas parcelas? Responda com "parcelas 12".',
+    };
+  }
+  if (draft.cardId === undefined) {
+    const cards = deps.listActiveCards?.() ?? [];
+    return {
+      state,
+      reply: "Qual cartão?",
+      keyboard: cardGridKeyboard(cards),
+    };
   }
   if (taxonomyProposalLabel(state) !== undefined) {
     const resolved = await applyPendingTaxonomyToInstallment(state, deps);
@@ -2616,7 +3741,7 @@ async function confirmInstallment(
       draft.categoryId !== undefined
         ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
         : undefined,
-    closingDay: card?.closingDay,
+    closingDay: draft.cardClosingDay,
   });
   if (!built.ok) {
     return {
@@ -2625,40 +3750,47 @@ async function confirmInstallment(
     };
   }
 
-  // The RPC is atomic (nothing persists on a throw), but there is no DB-level
-  // idempotency for installment groups — cancel on failure so a blind retry
-  // can't double-insert; the user re-sends the purchase.
+  // The RPC is atomic and the pending draft's stable key makes a replay after
+  // any later failure (interaction log, conversation save, Telegram) return the
+  // original group instead of inserting a second purchase.
   try {
-    await deps.createInstallmentPurchase(built.value);
+    const persisted = await deps.createInstallmentPurchase(
+      built.value,
+      draft.idempotencyKey,
+    );
+    await deps.logInteraction({
+      fromUserId: draft.createdByUserId,
+      inputKind: state.draft.inputKind,
+      messageText,
+      explanation: draft.categoryExplanation,
+    });
+
+    return {
+      state: { status: "saved", draft: workingState.draft },
+      reply: installmentSavedMessage({
+        description: persisted.description,
+        totalCents: persisted.totalCents,
+        installmentCount: persisted.installmentCount,
+        cardName:
+          findActiveCard(deps, persisted.creditCardId)?.name ??
+          card?.name ??
+          "cartão",
+        firstDueMonth: persisted.firstDueMonth,
+      }),
+    };
   } catch (error) {
     console.warn(
-      `[bot] createInstallmentPurchase failed for ${draft.description}:`,
+      `[bot] installment confirmation outcome uncertain for ${draft.description}:`,
       error,
     );
     return {
-      state: { status: "cancelled", draft: workingState.draft },
+      // The request may have committed before its response was lost. Keep the
+      // exact draft/key retryable; the database will replay or reconcile it.
+      state: { ...workingState, status: "installment_outcome_uncertain" },
       reply: installmentSaveFailedMessage(draft.description),
+      keyboard: installmentReconciliationKeyboard(),
     };
   }
-  await deps.logInteraction({
-    fromUserId: draft.createdByUserId,
-    inputKind: state.draft.inputKind,
-    messageText,
-    explanation: draft.categoryExplanation,
-  });
-
-  const firstDueMonth =
-    built.value.installments[0]?.dueMonth ?? draft.purchasedOn.slice(0, 7);
-  return {
-    state: { status: "saved", draft: workingState.draft },
-    reply: installmentSavedMessage({
-      description: draft.description,
-      totalCents,
-      installmentCount,
-      cardName: card?.name ?? "cartão",
-      firstDueMonth,
-    }),
-  };
 }
 
 /**
@@ -2689,26 +3821,6 @@ async function applyInstallmentMessage(
   }
 
   if (CONFIRM_RE.test(message)) {
-    if (draft.totalCents === undefined) {
-      return {
-        state,
-        reply: 'Ainda falta o valor. Informe com "valor 3.600".',
-      };
-    }
-    if (draft.installmentCount === undefined) {
-      return {
-        state,
-        reply: 'Em quantas parcelas? Responda com "parcelas 12".',
-      };
-    }
-    if (draft.cardId === undefined) {
-      const cards = deps.listActiveCards?.() ?? [];
-      return {
-        state,
-        reply: "Qual cartão?",
-        keyboard: cardGridKeyboard(cards),
-      };
-    }
     return confirmInstallment(state, deps, today, message);
   }
 
@@ -2743,14 +3855,24 @@ async function applyInstallmentMessage(
   const cardMatch =
     fieldLabel === null ? /^cart[aã]o\b\s*(.+)$/i.exec(trimmed) : null;
   if (cardMatch !== null) {
-    const keyword = (cardMatch[1] as string).trim();
+    const authoritativeName = explicitAuthoritativeInstrumentFromText(
+      trimmed,
+      "card",
+      deps.listActiveCards?.() ?? [],
+    );
+    const keyword = authoritativeName ?? (cardMatch[1] as string).trim();
     const cards = deps.listActiveCards?.() ?? [];
-    const matches = cards.filter((c) => cardKeywordMatch(keyword, c.name));
+    const matches = cards.filter((c) =>
+      authoritativeName === undefined
+        ? cardKeywordMatch(keyword, c.name)
+        : authoritativeCardNameMatch(authoritativeName, c.name),
+    );
     if (matches.length !== 1) {
       return { state, reply: `Não encontrei o cartão "${keyword}".` };
     }
     const card = matches[0];
     next.cardId = card?.id;
+    next.cardClosingDay = card?.closingDay;
     next.description = stripSelectedInstrumentFromDescription(
       next.description,
       card?.name,
@@ -2777,14 +3899,18 @@ async function applyInstallmentMessage(
   const dateMatch =
     fieldLabel === null ? /^(data|dia)\b\s*(.+)$/i.exec(trimmed) : null;
   if (dateMatch !== null) {
-    const parsed = parseExpenseText(dateMatch[2] as string, { today });
-    if (
-      parsed.occurredOn === undefined ||
-      parsed.uncertainFields.includes("date")
-    ) {
-      return { state, reply: notUnderstoodMessage() };
+    const validatedPurchaseDate = explicitPaymentDate(trimmed, today);
+    if (validatedPurchaseDate.kind !== "valid") {
+      const raw =
+        validatedPurchaseDate.kind === "invalid"
+          ? validatedPurchaseDate.raw
+          : (dateMatch[2] as string).trim();
+      return {
+        state,
+        reply: `A data da compra “${raw}” é inválida. Envie uma data real no formato DD/MM ou DD/MM/AAAA.`,
+      };
     }
-    next.purchasedOn = parsed.occurredOn;
+    next.purchasedOn = validatedPurchaseDate.iso;
     fieldLabel = "a data";
   }
 
@@ -2844,7 +3970,7 @@ async function confirmCardBill(
     accountId: draft.accountId,
     billMonth: draft.month,
     amountCents: draft.amountCents,
-    paidOn: today,
+    paidOn: draft.paidOn ?? today,
     createdByUserId: draft.createdByUserId,
   });
   if (!built.ok) {
@@ -2928,7 +4054,16 @@ async function applyCardBillMessage(
   // name might otherwise look like an unrecognized correction).
   if (draft.cardId === undefined) {
     const cards = deps.listActiveCards?.() ?? [];
-    const matches = cards.filter((c) => cardKeywordMatch(message, c.name));
+    const authoritativeName = explicitAuthoritativeInstrumentFromText(
+      message,
+      "card",
+      deps.listActiveCards?.() ?? [],
+    );
+    const matches = cards.filter((c) =>
+      authoritativeName === undefined
+        ? cardKeywordMatch(message, c.name)
+        : authoritativeCardNameMatch(authoritativeName, c.name),
+    );
     if (matches.length === 1) {
       return resolveBillCard(
         matches[0]?.id as string,
@@ -2939,7 +4074,13 @@ async function applyCardBillMessage(
     }
     return {
       state,
-      reply: chooseCardBillMessage(),
+      reply:
+        authoritativeName === undefined
+          ? chooseCardBillMessage()
+          : cardBillNoMatchMessage(
+              authoritativeName,
+              cards.map((card) => card.name),
+            ),
       keyboard: cardGridKeyboard(cards),
     };
   }
@@ -2991,6 +4132,32 @@ async function applyCardBillMessage(
     );
   }
 
+  const dateMatch = /^data\b\s*(.+)$/i.exec(trimmed);
+  if (dateMatch !== null) {
+    const parsedDate = explicitPaymentDate(dateMatch[1] as string, today);
+    if (parsedDate.kind !== "valid") {
+      const raw =
+        parsedDate.kind === "invalid"
+          ? parsedDate.raw
+          : (dateMatch[1] as string).trim();
+      return {
+        state,
+        reply: `A data de pagamento “${raw}” é inválida. Envie no formato DD/MM ou DD/MM/AAAA.`,
+      };
+    }
+    const next: CardBillDraftInProgress = {
+      ...draft,
+      paidOn: parsedDate.iso,
+    };
+    return cardBillConfirmationOutcome(
+      next,
+      draft.amountCents as number,
+      cardName,
+      state.draft,
+      deps,
+    );
+  }
+
   return {
     state,
     reply: cardBillConfirmationMessage({
@@ -2998,6 +4165,7 @@ async function applyCardBillMessage(
       month: draft.month,
       amountCents: draft.amountCents as number,
       accountLabel: deps.accountNameById?.(draft.accountId) ?? "Conta",
+      paidOn: draft.paidOn ?? today,
     }),
     keyboard: confirmCancelKeyboard(),
   };
@@ -3012,6 +4180,34 @@ export async function applyMessage(
   // Already terminal — nothing to do.
   if (state.status === "saved" || state.status === "cancelled") {
     return { state, reply: notUnderstoodMessage() };
+  }
+
+  if (state.status === "installment_recovery_required") {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply:
+        "Não consigo confirmar este parcelamento antigo com segurança porque ele pode já ter sido salvo. Verifique suas compras parceladas; se ele não estiver lá, envie o lançamento novamente.",
+    };
+  }
+
+  if (
+    state.status === "installment_submission_started" ||
+    state.status === "installment_outcome_uncertain"
+  ) {
+    if (CONFIRM_RE.test(message)) {
+      return confirmInstallment(
+        state,
+        deps,
+        options.today ?? state.draft.occurredOn,
+        message,
+      );
+    }
+    return {
+      state,
+      reply:
+        "Ainda estou verificando se essa compra já foi salva. Não posso editar nem cancelar agora; confirme novamente para concluir sem duplicar.",
+      keyboard: installmentReconciliationKeyboard(),
+    };
   }
 
   const today = options.today ?? state.draft.occurredOn;
@@ -3553,6 +4749,34 @@ export async function applyCallback(
   if (state.status === "cancelled") {
     return expiredOutcome(state);
   }
+  if (state.status === "installment_recovery_required") {
+    return {
+      state: { status: "cancelled", draft: state.draft },
+      reply:
+        "Não consigo confirmar este parcelamento antigo com segurança porque ele pode já ter sido salvo. Verifique suas compras parceladas; se ele não estiver lá, envie o lançamento novamente.",
+    };
+  }
+  if (
+    state.status === "installment_submission_started" ||
+    state.status === "installment_outcome_uncertain"
+  ) {
+    if (token === TOKENS.confirm) {
+      const depsValue = await getDeps();
+      return confirmInstallment(
+        state,
+        depsValue,
+        today,
+        "confirmar reconciliação (botão)",
+      );
+    }
+    return {
+      state,
+      reply:
+        "Ainda estou verificando se essa compra já foi salva. Não posso editar nem cancelar agora; toque em verificar para concluir sem duplicar.",
+      keyboard: installmentReconciliationKeyboard(),
+      toast: "Confirmação pendente — verifique para concluir.",
+    };
+  }
 
   if (state.status === "awaiting_payment_choice") {
     const candidates = state.paymentCandidates ?? [];
@@ -3636,6 +4860,7 @@ export async function applyCallback(
       const next: InstallmentDraftInProgress = {
         ...draft,
         cardId,
+        cardClosingDay: card.closingDay,
         description: stripSelectedInstrumentFromDescription(
           draft.description,
           card.name,

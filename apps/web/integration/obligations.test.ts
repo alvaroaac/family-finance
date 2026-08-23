@@ -24,8 +24,11 @@ import {
 } from "./fake-supabase.js";
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
+const FOREIGN_HOUSEHOLD = "00000000-0000-0000-0000-000000000002";
 const ALVARO = "11111111-1111-1111-1111-111111111111";
 const ACCOUNT = "acc-corrente";
+const OVERRIDE_ACCOUNT = "acc-pix";
+const FOREIGN_ACCOUNT = "acc-foreign";
 
 // Inside July 2026.
 const NOW = new Date("2026-07-15T12:00:00Z");
@@ -35,6 +38,15 @@ function seededClient(): {
   store: FakeSupabaseStore;
 } {
   const store = new FakeSupabaseStore({
+    accounts: [
+      { id: ACCOUNT, household_id: HOUSEHOLD, name: "Corrente" },
+      { id: OVERRIDE_ACCOUNT, household_id: HOUSEHOLD, name: "Pix" },
+      {
+        id: FOREIGN_ACCOUNT,
+        household_id: FOREIGN_HOUSEHOLD,
+        name: "Foreign",
+      },
+    ],
     obligations: [
       {
         id: "ob-solar",
@@ -302,7 +314,7 @@ describe("mark-paid actual amount", () => {
     await materializeObligationPayment(client, {
       obligationId: "ob-rent",
       month: "2026-07",
-      accountId: "acc-pix",
+      accountId: OVERRIDE_ACCOUNT,
     });
 
     const transaction = store
@@ -311,7 +323,35 @@ describe("mark-paid actual amount", () => {
     const obligation = store
       .table("obligations")
       .find((row) => row.id === "ob-rent");
-    expect(transaction?.account_id).toBe("acc-pix");
+    expect(transaction?.account_id).toBe(OVERRIDE_ACCOUNT);
     expect(obligation?.account_id).toBe(ACCOUNT);
+  });
+
+  it("rejects an account override that does not exist", async () => {
+    const { client, store } = seededClient();
+
+    await expect(
+      materializeObligationPayment(client, {
+        obligationId: "ob-rent",
+        month: "2026-07",
+        accountId: "acc-missing",
+      }),
+    ).rejects.toThrow("account acc-missing not found in obligation household");
+    expect(store.table("transactions")).toHaveLength(0);
+  });
+
+  it("rejects an account override owned by another household", async () => {
+    const { client, store } = seededClient();
+
+    await expect(
+      materializeObligationPayment(client, {
+        obligationId: "ob-rent",
+        month: "2026-07",
+        accountId: FOREIGN_ACCOUNT,
+      }),
+    ).rejects.toThrow(
+      `account ${FOREIGN_ACCOUNT} not found in obligation household`,
+    );
+    expect(store.table("transactions")).toHaveLength(0);
   });
 });

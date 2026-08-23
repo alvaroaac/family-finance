@@ -383,6 +383,61 @@ function createInstallmentPurchaseRpc(
   store: FakeSupabaseStore,
   args: { group_payload: Row; installments_payload: Row[] },
 ): Result<{ group: Row; installments: Row[] }> {
+  const idempotencyKey = args.group_payload.idempotency_key;
+  const existing =
+    typeof idempotencyKey === "string"
+      ? store
+          .table("installment_groups")
+          .find(
+            (row) =>
+              row.household_id === args.group_payload.household_id &&
+              row.idempotency_key === idempotencyKey,
+          )
+      : undefined;
+  if (existing !== undefined) {
+    const payloadKeys = [
+      "household_id",
+      "credit_card_id",
+      "number",
+      "installment_count",
+      "amount_cents",
+      "due_month",
+      "description",
+      "category_id",
+      "subcategory_id",
+      "responsibility_scope",
+      "responsible_user_id",
+      "created_by_user_id",
+    ];
+    const normalize = (row: Row) =>
+      Object.fromEntries(payloadKeys.map((key) => [key, row[key] ?? null]));
+    const requested = args.installments_payload
+      .map(normalize)
+      .sort((a, b) => Number(a.number) - Number(b.number));
+    const persisted = store
+      .table("installments")
+      .filter((row) => row.installment_group_id === existing.id)
+      .map(normalize)
+      .sort((a, b) => Number(a.number) - Number(b.number));
+    if (JSON.stringify(requested) !== JSON.stringify(persisted)) {
+      return {
+        data: null as unknown as { group: Row; installments: Row[] },
+        error: {
+          message: "idempotency key reused with different installments payload",
+        },
+      };
+    }
+    return {
+      data: {
+        group: existing,
+        installments: store
+          .table("installments")
+          .filter((row) => row.installment_group_id === existing.id),
+      },
+      error: null,
+    };
+  }
+
   const group = store.materialize({ ...args.group_payload });
   store.table("installment_groups").push(group);
 
@@ -516,7 +571,7 @@ function mergeCategoryRpc(
 
 /**
  * JS stand-in for the `materialize_obligation_payment` plpgsql function
- * (supabase/migrations/0011_create_obligations.sql, extended by 0017). The REAL
+ * (supabase/migrations/0011_create_obligations.sql, extended by 0017/0018). The REAL
  * atomicity + idempotency guarantee (unique partial index) is proven against
  * live Postgres separately; here we reproduce the happy-path DATA EFFECT:
  * insert ONE expense transaction linked via obligation_id/obligation_month —
@@ -547,6 +602,24 @@ function materializeObligationPaymentRpc(
     return {
       data: null as unknown as Row,
       error: { message: `obligation is ${String(obligation.status)}` },
+    };
+  }
+
+  if (
+    args.target_account_id != null &&
+    !store
+      .table("accounts")
+      .some(
+        (account) =>
+          account.id === args.target_account_id &&
+          account.household_id === obligation.household_id,
+      )
+  ) {
+    return {
+      data: null as unknown as Row,
+      error: {
+        message: `account ${args.target_account_id} not found in obligation household`,
+      },
     };
   }
 

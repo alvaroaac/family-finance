@@ -7,10 +7,13 @@
  * `bot_conversations` (service-role only — the table has RLS enabled with zero
  * policies) so conversations survive bot restarts.
  *
- * Staleness: a persisted row older than 24h is treated as absent on load and
- * deleted lazily — a half-finished draft from yesterday should never be what a
- * fresh "Uber 32 reais" message lands on. The persisted jsonb is validated
- * structurally on load; a malformed row is treated as absent (never thrown).
+ * Staleness: an ordinary persisted row older than 24h is treated as absent on
+ * load and deleted lazily — a half-finished draft from yesterday should never
+ * be what a fresh "Uber 32 reais" message lands on. Post-write installment
+ * uncertainty is retained until it is explicitly reconciled: its stable
+ * idempotency key is the only safe way to retry without duplicating a purchase.
+ * The persisted jsonb is validated structurally on load; a malformed row is
+ * treated as absent (never thrown).
  */
 
 import {
@@ -32,6 +35,12 @@ export type ConversationStore = {
 /** Conversations older than this are treated as abandoned (absent on load). */
 export const CONVERSATION_TTL_MS = 24 * 60 * 60 * 1000;
 
+const DURABLE_INSTALLMENT_STATUSES = [
+  "installment_submission_started",
+  "installment_outcome_uncertain",
+  "installment_recovery_required",
+] as const satisfies readonly ConversationStatus[];
+
 const CONVERSATION_STATUSES = [
   "awaiting_confirmation",
   "needs_amount",
@@ -39,6 +48,9 @@ const CONVERSATION_STATUSES = [
   "cancelled",
   "awaiting_obligation_confirmation",
   "awaiting_installment_confirmation",
+  "installment_submission_started",
+  "installment_outcome_uncertain",
+  "installment_recovery_required",
   "awaiting_card_bill_confirmation",
   "awaiting_mark_paid_choice",
   "awaiting_payment_choice",
@@ -49,6 +61,34 @@ function isConversationStatus(value: unknown): value is ConversationStatus {
   return (
     typeof value === "string" &&
     CONVERSATION_STATUSES.includes(value as ConversationStatus)
+  );
+}
+
+function isDurableInstallmentStatus(status: ConversationStatus): boolean {
+  return DURABLE_INSTALLMENT_STATUSES.includes(
+    status as (typeof DURABLE_INSTALLMENT_STATUSES)[number],
+  );
+}
+
+function requiresInstallmentIdentity(status: ConversationStatus): boolean {
+  return (
+    status === "awaiting_installment_confirmation" ||
+    isDurableInstallmentStatus(status)
+  );
+}
+
+function hasInstallmentIdentity(state: ConversationState): boolean {
+  return (
+    typeof state.installmentDraft?.idempotencyKey === "string" &&
+    state.installmentDraft.idempotencyKey.length > 0
+  );
+}
+
+function isDurableConversationState(state: ConversationState): boolean {
+  return (
+    isDurableInstallmentStatus(state.status) ||
+    (state.status === "awaiting_installment_confirmation" &&
+      hasInstallmentIdentity(state))
   );
 }
 
@@ -74,12 +114,31 @@ function isConversationState(value: unknown): value is ConversationState {
   if (typeof value !== "object" || value === null) {
     return false;
   }
-  const candidate = value as { status?: unknown; draft?: unknown };
-  return (
-    isConversationStatus(candidate.status) &&
-    typeof candidate.draft === "object" &&
-    candidate.draft !== null
-  );
+  const candidate = value as {
+    status?: unknown;
+    draft?: unknown;
+    installmentDraft?: unknown;
+  };
+  if (!isConversationStatus(candidate.status)) {
+    return false;
+  }
+  const status = candidate.status;
+  const baseStateIsValid =
+    typeof candidate.draft === "object" && candidate.draft !== null;
+  if (!baseStateIsValid) {
+    return false;
+  }
+  if (!requiresInstallmentIdentity(status)) {
+    return true;
+  }
+
+  if (
+    typeof candidate.installmentDraft !== "object" ||
+    candidate.installmentDraft === null
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -96,13 +155,31 @@ export function createDbConversationStore(
       if (row === null) {
         return undefined;
       }
-      const ageMs = Date.now() - new Date(row.updatedAt).getTime();
-      if (!Number.isFinite(ageMs) || ageMs > CONVERSATION_TTL_MS) {
-        // Stale (or unparseable timestamp): treat as absent, clean up lazily.
-        await deleteBotConversation(client, Number(chatId));
+      if (!isConversationState(row.state)) {
         return undefined;
       }
-      if (!isConversationState(row.state)) {
+      if (
+        requiresInstallmentIdentity(row.state.status) &&
+        row.state.installmentDraft !== undefined &&
+        !hasInstallmentIdentity(row.state)
+      ) {
+        const recoveryState: ConversationState = {
+          ...row.state,
+          status: "installment_recovery_required",
+        };
+        await saveBotConversation(client, Number(chatId), recoveryState);
+        return recoveryState;
+      }
+      const ageMs = Date.now() - new Date(row.updatedAt).getTime();
+      if (
+        (!Number.isFinite(ageMs) || ageMs > CONVERSATION_TTL_MS) &&
+        !isDurableConversationState(row.state)
+      ) {
+        // Ordinary stale (or unparseable timestamp) state is abandoned. The
+        // post-write safety states and a keyed pre-write state remain available
+        // until explicit reconciliation, so a committed RPC can always be
+        // retried with the same identity after a later state-save failure.
+        await deleteBotConversation(client, Number(chatId));
         return undefined;
       }
       return row.state;
