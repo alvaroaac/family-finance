@@ -1,4 +1,9 @@
-import { currentMonth, type TransactionFilters, type TransactionPatch } from "@family-finance/db";
+import {
+  currentMonth,
+  type InstallmentGroupPatch,
+  type TransactionFilters,
+  type TransactionPatch,
+} from "@family-finance/db";
 
 import { parseReaisToCents } from "../../../lib/format";
 
@@ -262,6 +267,29 @@ export function transactionPatchFromFormData(
   const payment = formData.get("payment");
   if (typeof payment === "string" && payment !== "") {
     patch.payment = decodePayment(payment);
+  }
+
+  return patch;
+}
+
+/**
+ * Translate a server-action FormData into an `InstallmentGroupPatch`: only the
+ * keys present in the form are patched; empty selects mean "sem categoria"
+ * (null), same contract as `transactionPatchFromFormData`.
+ */
+export function installmentGroupPatchFromFormData(
+  formData: FormData,
+): InstallmentGroupPatch {
+  const patch: InstallmentGroupPatch = {};
+
+  const categoryId = formData.get("categoryId");
+  if (typeof categoryId === "string") {
+    patch.categoryId = categoryId === "" ? null : categoryId;
+  }
+
+  const subcategoryId = formData.get("subcategoryId");
+  if (typeof subcategoryId === "string") {
+    patch.subcategoryId = subcategoryId === "" ? null : subcategoryId;
   }
 
   return patch;

@@ -95,10 +95,13 @@ export type CreditCardRow = {
   updated_at: string;
 };
 
+export type CategoryKind = "expense" | "income";
+
 export type CategoryRow = {
   id: string;
   household_id: string;
   name: string;
+  kind: CategoryKind;
   is_active: boolean;
   created_at: string;
   updated_at: string;

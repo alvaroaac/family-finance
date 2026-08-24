@@ -61,11 +61,18 @@ export function NewTransactionForm({
   const [fieldError, setFieldError] = useState<string | null>(null);
 
   const paymentOptions = [
-    ...accounts.map((a) => ({ value: `account:${a.id}`, label: `Conta: ${a.name}` })),
+    ...accounts.map((a) => ({
+      value: `account:${a.id}`,
+      label: `Conta: ${a.name}`,
+    })),
     ...(kind === "expense"
-      ? cards.map((c) => ({ value: `card:${c.id}`, label: `Cartão: ${c.name}` }))
+      ? cards.map((c) => ({
+          value: `card:${c.id}`,
+          label: `Cartão: ${c.name}`,
+        }))
       : []),
   ];
+  const visibleCategories = categories.filter((c) => c.kind === kind);
   const visibleSubcategories = subcategories.filter(
     (s) => s.categoryId === categoryId,
   );
@@ -202,11 +209,17 @@ export function NewTransactionForm({
                 value={kind}
                 aria-label="Tipo"
                 onChange={(e) => {
-                  const next = e.target.value === "income" ? "income" : "expense";
+                  const next =
+                    e.target.value === "income" ? "income" : "expense";
                   setKind(next);
+                  // The other kind's categories are hidden — drop the pick.
+                  setCategoryId("");
+                  setSubcategoryId("");
                   if (next === "income" && payment.startsWith("card:")) {
                     setPayment(
-                      accounts[0] !== undefined ? `account:${accounts[0].id}` : "",
+                      accounts[0] !== undefined
+                        ? `account:${accounts[0].id}`
+                        : "",
                     );
                     setPurchaseMode("avista");
                   }
@@ -255,7 +268,7 @@ export function NewTransactionForm({
                 }}
               >
                 <option value="">— sem categoria —</option>
-                {categories.map((c) => (
+                {visibleCategories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -327,7 +340,10 @@ export function NewTransactionForm({
                       value={installmentCount}
                       onChange={(e) =>
                         setInstallmentCount(
-                          Math.max(2, Number.parseInt(e.target.value || "2", 10)),
+                          Math.max(
+                            2,
+                            Number.parseInt(e.target.value || "2", 10),
+                          ),
                         )
                       }
                     />

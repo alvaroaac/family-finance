@@ -21,6 +21,7 @@ import {
   transactionUpdateFromPatch,
   updateInvestmentBucketBalance,
   updateTransaction,
+  updateInstallmentGroup,
   deleteTransaction,
   findMemberByTelegramUserId,
   resolveTelegramMember,
@@ -728,6 +729,76 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
   return client;
 }
 
+describe("updateInstallmentGroup", () => {
+  /** Records every update per table so the group+parcels propagation is visible. */
+  function fakeGroupClient() {
+    const updates: Array<{
+      table: string;
+      changes: Record<string, unknown>;
+      filters: Array<[string, unknown]>;
+    }> = [];
+    const client = {
+      from(table: string) {
+        const entry = {
+          table,
+          changes: {} as Record<string, unknown>,
+          filters: [] as Array<[string, unknown]>,
+        };
+        const builder = {
+          update(changes: Record<string, unknown>) {
+            entry.changes = changes;
+            updates.push(entry);
+            return builder;
+          },
+          eq(column: string, value: unknown) {
+            entry.filters.push([column, value]);
+            return builder;
+          },
+          then(resolve: (value: { error: null }) => unknown) {
+            return Promise.resolve({ error: null }).then(resolve);
+          },
+        };
+        return builder;
+      },
+    } as unknown as AppSupabaseClient;
+    return { client, updates };
+  }
+
+  it("patches the group and its parcels with the same categorization", async () => {
+    const { client, updates } = fakeGroupClient();
+    await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
+      categoryId: "cat-1",
+      subcategoryId: null,
+    });
+    expect(updates.map((u) => u.table)).toEqual([
+      "installment_groups",
+      "installments",
+    ]);
+    const group = updates.find((u) => u.table === "installment_groups");
+    const parcels = updates.find((u) => u.table === "installments");
+    expect(group?.changes).toEqual({
+      category_id: "cat-1",
+      subcategory_id: null,
+    });
+    expect(group?.filters).toContainEqual(["household_id", HOUSEHOLD]);
+    expect(group?.filters).toContainEqual(["id", "group-1"]);
+    expect(parcels?.changes).toEqual({
+      category_id: "cat-1",
+      subcategory_id: null,
+    });
+    expect(parcels?.filters).toContainEqual([
+      "installment_group_id",
+      "group-1",
+    ]);
+  });
+
+  it("is a no-op for an empty patch", async () => {
+    const { client, updates } = fakeGroupClient();
+    await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {});
+    expect(updates).toHaveLength(0);
+  });
+});
+
 describe("updateTransaction with parcela guard", () => {
   it("refuses amount/payment edits on a parcela row (installment_id set), pt-BR", async () => {
     const client = fakeClientWithRow({ installment_id: "inst-1" });
@@ -1252,6 +1323,7 @@ describe("createCategory", () => {
     expect(captured).toEqual({
       household_id: "house-1",
       name: "Pets",
+      kind: "expense",
       is_active: true,
     });
     expect(row.id).toBe("cat-new");

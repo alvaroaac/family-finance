@@ -66,6 +66,7 @@ function seed(): FakeDatabaseSeed {
         id: CATEGORY,
         household_id: HOUSEHOLD,
         name: "Casa",
+        kind: "expense",
         is_active: true,
         created_at: "2026-07-01T00:00:00Z",
         updated_at: "2026-07-01T00:00:00Z",
@@ -120,10 +121,8 @@ describe("manual transaction server action: parcelado card expense", () => {
     expect(dashboard.cardPressure.directCents).toBe(0);
     expect(dashboard.cardPressure.installmentCents).toBe(4000);
     expect(dashboard.cardPressure.totalCents).toBe(4000);
-    expect(dashboard.upcomingInstallments.map((item) => item.description)).toEqual([
-      "E2E API Parcelado",
-      "E2E API Parcelado",
-      "E2E API Parcelado",
-    ]);
+    expect(
+      dashboard.upcomingInstallments.map((item) => item.description),
+    ).toEqual(["E2E API Parcelado", "E2E API Parcelado", "E2E API Parcelado"]);
   });
 });

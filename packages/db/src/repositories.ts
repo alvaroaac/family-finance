@@ -867,7 +867,13 @@ export async function createCategory(
 ): Promise<CategoryRow> {
   const { data, error } = await client
     .from("categories")
-    .insert({ household_id: householdId, name, is_active: true })
+    // kind is explicit: the bot only registers expenses.
+    .insert({
+      household_id: householdId,
+      name,
+      kind: "expense",
+      is_active: true,
+    })
     .select("*")
     .single();
   if (error !== null) {
@@ -1766,7 +1772,10 @@ export type TransactionListItem = PersistedTransaction & {
   responsibleUserId: string | null;
 };
 
-/** A parent card purchase shown in ledger-like screens as a read-only entry. */
+/**
+ * A parent card purchase shown in ledger-like screens. Categoria/subcategoria
+ * are editable via `updateInstallmentGroup`; everything else is read-only.
+ */
 export type InstallmentPurchaseListItem = {
   id: string;
   householdId: string;
@@ -2011,6 +2020,57 @@ export async function findInstallmentPurchasesFiltered(
   return groups.map((group) =>
     mapInstallmentPurchaseListItem(group, matchingInstallments),
   );
+}
+
+/** Editable fields of an installment group. Absent keys are left untouched. */
+export type InstallmentGroupPatch = {
+  categoryId?: string | null;
+  subcategoryId?: string | null;
+};
+
+/**
+ * Apply a categorization edit to a parcelado purchase. The same patch is
+ * written to the `installment_groups` parent AND its child parcels, so the
+ * group never disagrees with the month-attributed installments.
+ */
+export async function updateInstallmentGroup(
+  client: AppSupabaseClient,
+  householdId: string,
+  installmentGroupId: string,
+  patch: InstallmentGroupPatch,
+): Promise<void> {
+  const update: Partial<
+    Pick<InstallmentGroupRow, "category_id" | "subcategory_id">
+  > = {};
+  if (patch.categoryId !== undefined) {
+    update.category_id = patch.categoryId;
+  }
+  if (patch.subcategoryId !== undefined) {
+    update.subcategory_id = patch.subcategoryId;
+  }
+  if (Object.keys(update).length === 0) {
+    return;
+  }
+
+  const { error } = await client
+    .from("installment_groups")
+    .update(update)
+    .eq("household_id", householdId)
+    .eq("id", installmentGroupId);
+  if (error !== null) {
+    throw new Error(`updateInstallmentGroup failed: ${error.message}`);
+  }
+
+  const { error: parcelsError } = await client
+    .from("installments")
+    .update(update)
+    .eq("household_id", householdId)
+    .eq("installment_group_id", installmentGroupId);
+  if (parcelsError !== null) {
+    throw new Error(
+      `updateInstallmentGroup(installments) failed: ${parcelsError.message}`,
+    );
+  }
 }
 
 function ledgerItemDate(item: TransactionLedgerItem): string {

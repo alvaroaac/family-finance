@@ -135,7 +135,11 @@ export default async function TransactionsPage({
     data = pageData;
     accounts = accountRows.map((a) => ({ id: a.id, name: a.name }));
     cards = cardRows.map((c) => ({ id: c.id, name: c.name }));
-    categories = categoryRows.map((c) => ({ id: c.id, name: c.name }));
+    categories = categoryRows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      kind: c.kind,
+    }));
     subcategories = subcategoryRows.map((s) => ({
       id: s.id,
       categoryId: s.category_id,

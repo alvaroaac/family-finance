@@ -5,13 +5,18 @@ import { revalidatePath } from "next/cache";
 import {
   findHouseholdIdForCurrentUser,
   updateTransaction,
+  updateInstallmentGroup,
   deleteTransaction,
   createTransaction,
 } from "@family-finance/db";
 import { brl, createTransactionDraft } from "@family-finance/domain";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
-import { transactionPatchFromFormData, manualEntryFromFormData } from "./filters";
+import {
+  transactionPatchFromFormData,
+  installmentGroupPatchFromFormData,
+  manualEntryFromFormData,
+} from "./filters";
 import { saveCardPurchase } from "../cards/actions";
 
 /**
@@ -63,6 +68,31 @@ export async function updateTransactionAction(
     const transactionId = requireField(formData, "transactionId");
     const patch = transactionPatchFromFormData(formData);
     await updateTransaction(client, householdId, transactionId, patch);
+    revalidatePath("/transactions");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar a alteração.",
+    };
+  }
+}
+
+/**
+ * Apply an inline categorization edit (categoria/subcategoria) to a parcelado
+ * purchase — the group row and all of its parcels, via the repository.
+ */
+export async function updateInstallmentGroupAction(
+  formData: FormData,
+): Promise<TransactionActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const installmentGroupId = requireField(formData, "installmentGroupId");
+    const patch = installmentGroupPatchFromFormData(formData);
+    await updateInstallmentGroup(client, householdId, installmentGroupId, patch);
     revalidatePath("/transactions");
     return { ok: true };
   } catch (error) {

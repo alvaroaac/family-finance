@@ -27,16 +27,19 @@ on conflict (household_id, slug) do nothing;
 
 -- Placeholder macro categories. These are starting buckets only; the real
 -- taxonomy is consolidated from imports during onboarding, not invented here.
-insert into categories (household_id, name)
+insert into categories (household_id, name, kind)
 values
-  ('00000000-0000-0000-0000-000000000001', 'Alimentação'),
-  ('00000000-0000-0000-0000-000000000001', 'Moradia'),
-  ('00000000-0000-0000-0000-000000000001', 'Transporte'),
-  ('00000000-0000-0000-0000-000000000001', 'Saúde'),
-  ('00000000-0000-0000-0000-000000000001', 'Lazer'),
-  ('00000000-0000-0000-0000-000000000001', 'Educação'),
-  ('00000000-0000-0000-0000-000000000001', 'Receitas'),
-  ('00000000-0000-0000-0000-000000000001', 'Outros')
+  ('00000000-0000-0000-0000-000000000001', 'Alimentação', 'expense'),
+  ('00000000-0000-0000-0000-000000000001', 'Moradia', 'expense'),
+  ('00000000-0000-0000-0000-000000000001', 'Transporte', 'expense'),
+  ('00000000-0000-0000-0000-000000000001', 'Saúde', 'expense'),
+  ('00000000-0000-0000-0000-000000000001', 'Lazer', 'expense'),
+  ('00000000-0000-0000-0000-000000000001', 'Educação', 'expense'),
+  ('00000000-0000-0000-0000-000000000001', 'Receitas', 'income'),
+  ('00000000-0000-0000-0000-000000000001', 'Salário', 'income'),
+  ('00000000-0000-0000-0000-000000000001', 'Freelas', 'income'),
+  ('00000000-0000-0000-0000-000000000001', 'Investimentos', 'income'),
+  ('00000000-0000-0000-0000-000000000001', 'Outros', 'expense')
 on conflict (household_id, name) do nothing;
 
 -- A couple of placeholder subcategories under Alimentação, to exercise the

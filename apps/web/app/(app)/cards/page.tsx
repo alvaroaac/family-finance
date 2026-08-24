@@ -58,8 +58,10 @@ async function loadData(): Promise<CardsData> {
       findCategoriesByHousehold(client, householdId),
       findInstallmentPurchasesFiltered(client, householdId),
     ]);
+    // Card purchases are expenses — income categories don't apply here.
+    const expenseCategories = categories.filter((c) => c.kind === "expense");
     const subLists = await Promise.all(
-      categories.map((c) =>
+      expenseCategories.map((c) =>
         findSubcategoriesByCategory(client, householdId, c.id),
       ),
     );
@@ -67,7 +69,7 @@ async function loadData(): Promise<CardsData> {
     return {
       cards,
       purchases,
-      categories: categories.map((c) => ({ id: c.id, name: c.name })),
+      categories: expenseCategories.map((c) => ({ id: c.id, name: c.name })),
       subcategories: subcategories.map((s) => ({
         id: s.id,
         categoryId: s.category_id,
