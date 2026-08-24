@@ -86,13 +86,17 @@ const VALID = {
   proposed_taxonomy_change: null,
 };
 
-function classifier(runner: CodexProcessRunner) {
+function classifier(
+  runner: CodexProcessRunner,
+  telemetry?: (event: Record<string, unknown>) => void,
+) {
   return createCodexMessageClassifier({
     enabled: true,
     model: "gpt-5.5",
     timeoutMs: 1000,
     codexHome: "/tmp/family-finance-codex-test-home",
     runner,
+    telemetry,
   });
 }
 
@@ -261,13 +265,13 @@ describe("Codex unified primary", () => {
       },
     ],
     [
-      "invalid installment XOR",
+      "inconsistent installment amounts",
       {
         ...VALID,
         intent: "card_installment",
         installment_count: 12,
         amount_cents: 120000,
-        per_installment_cents: 10000,
+        per_installment_cents: 10001,
       },
     ],
     [
@@ -292,6 +296,67 @@ describe("Codex unified primary", () => {
       () => undefined,
     )?.("x", OPTIONS);
     expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts consistent total and per-installment values from one reading", async () => {
+    const primary = classifier(async (request) => {
+      await writeFile(
+        request.outputPath,
+        JSON.stringify({
+          ...VALID,
+          intent: "card_installment",
+          description: "Mouse Logitech",
+          amount_cents: 41990,
+          per_installment_cents: 4199,
+          installment_count: 10,
+          category_candidates: [],
+        }),
+      );
+      return { exitCode: 0, timedOut: false, stderr: "" };
+    });
+
+    await expect(
+      primary("mouse logitech 10x de 41,99", OPTIONS),
+    ).resolves.toMatchObject({
+      intent: "card_installment",
+      purchase: {
+        totalCents: 41990,
+        perInstallmentCents: 4199,
+        installmentCount: 10,
+      },
+    });
+  });
+
+  it("logs only a sanitized semantic rejection code", async () => {
+    const telemetry = vi.fn();
+    const primary = classifier(async (request) => {
+      await writeFile(
+        request.outputPath,
+        JSON.stringify({
+          ...VALID,
+          intent: "card_installment",
+          amount_cents: 41990,
+          per_installment_cents: 4200,
+          installment_count: 10,
+          category_candidates: [],
+        }),
+      );
+      return { exitCode: 0, timedOut: false, stderr: "" };
+    }, telemetry);
+
+    await expect(
+      primary("private financial text", OPTIONS),
+    ).resolves.toBeNull();
+    expect(telemetry).toHaveBeenCalledWith({
+      type: "ai_call",
+      provider: "codex",
+      role: "primary",
+      outcome: "semantic_rejection",
+      reason: "inconsistent_installment_amounts",
+    });
+    expect(JSON.stringify(telemetry.mock.calls)).not.toContain(
+      "private financial text",
+    );
   });
 
   it("does not invoke Anthropic when Codex succeeds", async () => {
@@ -352,6 +417,39 @@ describe("Codex unified primary", () => {
     )?.("giassi", OPTIONS);
     expect(result?.intent).toBe("plain");
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports fallback semantic rejection without logging the message", async () => {
+    const telemetry = vi.fn();
+    const fallback = createUnifiedCompletionMessageClassifier(
+      {
+        complete: vi.fn(async () =>
+          JSON.stringify({
+            ...VALID,
+            intent: "card_installment",
+            amount_cents: 41990,
+            per_installment_cents: 4200,
+            installment_count: 10,
+            category_candidates: [],
+          }),
+        ),
+      },
+      { provider: "anthropic", telemetry },
+    );
+
+    await expect(
+      fallback("private financial text", OPTIONS),
+    ).resolves.toBeNull();
+    expect(telemetry).toHaveBeenCalledWith({
+      type: "ai_call",
+      provider: "anthropic",
+      role: "fallback",
+      outcome: "semantic_rejection",
+      reason: "inconsistent_installment_amounts",
+    });
+    expect(JSON.stringify(telemetry.mock.calls)).not.toContain(
+      "private financial text",
+    );
   });
 
   it.each([

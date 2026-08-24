@@ -1682,6 +1682,7 @@ function installmentSummaryView(
     totalCents: draft.totalCents,
     installmentCount: draft.installmentCount,
     cardName: card?.name,
+    purchasedOn: draft.purchasedOn,
     firstDueMonth: firstDueMonthFor(draft, deps),
     categoryLabel: categoryLabel(
       deps.catalog,
@@ -1691,7 +1692,6 @@ function installmentSummaryView(
     categoryExplanation: draft.categoryExplanation,
     proposedNewCategory,
     responsibleLabel: responsibleLabel(draft.responsibleUserId, deps),
-    needsCard: draft.cardId === undefined,
   };
 }
 
@@ -1872,7 +1872,13 @@ async function startInstallmentIntent(
       installmentDraft.subcategoryId = undefined;
       installmentDraft.categoryExplanation = proposedSubcategory.explanation;
     }
-  } else {
+  }
+
+  const needsCategoryFallback =
+    installmentDraft.categoryId === undefined &&
+    proposedCategoryName === undefined &&
+    proposedSubcategory === undefined;
+  if (needsCategoryFallback) {
     const result = await deps.suggestCategory({
       householdId: deps.householdId,
       description:
