@@ -59,9 +59,10 @@ export type CreateInstallmentPlanInput = {
   responsibleUserId?: string;
   category?: CategoryRef;
   /**
-   * Card statement closing day (1–28). When set, a purchase made AFTER this
+   * Card statement closing day (1–31). When set, a purchase made AFTER this
    * day lands on the next month's invoice, so the first `dueMonth` shifts by
-   * one month (spec §2.6). Omitted → first dueMonth is the purchase month.
+   * one month (spec §2.6). In shorter months, days 29–31 mean the month's last
+   * calendar day. Omitted → first dueMonth is the purchase month.
    */
   closingDay?: number;
 };
@@ -83,7 +84,7 @@ const createInstallmentPlanInputSchema = z.object({
       subcategoryId: z.string().min(1).optional(),
     })
     .optional(),
-  closingDay: z.number().int().min(1).max(28).optional(),
+  closingDay: z.number().int().min(1).max(31).optional(),
 });
 
 function parseIsoDateParts(
@@ -116,11 +117,21 @@ function parseIsoDateParts(
  * (no Jan-31 -> Mar-3 drift) and lets the dashboard group by month directly.
  */
 function addMonths(year: number, month1Based: number, offset: number): string {
-  const zeroBasedTotal = (month1Based - 1) + offset;
+  const zeroBasedTotal = month1Based - 1 + offset;
   const newYear = year + Math.floor(zeroBasedTotal / 12);
   const newMonth0 = ((zeroBasedTotal % 12) + 12) % 12;
   const mm = String(newMonth0 + 1).padStart(2, "0");
   return `${newYear}-${mm}`;
+}
+
+/** Resolve configured days 29–31 safely in months that end earlier. */
+function closingDayInMonth(
+  year: number,
+  month1Based: number,
+  closingDay: number,
+): number {
+  const lastDayOfMonth = new Date(Date.UTC(year, month1Based, 0)).getUTCDate();
+  return Math.min(closingDay, lastDayOfMonth);
 }
 
 /**
@@ -153,10 +164,7 @@ export function createInstallmentPlan(
   const data = parsed.data;
   const errors: ValidationError[] = [];
 
-  if (
-    !Number.isInteger(data.installmentCount) ||
-    data.installmentCount < 1
-  ) {
+  if (!Number.isInteger(data.installmentCount) || data.installmentCount < 1) {
     errors.push({
       field: "installmentCount",
       code: "invalid_installment_count",
@@ -227,9 +235,15 @@ export function createInstallmentPlan(
 
   // Invoice timing (spec §2.6): buying after the card's closing day pushes the
   // purchase onto the NEXT invoice, so every dueMonth shifts by one month.
-  // Day == closingDay still belongs to the current invoice.
+  // A purchase on the effective closing day still belongs to the current one.
+  const effectiveClosingDay =
+    data.closingDay === undefined
+      ? undefined
+      : closingDayInMonth(dateParts.year, dateParts.month, data.closingDay);
   const offsetBase =
-    data.closingDay !== undefined && dateParts.day > data.closingDay ? 1 : 0;
+    effectiveClosingDay !== undefined && dateParts.day > effectiveClosingDay
+      ? 1
+      : 0;
 
   const installments: InstallmentDraft[] = perInstallmentCents.map(
     (cents, index) => ({

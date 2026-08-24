@@ -173,7 +173,43 @@ describe("createInstallmentPlan", () => {
       expect(result.value.installments[0]?.dueMonth).toBe("2027-01");
     });
 
-    it.each([0, 29, 1.5])(
+    it.each([
+      [29, "2026-04-30", "2026-05"],
+      [30, "2026-01-31", "2026-02"],
+      [31, "2026-01-31", "2026-01"],
+    ])(
+      "accepts closingDay %i and schedules %s in %s",
+      (closingDay, purchasedOn, expectedDueMonth) => {
+        const result = createInstallmentPlan(
+          baseInput({ closingDay, purchasedOn, installmentCount: 1 }),
+        );
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.installments[0]?.dueMonth).toBe(expectedDueMonth);
+      },
+    );
+
+    it.each([
+      [29, "2025-02-28", "non-leap February"],
+      [30, "2024-02-29", "leap February"],
+      [31, "2026-04-30", "a 30-day month"],
+    ])(
+      "treats closingDay %i as the final calendar day in %s",
+      (closingDay, purchasedOn) => {
+        const result = createInstallmentPlan(
+          baseInput({ closingDay, purchasedOn, installmentCount: 1 }),
+        );
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.installments[0]?.dueMonth).toBe(
+          purchasedOn.slice(0, 7),
+        );
+      },
+    );
+
+    it.each([0, 32, 1.5])(
       "rejects invalid closingDay %s with a validation error on the field",
       (closingDay) => {
         const result = createInstallmentPlan(baseInput({ closingDay }));

@@ -268,7 +268,7 @@ export function buildClassifierPrompt(text: string, today: string): string {
     "Intenções possíveis:",
     '- "plain": uma despesa avulsa (ex.: "mercado 230", "farmácia 45 ontem").',
     '- "obligation": uma obrigação fixa mensal — financiamento, boleto, conta recorrente (ex.: "Parcela solar 710,44 72x a partir de 05/10", "aluguel 1200 todo mês dia 10"). NÃO é no cartão de crédito.',
-    '- "card_installment": compra parcelada NO CARTÃO de crédito (ex.: "notebook 3600 em 12x no nubank"). Menções a cartão indicam esta intenção.',
+    '- "card_installment": compra parcelada em DUAS OU MAIS parcelas no cartão de crédito (ex.: "notebook 3600 em 12x no nubank"). Apenas mencionar cartão ou crédito continua sendo "plain".',
     '- "mark_paid": dar baixa em algo já registrado (ex.: "placa solar pago", "nubank pago").',
     "",
     "Responda APENAS com um objeto JSON, sem texto extra, em UM dos formatos:",

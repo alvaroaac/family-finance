@@ -12,9 +12,7 @@ export function formatBrl(cents: number): string {
   const abs = Math.abs(cents);
   const reais = Math.floor(abs / 100);
   const centavos = String(abs % 100).padStart(2, "0");
-  const reaisStr = reais
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const reaisStr = reais.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `${sign}${reaisStr},${centavos}`;
 }
 
@@ -52,7 +50,7 @@ export function confirmationMessage(view: SummaryView): string {
   lines.push("Confirme o lançamento:");
   lines.push("");
   lines.push(
-    `• Valor: R$ ${view.amountCents !== undefined ? formatBrl(view.amountCents) : "— (informe com \"valor 32,50\")"}`,
+    `• Valor: R$ ${view.amountCents !== undefined ? formatBrl(view.amountCents) : '— (informe com "valor 32,50")'}`,
   );
   lines.push(`• Descrição: ${view.description || "—"}`);
   lines.push(`• Data: ${formatIsoDate(view.occurredOn)}`);
@@ -69,8 +67,10 @@ export function confirmationMessage(view: SummaryView): string {
   }
   lines.push("");
   lines.push("Responda *confirmar* para salvar, ou corrija:");
-  lines.push('"valor 45,90" · "data 12/03" · "categoria Alimentação" · "responsável Karol"');
-  lines.push('Para descartar, responda *cancelar*.');
+  lines.push(
+    '"valor 45,90" · "data 12/03" · "categoria Alimentação" · "responsável Karol"',
+  );
+  lines.push("Para descartar, responda *cancelar*.");
   return lines.join("\n");
 }
 
@@ -119,7 +119,7 @@ export function cancelledMessage(): string {
 export function notUnderstoodMessage(): string {
   return [
     "Não entendi. Você pode:",
-    '• confirmar · cancelar',
+    "• confirmar · cancelar",
     '• corrigir: "valor 32,50", "data 12/03", "categoria X", "responsável Karol"',
   ].join("\n");
 }
@@ -371,7 +371,10 @@ export function noActiveCardMessage(): string {
 // ---------------------------------------------------------------------------
 
 /** No card matched the mark_paid{card} keyword (household has cards, though). */
-export function cardBillNoMatchMessage(keyword: string, cardNames: string[]): string {
+export function cardBillNoMatchMessage(
+  keyword: string,
+  cardNames: string[],
+): string {
   const sorted = [...cardNames].sort((a, b) => a.localeCompare(b, "pt-BR"));
   return `Não encontrei o cartão "${keyword}". Cartões da casa: ${sorted.join(", ")} — ou corrija o nome.`;
 }
@@ -395,11 +398,15 @@ export function cardBillConfirmationMessage(view: {
   month: string;
   amountCents: number;
   accountLabel: string;
+  paidOn: string;
 }): string {
+  const [year, month, day] = view.paidOn.split("-");
+  const paidOnLabel = `${day}/${month}/${year}`;
   return [
     `Fatura ${view.cardName} de ${monthAbbrPtBr(view.month)} — R$ ${formatBrl(view.amountCents)}. Pagar da conta ${view.accountLabel}?`,
+    `Data do pagamento: ${paidOnLabel}.`,
     "",
-    'Responda "confirmar", corrija com "valor 2.350" ou "conta X", ou "cancelar".',
+    'Responda "confirmar", corrija com "valor 2.350", "conta X" ou "data 05/07/2026", ou "cancelar".',
   ].join("\n");
 }
 
@@ -427,7 +434,7 @@ export function cardBillSettleFailedMessage(cardName: string): string {
 
 /** Installment persist failed (RPC threw) — same recovery contract as above. */
 export function installmentSaveFailedMessage(description: string): string {
-  return `Não consegui salvar a compra parcelada "${description}" — tenta de novo em instantes.`;
+  return `Não consegui confirmar agora se a compra parcelada "${description}" foi salva. Tente confirmar novamente — não vou duplicar a compra.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +474,7 @@ export function invalidCategoryNameMessage(
   reason: "empty" | "too_long",
 ): string {
   return reason === "empty"
-    ? "O nome da categoria não pode ficar vazio. Tente de novo, ou responda \"cancelar\"."
+    ? 'O nome da categoria não pode ficar vazio. Tente de novo, ou responda "cancelar".'
     : "O nome da categoria precisa ter no máximo 40 caracteres. Tente um nome mais curto.";
 }
 
