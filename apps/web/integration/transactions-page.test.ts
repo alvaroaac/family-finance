@@ -205,7 +205,7 @@ describe("TransactionsTable: payment select", () => {
     expect(html).toContain("Nubank");
   });
 
-  it("renders a parcelado purchase as a read-only ledger item", () => {
+  it("renders a parcelado purchase with editable categoria and read-only rest", () => {
     const row: TransactionLedgerItem = {
       itemType: "installment_purchase",
       id: "group-1",
@@ -241,6 +241,10 @@ describe("TransactionsTable: payment select", () => {
     expect(html).toContain("Sofá novo");
     expect(html).toContain("parcelado");
     expect(html).toContain("6x");
+    expect(html).toContain('aria-label="Categoria"');
+    expect(html).toContain('aria-label="Subcategoria"');
+    expect(html).not.toContain('aria-label="Pagamento"');
+    expect(html).not.toContain('aria-label="Responsável"');
     expect(html).not.toContain("Excluir Sofá novo");
     expect(html).not.toContain("Editar Sofá novo");
   });

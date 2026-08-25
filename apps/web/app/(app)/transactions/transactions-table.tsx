@@ -20,7 +20,11 @@ import {
   TableRow,
   useToast,
 } from "../../../components/ui";
-import { updateTransactionAction, deleteTransactionAction } from "./actions";
+import {
+  updateTransactionAction,
+  updateInstallmentGroupAction,
+  deleteTransactionAction,
+} from "./actions";
 
 /**
  * Client table for the "Transações" screen: inline edit of descrição, valor,
@@ -31,6 +35,8 @@ import { updateTransactionAction, deleteTransactionAction } from "./actions";
  * component. `kind` stays read-only here; parcela rows (installmentId set)
  * keep both valor and meio de pagamento read-only too — those are managed via
  * the installment group, and the server repo refuses the edit anyway.
+ * Parcelado (installment_purchase) rows edit categoria/subcategoria through
+ * their own action (group id, not a transaction id); the rest stays read-only.
  *
  * Re-skin (Transacoes.dc.html): desktop grid table with pending stripes and
  * an inline delete-confirm row ("Isso não dá pra desfazer." / "Deixa pra lá"
@@ -181,15 +187,10 @@ export function TransactionsTable({
   // Mobile: row id with the categorize/edit panel expanded.
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  function patchRow(transactionId: string, fields: Record<string, string>) {
+  function runSave(submit: () => Promise<{ ok: boolean; error?: string }>) {
     setError(null);
     startTransition(async () => {
-      const formData = new FormData();
-      formData.set("transactionId", transactionId);
-      for (const [key, value] of Object.entries(fields)) {
-        formData.set(key, value);
-      }
-      const result = await updateTransactionAction(formData);
+      const result = await submit();
       if (!result.ok) {
         const message = result.error ?? "Não foi possível salvar a alteração.";
         setError(message);
@@ -198,6 +199,37 @@ export function TransactionsTable({
         toast.success("Alteração salva.");
       }
     });
+  }
+
+  function patchRow(transactionId: string, fields: Record<string, string>) {
+    const formData = new FormData();
+    formData.set("transactionId", transactionId);
+    for (const [key, value] of Object.entries(fields)) {
+      formData.set(key, value);
+    }
+    runSave(() => updateTransactionAction(formData));
+  }
+
+  /** Categoria/subcategoria of a parcelado purchase (id = the GROUP's id). */
+  function patchGroup(groupId: string, fields: Record<string, string>) {
+    const formData = new FormData();
+    formData.set("installmentGroupId", groupId);
+    for (const [key, value] of Object.entries(fields)) {
+      formData.set(key, value);
+    }
+    runSave(() => updateInstallmentGroupAction(formData));
+  }
+
+  /** Route a categoria/subcategoria edit to the right action for the row. */
+  function patchCategorization(
+    row: TransactionTableRow,
+    fields: Record<string, string>,
+  ) {
+    if (isInstallmentPurchase(row)) {
+      patchGroup(row.id, fields);
+    } else {
+      patchRow(row.id, fields);
+    }
   }
 
   function commitDescription(row: TransactionListItem) {
@@ -353,13 +385,6 @@ export function TransactionsTable({
   }
 
   function categorySelect(row: TransactionTableRow, compact: boolean) {
-    if (isInstallmentPurchase(row)) {
-      return (
-        <span className={row.categoryId === null ? "ff-warn" : undefined}>
-          {categoryName(row)}
-        </span>
-      );
-    }
     return (
       <Select
         className={`${compact ? "ff-select--compact" : ""}${
@@ -370,7 +395,10 @@ export function TransactionsTable({
         onChange={(e) =>
           // Changing the category resets the subcategory (it belongs to the
           // previous category).
-          patchRow(row.id, { categoryId: e.target.value, subcategoryId: "" })
+          patchCategorization(row, {
+            categoryId: e.target.value,
+            subcategoryId: "",
+          })
         }
       >
         <option value="">— sem categoria —</option>
@@ -384,14 +412,6 @@ export function TransactionsTable({
   }
 
   function subcategorySelect(row: TransactionTableRow, compact: boolean) {
-    if (isInstallmentPurchase(row)) {
-      if (row.subcategoryId === null) return <span className="ff-dim">—</span>;
-      return (
-        <span>
-          {subcategories.find((s) => s.id === row.subcategoryId)?.name ?? "—"}
-        </span>
-      );
-    }
     const rowSubcategories = subcategories.filter(
       (s) => s.categoryId === row.categoryId,
     );
@@ -401,7 +421,9 @@ export function TransactionsTable({
         value={row.subcategoryId ?? ""}
         aria-label="Subcategoria"
         disabled={row.categoryId === null}
-        onChange={(e) => patchRow(row.id, { subcategoryId: e.target.value })}
+        onChange={(e) =>
+          patchCategorization(row, { subcategoryId: e.target.value })
+        }
       >
         <option value="">—</option>
         {rowSubcategories.map((s) => (
@@ -728,8 +750,7 @@ export function TransactionsTable({
                       : ""}
                   </div>
 
-                  {isInstallmentPurchase(row) ? null : confirmingId ===
-                    row.id ? (
+                  {!isInstallmentPurchase(row) && confirmingId === row.id ? (
                     <div className="ff-rowcard__panel">
                       <span className="ff-row-confirm__text">
                         Excluir{" "}
@@ -777,14 +798,16 @@ export function TransactionsTable({
                         >
                           fechar
                         </button>
-                        <button
-                          type="button"
-                          className="ff-btn ff-btn--ghost-sm"
-                          disabled={isSaving}
-                          onClick={() => setConfirmingId(row.id)}
-                        >
-                          excluir
-                        </button>
+                        {isInstallmentPurchase(row) ? null : (
+                          <button
+                            type="button"
+                            className="ff-btn ff-btn--ghost-sm"
+                            disabled={isSaving}
+                            onClick={() => setConfirmingId(row.id)}
+                          >
+                            excluir
+                          </button>
+                        )}
                       </div>
                     </div>
                   ) : pending ? (
