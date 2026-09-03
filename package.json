@@ -8,6 +8,7 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:migrations": "bash scripts/verify-all-migrations.sh",
     "test:import-migration": "bash scripts/verify-import-migration.sh",
     "typecheck": "turbo run typecheck",
     "format": "prettier --check .",

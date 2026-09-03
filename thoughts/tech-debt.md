@@ -6,7 +6,6 @@ Punted issues, deferred improvements, and known shortcomings. Append entries wit
 
 > Migrado de `memory/project-tech-debt.md` em 2026-07-03 (o arquivo antigo é um ponteiro pra cá).
 
-
 Track known compromises here. Debt should be specific enough that a future agent can act on it.
 
 ## Open Debt
@@ -622,6 +621,28 @@ accent+tint ring, pick one faded-row opacity (or name the two states), and
 collapse the track families into one.
 
 **Status:** open
+## 2026-09-03: No migration control on the production VPS (P0)
+
+**Priority:** P0
+
+**Area:** `deploy/migrate.sh`, `supabase/migrations/`, self-hosted Supabase
+
+**Impact:** Production migrations were applied through raw psql with no ledger.
+Two later changes also reused the already-occupied `0018` and `0019` numbers,
+making filenames insufficient evidence of the live schema.
+
+**Current workaround:** The live database was fingerprinted directly. It has
+the effects of both colliding pairs: payment-account override, installment
+idempotency, legacy payment-RPC cleanup, and category kinds.
+
+**Revisit trigger:** Before the next bot or web deployment, deploy this branch,
+take a fresh database backup, run `./deploy/migrate.sh baseline 0021`, verify
+`status`, and use `apply` before every subsequent build/restart.
+
+**Status:** in progress (2026-09-03) — the controller, checksum ledger,
+schema-fingerprint gate, canonical `0020`/`0021` files, and repeat-application
+test are implemented locally. Production remains unledgered until the explicit
+one-time baseline is approved and run.
 
 ## Entry Format
 

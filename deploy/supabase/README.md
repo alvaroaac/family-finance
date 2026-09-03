@@ -48,7 +48,21 @@ docker compose up -d
 docker compose ps   # everything healthy
 ```
 
-## 4. Volumes & backups
+## 4. Database migrations
+
+Use the repository controller from `/opt/family-finance`; do not pipe migration
+files directly into psql:
+
+```bash
+./deploy/migrate.sh status
+./deploy/migrate.sh apply
+```
+
+On a new empty database, use `./deploy/migrate.sh initialize`. The existing
+production database requires the one-time, fingerprint-checked baseline
+documented in the root [`deploy/README.md`](../README.md).
+
+## 5. Volumes & backups
 
 - Postgres data lives in the compose `db` volume (`./volumes/db/data` in the
   official stack). Treat that path as the single source of truth — losing it
@@ -65,7 +79,7 @@ Create `/var/backups/family-finance` (mode 700) first. Periodically test a
 restore (`gunzip -c ... | docker exec -i supabase-db psql -U postgres -d postgres`
 against a scratch database).
 
-## 5. Upgrades
+## 6. Upgrades
 
 Upgrade by bumping the pinned tag, re-copying `docker/`, diffing `.env` against
 the new template, then `docker compose pull && docker compose up -d`. Take a
