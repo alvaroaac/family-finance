@@ -2733,6 +2733,11 @@ a.ff-callout:hover {
   font-weight: 600;
 }
 
+.ff-oblig-relief {
+  color: var(--ff-positive);
+  font-weight: 500;
+}
+
 /* Stats strip — 3 up (Main mockup), 2 up on mobile (Mobile mockup). */
 .ff-oblig-stats {
   display: grid;
@@ -3189,7 +3194,7 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   /* Toasts stack above the sticky CTA instead of behind it — only on the
      pages that actually render one. */
   body:has(.ff-sticky-cta) .ff-toast-stack {
-    bottom: 148px;
+    bottom: calc(148px + env(safe-area-inset-bottom, 0px));
   }
 
   .ff-danger-zone__head {

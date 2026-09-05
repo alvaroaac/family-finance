@@ -68,6 +68,32 @@ function TermCell({ progress }: { progress: TermProgress }): ReactElement {
   );
 }
 
+function TableFoot({
+  totalLabel,
+  totalCents,
+  showEnded,
+}: {
+  totalLabel: string;
+  totalCents: number;
+  showEnded: boolean;
+}): ReactElement {
+  return (
+    <>
+      <span className="ff-table__foot-note">
+        {showEnded
+          ? "As encerradas aparecem no fim da lista. "
+          : "Obrigações encerradas não aparecem aqui. "}
+        <Link className="ff-link" href={showEnded ? "?" : "?encerradas=1"}>
+          {showEnded ? "esconder encerradas" : "ver encerradas →"}
+        </Link>
+      </span>
+      <span className="ff-table__foot-note ff-num">
+        {totalLabel}: {formatBrlCents(totalCents)}/mês
+      </span>
+    </>
+  );
+}
+
 export function ObligationsTable({
   items,
   ended,
@@ -92,16 +118,24 @@ export function ObligationsTable({
   cancelAction: (formData: FormData) => Promise<ObligationActionResult>;
 }): ReactElement {
   const committed = committedPerMonth(items, currentMonth);
-  const listed = showEnded ? [...items, ...ended] : items;
+  const listed = [
+    ...items.map((item) => ({ item, ended: false })),
+    ...(showEnded ? ended.map((item) => ({ item, ended: true })) : []),
+  ];
+  const footProps = {
+    totalLabel:
+      committed.fromMonth === null
+        ? "Total"
+        : `Total a partir de ${monthAbbrPtBr(committed.fromMonth)}`,
+    totalCents: committed.totalCents,
+    showEnded,
+  };
 
   const subtitle = (item: ObligationListItem): string => {
     const category = categoryName(item.categoryId);
     const base = `vence dia ${item.dueDay} · ${accountName(item.accountId)}`;
     return category === null ? base : `${base} · ${category}`;
   };
-
-  const isEnded = (item: ObligationListItem): boolean =>
-    item.status !== "active";
 
   return (
     <div>
@@ -117,14 +151,12 @@ export function ObligationsTable({
 
       <Table columns={COLUMNS} gridTemplate={GRID}>
         {listed.length === 0 ? (
-          <TableRow>
-            <span className="ff-muted">Nenhuma obrigação cadastrada.</span>
-          </TableRow>
+          <div className="ff-empty ff-muted">Nenhuma obrigação cadastrada.</div>
         ) : (
-          listed.map((item) => (
+          listed.map(({ item, ended: isEnded }) => (
             <TableRow
               key={item.id}
-              className={isEnded(item) ? "ff-off" : undefined}
+              className={isEnded ? "ff-off" : undefined}
             >
               <div className="ff-oblig-row__name">
                 <span className="ff-bubble">
@@ -135,7 +167,7 @@ export function ObligationsTable({
                   <div className="ff-name-sub">{subtitle(item)}</div>
                 </div>
               </div>
-              {isEnded(item) ? (
+              {isEnded ? (
                 <Badge tone="neutral">encerrada</Badge>
               ) : (
                 <TermCell progress={termProgress(item, currentMonth)} />
@@ -144,7 +176,7 @@ export function ObligationsTable({
                 {formatBrlCents(item.amountCents)}
               </div>
               <div className="ff-oblig-cell--action">
-                {isEnded(item) ? null : (
+                {isEnded ? null : (
                   <EditObligationDialog
                     item={item}
                     progress={termProgress(item, currentMonth)}
@@ -161,38 +193,29 @@ export function ObligationsTable({
         )}
 
         <div className="ff-table__foot">
-          <span className="ff-table__foot-note">
-            {showEnded
-              ? "As encerradas aparecem no fim da lista. "
-              : "Obrigações encerradas não aparecem aqui. "}
-            <Link className="ff-link" href={showEnded ? "?" : "?encerradas=1"}>
-              {showEnded ? "esconder encerradas" : "ver encerradas →"}
-            </Link>
-          </span>
-          <span className="ff-table__foot-note ff-num">
-            {committed.fromMonth === null
-              ? "Total"
-              : `Total a partir de ${monthAbbrPtBr(committed.fromMonth)}`}
-            : {formatBrlCents(committed.totalCents)}/mês
-          </span>
+          <TableFoot {...footProps} />
         </div>
       </Table>
 
       <RowCardList>
-        {listed.map((item) => (
+        {listed.length === 0 ? (
+          <div className="ff-empty ff-muted">Nenhuma obrigação cadastrada.</div>
+        ) : null}
+        {listed.map(({ item, ended: isEnded }) => (
           <Card
             key={item.id}
-            className={`ff-rowcard${isEnded(item) ? " ff-off" : ""}`}
+            className={`ff-rowcard${isEnded ? " ff-off" : ""}`}
             soft={false}
           >
             <div className="ff-oblig-rowcard__body">
               <div className="ff-name">{item.description}</div>
               <div className="ff-name-sub">{subtitle(item)}</div>
+              {isEnded ? <Badge tone="neutral">encerrada</Badge> : null}
             </div>
             <div className="ff-oblig-cell--amount ff-num">
               {formatBrlCents(item.amountCents)}
             </div>
-            {isEnded(item) ? null : (
+            {isEnded ? null : (
               <EditObligationDialog
                 item={item}
                 progress={termProgress(item, currentMonth)}
@@ -206,6 +229,9 @@ export function ObligationsTable({
           </Card>
         ))}
       </RowCardList>
+      <div className="ff-mobile-foot">
+        <TableFoot {...footProps} />
+      </div>
     </div>
   );
 }

@@ -284,9 +284,11 @@ function ObligationsSkeleton(): ReactElement {
           </div>
         ))}
       </div>
-      <Card>
-        <Skeleton width={240} height={22} />
-        <div className="ff-checklist ff-skeleton-gap-md">
+      <Card className="ff-oblig-panel">
+        <div className="ff-panel__head ff-oblig-panel__head">
+          <Skeleton width={240} height={22} />
+        </div>
+        <div className="ff-checklist">
           {FOUR_ROWS.map((row) => (
             <div className="ff-checklist__row" key={row}>
               <Skeleton width={44} height={44} />
@@ -298,9 +300,14 @@ function ObligationsSkeleton(): ReactElement {
           ))}
         </div>
       </Card>
-      <Card>
-        <Skeleton width={190} height={22} />
-        <div className="ff-skeleton-gap-md">
+      <Card className="ff-oblig-panel">
+        <div className="ff-panel__head ff-oblig-panel__head">
+          <Skeleton width={190} height={22} />
+        </div>
+        <div className="ff-note ff-oblig-panel__note">
+          <Skeleton width="72%" height={13} />
+        </div>
+        <div>
           {SIX_ROWS.map((row, index) => (
             <div className="ff-timeline__row" key={row}>
               <Skeleton width={64} height={14} />
@@ -315,6 +322,14 @@ function ObligationsSkeleton(): ReactElement {
           ))}
         </div>
       </Card>
+      <div>
+        <div className="ff-panel__head">
+          <Skeleton width={190} height={22} />
+        </div>
+        <Card>
+          <TextRows count={4} />
+        </Card>
+      </div>
     </section>
   );
 }

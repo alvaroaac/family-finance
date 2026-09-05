@@ -7,7 +7,7 @@
 
 import type { ReactElement } from "react";
 
-import { Badge, Card } from "../../../components/ui/primitives";
+import { Badge, Card } from "../../../components/ui";
 import { formatBrlCents, monthLabelPtBr } from "../../../lib/format";
 import type { ObligationActionResult } from "./actions";
 import { ObligationPaymentDialog } from "./payment-dialog";

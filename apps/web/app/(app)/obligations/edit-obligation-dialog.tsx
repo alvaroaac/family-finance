@@ -347,10 +347,10 @@ export function EditObligationDialog({
             <div className="ff-danger-zone__head">
               <div>
                 <div className="ff-name">Encerrar obrigação</div>
-                <p className="ff-name-sub">
+                <div className="ff-name-sub">
                   Some dos próximos meses. O que já foi pago continua nas
                   transações.
-                </p>
+                </div>
               </div>
               <button
                 type="button"

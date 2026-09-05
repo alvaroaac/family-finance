@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 /**
  * Server-render coverage for the three /obligations panels.
  *
@@ -394,4 +396,58 @@ describe("ObligationsTable", () => {
     expect(shown).toContain("Financiamento antigo");
     expect(shown).toContain("encerrada");
   });
+
+  it("fades and badges finished active templates in both layouts", () => {
+    const html = render(
+      createElement(ObligationsTable, {
+        ...props,
+        items: [],
+        ended: [item({ ...antigo, status: "active" })],
+        showEnded: true,
+      }),
+    );
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    for (const selector of [".ff-table .ff-row", ".ff-rowcards .ff-rowcard"]) {
+      const row = container.querySelector(selector);
+      expect(row?.classList.contains("ff-off")).toBe(true);
+      expect(row?.querySelector(".ff-badge")?.textContent).toBe("encerrada");
+      expect(row?.querySelector("button")).toBeNull();
+    }
+  });
+
+  it("keeps the total and archive toggle reachable in the mobile footer", () => {
+    for (const showEnded of [false, true]) {
+      const container = document.createElement("div");
+      container.innerHTML = render(
+        createElement(ObligationsTable, { ...props, showEnded }),
+      );
+      const href = showEnded ? "?" : "?encerradas=1";
+      expect(container.querySelectorAll(`a[href="${href}"]`)).toHaveLength(2);
+      const mobileFoot = container.querySelector(".ff-mobile-foot");
+      expect(mobileFoot?.querySelector("a")?.getAttribute("href")).toBe(href);
+      expect(mobileFoot?.textContent).toContain("Total a partir de out/2026");
+      expect(mobileFoot?.textContent).toContain(formatBrlCents(956044));
+      expect(mobileFoot?.closest(".ff-table")).toBeNull();
+    }
+  });
+
+  it("shows a full-width desktop empty state and a mobile empty state", () => {
+    const container = document.createElement("div");
+    container.innerHTML = render(
+      createElement(ObligationsTable, {
+        ...props,
+        items: [],
+        ended: [],
+        showEnded: false,
+      }),
+    );
+    for (const selector of [".ff-table > .ff-empty", ".ff-rowcards > .ff-empty"]) {
+      expect(container.querySelector(selector)?.textContent).toBe(
+        "Nenhuma obrigação cadastrada.",
+      );
+    }
+    expect(container.querySelector(".ff-table .ff-row")).toBeNull();
+  });
+
 });

@@ -9,7 +9,7 @@
 
 import type { ReactElement } from "react";
 
-import { Badge, Card } from "../../../components/ui/primitives";
+import { Badge, Card } from "../../../components/ui";
 import { formatBrlCents } from "../../../lib/format";
 import type { TimelineMonth } from "./queries";
 import {
