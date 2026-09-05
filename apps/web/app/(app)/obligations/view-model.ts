@@ -199,14 +199,18 @@ export type Committed = {
   fromMonth: string | null;
 };
 
-/** Active template totals include commitments that start in future months. */
+export function isFinished(item: ObligationListItem, month: string): boolean {
+  return item.endMonth !== null && item.endMonth < month;
+}
+
+/** Unfinished active totals include commitments that start in future months. */
 export function committedPerMonth(
   obligations: ObligationListItem[],
   month: string,
 ): Committed {
   const result: Committed = { totalCents: 0, activeCount: 0, fromMonth: null };
   for (const item of obligations) {
-    if (item.status !== "active") continue;
+    if (item.status !== "active" || isFinished(item, month)) continue;
     result.totalCents += item.amountCents;
     result.activeCount += 1;
     if (

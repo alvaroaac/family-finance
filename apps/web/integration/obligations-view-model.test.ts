@@ -265,6 +265,30 @@ describe("obligations view-model", () => {
     });
   });
 
+  it("committedPerMonth excludes finished active templates and keeps current and future commitments", () => {
+    const finished = item({
+      startMonth: "2025-07",
+      endMonth: "2025-10",
+      remainingMonths: 0,
+    });
+    expect(committedPerMonth([finished], "2026-09")).toEqual({
+      totalCents: 0,
+      activeCount: 0,
+      fromMonth: null,
+    });
+    expect(
+      committedPerMonth(
+        [
+          finished,
+          item({ startMonth: "2026-06", endMonth: "2026-09" }),
+          item({ termMonths: null, endMonth: null }),
+          item({ startMonth: "2026-12", endMonth: "2027-03" }),
+        ],
+        "2026-09",
+      ),
+    ).toEqual({ totalCents: 30000, activeCount: 3, fromMonth: "2026-12" });
+  });
+
   it("termProgress covers indefinite, future, running, last month, and completed terms", () => {
     expect(
       termProgress(item({ termMonths: null, endMonth: null }), "2026-09"),
