@@ -7,17 +7,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ObligationPaymentDialog } from "../app/(app)/obligations/payment-dialog.js";
 
+import { ToastProvider } from "../components/ui";
+
 type DialogProps = ComponentProps<typeof ObligationPaymentDialog>;
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
-  .IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const baseProps: DialogProps = {
   obligationId: "obligation-1",
   month: "2026-07",
   description: "Aluguel",
   projectedAmountCents: 124780,
-  action: async () => undefined,
+  action: async () => ({ ok: true }),
 };
 
 function installDialogPolyfill(): void {
@@ -54,7 +57,11 @@ function createHarness(initialProps: DialogProps = baseProps): {
 
   async function render(props: Partial<DialogProps> = {}): Promise<void> {
     await act(async () => {
-      root.render(<ObligationPaymentDialog {...initialProps} {...props} />);
+      root.render(
+        <ToastProvider>
+          <ObligationPaymentDialog {...initialProps} {...props} />
+        </ToastProvider>,
+      );
     });
   }
 
@@ -70,7 +77,7 @@ function createHarness(initialProps: DialogProps = baseProps): {
 
 function getOpenButton(container: HTMLElement): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find(
-    (candidate) => candidate.textContent === "Marcar como pago",
+    (candidate) => candidate.textContent === "Marcar como paga",
   );
   if (!(button instanceof HTMLButtonElement)) {
     throw new Error("Open button not found");
@@ -123,6 +130,71 @@ describe("ObligationPaymentDialog", () => {
     document.body.innerHTML = "";
     setupAnimationFrame();
     installDialogPolyfill();
+  });
+
+  it("shows a failed action inline and in a toast, preserving input until close", async () => {
+    const action = vi.fn(async () => ({
+      ok: false,
+      error: "Valor pago inválido.",
+    }));
+    const harness = createHarness({ ...baseProps, action });
+    await harness.render();
+    await click(getOpenButton(harness.container));
+    getAmountInput(harness.container).value = "999,99";
+    await act(async () => {
+      getSurface(harness.container).dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(action).toHaveBeenCalledOnce();
+    expect(harness.container.querySelector('[role="alert"]')?.textContent).toBe(
+      "Valor pago inválido.",
+    );
+    expect(document.querySelector(".ff-toast__message")?.textContent).toBe(
+      "Valor pago inválido.",
+    );
+    expect(getDialog(harness.container).open).toBe(true);
+    expect(getAmountInput(harness.container).value).toBe("999,99");
+    await click(getCancelButton(harness.container));
+    await click(getOpenButton(harness.container));
+    expect(harness.container.querySelector('[role="alert"]')).toBeNull();
+    expect(getAmountInput(harness.container).value).toBe("1247,80");
+    harness.unmount();
+  });
+
+  it("disables submit while pending and resets the amount after success", async () => {
+    let finish: (result: { ok: boolean }) => void = () => undefined;
+    const action = vi.fn((data: FormData) => {
+      expect(data.get("obligationId")).toBe("obligation-1");
+      expect(data.get("month")).toBe("2026-07");
+      expect(data.get("amount")).toBe("999,99");
+      return new Promise<{ ok: boolean }>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const harness = createHarness({ ...baseProps, action });
+    await harness.render();
+    await click(getOpenButton(harness.container));
+    getAmountInput(harness.container).value = "999,99";
+    await act(async () => {
+      getSurface(harness.container).dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    const submit = harness.container.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    );
+    expect(submit?.disabled).toBe(true);
+    expect(submit?.textContent).toBe("Registrando…");
+    await act(async () => {
+      finish({ ok: true });
+    });
+    expect(submit?.disabled).toBe(false);
+    expect(submit?.textContent).toBe("Confirmar pagamento");
+    expect(getAmountInput(harness.container).value).toBe("1247,80");
+    expect(getDialog(harness.container).open).toBe(true);
+    expect(harness.container.querySelector('[role="alert"]')).toBeNull();
+    harness.unmount();
   });
 
   it("opens with showModal, prefilled projected amount and selected amount input", async () => {

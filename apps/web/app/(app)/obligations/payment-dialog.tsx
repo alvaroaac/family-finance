@@ -1,29 +1,21 @@
 "use client";
 
-import { useId, useRef } from "react";
-import { useFormStatus } from "react-dom";
+import { useId, useRef, useState, useTransition } from "react";
 
-import { Button, Field, Input } from "../../../components/ui";
+import type { ObligationActionResult } from "./actions";
+
+import { Button, Field, Input, useToast } from "../../../components/ui";
 
 type ObligationPaymentDialogProps = {
   obligationId: string;
   month: string;
   description: string;
   projectedAmountCents: number;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<ObligationActionResult>;
 };
 
 function amountInputValue(amountCents: number): string {
   return (amountCents / 100).toFixed(2).replace(".", ",");
-}
-
-function SubmitPaymentButton(): React.ReactElement {
-  const { pending } = useFormStatus();
-  return (
-    <Button variant="primary" type="submit" disabled={pending}>
-      {pending ? "Registrando…" : "Confirmar pagamento"}
-    </Button>
-  );
 }
 
 export function ObligationPaymentDialog({
@@ -33,6 +25,9 @@ export function ObligationPaymentDialog({
   projectedAmountCents,
   action,
 }: ObligationPaymentDialogProps): React.ReactElement {
+  const toast = useToast();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -50,18 +45,41 @@ export function ObligationPaymentDialog({
 
   return (
     <>
-      <Button onClick={openDialog}>Marcar como pago</Button>
+      <Button onClick={openDialog}>Marcar como paga</Button>
       <dialog
         ref={dialogRef}
         className="ff-dialog"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        onClose={() => formRef.current?.reset()}
+        onClose={() => {
+          formRef.current?.reset();
+          setError(null);
+        }}
         onClick={(event) => {
           if (event.target === event.currentTarget) closeDialog();
         }}
       >
-        <form ref={formRef} action={action} className="ff-dialog__surface">
+        <form
+          ref={formRef}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (pending) return;
+            const formData = new FormData(event.currentTarget);
+            setError(null);
+            startTransition(async () => {
+              const result = await action(formData);
+              if (!result.ok) {
+                const message =
+                  result.error ?? "Não foi possível salvar a obrigação.";
+                setError(message);
+                toast.error(message);
+              } else {
+                formRef.current?.reset();
+              }
+            });
+          }}
+          className="ff-dialog__surface"
+        >
           <input type="hidden" name="obligationId" value={obligationId} />
           <input type="hidden" name="month" value={month} />
 
@@ -103,11 +121,18 @@ export function ObligationPaymentDialog({
             foi diferente.
           </div>
 
+          {error !== null ? (
+            <div role="alert" className="ff-alert ff-alert--negative">
+              {error}
+            </div>
+          ) : null}
           <div className="ff-dialog__actions">
             <Button type="button" onClick={closeDialog}>
               Cancelar
             </Button>
-            <SubmitPaymentButton />
+            <Button variant="primary" type="submit" disabled={pending}>
+              {pending ? "Registrando…" : "Confirmar pagamento"}
+            </Button>
           </div>
         </form>
       </dialog>

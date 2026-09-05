@@ -22,6 +22,7 @@ import { buildObligationsData } from "../app/(app)/obligations/queries.js";
 import { undoObligationPaymentAction } from "../app/(app)/obligations/actions.js";
 import { requireAuthorizedUser } from "../lib/auth.js";
 import {
+  obligationChangesFromForm,
   obligationInputFromForm,
   obligationPaymentFromForm,
 } from "../app/(app)/obligations/form.js";
@@ -402,6 +403,25 @@ describe("obligationInputFromForm (review F9 — server-action input parsing)", 
     accountId: ACCOUNT,
   };
 
+  it.each([
+    ["installments", "72", 72],
+    ["indefinite", "garbage", null],
+  ])("parses termMode=%s", (termMode, termMonths, expected) => {
+    expect(
+      obligationInputFromForm(form({ ...BASE, termMode, termMonths }), IDS)
+        .termMonths,
+    ).toBe(expected);
+  });
+
+  it("requires a term for installments", () => {
+    expect(() =>
+      obligationInputFromForm(
+        form({ ...BASE, termMode: "installments", termMonths: "" }),
+        IDS,
+      ),
+    ).toThrow("Informe o prazo em meses.");
+  });
+
   it("maps the happy path: pt-BR amount to cents, term to number", () => {
     expect(obligationInputFromForm(form(BASE), IDS)).toEqual({
       householdId: HOUSEHOLD,
@@ -537,4 +557,69 @@ describe("mark-paid actual amount", () => {
     );
     expect(store.table("transactions")).toHaveLength(0);
   });
+});
+
+describe("obligationChangesFromForm", () => {
+  function form(entries: Record<string, string>): FormData {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(entries)) fd.set(k, v);
+    return fd;
+  }
+
+  it.each(["cat-1", ""])(
+    "maps editable fields with category %j",
+    (categoryId) => {
+      expect(
+        obligationChangesFromForm(
+          form({
+            obligationId: "ob-rent",
+            description: " Aluguel ",
+            amount: "1.247,80",
+            dueDay: "10",
+            accountId: ACCOUNT,
+            categoryId,
+          }),
+        ),
+      ).toEqual({
+        obligationId: "ob-rent",
+        changes: {
+          description: "Aluguel",
+          amountCents: 124780,
+          dueDay: 10,
+          accountId: ACCOUNT,
+          categoryId: categoryId || null,
+        },
+      });
+    },
+  );
+
+  it("leaves omitted account and category untouched", () => {
+    expect(
+      obligationChangesFromForm(
+        form({
+          obligationId: "ob-rent",
+          description: "Aluguel",
+          amount: "100",
+          dueDay: "5",
+        }),
+      ).changes,
+    ).toEqual({ description: "Aluguel", amountCents: 10000, dueDay: 5 });
+  });
+
+  it.each([{ amount: "abc" }, { dueDay: "5abc" }])(
+    "rejects malformed edits %j",
+    (patch) => {
+      expect(() =>
+        obligationChangesFromForm(
+          form({
+            obligationId: "ob-rent",
+            description: "Aluguel",
+            amount: "100",
+            dueDay: "5",
+            ...patch,
+          }),
+        ),
+      ).toThrow();
+    },
+  );
 });

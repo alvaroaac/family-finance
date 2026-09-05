@@ -192,7 +192,10 @@ export default async function ObligationsPage() {
               </div>
               <div className="ff-actions">
                 <form
-                  action={updateObligationAction}
+                  action={async (formData) => {
+                    "use server";
+                    await updateObligationAction(formData);
+                  }}
                   style={{
                     display: "flex",
                     gap: 8,
@@ -237,7 +240,12 @@ export default async function ObligationsPage() {
                     Salvar
                   </SubmitButton>
                 </form>
-                <form action={cancelObligationAction}>
+                <form
+                  action={async (formData) => {
+                    "use server";
+                    await cancelObligationAction(formData);
+                  }}
+                >
                   <input type="hidden" name="obligationId" value={item.id} />
                   <SubmitButton variant="danger" pendingLabel="Cancelando…">
                     Cancelar
@@ -254,7 +262,10 @@ export default async function ObligationsPage() {
       <Card>
         <h2 className="ff-name">Nova obrigação</h2>
         <form
-          action={createObligationAction}
+          action={async (formData) => {
+            "use server";
+            await createObligationAction(formData);
+          }}
           style={{
             display: "grid",
             gap: 12,
