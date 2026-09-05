@@ -2251,6 +2251,37 @@ export async function deleteTransaction(
   }
 }
 
+/** Delete a materialized payment, refusing rows outside this household or without an obligation. */
+export async function deleteObligationPayment(
+  client: AppSupabaseClient,
+  householdId: string,
+  transactionId: string,
+): Promise<void> {
+  const { data, error: lookupError } = await client
+    .from("transactions")
+    .select("obligation_id")
+    .eq("household_id", householdId)
+    .eq("id", transactionId)
+    .maybeSingle();
+  if (lookupError !== null) {
+    throw new Error(
+      `deleteObligationPayment lookup failed: ${lookupError.message}`,
+    );
+  }
+  if (data === null || data.obligation_id === null) {
+    throw new Error("Esse lançamento não é um pagamento de obrigação.");
+  }
+
+  const { error } = await client
+    .from("transactions")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", transactionId);
+  if (error !== null) {
+    throw new Error(`deleteObligationPayment failed: ${error.message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Household member profiles (v1.0 Task 2) — display names + Telegram link.
 // ---------------------------------------------------------------------------
@@ -2880,6 +2911,8 @@ export function obligationMonthYm(obligationMonth: string): string {
 export type ObligationPaymentKey = {
   obligationId: string;
   month: string;
+  transactionId: string;
+  paidOn: string | null;
   /** The MATERIALIZED transaction's amount — the actual paid, not the
    * (editable) template amount. */
   amountCents: number;
@@ -2898,7 +2931,7 @@ export async function listObligationPayments(
 ): Promise<ObligationPaymentKey[]> {
   const { data, error } = await client
     .from("transactions")
-    .select("obligation_id, obligation_month, amount_cents")
+    .select("obligation_id, obligation_month, amount_cents, id, occurred_on")
     .eq("household_id", householdId)
     .not("obligation_id", "is", null)
     .gte("obligation_month", `${fromMonth}-01`)
@@ -2910,13 +2943,19 @@ export async function listObligationPayments(
     (data ?? []) as Array<
       Pick<
         TransactionRow,
-        "obligation_id" | "obligation_month" | "amount_cents"
+        | "obligation_id"
+        | "obligation_month"
+        | "amount_cents"
+        | "id"
+        | "occurred_on"
       >
     >
   ).map((row) => ({
     obligationId: row.obligation_id as string,
     month: obligationMonthYm(row.obligation_month as string),
     amountCents: row.amount_cents,
+    transactionId: row.id,
+    paidOn: row.occurred_on,
   }));
 }
 

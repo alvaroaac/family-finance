@@ -61,8 +61,10 @@ export type ObligationsData = {
     unpaid: ProjectedEntry[];
     paid: Array<{
       obligationId: string;
+      transactionId: string;
       description: string;
       amountCents: number;
+      paidOn: string | null;
     }>;
   };
   timeline: TimelineMonth[];
@@ -109,10 +111,7 @@ export async function buildObligationsData(
   // Paid amounts per month. The amount comes from the MATERIALIZED
   // transaction (the actual at payment time) — never the template, which is
   // editable afterwards; only the description is looked up on the template.
-  const paidByMonth = new Map<
-    string,
-    Array<{ obligationId: string; description: string; amountCents: number }>
-  >();
+  const paidByMonth = new Map<string, ObligationsData["thisMonth"]["paid"]>();
   for (const payment of payments) {
     const obligation = byId.get(payment.obligationId);
     if (obligation === undefined) {
@@ -121,8 +120,10 @@ export async function buildObligationsData(
     const list = paidByMonth.get(payment.month) ?? [];
     list.push({
       obligationId: obligation.id,
+      transactionId: payment.transactionId,
       description: obligation.description,
       amountCents: payment.amountCents,
+      paidOn: payment.paidOn,
     });
     paidByMonth.set(payment.month, list);
   }

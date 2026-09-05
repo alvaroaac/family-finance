@@ -8,12 +8,19 @@
  * timeline, and mark-paid materialization (idempotent, anti-double-count).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { revalidatePath } from "next/cache";
 
 import type { AppSupabaseClient } from "@family-finance/db";
-import { materializeObligationPayment } from "@family-finance/db";
+import {
+  deleteObligationPayment,
+  listObligationPayments,
+  materializeObligationPayment,
+} from "@family-finance/db";
 
 import { buildObligationsData } from "../app/(app)/obligations/queries.js";
+import { undoObligationPaymentAction } from "../app/(app)/obligations/actions.js";
+import { requireAuthorizedUser } from "../lib/auth.js";
 import {
   obligationInputFromForm,
   obligationPaymentFromForm,
@@ -22,6 +29,22 @@ import {
   FakeSupabaseStore,
   createFakeSupabaseClient,
 } from "./fake-supabase.js";
+
+const mockedSupabase = vi.hoisted(() => ({
+  client: null as AppSupabaseClient | null,
+}));
+
+vi.mock("../lib/auth.js", () => ({
+  requireAuthorizedUser: vi.fn(async () => undefined),
+}));
+
+vi.mock("../lib/supabase.js", () => ({
+  createServerSupabaseClient: vi.fn(async () => mockedSupabase.client),
+}));
+
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+}));
 
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
 const FOREIGN_HOUSEHOLD = "00000000-0000-0000-0000-000000000002";
@@ -181,6 +204,166 @@ describe("buildObligationsData", () => {
     expect(data.thisMonth.paid).toHaveLength(1);
     expect(data.timeline[0]?.totalCents).toBe(71044 + 120000);
   });
+});
+
+describe("undo obligation payments", () => {
+  it("marking a month paid then deleting the payment restores unpaid and preserves the timeline total", async () => {
+    const { client, store } = seededClient();
+    const payment = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+    const before = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(before.thisMonth.paid).toHaveLength(1);
+
+    await deleteObligationPayment(client, HOUSEHOLD, payment.transaction.id);
+
+    const after = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(after.thisMonth.paid).toEqual([]);
+    expect(after.thisMonth.unpaid.map((entry) => entry.obligationId)).toContain(
+      "ob-rent",
+    );
+    expect(after.timeline.map((entry) => entry.totalCents)).toEqual(
+      before.timeline.map((entry) => entry.totalCents),
+    );
+    expect(store.table("transactions")).toHaveLength(0);
+  });
+
+  it.each([
+    ["plain transaction", HOUSEHOLD, null],
+    ["another household's payment", FOREIGN_HOUSEHOLD, "ob-rent"],
+  ])(
+    "refuses a %s without deleting it",
+    async (_label, householdId, obligationId) => {
+      const { client, store } = seededClient();
+      const transaction = {
+        id: "tx-refused",
+        household_id: householdId,
+        obligation_id: obligationId,
+      };
+      store.table("transactions").push(transaction);
+
+      await expect(
+        deleteObligationPayment(client, HOUSEHOLD, transaction.id),
+      ).rejects.toThrow("Esse lançamento não é um pagamento de obrigação.");
+      expect(store.table("transactions")).toEqual([transaction]);
+    },
+  );
+
+  it("listObligationPayments returns transactionId and paidOn through the paid query entries", async () => {
+    const { client } = seededClient();
+    const payment = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+      paidOn: "2026-07-12",
+    });
+
+    expect(
+      await listObligationPayments(client, HOUSEHOLD, "2026-07", "2026-07"),
+    ).toEqual([
+      {
+        obligationId: "ob-rent",
+        month: "2026-07",
+        amountCents: 120000,
+        transactionId: payment.transaction.id,
+        paidOn: "2026-07-12",
+      },
+    ]);
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.thisMonth.paid).toEqual([
+      {
+        obligationId: "ob-rent",
+        transactionId: payment.transaction.id,
+        description: "Aluguel",
+        amountCents: 120000,
+        paidOn: "2026-07-12",
+      },
+    ]);
+  });
+});
+
+describe("undoObligationPaymentAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function installClient(): ReturnType<typeof seededClient> {
+    const { client, store } = seededClient();
+    store.table("household_members").push({
+      household_id: HOUSEHOLD,
+      user_id: ALVARO,
+      is_active: true,
+    });
+    mockedSupabase.client = {
+      ...client,
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: ALVARO } },
+          error: null,
+        })),
+      },
+    } as unknown as AppSupabaseClient;
+    return { client, store };
+  }
+
+  it("deletes the payment and revalidates obligation paths on success", async () => {
+    const { client, store } = installClient();
+    const payment = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+    const form = new FormData();
+    form.set("transactionId", payment.transaction.id);
+
+    await expect(undoObligationPaymentAction(form)).resolves.toEqual({
+      ok: true,
+    });
+    expect(requireAuthorizedUser).toHaveBeenCalledOnce();
+    expect(store.table("transactions")).toHaveLength(0);
+    expect(vi.mocked(revalidatePath).mock.calls).toEqual([
+      ["/obligations"],
+      ["/resumo"],
+      ["/dashboard"],
+    ]);
+  });
+
+  it("returns repository errors without revalidating", async () => {
+    installClient();
+    const form = new FormData();
+    form.set("transactionId", "missing");
+
+    await expect(undoObligationPaymentAction(form)).resolves.toEqual({
+      ok: false,
+      error: "Esse lançamento não é um pagamento de obrigação.",
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("returns validation errors for a missing transactionId", async () => {
+    installClient();
+    await expect(undoObligationPaymentAction(new FormData())).resolves.toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error("Sessão inválida."), "unexpected"])(
+    "catches authentication failures including non-Error values: %s",
+    async (error) => {
+      vi.mocked(requireAuthorizedUser).mockRejectedValueOnce(error);
+      await expect(
+        undoObligationPaymentAction(new FormData()),
+      ).resolves.toEqual({
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não foi possível desfazer o pagamento.",
+      });
+      expect(revalidatePath).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("paid entries reflect materialized actuals (review F4)", () => {

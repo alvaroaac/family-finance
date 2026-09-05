@@ -6,6 +6,7 @@ import { createObligationDraft } from "@family-finance/domain";
 import {
   cancelObligation,
   createObligation,
+  deleteObligationPayment,
   findAccountsByHousehold,
   findCategoriesByHousehold,
   findHouseholdIdForCurrentUser,
@@ -34,6 +35,8 @@ import {
 type ServerSupabaseClient = Awaited<
   ReturnType<typeof import("../../../lib/supabase").createServerSupabaseClient>
 >;
+
+export type ObligationActionResult = { ok: boolean; error?: string };
 
 async function authedHousehold(): Promise<{
   householdId: string;
@@ -145,4 +148,25 @@ export async function markObligationPaidAction(
   const payment = obligationPaymentFromForm(formData);
   await materializeObligationPayment(client, payment);
   revalidateObligationPaths();
+}
+
+/** Undo a materialized payment and return errors to the caller. */
+export async function undoObligationPaymentAction(
+  formData: FormData,
+): Promise<ObligationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const transactionId = requireField(formData, "transactionId");
+    await deleteObligationPayment(client, householdId, transactionId);
+    revalidateObligationPaths();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível desfazer o pagamento.",
+    };
+  }
 }

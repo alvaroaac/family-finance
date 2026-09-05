@@ -232,6 +232,7 @@ export {
   updateObligation,
   materializeObligationPayment,
   listObligationPayments,
+  deleteObligationPayment,
   getObligationsPressure,
   settleCardBill,
   findCardBillSettlements,
