@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 
 import { createObligationDraft } from "@family-finance/domain";
 import {
@@ -72,6 +73,7 @@ function actionFailure(
   error: unknown,
   fallback = "Não foi possível salvar a obrigação.",
 ): ObligationActionResult {
+  unstable_rethrow(error);
   return {
     ok: false,
     error:

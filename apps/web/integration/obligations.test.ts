@@ -606,9 +606,12 @@ describe("obligationChangesFromForm", () => {
     ).toEqual({ description: "Aluguel", amountCents: 10000, dueDay: 5 });
   });
 
-  it.each([{ amount: "abc" }, { dueDay: "5abc" }])(
+  it.each([
+    [{ amount: "abc" }, "Valor mensal inválido — use por exemplo 710,44."],
+    [{ dueDay: "5abc" }, "Dia de vencimento inválido — use apenas números."],
+  ])(
     "rejects malformed edits %j",
-    (patch) => {
+    (patch, message) => {
       expect(() =>
         obligationChangesFromForm(
           form({
@@ -619,7 +622,7 @@ describe("obligationChangesFromForm", () => {
             ...patch,
           }),
         ),
-      ).toThrow();
+      ).toThrow(message);
     },
   );
 });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import type { AppSupabaseClient } from "@family-finance/db";
 import {
   createObligationAction,
@@ -111,13 +112,14 @@ function expectRevalidation(): void {
 }
 
 describe("obligation actions", () => {
+  let store: FakeSupabaseStore;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    installClient();
+    store = installClient();
   });
 
   it("creates and revalidates on success", async () => {
-    const store = installClient();
     expect(await createObligationAction(form())).toEqual({ ok: true });
     expect(store.table("obligations")).toHaveLength(2);
     expectRevalidation();
@@ -134,7 +136,6 @@ describe("obligation actions", () => {
   it.each([createObligationAction, updateObligationAction])(
     "checks ownership in %s",
     async (action) => {
-      const store = installClient();
       const before = structuredClone(store.table("obligations"));
       expect(await action(form({ accountId: "foreign-account" }))).toEqual({
         ok: false,
@@ -149,7 +150,6 @@ describe("obligation actions", () => {
     },
   );
   it("updates fields and clears category", async () => {
-    const store = installClient();
     expect(
       await updateObligationAction(form({ categoryId: "", amount: "120,50" })),
     ).toEqual({ ok: true });
@@ -161,7 +161,6 @@ describe("obligation actions", () => {
     expectRevalidation();
   });
   it("preserves omitted ownership fields", async () => {
-    const store = installClient();
     const fd = form();
     fd.delete("accountId");
     expect(await updateObligationAction(fd)).toEqual({ ok: true });
@@ -178,7 +177,6 @@ describe("obligation actions", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
   it("cancels successfully", async () => {
-    const store = installClient();
     expect(await cancelObligationAction(form())).toEqual({ ok: true });
     expect(store.table("obligations")[0]?.status).toBe("canceled");
     expectRevalidation();
@@ -191,7 +189,6 @@ describe("obligation actions", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
   it("materializes payment successfully", async () => {
-    const store = installClient();
     expect(await markObligationPaidAction(form())).toEqual({ ok: true });
     expect(store.table("transactions")).toHaveLength(1);
     expectRevalidation();
@@ -216,6 +213,20 @@ describe("obligation actions", () => {
     markObligationPaidAction,
     undoObligationPaymentAction,
   ])("error filtering: %s", (action) => {
+    it("rethrows NEXT_REDIRECT without revalidating", async () => {
+      let redirectError: unknown;
+      try {
+        redirect("/login");
+      } catch (error) {
+        redirectError = error;
+      }
+      expect(redirectError).toBeInstanceOf(Error);
+      vi.mocked(requireAuthorizedUser).mockRejectedValueOnce(redirectError);
+
+      await expect(action(form())).rejects.toBe(redirectError);
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
     it.each([
       new Error("updateObligation failed: private"),
       new Error("deleteObligationPayment lookup failed: private"),
