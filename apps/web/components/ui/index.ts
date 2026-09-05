@@ -19,7 +19,14 @@ export {
   StatCard,
 } from "./primitives";
 export type { BadgeTone } from "./primitives";
-export { Field, Input, MonthStepper, PillToggle, Select } from "./forms";
+export {
+  Field,
+  Input,
+  MonthStepper,
+  PillToggle,
+  Segmented,
+  Select,
+} from "./forms";
 export { AppShell, isNavItemActive, NAV_ICONS } from "./app-shell";
 export type { NavItem } from "./app-shell";
 export { ThemePicker } from "./theme-picker";

@@ -20,6 +20,7 @@ import {
   PressureBars,
   RouteSkeleton,
   RowCardList,
+  Segmented,
   Select,
   StatCard,
   Table,
@@ -81,7 +82,7 @@ describe("ui primitives — core", () => {
       categories: "ff-skeleton-category-list",
       accounts: "ff-cards-grid",
       cards: "ff-skeleton-fields",
-      obligations: "ff-skeleton-rows",
+      obligations: "ff-oblig-stats",
       investments: "ff-skeleton-actions",
       settings: "ff-skeleton-theme-grid",
     } as const;
@@ -95,6 +96,17 @@ describe("ui primitives — core", () => {
       expect(html).toContain('role="status"');
       expect(html).toContain(expectedClass);
     }
+  });
+
+  it("the obligations skeleton mirrors the redesigned page shape", () => {
+    const html = renderToStaticMarkup(
+      createElement(RouteSkeleton, { variant: "obligations" }),
+    );
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-label="Carregando conteúdo"');
+    expect(html).toContain("ff-oblig-stats");
+    expect(html.match(/ff-checklist__row/g)).toHaveLength(4);
+    expect(html.match(/ff-timeline__row/g)).toHaveLength(6);
   });
 
   it("StatCard renders kicker uppercase text + value inside .ff-num", () => {
@@ -250,6 +262,46 @@ describe("ui primitives — core", () => {
       }),
     );
     expect(inactive).not.toContain("ff-pill--active");
+  });
+
+  it("Segmented renders a radiogroup with the active option checked", () => {
+    const html = renderToStaticMarkup(
+      createElement(Segmented, {
+        value: "parcelado",
+        options: [
+          { value: "sem-prazo", label: "Sem prazo" },
+          { value: "parcelado", label: "Parcelado" },
+        ],
+        onChange: () => undefined,
+        ariaLabel: "Tipo de prazo",
+      }),
+    );
+    expect(html).toMatch(/<div[^>]*class="ff-seg"[^>]*role="radiogroup"/);
+    expect(html).toContain('aria-label="Tipo de prazo"');
+    expect(html.match(/role="radio"/g)).toHaveLength(2);
+    expect(html.match(/aria-checked="true"/g)).toHaveLength(1);
+    expect(html).toMatch(
+      /aria-checked="true" tabindex="0" class="ff-seg__item ff-seg__item--on"/,
+    );
+    expect(html).toMatch(/aria-checked="false" tabindex="-1" class="ff-seg__item"/);
+    expect(html.match(/type="button"/g)).toHaveLength(2);
+    expect(html).toContain("Sem prazo");
+  });
+
+  it("Segmented keeps the first option reachable when no option matches", () => {
+    const html = renderToStaticMarkup(
+      createElement(Segmented, {
+        value: "nenhum",
+        options: [
+          { value: "sem-prazo", label: "Sem prazo" },
+          { value: "parcelado", label: "Parcelado" },
+        ],
+        onChange: () => undefined,
+        ariaLabel: "Tipo de prazo",
+      }),
+    );
+    expect(html).not.toContain('aria-checked="true"');
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
   });
 
   it("Table renders header labels on the grid template and TableRow pending adds the warn stripe", () => {
