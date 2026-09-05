@@ -93,7 +93,9 @@ export function summarize(
   const term =
     endMonth === null
       ? `todo mês a partir de ${monthAbbrPtBr(startMonth)}`
-      : `${termMonths as number} vezes, de ${monthAbbrPtBr(startMonth)} a ${monthAbbrPtBr(endMonth)}`;
+      : termMonths === 1
+        ? `1 vez, em ${monthAbbrPtBr(startMonth)}`
+        : `${termMonths as number} vezes, de ${monthAbbrPtBr(startMonth)} a ${monthAbbrPtBr(endMonth)}`;
 
   const where =
     dueDay !== null && accountName !== null
@@ -143,7 +145,9 @@ function monthOptions(currentMonth: string): string[] {
 
 /** Strictly numeric text field -> number; "12abc" and "" are not numbers. */
 function toPositiveInt(value: string): number | null {
-  return /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : null;
+  if (!/^\d+$/.test(value.trim())) return null;
+  const parsed = Number.parseInt(value, 10);
+  return parsed < 1 ? null : parsed;
 }
 
 function Step({
@@ -304,7 +308,7 @@ export function NewObligationDialog({
           if (event.target === event.currentTarget) closeDialog();
         }}
       >
-        <form className="ff-dialog__surface" onSubmit={handleSubmit}>
+        <form className="ff-dialog__surface" noValidate onSubmit={handleSubmit}>
           <input type="hidden" name="termMode" value={termMode} />
 
           <div className="ff-dialog__header">
@@ -334,6 +338,7 @@ export function NewObligationDialog({
               <Field label="Nome">
                 <Input
                   name="description"
+                  autoFocus
                   value={description}
                   placeholder="Placas solares"
                   required
@@ -397,7 +402,12 @@ export function NewObligationDialog({
                 ariaLabel="Por quanto tempo"
                 value={termMode}
                 options={TERM_OPTIONS}
-                onChange={setTermMode}
+                onChange={(mode) => {
+                  setTermMode(mode);
+                  if (mode === "installments" && termMonths === "") {
+                    setTermMonths(DEFAULT_TERM_MONTHS);
+                  }
+                }}
               />
               {termMode === "installments" ? (
                 <>

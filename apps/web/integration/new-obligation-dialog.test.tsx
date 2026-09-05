@@ -182,6 +182,12 @@ describe("summarize", () => {
     );
   });
 
+  it("uses the singular sentence for one installment", () => {
+    expect(summarize({ ...parcelado, termMonths: 1 }, {}).main).toBe(
+      `Placas solares — R$${NBSP}710,44 por mês, 1 vez, em out/2026. Vence dia 5, sai da Conta Itaú.`,
+    );
+  });
+
   it("builds the sem-prazo variant", () => {
     const main = summarize(
       { ...parcelado, termMode: "indefinite", termMonths: null },
@@ -213,6 +219,18 @@ describe("NewObligationDialog", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     installDialogPolyfill();
+  });
+
+  it("gives Nome initial focus", async () => {
+    const harness = createHarness();
+    await harness.render();
+    await click(buttonWithText(harness.container, "+ Nova obrigação"));
+
+    expect(getDialog(harness.container).open).toBe(true);
+    expect(document.activeElement).toBe(
+      getInput(harness.container, "description"),
+    );
+    harness.unmount();
   });
 
   it("lists the months from currentMonth − 3 to currentMonth + 12", async () => {
@@ -253,6 +271,25 @@ describe("NewObligationDialog", () => {
       harness.container.querySelector('input[name="termMonths"]'),
     ).toBeNull();
 
+    harness.unmount();
+  });
+
+  it("re-seeds an empty installment count but preserves a typed count on round-trips", async () => {
+    const harness = createHarness();
+    await harness.render();
+    await click(buttonWithText(harness.container, "+ Nova obrigação"));
+    await click(buttonWithText(harness.container, "Parcelado"));
+    expect(getInput(harness.container, "termMonths").value).toBe("12");
+
+    await fill(getInput(harness.container, "termMonths"), "");
+    await click(buttonWithText(harness.container, "Sem prazo"));
+    await click(buttonWithText(harness.container, "Parcelado"));
+    expect(getInput(harness.container, "termMonths").value).toBe("12");
+
+    await fill(getInput(harness.container, "termMonths"), "24");
+    await click(buttonWithText(harness.container, "Sem prazo"));
+    await click(buttonWithText(harness.container, "Parcelado"));
+    expect(getInput(harness.container, "termMonths").value).toBe("24");
     harness.unmount();
   });
 
@@ -336,6 +373,40 @@ describe("NewObligationDialog", () => {
 
     harness.unmount();
   });
+
+  it.each([
+    ["description", "", "O nome não pode ficar vazio."],
+    ["dueDay", "", "Escolha o dia do vencimento, de 1 a 28."],
+    ["dueDay", "29", "Escolha o dia do vencimento, de 1 a 28."],
+    ["dueDay", "0", "Escolha o dia do vencimento, de 1 a 28."],
+    ["termMonths", "0", "Informe pelo menos 1 parcela."],
+    ["accountId", "", "Escolha a conta de onde a obrigação sai."],
+  ])(
+    "shows pt-BR feedback for %s=%s on submit click",
+    async (name, value, message) => {
+      const action = vi.fn(async () => ({ ok: true }));
+      const harness = createHarness({ ...baseProps, action });
+      await harness.render();
+      await click(buttonWithText(harness.container, "+ Nova obrigação"));
+      await fillTheWholeForm(harness.container);
+      await fill(
+        name === "accountId"
+          ? getSelect(harness.container, name)
+          : getInput(harness.container, name),
+        value,
+      );
+
+      // A real submit click exercises constraint validation before onSubmit.
+      await click(buttonWithText(harness.container, "Criar obrigação"));
+
+      expect(action).not.toHaveBeenCalled();
+      expect(
+        harness.container.querySelector('[role="alert"]')?.textContent,
+      ).toBe(message);
+      expect(getForm(harness.container).noValidate).toBe(true);
+      harness.unmount();
+    },
+  );
 
   it("refuses an unparseable amount before calling the action", async () => {
     const action = vi.fn(async () => ({ ok: true }));
