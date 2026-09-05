@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState, useTransition } from "react";
+import { useId, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 
 import { addMonthsYm, obligationEndMonth } from "@family-finance/domain";
@@ -14,7 +14,6 @@ import {
   Input,
   Segmented,
   Select,
-  useToast,
 } from "../../../components/ui";
 import {
   formatBrlCents,
@@ -22,6 +21,15 @@ import {
   parseReaisToCents,
 } from "../../../lib/format";
 import type { ObligationActionResult } from "./actions";
+import {
+  ObligationDialogError,
+  ObligationDialogHeader,
+  ObligationDialogShell,
+  toPositiveInt,
+  useObligationAction,
+  useObligationDialog,
+  type OptionItem,
+} from "./obligation-dialog-shell";
 import { monthAbbrPtBr } from "./view-model";
 
 /**
@@ -33,7 +41,7 @@ import { monthAbbrPtBr } from "./view-model";
  * re-parses and re-validates everything through the domain draft.
  */
 
-export type OptionItem = { id: string; name: string };
+export type { OptionItem } from "./obligation-dialog-shell";
 
 type TermMode = "indefinite" | "installments";
 
@@ -143,13 +151,6 @@ function monthOptions(currentMonth: string): string[] {
   return months;
 }
 
-/** Strictly numeric text field -> number; "12abc" and "" are not numbers. */
-function toPositiveInt(value: string): number | null {
-  if (!/^\d+$/.test(value.trim())) return null;
-  const parsed = Number.parseInt(value, 10);
-  return parsed < 1 ? null : parsed;
-}
-
 function Step({
   number,
   title,
@@ -185,13 +186,9 @@ export function NewObligationDialog({
   action: (formData: FormData) => Promise<ObligationActionResult>;
   trigger?: "header" | "sticky";
 }): ReactElement {
-  const toast = useToast();
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
-  const descriptionId = useId();
+  const dialog = useObligationDialog();
   const startHintId = useId();
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const save = useObligationAction("Obrigação criada.");
 
   const defaultAccountId = accounts[0]?.id ?? "";
   const [description, setDescription] = useState("");
@@ -229,15 +226,7 @@ export function NewObligationDialog({
     setTermMonths(DEFAULT_TERM_MONTHS);
     setAccountId(defaultAccountId);
     setCategoryId("");
-    setError(null);
-  }
-
-  function openDialog(): void {
-    dialogRef.current?.showModal();
-  }
-
-  function closeDialog(): void {
-    dialogRef.current?.close();
+    save.setError(null);
   }
 
   /** The first pt-BR complaint the household should see, if any. */
@@ -263,30 +252,24 @@ export function NewObligationDialog({
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (pending) return;
+    if (save.pending) return;
     const complaint = preCheck();
     if (complaint !== null) {
-      setError(complaint);
+      save.setError(complaint);
       return;
     }
     const formData = new FormData(event.currentTarget);
-    setError(null);
-    startTransition(async () => {
-      const result = await action(formData);
-      if (!result.ok) {
-        const message = result.error ?? "Não foi possível salvar a obrigação.";
-        setError(message);
-        toast.error(message);
-        return;
-      }
-      toast.success("Obrigação criada.");
-      reset();
-      closeDialog();
-    });
+    save.run(
+      () => action(formData),
+      () => {
+        reset();
+        dialog.close();
+      },
+    );
   }
 
   const openButton = (
-    <Button variant="primary" onClick={openDialog}>
+    <Button variant="primary" onClick={dialog.open}>
       + Nova obrigação
     </Button>
   );
@@ -298,40 +281,16 @@ export function NewObligationDialog({
       ) : (
         openButton
       )}
-      <dialog
-        ref={dialogRef}
-        className="ff-dialog ff-dialog--transaction"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        onClose={reset}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) closeDialog();
-        }}
-      >
+      <ObligationDialogShell dialog={dialog} onClose={reset}>
         <form className="ff-dialog__surface" noValidate onSubmit={handleSubmit}>
           <input type="hidden" name="termMode" value={termMode} />
 
-          <div className="ff-dialog__header">
-            <div>
-              <div className="ff-kicker">Obrigações fixas</div>
-              <h2 id={titleId} className="ff-dialog__title ff-serif">
-                Nova obrigação
-              </h2>
-            </div>
-            <button
-              type="button"
-              className="ff-dialog__close"
-              aria-label="Fechar"
-              onClick={closeDialog}
-            >
-              ×
-            </button>
-          </div>
-
-          <p id={descriptionId} className="ff-dialog__description">
-            Um financiamento, uma parcela ou uma conta que chega todo mês. A
-            gente projeta os próximos meses e você só marca quando pagar.
-          </p>
+          <ObligationDialogHeader
+            dialog={dialog}
+            kicker="Obrigações fixas"
+            title="Nova obrigação"
+            description="Um financiamento, uma parcela ou uma conta que chega todo mês. A gente projeta os próximos meses e você só marca quando pagar."
+          />
 
           <Step number={1} title="O que é">
             <div className="ff-form-grid">
@@ -483,27 +442,27 @@ export function NewObligationDialog({
             </Card>
           ) : null}
 
-          {error !== null ? (
-            <div role="alert" className="ff-alert ff-alert--negative">
-              {error}
-            </div>
-          ) : null}
+          <ObligationDialogError message={save.error} />
 
           <div className="ff-dialog__actions">
-            <Button variant="ghost" disabled={pending} onClick={closeDialog}>
+            <Button
+              variant="ghost"
+              disabled={save.pending}
+              onClick={dialog.close}
+            >
               Cancelar
             </Button>
             <Button
               variant="primary"
               type="submit"
-              loading={pending}
+              loading={save.pending}
               loadingText="Criando…"
             >
               Criar obrigação
             </Button>
           </div>
         </form>
-      </dialog>
+      </ObligationDialogShell>
     </>
   );
 }
