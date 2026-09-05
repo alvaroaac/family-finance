@@ -32,6 +32,8 @@ import {
   type PersistedObligation,
 } from "@family-finance/db";
 
+import { monthDiffYm } from "./view-model";
+
 /** How many months the forward timeline covers (current month included). */
 export const TIMELINE_MONTHS = 12;
 
@@ -67,19 +69,6 @@ export type ObligationsData = {
   /** Non-null when data could not be loaded; the page shows a zero state. */
   loadError: string | null;
 };
-
-/** Whole months between two `YYYY-MM` values (b - a). Pure. */
-function monthDiffYm(a: string, b: string): number {
-  const [ay, am] = a.split("-").map((p) => Number.parseInt(p, 10)) as [
-    number,
-    number,
-  ];
-  const [by, bm] = b.split("-").map((p) => Number.parseInt(p, 10)) as [
-    number,
-    number,
-  ];
-  return (by - ay) * 12 + (bm - am);
-}
 
 /**
  * Compose the obligations dataset from the repositories + domain projector.

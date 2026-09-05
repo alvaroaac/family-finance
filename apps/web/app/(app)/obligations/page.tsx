@@ -31,6 +31,7 @@ import {
   updateObligationAction,
 } from "./actions";
 import { ObligationPaymentDialog } from "./payment-dialog";
+import { monthAbbrPtBr } from "./view-model";
 
 export const metadata = {
   title: "Obrigações — Casa",
@@ -38,29 +39,6 @@ export const metadata = {
 
 // This page reads per-request, RLS-scoped data; never statically prerender it.
 export const dynamic = "force-dynamic";
-
-const MONTH_ABBR_PT = [
-  "jan",
-  "fev",
-  "mar",
-  "abr",
-  "mai",
-  "jun",
-  "jul",
-  "ago",
-  "set",
-  "out",
-  "nov",
-  "dez",
-];
-
-/** "2026-10" -> "out/2026". */
-function monthAbbrPtBr(month: string): string {
-  const match = /^(\d{4})-(\d{2})$/.exec(month);
-  if (match === null) return month;
-  const idx = Number.parseInt(match[2] as string, 10) - 1;
-  return `${MONTH_ABBR_PT[idx] ?? month}/${match[1]}`;
-}
 
 type PageData = {
   data: ObligationsData;
