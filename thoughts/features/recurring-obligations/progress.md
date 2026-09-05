@@ -111,6 +111,8 @@ real Supabase project when merging; (3) PR-2 (card installment persistence +
 card-bill payment — remember the `nubank pago` schema wrinkle needs its own
 design).
 
+---
+
 ## 2026-09-05 — Page redesign: checklist, change-only timeline, guided dialogs
 
 Design: `docs/superpowers/specs/2026-09-04-obligations-page-redesign-design.md`
@@ -200,5 +202,3 @@ Sálvia)**, comparing against `docs/design/2026-09-04-obrigacoes-mockups/`:
 Watch for: overdue/warn row washes, the timeline badge wrapper at narrow
 widths, the segmented control's focus ring, the sticky CTA not covering the
 table footer, and skeleton → content layout shift.
-
----
