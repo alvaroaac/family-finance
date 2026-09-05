@@ -149,6 +149,27 @@ describe("buildObligationsData", () => {
     expect(rent?.remainingMonths).toBeNull();
   });
 
+  it("returns ended and canceled templates separately when asked", async () => {
+    const { client } = seededClient();
+
+    const plain = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(plain.ended).toEqual([]);
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW, {
+      includeEnded: true,
+    });
+    // `obligations` stays the active listing.
+    expect(data.obligations.map((o) => o.description)).toEqual([
+      "Aluguel",
+      "Parcela solar",
+    ]);
+    expect(data.ended.map((o) => o.description)).toEqual([
+      "Financiamento antigo",
+    ]);
+    expect(data.ended[0]?.status).toBe("canceled");
+    expect(data.ended[0]?.endMonth).toBe("2020-12");
+  });
+
   it("splits the current month into unpaid projections and paid actuals", async () => {
     const { client } = seededClient();
 
@@ -609,20 +630,17 @@ describe("obligationChangesFromForm", () => {
   it.each([
     [{ amount: "abc" }, "Valor mensal inválido — use por exemplo 710,44."],
     [{ dueDay: "5abc" }, "Dia de vencimento inválido — use apenas números."],
-  ])(
-    "rejects malformed edits %j",
-    (patch, message) => {
-      expect(() =>
-        obligationChangesFromForm(
-          form({
-            obligationId: "ob-rent",
-            description: "Aluguel",
-            amount: "100",
-            dueDay: "5",
-            ...patch,
-          }),
-        ),
-      ).toThrow(message);
-    },
-  );
+  ])("rejects malformed edits %j", (patch, message) => {
+    expect(() =>
+      obligationChangesFromForm(
+        form({
+          obligationId: "ob-rent",
+          description: "Aluguel",
+          amount: "100",
+          dueDay: "5",
+          ...patch,
+        }),
+      ),
+    ).toThrow(message);
+  });
 });

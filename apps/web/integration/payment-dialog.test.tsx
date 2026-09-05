@@ -162,7 +162,7 @@ describe("ObligationPaymentDialog", () => {
     harness.unmount();
   });
 
-  it("disables submit while pending and resets the amount after success", async () => {
+  it("disables submit while pending, then toasts and closes on success", async () => {
     let finish: (result: { ok: boolean }) => void = () => undefined;
     const action = vi.fn((data: FormData) => {
       expect(data.get("obligationId")).toBe("obligation-1");
@@ -191,8 +191,12 @@ describe("ObligationPaymentDialog", () => {
     });
     expect(submit?.disabled).toBe(false);
     expect(submit?.textContent).toBe("Confirmar pagamento");
+    // Closing resets the form, so the projected amount is back for next time.
     expect(getAmountInput(harness.container).value).toBe("1247,80");
-    expect(getDialog(harness.container).open).toBe(true);
+    expect(getDialog(harness.container).open).toBe(false);
+    expect(document.querySelector(".ff-toast__message")?.textContent).toBe(
+      "Pagamento registrado.",
+    );
     expect(harness.container.querySelector('[role="alert"]')).toBeNull();
     harness.unmount();
   });

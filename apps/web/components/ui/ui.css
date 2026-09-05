@@ -2856,6 +2856,7 @@ a.ff-callout:hover {
 .ff-timeline__bar {
   display: flex;
   height: 10px;
+  flex-shrink: 0;
   border-radius: var(--ff-radius-pill);
   overflow: hidden;
   background: var(--ff-accent);
@@ -3045,6 +3046,98 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   line-height: 1.5;
 }
 
+/* Flush panel: the checklist and timeline rows carry their own 24px inset and
+   hairline separators, so the card must not pad them (mockup `.card` p=0). */
+.ff-oblig-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ff-oblig-panel__head {
+  padding: 22px 24px 14px;
+}
+
+/* The figure inside a panel head's note ("4 a pagar · R$ 11.330,00"). */
+.ff-oblig-panel__head strong {
+  color: var(--ff-ink);
+  font-weight: 500;
+}
+
+/* Copy or empty state under a flush panel's head, aligned with the rows. */
+.ff-oblig-panel__note {
+  margin: 0;
+  padding: 0 24px 16px;
+}
+
+/* Soft "de R$ total" suffix inside the "Este mês" stat value. */
+.ff-oblig-stat-of {
+  font-size: 15px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-oblig-stat-track {
+  margin: 8px 0 6px;
+}
+
+/* Right-aligned figure / trailing action of a checklist, timeline or table row. */
+.ff-oblig-cell--amount {
+  text-align: right;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ff-ink);
+}
+
+.ff-oblig-cell--soft {
+  font-weight: 500;
+  color: var(--ff-ink-soft);
+}
+
+.ff-oblig-cell--action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Month label; changed months (and the current one) read in full ink. */
+.ff-timeline__month {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ff-ink-soft);
+}
+
+.ff-timeline__month--strong {
+  font-weight: 600;
+  color: var(--ff-ink);
+}
+
+.ff-timeline__now {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ff-accent);
+}
+
+/* "Suas obrigações": icon bubble + name block, and the term progress track. */
+.ff-oblig-row__name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ff-oblig-term-count {
+  color: var(--ff-ink);
+}
+
+.ff-oblig-track {
+  width: 200px;
+  max-width: 100%;
+  margin-top: 6px;
+}
+
+.ff-oblig-rowcard__body {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Mobile-only CTA pinned above the bottom nav (Mobile mockup: full-width
    primary, float shadow). Desktop keeps the action in the page header. */
 .ff-sticky-cta {
@@ -3081,6 +3174,22 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   .ff-timeline__detail {
     grid-template-columns: 1fr;
     padding: 4px 18px 16px;
+  }
+
+  .ff-oblig-panel__head,
+  .ff-oblig-panel__note {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .ff-oblig-track {
+    width: 100%;
+  }
+
+  /* Toasts stack above the sticky CTA instead of behind it — only on the
+     pages that actually render one. */
+  body:has(.ff-sticky-cta) .ff-toast-stack {
+    bottom: 148px;
   }
 
   .ff-danger-zone__head {

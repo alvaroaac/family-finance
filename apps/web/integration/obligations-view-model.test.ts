@@ -71,6 +71,7 @@ function data(
   return {
     month: "2026-09",
     obligations: [],
+    ended: [],
     thisMonth: { unpaid, paid: [] },
     timeline,
     loadError: null,

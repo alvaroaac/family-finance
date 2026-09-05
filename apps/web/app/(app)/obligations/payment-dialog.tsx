@@ -74,7 +74,10 @@ export function ObligationPaymentDialog({
                 setError(message);
                 toast.error(message);
               } else {
-                formRef.current?.reset();
+                // onClose resets the form; the toast is the only feedback
+                // left once the dialog is gone.
+                toast.success("Pagamento registrado.");
+                closeDialog();
               }
             });
           }}

@@ -57,6 +57,8 @@ export type TimelineMonth = {
 export type ObligationsData = {
   month: string;
   obligations: ObligationListItem[];
+  /** Ended + canceled templates, only when the page asks for them. */
+  ended: ObligationListItem[];
   thisMonth: {
     unpaid: ProjectedEntry[];
     paid: Array<{
@@ -81,26 +83,39 @@ export async function buildObligationsData(
   client: AppSupabaseClient,
   householdId: string,
   now: Date = new Date(),
+  options: { includeEnded?: boolean } = {},
 ): Promise<ObligationsData> {
   const month = currentMonth(now);
   const lastMonth = addMonthsYm(month, TIMELINE_MONTHS - 1);
 
-  const [rows, payments] = await Promise.all([
+  const [rows, payments, endedRows, canceledRows] = await Promise.all([
     listObligations(client, householdId),
     listObligationPayments(client, householdId, month, lastMonth),
+    // The repository filters ONE status per call, so the archive needs both.
+    options.includeEnded === true
+      ? listObligations(client, householdId, { status: "ended" })
+      : [],
+    options.includeEnded === true
+      ? listObligations(client, householdId, { status: "canceled" })
+      : [],
   ]);
   const mapped = rows.map(mapObligationRow);
   const byId = new Map(mapped.map((o) => [o.id, o]));
   const paid = new Set(payments.map((p) => paidKey(p.obligationId, p.month)));
 
-  const obligations: ObligationListItem[] = mapped.map((o) => {
+  const withTerm = (o: PersistedObligation): ObligationListItem => {
     const endMonth = obligationEndMonth(o.startMonth, o.termMonths);
     let remainingMonths: number | null = null;
     if (endMonth !== null) {
       remainingMonths = Math.max(0, monthDiffYm(month, endMonth) + 1);
     }
     return { ...o, endMonth, remainingMonths };
-  });
+  };
+
+  const obligations = mapped.map(withTerm);
+  const ended = [...endedRows, ...canceledRows]
+    .map(mapObligationRow)
+    .map(withTerm);
 
   const projected = projectObligations(mapped, {
     fromMonth: month,
@@ -148,6 +163,7 @@ export async function buildObligationsData(
   return {
     month,
     obligations,
+    ended,
     thisMonth: {
       unpaid: timeline[0]?.entries ?? [],
       paid: paidByMonth.get(month) ?? [],
@@ -165,6 +181,7 @@ export function emptyObligationsData(
   return {
     month,
     obligations: [],
+    ended: [],
     thisMonth: { unpaid: [], paid: [] },
     timeline: [],
     loadError,
