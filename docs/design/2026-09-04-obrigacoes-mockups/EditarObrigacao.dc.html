@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap');
+    .esmeralda {
+      --ff-bg: #16352b; --ff-surface: #1e4133; --ff-surface-soft: #1a3a2e;
+      --ff-tint: rgba(212,175,106,0.14); --ff-ink: #f2ede0; --ff-ink-soft: rgba(242,237,224,0.66);
+      --ff-accent: #d4af6a; --ff-accent-hover: #e4c488; --ff-border: rgba(212,175,106,0.24);
+      --ff-on-accent: #16352b; --ff-positive: #93c7a1; --ff-positive-wash: rgba(147,199,161,0.13);
+      --ff-negative: #e08b63; --ff-negative-wash: rgba(224,139,99,0.13);
+      --ff-warn: #e0b662; --ff-warn-wash: rgba(224,182,98,0.15);
+    }
+    .salvia {
+      --ff-bg: #e8ede3; --ff-surface: #f7f9f3; --ff-surface-soft: #eff3ea;
+      --ff-tint: rgba(168,133,60,0.12); --ff-ink: #2e3a2a; --ff-ink-soft: #5f6b58;
+      --ff-accent: #a8853c; --ff-accent-hover: #c2a258; --ff-border: #cbd6c0;
+      --ff-on-accent: #ffffff; --ff-positive: #3e7d52; --ff-positive-wash: rgba(62,125,82,0.12);
+      --ff-negative: #b4552f; --ff-negative-wash: rgba(180,85,47,0.10);
+      --ff-warn: #9a7526; --ff-warn-wash: rgba(154,117,38,0.13);
+    }
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #d4af6a; text-decoration: none; } a:hover { color: #e4c488; }
+    .serif { font-family: "Playfair Display", Georgia, serif; font-weight: 600; }
+    .num { font-variant-numeric: tabular-nums; }
+    .kicker { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--ff-accent); }
+    .card { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 24px; }
+    .h2 { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 22px; color: var(--ff-ink); margin: 0; }
+    .note { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); }
+    .name { font-family: Inter, sans-serif; font-weight: 500; font-size: 15px; color: var(--ff-ink); }
+    .sub { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 2px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; white-space: nowrap; }
+    .badge-warn { background: var(--ff-warn-wash); color: var(--ff-warn); border: 1px solid var(--ff-warn-wash); }
+    .badge-pos { background: var(--ff-positive-wash); color: var(--ff-positive); border: 1px solid var(--ff-positive-wash); }
+    .badge-acc { background: var(--ff-tint); color: var(--ff-accent); border: 1px solid var(--ff-border); }
+    .badge-neu { background: transparent; color: var(--ff-ink-soft); border: 1px solid var(--ff-border); }
+    .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--ff-accent); color: var(--ff-on-accent); border: none; border-radius: 12px; padding: 11px 20px; font-family: Inter, sans-serif; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(20,14,8,0.14); cursor: pointer; }
+    .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 12px; padding: 10px 20px; font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; cursor: pointer; }
+    .btn-ghost-sm { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 10px; padding: 9px 16px; font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; cursor: pointer; }
+    .btn-link { background: transparent; color: var(--ff-accent); border: none; padding: 8px 6px; font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .iconbtn { width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; color: var(--ff-ink-soft); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .iconbtn:hover { background: var(--ff-tint); color: var(--ff-accent); }
+    .label { display: block; font-family: Inter, sans-serif; font-weight: 500; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ff-ink-soft); margin-bottom: 6px; }
+    .input { width: 100%; box-sizing: border-box; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 10px; padding: 11px 13px; color: var(--ff-ink); font-family: Inter, sans-serif; font-weight: 400; font-size: 14px; outline: none; }
+    .input-focus { border-color: var(--ff-accent); box-shadow: 0 0 0 3px var(--ff-tint); }
+    .placeholder { color: var(--ff-ink-soft); opacity: 0.7; }
+    .select { position: relative; display: block; width: 100%; }
+    .select .input { padding-right: 30px; cursor: pointer; }
+    .caret { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); color: var(--ff-accent); font-size: 11px; pointer-events: none; }
+    .bubble { width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; background: var(--ff-tint); color: var(--ff-accent); display: flex; align-items: center; justify-content: center; }
+    .track { height: 6px; border-radius: 999px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); overflow: hidden; }
+    .fill { height: 100%; border-radius: 999px; background: var(--ff-accent); }
+    .fill-pos { height: 100%; border-radius: 999px; background: var(--ff-positive); }
+    .stat { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 22px; }
+    .stat-k { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ff-ink-soft); }
+    .stat-v { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 30px; color: var(--ff-ink); margin-top: 10px; font-variant-numeric: tabular-nums; }
+    .stat-h { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 8px; }
+    .seg { display: inline-flex; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 999px; padding: 4px; gap: 2px; }
+    .seg-item { padding: 8px 16px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft); cursor: pointer; }
+    .seg-item-on { background: var(--ff-accent); color: var(--ff-on-accent); font-weight: 600; }
+  </style>
+</helmet>
+<div class="{{themeClass}}" style="width: 900px; min-height: 900px; box-sizing: border-box; background: var(--ff-bg); padding: 60px 90px; color: var(--ff-ink); position: relative;">
+  <div style="position: absolute; inset: 0; background: rgba(42,32,24,0.48);"></div>
+
+  <div style="position: relative; width: 720px; box-sizing: border-box; background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; box-shadow: 0 24px 70px rgba(42,32,24,0.24); padding: 24px; display: flex; flex-direction: column; gap: 22px;">
+
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;">
+      <div>
+        <div class="kicker">Editar obrigação</div>
+        <h2 class="serif" style="margin: 5px 0 0; font-size: 24px; font-weight: 500; color: var(--ff-ink);">Kicks</h2>
+      </div>
+      <button type="button" aria-label="Fechar" style="width: 32px; height: 32px; padding: 0; color: var(--ff-ink-soft); background: transparent; border: 1px solid transparent; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg></button>
+    </div>
+
+    <!-- Progress summary (read-only) -->
+    <div style="background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 14px; padding: 16px 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 20px; align-items: center;">
+      <div style="font-family: Inter, sans-serif; font-size: 14px; color: var(--ff-ink);">Parcela <strong class="num" style="font-weight: 600;">12 de 48</strong> · começou em set/2025 · termina em ago/2029</div>
+      <div class="num" style="font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); text-align: right;">faltam R$ 82.080,00</div>
+      <div class="track" style="grid-column: 1 / -1;"><div class="fill" style="width: 25%;"></div></div>
+      <div class="note" style="grid-column: 1 / -1;">Prazo e primeira parcela não mudam aqui — se o contrato mudou, encerre esta e crie outra.</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 12px;">
+      <div>
+        <label class="label">Nome</label>
+        <div class="input">Kicks</div>
+      </div>
+      <div>
+        <label class="label">Valor por mês</label>
+        <div style="position: relative;"><span style="position: absolute; left: 13px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--ff-ink-soft);">R$</span><div class="input input-focus num" style="padding-left: 38px;">2.380,00</div></div>
+        <div class="note" style="margin-top: 6px;">Vale a partir de outubro. Setembro continua R$ 2.280,00.</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(0, 1fr); gap: 12px;">
+      <div>
+        <label class="label">Vence todo dia</label>
+        <div class="select"><div class="input num">15</div><span class="caret">▾</span></div>
+      </div>
+      <div>
+        <label class="label">Conta</label>
+        <div class="select"><div class="input">Conta Nubank</div><span class="caret">▾</span></div>
+      </div>
+      <div>
+        <label class="label">Categoria</label>
+        <div class="select"><div class="input">Carro</div><span class="caret">▾</span></div>
+      </div>
+    </div>
+
+    <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px;">
+      <button class="btn-ghost" type="button">Cancelar</button>
+      <button class="btn-primary" type="button">Salvar alterações</button>
+    </div>
+
+    <!-- Danger zone -->
+    <div style="border-top: 1px solid var(--ff-border); padding-top: 18px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+        <div>
+          <div style="font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; color: var(--ff-ink);">Encerrar obrigação</div>
+          <div class="note" style="margin-top: 2px;">Quitou antes, vendeu o carro, cancelou o plano. Para de projetar daqui pra frente; o que já foi pago fica no histórico.</div>
+        </div>
+        <button type="button" style="flex-shrink: 0; background: transparent; color: var(--ff-negative); border: 1px solid var(--ff-negative-wash); border-radius: 12px; padding: 10px 20px; font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; cursor: pointer;">Encerrar…</button>
+      </div>
+
+      <!-- Confirm state (shown after clicking Encerrar…) -->
+      <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 14px 18px; border-radius: 12px; background: var(--ff-negative-wash); box-shadow: inset 3px 0 0 var(--ff-negative);">
+        <div style="flex: 1; min-width: 240px; font-family: Inter, sans-serif; font-size: 13px; color: var(--ff-ink);">Encerrar <strong style="font-weight: 600;">Kicks</strong>? A partir de outubro, esta obrigação sai dos próximos meses. As 12 parcelas pagas continuam nas transações.</div>
+        <button class="btn-ghost-sm" type="button">Deixa pra lá</button>
+        <button type="button" style="background: var(--ff-negative); color: #fff7f0; border: none; border-radius: 10px; padding: 9px 18px; font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; cursor: pointer;">Sim, encerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["esmeralda","salvia"],"default":"esmeralda","section":"Tema"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.theme ?? 'esmeralda' };
+  }
+}
+</script>
+</body>
+</html>
