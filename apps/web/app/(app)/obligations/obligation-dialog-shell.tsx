@@ -29,7 +29,9 @@ export type ObligationDialogHandle = {
 };
 
 /** Imperative handle for the dialog element plus the ids that label it. */
-export function useObligationDialog(): ObligationDialogHandle {
+export function useObligationDialog(
+  initialFocusRef?: RefObject<HTMLInputElement | null>,
+): ObligationDialogHandle {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -37,7 +39,10 @@ export function useObligationDialog(): ObligationDialogHandle {
     ref,
     titleId,
     descriptionId,
-    open: () => ref.current?.showModal(),
+    open: () => {
+      ref.current?.showModal();
+      requestAnimationFrame(() => initialFocusRef?.current?.focus());
+    },
     close: () => ref.current?.close(),
   };
 }
@@ -174,4 +179,31 @@ export function toPositiveInt(value: string): number | null {
   if (!/^\d+$/.test(value.trim())) return null;
   const parsed = Number.parseInt(value, 10);
   return parsed < 1 ? null : parsed;
+}
+
+/** The first shared pt-BR field complaint, in submission order. */
+export function obligationFieldComplaint({
+  description,
+  amountCents,
+  dueDay,
+  accountId,
+}: {
+  description: string;
+  amountCents: number | null;
+  dueDay: number | null;
+  accountId: string;
+}): string | null {
+  if (amountCents === null || amountCents <= 0) {
+    return 'Não entendi o valor — use algo como "710,44".';
+  }
+  if (description.trim() === "") {
+    return "O nome não pode ficar vazio.";
+  }
+  if (dueDay === null || dueDay > 28) {
+    return "Escolha o dia do vencimento, de 1 a 28.";
+  }
+  if (accountId === "") {
+    return "Escolha a conta de onde a obrigação sai.";
+  }
+  return null;
 }

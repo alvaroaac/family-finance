@@ -2968,11 +2968,6 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   grid-column: 1 / -1;
 }
 
-/* The panel already spaces the dialog; drop the grid's own leading margin. */
-.ff-oblig-edit .ff-form-grid {
-  margin-top: 0;
-}
-
 /* Numbered step inside the create/edit dialogs (NovaObrigacao mockup: 22px
    tint dot + 13px title, fields in the shared two-column form grid). */
 .ff-oblig-step {
@@ -3009,7 +3004,8 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   color: var(--ff-ink);
 }
 
-/* The step already spaces its children; drop the grid's own leading margin. */
+/* Dialog panels and steps already provide spacing; drop the leading margin. */
+.ff-oblig-edit .ff-form-grid,
 .ff-oblig-step .ff-form-grid {
   margin-top: 0;
 }

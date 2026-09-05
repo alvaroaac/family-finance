@@ -9,6 +9,8 @@ import { EditObligationDialog } from "../app/(app)/obligations/edit-obligation-d
 import type { ObligationListItem } from "../app/(app)/obligations/queries.js";
 import { termProgress } from "../app/(app)/obligations/view-model.js";
 
+import { parseReaisToCents } from "../lib/format.js";
+
 import { ToastProvider } from "../components/ui";
 
 type DialogProps = ComponentProps<typeof EditObligationDialog>;
@@ -222,6 +224,49 @@ describe("EditObligationDialog", () => {
     harness.unmount();
   });
 
+  it("gives Nome initial focus", async () => {
+    const harness = createHarness();
+    await openDialog(harness);
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    });
+    expect(document.activeElement).toBe(
+      getInput(harness.container, "description"),
+    );
+    harness.unmount();
+  });
+
+  it("re-seeds the amount from refreshed props on reopen", async () => {
+    const harness = createHarness();
+    await openDialog(harness);
+    await fill(getInput(harness.container, "amount"), "2.999,00");
+    await click(buttonWithLabel(harness.container, "Fechar"));
+    const item = { ...kicks, amountCents: 248050 };
+    await harness.render({ item, progress: termProgress(item, CURRENT_MONTH) });
+    await click(buttonWithLabel(harness.container, "Editar Kicks"));
+    expect(getInput(harness.container, "amount").value).toBe("2.480,50");
+    harness.unmount();
+  });
+
+  it("round-trips the pre-filled amount with a thousands separator", async () => {
+    expect(parseReaisToCents("2.380,00")).toBe(238000);
+    const posted: FormData[] = [];
+    const harness = createHarness({
+      ...baseProps,
+      updateAction: async (data) => {
+        posted.push(data);
+        return { ok: true };
+      },
+    });
+    await openDialog(harness);
+    await submit(harness.container);
+    expect(posted[0]?.get("amount")).toBe("2.380,00");
+    expect(parseReaisToCents(String(posted[0]?.get("amount")))).toBe(238000);
+    harness.unmount();
+  });
+
   it("renders the progress sentence for a running term", async () => {
     const harness = createHarness();
     await openDialog(harness);
@@ -274,7 +319,7 @@ describe("EditObligationDialog", () => {
     await openDialog(harness);
 
     expect(getInput(harness.container, "description").value).toBe("Kicks");
-    expect(getInput(harness.container, "amount").value).toBe("2380,00");
+    expect(getInput(harness.container, "amount").value).toBe("2.380,00");
     expect(getInput(harness.container, "dueDay").value).toBe("15");
     expect(getSelect(harness.container, "accountId").value).toBe(
       "account-nubank",
@@ -391,7 +436,7 @@ describe("EditObligationDialog", () => {
     },
   );
 
-  it("shows Salvando… while the save is in flight", async () => {
+  it("disables encerrar and shows Salvando… while the save is in flight", async () => {
     let finish: (result: { ok: boolean }) => void = () => undefined;
     const updateAction = vi.fn(
       () =>
@@ -408,7 +453,34 @@ describe("EditObligationDialog", () => {
     );
     expect(button?.disabled).toBe(true);
     expect(button?.textContent).toBe("Salvando…");
+    expect(buttonWithText(harness.container, "Encerrar…").disabled).toBe(true);
 
+    await act(async () => {
+      finish({ ok: true });
+    });
+    harness.unmount();
+  });
+
+  it("disables save and confirm controls while encerrar is in flight", async () => {
+    let finish: (result: { ok: boolean }) => void = () => undefined;
+    const cancelAction = vi.fn(
+      () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const harness = createHarness({ ...baseProps, cancelAction });
+    await openDialog(harness);
+    await click(buttonWithText(harness.container, "Encerrar…"));
+    await click(buttonWithText(harness.container, "Sim, encerrar"));
+    for (const label of [
+      "Salvar alterações",
+      "Encerrar…",
+      "Deixa pra lá",
+      "Encerrando…",
+    ]) {
+      expect(buttonWithText(harness.container, label).disabled).toBe(true);
+    }
     await act(async () => {
       finish({ ok: true });
     });
@@ -428,12 +500,16 @@ describe("EditObligationDialog", () => {
       harness.container.querySelector(".ff-danger-zone__confirm"),
     ).toBeNull();
 
-    await click(buttonWithText(harness.container, "Encerrar…"));
+    const toggle = buttonWithText(harness.container, "Encerrar…");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(textOf(harness.container, ".ff-danger-zone__confirm")).toContain(
-      "Encerrar Kicks? A partir de setembro, esta obrigação sai dos próximos meses. As 11 parcelas pagas continuam nas transações.",
+      "Encerrar Kicks? A partir de setembro, esta obrigação sai dos próximos meses. As 12 parcelas pagas continuam nas transações.",
     );
 
     await click(buttonWithText(harness.container, "Deixa pra lá"));
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(
       harness.container.querySelector(".ff-danger-zone__confirm"),
     ).toBeNull();

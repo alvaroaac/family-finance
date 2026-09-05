@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 
 import { addMonthsYm, obligationEndMonth } from "@family-finance/domain";
@@ -25,6 +25,7 @@ import {
   ObligationDialogError,
   ObligationDialogHeader,
   ObligationDialogShell,
+  obligationFieldComplaint,
   toPositiveInt,
   useObligationAction,
   useObligationDialog,
@@ -186,7 +187,8 @@ export function NewObligationDialog({
   action: (formData: FormData) => Promise<ObligationActionResult>;
   trigger?: "header" | "sticky";
 }): ReactElement {
-  const dialog = useObligationDialog();
+  const descriptionRef = useRef<HTMLInputElement>(null);
+  const dialog = useObligationDialog(descriptionRef);
   const startHintId = useId();
   const save = useObligationAction("Obrigação criada.");
 
@@ -231,19 +233,13 @@ export function NewObligationDialog({
 
   /** The first pt-BR complaint the household should see, if any. */
   function preCheck(): string | null {
-    if (amountCents === null || amountCents <= 0) {
-      return 'Não entendi o valor — use algo como "710,44".';
-    }
-    if (description.trim() === "") {
-      return "O nome não pode ficar vazio.";
-    }
-    const day = toPositiveInt(dueDay);
-    if (day === null || day > 28) {
-      return "Escolha o dia do vencimento, de 1 a 28.";
-    }
-    if (accountId === "") {
-      return "Escolha a conta de onde a obrigação sai.";
-    }
+    const complaint = obligationFieldComplaint({
+      description,
+      amountCents,
+      dueDay: toPositiveInt(dueDay),
+      accountId,
+    });
+    if (complaint !== null) return complaint;
     if (termMode === "installments" && termCount === null) {
       return "Informe pelo menos 1 parcela.";
     }
@@ -297,7 +293,7 @@ export function NewObligationDialog({
               <Field label="Nome">
                 <Input
                   name="description"
-                  autoFocus
+                  ref={descriptionRef}
                   value={description}
                   placeholder="Placas solares"
                   required

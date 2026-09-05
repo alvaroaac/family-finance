@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 
 import { addMonthsYm } from "@family-finance/domain";
@@ -23,6 +23,7 @@ import {
   ObligationDialogError,
   ObligationDialogHeader,
   ObligationDialogShell,
+  obligationFieldComplaint,
   toPositiveInt,
   useObligationAction,
   useObligationDialog,
@@ -43,9 +44,12 @@ import { monthAbbrPtBr, type TermProgress } from "./view-model";
  * re-parses and re-validates everything server-side.
  */
 
-/** 238000 -> "2380,00" — the pt-BR shape the amount field parses back. */
+/** 238000 -> "2.380,00" — the pt-BR shape the amount field parses back. */
 function amountInputValue(amountCents: number): string {
-  return (amountCents / 100).toFixed(2).replace(".", ",");
+  return (amountCents / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 /** Which installment the current month is: 11 already paid -> "Parcela 12". */
@@ -53,7 +57,7 @@ function installmentNumber(elapsed: number, total: number): number {
   return Math.min(elapsed + 1, total);
 }
 
-/** Elapsed share of the term, in percent (mockup: 12 of 48 -> 25%). */
+/** Paid share of the term, elapsed / total, in percent. */
 function elapsedPercent(elapsed: number, total: number): number {
   if (total === 0) return 0;
   return Math.round((elapsed / total) * 1000) / 10;
@@ -123,7 +127,10 @@ function cancelSentence(
   progress: TermProgress,
   currentMonth: string,
 ): ReactNode {
-  const paid = progress.kind === "running" ? progress.elapsed : 0;
+  const paid =
+    progress.kind === "running"
+      ? installmentNumber(progress.elapsed, progress.total)
+      : 0;
   const kept =
     paid === 0
       ? "O que já foi pago continua nas transações."
@@ -155,10 +162,13 @@ export function EditObligationDialog({
   updateAction: (formData: FormData) => Promise<ObligationActionResult>;
   cancelAction: (formData: FormData) => Promise<ObligationActionResult>;
 }): ReactElement {
-  const dialog = useObligationDialog();
+  const descriptionRef = useRef<HTMLInputElement>(null);
+  const dialog = useObligationDialog(descriptionRef);
   const amountHintId = useId();
   const save = useObligationAction("Obrigação atualizada.");
   const cancel = useObligationAction("Obrigação encerrada.");
+
+  const pending = save.pending || cancel.pending;
 
   const [description, setDescription] = useState(item.description);
   const [amount, setAmount] = useState(amountInputValue(item.amountCents));
@@ -182,25 +192,18 @@ export function EditObligationDialog({
   /** The first pt-BR complaint the household should see, if any. */
   function preCheck(): string | null {
     const amountCents = parseReaisToCents(amount);
-    if (amountCents === null || amountCents <= 0) {
-      return 'Não entendi o valor — use algo como "710,44".';
-    }
-    if (description.trim() === "") {
-      return "O nome não pode ficar vazio.";
-    }
-    const day = toPositiveInt(dueDay);
-    if (day === null || day > 28) {
-      return "Escolha o dia do vencimento, de 1 a 28.";
-    }
-    if (accountId === "") {
-      return "Escolha a conta de onde a obrigação sai.";
-    }
-    return null;
+    const complaint = obligationFieldComplaint({
+      description,
+      amountCents,
+      dueDay: toPositiveInt(dueDay),
+      accountId,
+    });
+    return complaint;
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (save.pending) return;
+    if (pending) return;
     const complaint = preCheck();
     if (complaint !== null) {
       save.setError(complaint);
@@ -212,6 +215,7 @@ export function EditObligationDialog({
 
   /** Encerrar posts only the id — it is not part of the edit form. */
   function handleCancelObligation(): void {
+    if (pending) return;
     const formData = new FormData();
     formData.set("obligationId", item.id);
     cancel.run(() => cancelAction(formData), dialog.close);
@@ -224,7 +228,10 @@ export function EditObligationDialog({
         className="ff-iconbtn"
         title="editar"
         aria-label={`Editar ${item.description}`}
-        onClick={dialog.open}
+        onClick={() => {
+          reset();
+          dialog.open();
+        }}
       >
         <IconPencil size={14} />
       </button>
@@ -252,7 +259,7 @@ export function EditObligationDialog({
             <Field label="Nome">
               <Input
                 name="description"
-                autoFocus
+                ref={descriptionRef}
                 value={description}
                 required
                 onChange={(event) => setDescription(event.target.value)}
@@ -322,16 +329,13 @@ export function EditObligationDialog({
           <ObligationDialogError message={save.error} />
 
           <div className="ff-dialog__actions">
-            <Button
-              variant="ghost"
-              disabled={save.pending}
-              onClick={dialog.close}
-            >
+            <Button variant="ghost" disabled={pending} onClick={dialog.close}>
               Cancelar
             </Button>
             <Button
               variant="primary"
               type="submit"
+              disabled={pending}
               loading={save.pending}
               loadingText="Salvando…"
             >
@@ -343,14 +347,20 @@ export function EditObligationDialog({
             <div className="ff-danger-zone__head">
               <div>
                 <div className="ff-name">Encerrar obrigação</div>
-                <p className="ff-sub">
+                <p className="ff-name-sub">
                   Some dos próximos meses. O que já foi pago continua nas
                   transações.
                 </p>
               </div>
-              <Button variant="danger" onClick={() => setConfirming(true)}>
+              <button
+                type="button"
+                className="ff-btn ff-btn--danger"
+                aria-expanded={confirming}
+                disabled={pending}
+                onClick={() => setConfirming(true)}
+              >
                 Encerrar…
-              </Button>
+              </button>
             </div>
 
             {confirming ? (
@@ -361,7 +371,7 @@ export function EditObligationDialog({
                 <button
                   type="button"
                   className="ff-btn ff-btn--ghost-sm"
-                  disabled={cancel.pending}
+                  disabled={pending}
                   onClick={() => setConfirming(false)}
                 >
                   Deixa pra lá
@@ -369,7 +379,7 @@ export function EditObligationDialog({
                 <button
                   type="button"
                   className="ff-btn ff-btn--danger-solid"
-                  disabled={cancel.pending}
+                  disabled={pending}
                   onClick={handleCancelObligation}
                 >
                   {cancel.pending ? (

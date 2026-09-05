@@ -227,6 +227,11 @@ describe("NewObligationDialog", () => {
     await click(buttonWithText(harness.container, "+ Nova obrigação"));
 
     expect(getDialog(harness.container).open).toBe(true);
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    });
     expect(document.activeElement).toBe(
       getInput(harness.container, "description"),
     );
