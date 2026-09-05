@@ -304,9 +304,13 @@ function ObligationsSkeleton(): ReactElement {
           {SIX_ROWS.map((row, index) => (
             <div className="ff-timeline__row" key={row}>
               <Skeleton width={64} height={14} />
-              <Skeleton width={`${92 - index * 6}%`} height={10} />
+              <div className="ff-timeline__badges">
+                <Skeleton width={`${92 - index * 6}%`} height={10} />
+              </div>
               <Skeleton width={110} height={15} />
-              <Skeleton width={18} height={18} />
+              <span className="ff-timeline__chevron">
+                <Skeleton width={18} height={18} />
+              </span>
             </div>
           ))}
         </div>

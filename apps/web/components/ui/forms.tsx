@@ -95,12 +95,19 @@ export function Segmented<T extends string>({
   // first option in the tab order.
   const focusIndex = activeIndex < 0 ? 0 : activeIndex;
 
+  // Re-selecting the current option is not a change, so stay quiet.
+  function report(next: T): void {
+    if (next === value) return;
+    onChange(next);
+  }
+
   function select(group: HTMLElement, step: number): void {
     const index = (focusIndex + step + options.length) % options.length;
     const option = options[index];
     if (!option) return;
-    group.querySelectorAll<HTMLButtonElement>("button")[index]?.focus();
-    onChange(option.value);
+    const target = group.children[index];
+    if (target instanceof HTMLElement) target.focus();
+    report(option.value);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -133,7 +140,7 @@ export function Segmented<T extends string>({
             "ff-seg__item",
             option.value === value && "ff-seg__item--on",
           )}
-          onClick={() => onChange(option.value)}
+          onClick={() => report(option.value)}
         >
           {option.label}
         </button>

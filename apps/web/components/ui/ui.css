@@ -2714,9 +2714,15 @@ a.ff-callout:hover {
   color: var(--ff-ink);
 }
 
+/* The file's `--ff-tint` halo (`.ff-input:focus`) alone would vanish on the
+   solid `--on` chip, so an accent ring carries the contrast; the transparent
+   outline keeps an indicator where box-shadows are dropped (forced colors). */
 .ff-seg__item:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--ff-tint);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 2px var(--ff-accent),
+    0 0 0 4px var(--ff-tint);
 }
 
 /* Mockup `.seg-item-on`: solid gold chip. */
@@ -2868,7 +2874,9 @@ a.ff-callout:hover {
   background: var(--ff-positive);
 }
 
-/* Badges next to the bar ("+ Placas solares", "última parcela"). */
+/* The bar cell (mockup: flex row) — holds `.ff-timeline__bar` plus the badges
+   ("+ Placas solares", "última parcela"), which wrap under it once it narrows.
+   Always column 2 of the row; a row without badges still uses it. */
 .ff-timeline__badges {
   display: flex;
   flex-wrap: wrap;
@@ -2959,11 +2967,6 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
     grid-template-columns: 72px 1fr 110px;
     gap: 10px;
     padding: 11px 18px;
-  }
-
-  /* Badges drop under the bar instead of squeezing it. */
-  .ff-timeline__badges {
-    grid-column: 2 / -1;
   }
 
   .ff-timeline__chevron {

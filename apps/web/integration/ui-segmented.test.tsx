@@ -59,6 +59,15 @@ describe("Segmented — teclado e clique", () => {
     expect(onChange).toHaveBeenCalledWith("ate");
   });
 
+  it("stays quiet when the already-selected option is picked again", async () => {
+    const onChange = vi.fn();
+    const container = await renderSegmented("parcelado", onChange);
+    act(() => {
+      container.querySelectorAll("button")[1]?.click();
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("ArrowRight/ArrowDown move to the next option and wrap around", async () => {
     const onChange = vi.fn();
     const container = await renderSegmented("parcelado", onChange);

@@ -107,6 +107,8 @@ describe("ui primitives — core", () => {
     expect(html).toContain("ff-oblig-stats");
     expect(html.match(/ff-checklist__row/g)).toHaveLength(4);
     expect(html.match(/ff-timeline__row/g)).toHaveLength(6);
+    // Every timeline row wraps its bar in the column-2 `__badges` cell.
+    expect(html.match(/ff-timeline__badges/g)).toHaveLength(6);
   });
 
   it("StatCard renders kicker uppercase text + value inside .ff-num", () => {
@@ -280,10 +282,16 @@ describe("ui primitives — core", () => {
     expect(html).toContain('aria-label="Tipo de prazo"');
     expect(html.match(/role="radio"/g)).toHaveLength(2);
     expect(html.match(/aria-checked="true"/g)).toHaveLength(1);
-    expect(html).toMatch(
-      /aria-checked="true" tabindex="0" class="ff-seg__item ff-seg__item--on"/,
-    );
-    expect(html).toMatch(/aria-checked="false" tabindex="-1" class="ff-seg__item"/);
+    // Checked state, tab order and the --on class must land on the same
+    // button, whatever order React emits the attributes in.
+    const buttons = html.match(/<button[^>]*>/g) ?? [];
+    expect(buttons).toHaveLength(2);
+    const on = buttons.find((tag) => tag.includes("ff-seg__item--on")) ?? "";
+    const off = buttons.find((tag) => !tag.includes("ff-seg__item--on")) ?? "";
+    expect(on).toContain('aria-checked="true"');
+    expect(on).toContain('tabindex="0"');
+    expect(off).toContain('aria-checked="false"');
+    expect(off).toContain('tabindex="-1"');
     expect(html.match(/type="button"/g)).toHaveLength(2);
     expect(html).toContain("Sem prazo");
   });
