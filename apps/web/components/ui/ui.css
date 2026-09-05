@@ -2940,6 +2940,39 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   box-shadow: inset 3px 0 0 var(--ff-negative);
 }
 
+/* Read-only term panel at the top of "Editar obrigação" (Editar mockup: soft
+   band, sentence on the left, "faltam …" on the right, track underneath). */
+.ff-oblig-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md);
+  background: var(--ff-surface-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ff-oblig-progress__remaining {
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Track and note run the full width, under both columns. */
+.ff-oblig-progress__wide {
+  grid-column: 1 / -1;
+}
+
+/* The panel already spaces the dialog; drop the grid's own leading margin. */
+.ff-oblig-edit .ff-form-grid {
+  margin-top: 0;
+}
+
 /* Numbered step inside the create/edit dialogs (NovaObrigacao mockup: 22px
    tint dot + 13px title, fields in the shared two-column form grid). */
 .ff-oblig-step {
@@ -2981,7 +3014,8 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   margin-top: 0;
 }
 
-.ff-oblig-step__hint {
+.ff-oblig-step__hint,
+.ff-oblig-edit__hint {
   margin-top: 6px;
 }
 
@@ -3056,6 +3090,15 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   .ff-danger-zone__head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  /* One column: the sentence wraps, "faltam …" sits under it, left-aligned. */
+  .ff-oblig-progress {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ff-oblig-progress__remaining {
+    text-align: left;
   }
 
   .ff-sticky-cta {
