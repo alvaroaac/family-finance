@@ -78,9 +78,13 @@ function data(
   };
 }
 
-const window = ["2026-09", "2026-10", "2026-11", "2026-12", "2027-01"].map(
-  (month) => slot(month),
-);
+const timelineWindow = [
+  "2026-09",
+  "2026-10",
+  "2026-11",
+  "2026-12",
+  "2027-01",
+].map((month) => slot(month));
 
 describe("obligations view-model", () => {
   it("formats month abbreviations and signed month distances", () => {
@@ -108,7 +112,7 @@ describe("obligations view-model", () => {
         endMonth: null,
       }),
     ];
-    expect(timelineChanges(obligations, window)).toEqual(
+    expect(timelineChanges(obligations, timelineWindow)).toEqual(
       new Map([
         ["2026-10", [{ kind: "last", description: "Parcela solar" }]],
         [
@@ -122,11 +126,11 @@ describe("obligations view-model", () => {
       ]),
     );
     expect(timelineChanges(obligations, [])).toEqual(new Map());
-    expect(timelineChanges([], window)).toEqual(new Map());
+    expect(timelineChanges([], timelineWindow)).toEqual(new Map());
     expect(
       timelineChanges(
         [item({ startMonth: "2026-12", termMonths: 1, endMonth: "2026-12" })],
-        window,
+        timelineWindow,
       ).get("2026-12"),
     ).toEqual([
       { kind: "starts", description: "Parcela solar", amountCents: 10000 },
@@ -135,9 +139,9 @@ describe("obligations view-model", () => {
   });
 
   it("reliefNote returns the month after the first term end and null for ends outside the window", () => {
-    expect(reliefNote([item({ endMonth: "2026-12" }), item()], window)).toEqual(
-      { fromMonth: "2026-11", amountCents: 10000 },
-    );
+    expect(
+      reliefNote([item({ endMonth: "2026-12" }), item()], timelineWindow),
+    ).toEqual({ fromMonth: "2026-11", amountCents: 10000 });
     expect(
       reliefNote(
         [
@@ -145,13 +149,15 @@ describe("obligations view-model", () => {
           item({ endMonth: "2027-02" }),
           item({ termMonths: null, endMonth: null }),
         ],
-        window,
+        timelineWindow,
       ),
     ).toBeNull();
-    expect(reliefNote([item({ endMonth: "2027-01" })], window)).toEqual({
-      fromMonth: "2027-02",
-      amountCents: 10000,
-    });
+    expect(reliefNote([item({ endMonth: "2027-01" })], timelineWindow)).toEqual(
+      {
+        fromMonth: "2027-02",
+        amountCents: 10000,
+      },
+    );
     expect(reliefNote([item()], [])).toBeNull();
   });
 

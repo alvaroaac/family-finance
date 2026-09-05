@@ -11,7 +11,7 @@
 
 import type { ReactElement } from "react";
 
-import { Button } from "../../../components/ui/primitives";
+import { Button } from "../../../components/ui";
 import type { ObligationActionResult } from "./actions";
 import { useObligationAction } from "./obligation-dialog-shell";
 

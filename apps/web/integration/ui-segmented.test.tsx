@@ -93,7 +93,9 @@ describe("Segmented — teclado e clique", () => {
   it("moves focus onto the option the arrow keys selected", async () => {
     const container = await renderSegmented("sem-prazo", () => undefined);
     pressKey(container, "ArrowRight");
-    expect(document.activeElement).toBe(container.querySelectorAll("button")[1]);
+    expect(document.activeElement).toBe(
+      container.querySelectorAll("button")[1],
+    );
   });
 
   it("ignores keys that are not arrows", async () => {

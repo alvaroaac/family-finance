@@ -269,7 +269,7 @@ function CollectionSkeleton({
 
 function ObligationsSkeleton(): ReactElement {
   return (
-    <section className="ff-skeleton-page ff-skeleton-page--narrow">
+    <section className="ff-skeleton-page ff-skeleton-page--narrow ff-has-sticky-cta">
       <PageHeading action />
       <div className="ff-oblig-stats">
         {Array.from({ length: 3 }, (_, index) => (

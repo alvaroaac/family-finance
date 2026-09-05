@@ -442,12 +442,14 @@ describe("ObligationsTable", () => {
         showEnded: false,
       }),
     );
-    for (const selector of [".ff-table > .ff-empty", ".ff-rowcards > .ff-empty"]) {
+    for (const selector of [
+      ".ff-table > .ff-oblig-table__empty",
+      ".ff-rowcards > .ff-oblig-table__empty",
+    ]) {
       expect(container.querySelector(selector)?.textContent).toBe(
         "Nenhuma obrigação cadastrada.",
       );
     }
     expect(container.querySelector(".ff-table .ff-row")).toBeNull();
   });
-
 });

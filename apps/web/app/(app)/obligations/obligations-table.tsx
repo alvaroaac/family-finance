@@ -151,13 +151,12 @@ export function ObligationsTable({
 
       <Table columns={COLUMNS} gridTemplate={GRID}>
         {listed.length === 0 ? (
-          <div className="ff-empty ff-muted">Nenhuma obrigação cadastrada.</div>
+          <div className="ff-oblig-table__empty">
+            Nenhuma obrigação cadastrada.
+          </div>
         ) : (
           listed.map(({ item, ended: isEnded }) => (
-            <TableRow
-              key={item.id}
-              className={isEnded ? "ff-off" : undefined}
-            >
+            <TableRow key={item.id} className={isEnded ? "ff-off" : undefined}>
               <div className="ff-oblig-row__name">
                 <span className="ff-bubble">
                   <IconDoc size={16} />
@@ -199,7 +198,9 @@ export function ObligationsTable({
 
       <RowCardList>
         {listed.length === 0 ? (
-          <div className="ff-empty ff-muted">Nenhuma obrigação cadastrada.</div>
+          <div className="ff-oblig-table__empty">
+            Nenhuma obrigação cadastrada.
+          </div>
         ) : null}
         {listed.map(({ item, ended: isEnded }) => (
           <Card
@@ -210,7 +211,11 @@ export function ObligationsTable({
             <div className="ff-oblig-rowcard__body">
               <div className="ff-name">{item.description}</div>
               <div className="ff-name-sub">{subtitle(item)}</div>
-              {isEnded ? <Badge tone="neutral">encerrada</Badge> : null}
+              {isEnded ? (
+                <div className="ff-oblig-rowcard__badge">
+                  <Badge tone="neutral">encerrada</Badge>
+                </div>
+              ) : null}
             </div>
             <div className="ff-oblig-cell--amount ff-num">
               {formatBrlCents(item.amountCents)}

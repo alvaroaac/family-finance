@@ -1,4 +1,4 @@
-import { addMonthsYm, obligationEndMonth } from "@family-finance/domain";
+import { addMonthsYm } from "@family-finance/domain";
 
 import type {
   ObligationListItem,
@@ -47,7 +47,10 @@ export type TimelineChange =
   | { kind: "last"; description: string }
   | { kind: "ended"; description: string; amountCents: number };
 
-/** Only months containing starts, final payments, or newly ended terms. */
+/**
+ * Only months containing starts, final payments, or newly ended terms.
+ * Callers pass active templates only (page.tsx feeds data.obligations).
+ */
 export function timelineChanges(
   obligations: ObligationListItem[],
   timeline: TimelineMonth[],
@@ -75,7 +78,10 @@ export function timelineChanges(
   return result;
 }
 
-/** The first term ending in the window, even if relief begins just after it. */
+/**
+ * The first term ending in the window, even if relief begins just after it.
+ * Callers pass active templates only (page.tsx feeds data.obligations).
+ */
 export function reliefNote(
   obligations: ObligationListItem[],
   timeline: TimelineMonth[],
@@ -86,15 +92,17 @@ export function reliefNote(
     if (
       item.endMonth !== null &&
       months.has(item.endMonth) &&
-      (first === undefined || item.endMonth < (first.endMonth as string))
+      (first === undefined ||
+        first.endMonth === null ||
+        item.endMonth < first.endMonth)
     ) {
       first = item;
     }
   }
-  return first === undefined
+  return first === undefined || first.endMonth === null
     ? null
     : {
-        fromMonth: addMonthsYm(first.endMonth as string, 1),
+        fromMonth: addMonthsYm(first.endMonth, 1),
         amountCents: first.amountCents,
       };
 }
@@ -246,7 +254,8 @@ export function termProgress(
       termMonths: item.termMonths,
     };
   }
-  if (item.termMonths === null) return { kind: "indefinite" };
+  if (item.termMonths === null || item.endMonth === null)
+    return { kind: "indefinite" };
   const total = item.termMonths;
   const elapsed = Math.min(
     total,
@@ -256,7 +265,7 @@ export function termProgress(
     kind: "running",
     elapsed,
     total,
-    endMonth: obligationEndMonth(item.startMonth, total) as string,
+    endMonth: item.endMonth,
     remainingCents: (total - elapsed) * item.amountCents,
   };
 }

@@ -29,7 +29,7 @@ import {
 import { formatBrlCents, monthNamePtBr } from "../../../lib/format";
 import { shiftMonth } from "../transactions/filters";
 
-// Kept on this module's surface: /resumo and /obligations already import it here.
+// Kept on this module's surface: /resumo already imports it here.
 export { monthLabelPtBr } from "../../../lib/format";
 
 export type ResumoData = {
@@ -151,7 +151,10 @@ export async function buildResumoData(
   // Split without double counting: direct card purchases are already inside
   // expenseCents, so the conta side subtracts them and the cartão side owns
   // them (plus the parcelas due this month, which are not transactions).
-  const accountSpentCents = Math.max(0, summary.expenseCents - pressure.directCents);
+  const accountSpentCents = Math.max(
+    0,
+    summary.expenseCents - pressure.directCents,
+  );
   const cardSpentCents = pressure.totalCents;
   const totalSpentCents = accountSpentCents + cardSpentCents;
   const previousTotalCents =
@@ -193,10 +196,13 @@ function emptyResumo(month: string, loadError: string | null): ResumoData {
  * (no household, unreachable DB) collapses to the zero state with a
  * `loadError` message for the page to surface.
  */
-export async function loadResumoData(now: Date = new Date()): Promise<ResumoData> {
+export async function loadResumoData(
+  now: Date = new Date(),
+): Promise<ResumoData> {
   const month = currentMonth(now);
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {

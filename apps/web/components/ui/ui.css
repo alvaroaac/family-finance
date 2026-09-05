@@ -3138,6 +3138,16 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   margin-top: 6px;
 }
 
+.ff-oblig-table__empty {
+  padding: 16px 20px;
+  color: var(--ff-ink-soft);
+  font-size: 13px;
+}
+
+.ff-oblig-rowcard__badge {
+  margin-top: 6px;
+}
+
 .ff-oblig-rowcard__body {
   flex: 1;
   min-width: 0;

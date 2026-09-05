@@ -2,9 +2,8 @@
 
 import { useId, useRef, useState, useTransition } from "react";
 
-import type { ObligationActionResult } from "./actions";
-
 import { Button, Field, Input, useToast } from "../../../components/ui";
+import type { ObligationActionResult } from "./actions";
 
 type ObligationPaymentDialogProps = {
   obligationId: string;
@@ -130,7 +129,7 @@ export function ObligationPaymentDialog({
             </div>
           ) : null}
           <div className="ff-dialog__actions">
-            <Button type="button" onClick={closeDialog}>
+            <Button variant="ghost" type="button" onClick={closeDialog}>
               Cancelar
             </Button>
             <Button variant="primary" type="submit" disabled={pending}>
