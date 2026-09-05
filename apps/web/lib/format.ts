@@ -32,3 +32,34 @@ export function parseReaisToCents(value: string): number | null {
   }
   return Math.round(reais * 100);
 }
+
+const MONTH_NAMES_PT = [
+  "janeiro",
+  "fevereiro",
+  "março",
+  "abril",
+  "maio",
+  "junho",
+  "julho",
+  "agosto",
+  "setembro",
+  "outubro",
+  "novembro",
+  "dezembro",
+];
+
+/** "2026-07" -> "julho de 2026". Pure. */
+export function monthLabelPtBr(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (match === null) return month;
+  const idx = Number.parseInt(match[2] as string, 10) - 1;
+  const name = MONTH_NAMES_PT[idx] ?? month;
+  return `${name} de ${match[1]}`;
+}
+
+/** Just the month name, e.g. "2026-06" -> "junho". Pure. */
+export function monthNamePtBr(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (match === null) return month;
+  return MONTH_NAMES_PT[Number.parseInt(match[2] as string, 10) - 1] ?? month;
+}

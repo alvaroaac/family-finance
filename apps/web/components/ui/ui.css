@@ -2940,6 +2940,81 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   box-shadow: inset 3px 0 0 var(--ff-negative);
 }
 
+/* Numbered step inside the create/edit dialogs (NovaObrigacao mockup: 22px
+   tint dot + 13px title, fields in the shared two-column form grid). */
+.ff-oblig-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ff-oblig-step__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ff-oblig-step__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--ff-accent);
+  background: var(--ff-tint);
+  border-radius: 50%;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.ff-oblig-step__title {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ff-ink);
+}
+
+/* The step already spaces its children; drop the grid's own leading margin. */
+.ff-oblig-step .ff-form-grid {
+  margin-top: 0;
+}
+
+.ff-oblig-step__hint {
+  margin-top: 6px;
+}
+
+/* Term row: segmented control, parcela count and the live "até …" badge. */
+.ff-oblig-term {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.ff-oblig-term__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ff-oblig-term__input {
+  width: 84px;
+  text-align: center;
+}
+
+/* Live summary (mockup: soft accent-edge card, icon bubble + one sentence). */
+.ff-oblig-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 /* Mobile-only CTA pinned above the bottom nav (Mobile mockup: full-width
    primary, float shadow). Desktop keeps the action in the page header. */
 .ff-sticky-cta {
