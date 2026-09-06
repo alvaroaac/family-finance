@@ -51,22 +51,27 @@ history with:
 
 The current production database predates the ledger. Its one-time bootstrap is
 different: take a fresh backup, deploy these migration-control files, then run
-the schema-fingerprint gate and baseline all migrations already present:
+the schema-fingerprint gate and baseline the explicitly verified history:
 
 ```bash
 ./deploy/migrate.sh baseline 0021
 ./deploy/migrate.sh status
 ```
 
-`baseline` does not execute migrations. It records their filenames and SHA-256
-checksums only after `deploy/checks/migration-baseline.sql` proves the live
-effects of `0001..0021`, including both pairs that were historically applied
-under the colliding `0018`/`0019` numbers. It is a one-time operation and
-refuses an existing ledger.
+`baseline` does not execute migrations. It records filenames and SHA-256
+checksums through `0021` only after `deploy/checks/migration-baseline.sql`
+proves those live effects, including both pairs historically applied under the
+colliding `0018`/`0019` numbers. Later migration files remain pending and are
+executed by `apply`; they can never be silently absorbed into this fingerprint.
+The baseline is a one-time operation and refuses an existing ledger.
+
+When the fingerprint is deliberately extended in the future, update the check
+and `MIGRATION_BASELINE_VERSION` together. Never raise the version without
+adding fingerprints and rejection tests for the new history.
 
 After migrations, apply `supabase/seed.sql` via psql when provisioning a new
-environment. It is idempotent (`on conflict do nothing`) and seeds the
-household, caixinhas, and starter categories.
+environment. It is idempotent (conflict-safe inserts and category-kind
+upserts) and seeds the household, caixinhas, and starter categories.
 
 **Apply `seed.sql` (or otherwise create the household) BEFORE the first login.**
 Migration 0014 makes provisioning resilient (an `allowed_emails` trigger +

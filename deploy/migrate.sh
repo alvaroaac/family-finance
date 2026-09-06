@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 migrations_dir="${MIGRATIONS_DIR:-$repo_root/supabase/migrations}"
 baseline_check="${MIGRATION_BASELINE_CHECK:-$repo_root/deploy/checks/migration-baseline.sql}"
+baseline_version="${MIGRATION_BASELINE_VERSION:-0021}"
 db_container="${MIGRATION_DB_CONTAINER:-supabase-db}"
 db_user="${MIGRATION_DB_USER:-postgres}"
 db_name="${MIGRATION_DB_NAME:-postgres}"
@@ -50,7 +51,8 @@ for migration in "${migrations[@]}"; do
     fail "duplicate migration version: $version"
   previous_version="$version"
 done
-latest_version="$previous_version"
+[[ "$baseline_version" =~ ^[0-9]{4}$ ]] || \
+  fail "invalid baseline fingerprint version: $baseline_version"
 
 command="${1:-}"
 case "$command" in
@@ -90,9 +92,17 @@ fi
 if [[ "$command" == "baseline" ]]; then
   through="$2"
   [[ "$ledger_exists" == "f" ]] || fail "$ledger already exists; baseline is one-time only"
-  [[ "$through" == "$latest_version" ]] || \
-    fail "baseline must cover the complete verified history through $latest_version"
+  [[ "$through" == "$baseline_version" ]] || \
+    fail "baseline fingerprint authorizes history only through $baseline_version"
   [[ -f "$baseline_check" ]] || fail "baseline check not found: $baseline_check"
+
+  baseline_file_found="false"
+  for migration in "${migrations[@]}"; do
+    filename="$(basename "$migration")"
+    [[ "${filename%%_*}" == "$through" ]] && baseline_file_found="true"
+  done
+  [[ "$baseline_file_found" == "true" ]] || \
+    fail "baseline migration $through is missing from $migrations_dir"
 
   {
     printf '%s\n' 'begin;' "select pg_advisory_xact_lock($lock_key);"
@@ -110,6 +120,7 @@ if [[ "$command" == "baseline" ]]; then
     for migration in "${migrations[@]}"; do
       filename="$(basename "$migration")"
       version="${filename%%_*}"
+      ((10#$version <= 10#$through)) || continue
       checksum="$(hash_file "$migration")"
       printf "insert into %s (version, name, checksum) values ('%s', '%s', '%s');\n" \
         "$ledger" "$version" "$filename" "$checksum"

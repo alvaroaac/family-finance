@@ -27,6 +27,8 @@ on conflict (household_id, slug) do nothing;
 
 -- Placeholder macro categories. These are starting buckets only; the real
 -- taxonomy is consolidated from imports during onboarding, not invented here.
+-- Kinds are explicit so the documented migrations-then-seed flow converges to
+-- the same state as upgrading an already-seeded database through migration 0021.
 insert into categories (household_id, name, kind)
 values
   ('00000000-0000-0000-0000-000000000001', 'Alimentação', 'expense'),
@@ -40,7 +42,7 @@ values
   ('00000000-0000-0000-0000-000000000001', 'Freelas', 'income'),
   ('00000000-0000-0000-0000-000000000001', 'Investimentos', 'income'),
   ('00000000-0000-0000-0000-000000000001', 'Outros', 'expense')
-on conflict (household_id, name) do nothing;
+on conflict (household_id, name) do update set kind = excluded.kind;
 
 -- A couple of placeholder subcategories under Alimentação, to exercise the
 -- macro -> sub relationship. Still no financial data.

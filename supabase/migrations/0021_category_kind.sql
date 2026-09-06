@@ -3,9 +3,18 @@
 -- kinds were first applied manually under that occupied number, so their
 -- canonical repository version is 0021.
 
-alter table categories
-  add column if not exists kind text not null default 'expense'
+alter table categories add column if not exists kind text;
+
+update categories set kind = 'expense' where kind is null;
+
+alter table categories alter column kind set default 'expense';
+alter table categories alter column kind set not null;
+
+do $$ begin
+  alter table categories add constraint categories_kind_check
     check (kind in ('expense', 'income'));
+exception when duplicate_object then null;
+end $$;
 
 -- The seeded "Receitas" bucket becomes the income fallback category.
 update categories set kind = 'income' where name = 'Receitas';
