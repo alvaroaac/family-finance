@@ -456,6 +456,9 @@ async function checkAnonCannotExecuteRpcs(householdId) {
     ["materialize_obligation_payment", {
       target_obligation_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
       target_month: "2026-01",
+      paid_on: null,
+      target_amount_cents: null,
+      target_account_id: null,
     }],
     ["merge_category", {
       target_household_id: householdId,
@@ -481,7 +484,7 @@ async function checkAnonCannotExecuteRpcs(householdId) {
     // the body RAN) is a fail — anon reached the function.
     const denied =
       Boolean(error) &&
-      /permission denied|not allowed|does not exist|42501/i.test(error.message);
+      /permission denied|not allowed|42501/i.test(error.message);
     record(
       `(e) anon cannot EXECUTE ${name}`,
       denied,
@@ -518,6 +521,9 @@ async function checkObligationMaterialization(member, householdId) {
   const first = await member.rpc("materialize_obligation_payment", {
     target_obligation_id: ob.id,
     target_month: "2026-03",
+    paid_on: null,
+    target_amount_cents: null,
+    target_account_id: null,
   });
   record(
     "(f1) member materializes an in-window month",
@@ -528,6 +534,9 @@ async function checkObligationMaterialization(member, householdId) {
   const repeat = await member.rpc("materialize_obligation_payment", {
     target_obligation_id: ob.id,
     target_month: "2026-03",
+    paid_on: null,
+    target_amount_cents: null,
+    target_account_id: null,
   });
   record(
     "(f2) repeat is idempotent (already_paid=true, no double row)",
@@ -538,10 +547,14 @@ async function checkObligationMaterialization(member, householdId) {
   const outOfWindow = await member.rpc("materialize_obligation_payment", {
     target_obligation_id: ob.id,
     target_month: "2030-01",
+    paid_on: null,
+    target_amount_cents: null,
+    target_account_id: null,
   });
   record(
     "(f3) month after the term is rejected",
-    Boolean(outOfWindow.error),
+    Boolean(outOfWindow.error) &&
+      /month .* is after the .*term/i.test(outOfWindow.error.message),
     outOfWindow.error ? outOfWindow.error.message : "unexpectedly accepted",
   );
 

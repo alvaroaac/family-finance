@@ -68,6 +68,25 @@ docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -
   < "$repo_root/supabase/seed.sql" >/dev/null
 
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+  "grant execute on function confirm_import(jsonb, jsonb) to anon;" >/dev/null
+assert_baseline_rejected "0012 anon RPC lock" \
+  "$repo_root/deploy/migrate.sh" baseline 0021
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+  "revoke execute on function confirm_import(jsonb, jsonb) from anon;" >/dev/null
+
+for trigger_case in \
+  "auth.users|provision_member_on_signup|0009 member provisioning" \
+  "public.allowed_emails|provision_member_on_allowlist|0014 resilient provisioning"; do
+  IFS='|' read -r trigger_table trigger_name expected_fingerprint <<< "$trigger_case"
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+    "alter table $trigger_table disable trigger $trigger_name;" >/dev/null
+  assert_baseline_rejected "$expected_fingerprint" \
+    "$repo_root/deploy/migrate.sh" baseline 0021
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+    "alter table $trigger_table enable trigger $trigger_name;" >/dev/null
+done
+
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
   "alter table transactions drop constraint transactions_hh_category_fk;
    alter table installments add constraint transactions_hh_category_fk
      foreign key (household_id, category_id)
@@ -93,25 +112,32 @@ end;
 $old_rpc$;
 SQL
 assert_baseline_rejected "0019 installment idempotency" \
+  env MIGRATION_BASELINE_CHECK=/dev/null \
   "$repo_root/deploy/migrate.sh" baseline 0021
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d postgres -f - \
   < "$repo_root/supabase/migrations/0019_installment_purchase_idempotency.sql" >/dev/null
 
-docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
-  "alter table categories drop constraint categories_kind_check;
-   alter table categories alter column kind drop not null;
-   alter table categories alter column kind drop default;
-   update categories set kind = 'expense' where name = 'Receitas';
-   delete from categories where name = 'Salário';" >/dev/null
-assert_baseline_rejected "0021 category kind" \
-  "$repo_root/deploy/migrate.sh" baseline 0021
-docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d postgres -f - \
-  < "$repo_root/supabase/migrations/0021_category_kind.sql" >/dev/null
+category_mutations=(
+  "alter table categories drop constraint categories_kind_check"
+  "alter table categories alter column kind drop not null"
+  "alter table categories alter column kind drop default"
+  "update categories set kind = 'expense' where name = 'Receitas'"
+  "delete from categories where name = 'Salário'"
+)
+for mutation in "${category_mutations[@]}"; do
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+    "$mutation" >/dev/null
+  assert_baseline_rejected "0021 category kind" \
+    "$repo_root/deploy/migrate.sh" baseline 0021
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d postgres -f - \
+    < "$repo_root/supabase/migrations/0021_category_kind.sql" >/dev/null
+done
 
 cp -R "$repo_root/supabase/migrations" "$scratch/pending-migrations"
 printf '%s\n' 'create table if not exists migration_runner_success(id integer);' \
   > "$scratch/pending-migrations/0022_runner_success.sql"
 assert_baseline_rejected "only through 0021" env \
+  MIGRATION_BASELINE_VERSION=0022 \
   MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" baseline 0022
 
@@ -149,6 +175,24 @@ if MIGRATIONS_DIR="$scratch/checksum-migrations" \
   echo "changed applied migration was not rejected" >&2
   exit 1
 fi
+printf '%s\n' 'create table checksum_guard_was_bypassed(id integer);' \
+  > "$scratch/checksum-migrations/0023_checksum_guard.sql"
+if checksum_output="$(MIGRATIONS_DIR="$scratch/checksum-migrations" \
+  "$repo_root/deploy/migrate.sh" apply 2>&1)"; then
+  echo "apply accepted a changed applied migration" >&2
+  exit 1
+fi
+[[ "$checksum_output" == *"checksum/name mismatch"* ]] || {
+  echo "apply rejected checksum drift without the expected error: $checksum_output" >&2
+  exit 1
+}
+checksum_apply_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
+  "select (to_regclass('public.checksum_guard_was_bypassed') is null)::int || '|' ||
+          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0023'))::int")"
+[[ "$checksum_apply_state" == "1|1" ]] || {
+  echo "checksum rejection allowed a pending migration to run: $checksum_apply_state" >&2
+  exit 1
+}
 
 cp -R "$scratch/pending-migrations" "$scratch/duplicate-migrations"
 cp "$scratch/duplicate-migrations/0021_category_kind.sql" \
@@ -204,6 +248,73 @@ category_state="$(docker exec "$container" psql -X -U postgres -d "$fresh_db" -A
      and name in ('Receitas', 'Salário', 'Freelas', 'Investimentos', 'Alimentação')")"
 [[ "$category_state" == "4|1" ]] || {
   echo "fresh migrations-then-seed category state is wrong: $category_state" >&2
+  exit 1
+}
+
+upgrade_db="family_finance_upgrade"
+docker exec "$container" createdb -U postgres "$upgrade_db"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$upgrade_db" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "0021_" ]] || continue
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$upgrade_db" -f - \
+    < "$migration" >/dev/null
+done
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$upgrade_db" -c \
+  "insert into households (id, name)
+     values ('00000000-0000-0000-0000-000000000001', 'Casa');
+   insert into categories (household_id, name)
+     values
+       ('00000000-0000-0000-0000-000000000001', 'Alimentação'),
+       ('00000000-0000-0000-0000-000000000001', 'Receitas'),
+       ('00000000-0000-0000-0000-000000000001', 'Freelas');" >/dev/null
+freelas_id="$(docker exec "$container" psql -X -U postgres -d "$upgrade_db" -Atc \
+  "select id from categories where name = 'Freelas'")"
+for _ in 1 2; do
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$upgrade_db" -f - \
+    < "$repo_root/supabase/migrations/0021_category_kind.sql" >/dev/null
+done
+upgrade_state="$(docker exec "$container" psql -X -U postgres -d "$upgrade_db" -Atc \
+  "select count(*) filter (where kind = 'income') || '|' ||
+          count(*) filter (where kind = 'expense') || '|' ||
+          count(*) filter (where name = 'Freelas' and id = '$freelas_id')
+   from categories
+   where household_id = '00000000-0000-0000-0000-000000000001'
+     and name in ('Receitas', 'Salário', 'Freelas', 'Investimentos', 'Alimentação')")"
+[[ "$upgrade_state" == "4|1|1" ]] || {
+  echo "populated pre-0021 upgrade state is wrong: $upgrade_state" >&2
+  exit 1
+}
+
+decoy_db="family_finance_enum_decoy"
+docker exec "$container" createdb -U postgres "$decoy_db"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$decoy_db" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';
+   create schema decoy;
+   create type decoy.import_source as enum ('mercado_pago_pdf');" >/dev/null
+for migration in "$repo_root"/supabase/migrations/000{1,2,3,4,5}_*.sql; do
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$decoy_db" -f - \
+    < "$migration" >/dev/null
+done
+if decoy_output="$(MIGRATION_DB_NAME="$decoy_db" \
+  "$repo_root/deploy/migrate.sh" baseline 0021 2>&1)"; then
+  echo "decoy import_source enum unexpectedly satisfied the baseline" >&2
+  exit 1
+fi
+[[ "$decoy_output" == *"0006 mercado_pago_pdf"* ]] || {
+  echo "schema-scoped enum rejection was not reported: $decoy_output" >&2
+  exit 1
+}
+decoy_ledger="$(docker exec "$container" psql -X -U postgres -d "$decoy_db" -Atc \
+  "select to_regclass('family_finance_migrations.schema_migrations') is null")"
+[[ "$decoy_ledger" == "t" ]] || {
+  echo "failed decoy baseline created a migration ledger" >&2
   exit 1
 }
 

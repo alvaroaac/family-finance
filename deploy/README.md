@@ -66,8 +66,10 @@ executed by `apply`; they can never be silently absorbed into this fingerprint.
 The baseline is a one-time operation and refuses an existing ledger.
 
 When the fingerprint is deliberately extended in the future, update the check
-and `MIGRATION_BASELINE_VERSION` together. Never raise the version without
-adding fingerprints and rejection tests for the new history.
+and the source-pinned `baseline_version` together. Neither the check path nor
+its authorized version can be overridden through the environment. Never raise
+the version without adding fingerprints and rejection tests for the new
+history.
 
 After migrations, apply `supabase/seed.sql` via psql when provisioning a new
 environment. It is idempotent (conflict-safe inserts and category-kind

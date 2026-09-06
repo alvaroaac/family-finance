@@ -3,8 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 migrations_dir="${MIGRATIONS_DIR:-$repo_root/supabase/migrations}"
-baseline_check="${MIGRATION_BASELINE_CHECK:-$repo_root/deploy/checks/migration-baseline.sql}"
-baseline_version="${MIGRATION_BASELINE_VERSION:-0021}"
+baseline_check="$repo_root/deploy/checks/migration-baseline.sql"
+baseline_version="0021"
 db_container="${MIGRATION_DB_CONTAINER:-supabase-db}"
 db_user="${MIGRATION_DB_USER:-postgres}"
 db_name="${MIGRATION_DB_NAME:-postgres}"

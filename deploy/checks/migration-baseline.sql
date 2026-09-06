@@ -17,7 +17,8 @@ begin
   if not exists (
     select 1 from pg_enum enum_value
     join pg_type enum_type on enum_type.oid = enum_value.enumtypid
-    where enum_type.typname = 'import_source' and enum_value.enumlabel = 'mercado_pago_pdf'
+    where enum_type.oid = to_regtype('public.import_source')
+      and enum_value.enumlabel = 'mercado_pago_pdf'
   ) then missing := missing || '0006 mercado_pago_pdf'; end if;
   if not exists (
     select 1 from information_schema.columns
@@ -40,6 +41,7 @@ begin
       and schema.nspname = 'auth'
       and relation.relname = 'users'
       and trigger.tgfoid = to_regprocedure('public.provision_household_member()')
+      and trigger.tgenabled in ('O', 'A')
   ) then missing := missing || '0009 member provisioning'; end if;
   if not exists (
     select 1 from information_schema.columns
@@ -51,7 +53,20 @@ begin
       and policyname = 'household_members_update'
   ) then missing := missing || '0010 member update policy'; end if;
   if to_regclass('public.obligations') is null then missing := missing || '0011 obligations'; end if;
-  if has_function_privilege('anon', 'public.merge_category(uuid,uuid,uuid)', 'execute') then
+  if exists (
+    select 1
+    from unnest(array[
+      'public.create_installment_purchase(jsonb,jsonb)',
+      'public.confirm_import(jsonb,jsonb)',
+      'public.confirm_import_v2(jsonb,jsonb)',
+      'public.merge_category(uuid,uuid,uuid)',
+      'public.materialize_obligation_payment(uuid,text,date,bigint)',
+      'public.materialize_obligation_payment(uuid,text,date,bigint,uuid)',
+      'public.settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)'
+    ]) rpc(signature)
+    where to_regprocedure(rpc.signature) is null
+       or has_function_privilege('anon', to_regprocedure(rpc.signature), 'execute')
+  ) then
     missing := missing || '0012 anon RPC lock';
   end if;
   if not exists (
@@ -74,6 +89,7 @@ begin
       and schema.nspname = 'public'
       and relation.relname = 'allowed_emails'
       and trigger.tgfoid = to_regprocedure('public.provision_on_allowlist()')
+      and trigger.tgenabled in ('O', 'A')
   ) then missing := missing || '0014 resilient provisioning'; end if;
   if not exists (
     select 1 from information_schema.columns
