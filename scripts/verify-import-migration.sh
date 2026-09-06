@@ -6,11 +6,19 @@ cleanup() { docker stop "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 docker run --rm -d --name "$name" -e POSTGRES_PASSWORD=postgres postgres:17-alpine >/dev/null
-for _ in $(seq 1 30); do
-  if docker exec "$name" pg_isready -U postgres >/dev/null 2>&1; then break; fi
+ready=false
+for _ in $(seq 1 60); do
+  if docker exec "$name" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
   sleep 1
 done
-docker exec "$name" pg_isready -U postgres >/dev/null
+if [[ "$ready" != "true" ]]; then
+  docker logs "$name" >&2 || true
+  echo "postgres did not become ready" >&2
+  exit 1
+fi
 
 docker exec "$name" psql -v ON_ERROR_STOP=1 -U postgres -c \
   "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
