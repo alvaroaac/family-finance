@@ -32,6 +32,7 @@ import {
   type ConfirmResult,
   type ImportPreviewSnapshot,
   type ImportAiSuggestion,
+  type InstallmentCandidateMatch,
 } from "./actions";
 import {
   normalizeMerchantKey,
@@ -51,6 +52,14 @@ function formatBrl(cents: number): string {
 
 function providerLabel(provider: "codex" | "paid_fallback"): string {
   return provider === "codex" ? "Codex" : "fallback pago";
+}
+
+function installmentConfidenceLabel(
+  confidence: InstallmentCandidateMatch["confidence"],
+): string {
+  if (confidence === "very_strong") return "confiança muito forte";
+  if (confidence === "strong") return "confiança forte";
+  return "confiança média";
 }
 
 /** "2026-06-05" -> "05/06". */
@@ -161,6 +170,12 @@ export default function ImportsPage() {
   >({});
   const [groupOverrides, setGroupOverrides] = useState<
     Record<number, { token?: string; claimId?: string; reason: string }>
+  >({});
+  const [groupMatchesByIndex, setGroupMatchesByIndex] = useState<
+    Record<number, InstallmentCandidateMatch[]>
+  >({});
+  const [groupMatchDecisions, setGroupMatchDecisions] = useState<
+    Record<number, "keep_existing" | "import_anyway">
   >({});
   const [mapping, setMapping] = useState<
     Record<number, { categoryId?: string; subcategoryId?: string }>
@@ -314,6 +329,8 @@ export default function ImportsPage() {
     setPersistedGroupDuplicates(new Set());
     setPersistedGroupClaimIds({});
     setGroupOverrides({});
+    setGroupMatchesByIndex({});
+    setGroupMatchDecisions({});
     const edits: Record<
       number,
       {
@@ -375,6 +392,8 @@ export default function ImportsPage() {
       const nextPersisted = new Set(result.duplicateIndices);
       setPersistedClaimIds(result.claimIdsByIndex);
       const nextGroupPersisted = new Set(result.groupDuplicateIndices);
+      setGroupMatchesByIndex(result.groupMatchesByIndex);
+      setGroupMatchDecisions({});
       setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
       setPersistedGroupDuplicates((previousPersisted) => {
         setGroupEdits((previousEdits) => {
@@ -605,6 +624,24 @@ export default function ImportsPage() {
         message: isMp
           ? "Escolha o cartão de destino antes de confirmar."
           : "Escolha a conta de destino antes de confirmar.",
+      });
+      return;
+    }
+    const pendingMatchReview = Object.entries(groupMatchesByIndex).find(
+      ([rawIndex, matches]) => {
+        const index = Number.parseInt(rawIndex, 10);
+        return (
+          matches.length > 0 &&
+          groupEdits[index]?.skip === false &&
+          groupMatchDecisions[index] === undefined
+        );
+      },
+    );
+    if (pendingMatchReview !== undefined) {
+      setConfirmResult({
+        ok: false,
+        message:
+          "Compare os possíveis parcelamentos existentes e escolha manter ou importar mesmo assim.",
       });
       return;
     }
@@ -1026,11 +1063,19 @@ export default function ImportsPage() {
                     if (edit === undefined) return null;
                     const isPersistedDuplicate =
                       persistedGroupDuplicates.has(i);
+                    const matches = groupMatchesByIndex[i] ?? [];
+                    const topMatch = matches[0];
+                    const isExactImported =
+                      persistedGroupClaimIds[i] !== undefined;
                     return (
                       <div
                         key={i}
                         className={`ff-group${
-                          !isPersistedDuplicate ? " ff-group--new" : ""
+                          !isPersistedDuplicate && matches.length === 0
+                            ? " ff-group--new"
+                            : ""
+                        }${
+                          matches.length > 0 ? " ff-group--match" : ""
                         }${edit.skip ? " ff-off" : ""}`}
                       >
                         <div className="ff-group__head">
@@ -1038,11 +1083,25 @@ export default function ImportsPage() {
                             {g.description}
                           </span>
                           <Badge
-                            tone={isPersistedDuplicate ? "neutral" : "positive"}
+                            tone={
+                              isExactImported
+                                ? "neutral"
+                                : topMatch !== undefined
+                                  ? "warn"
+                                  : isPersistedDuplicate
+                                    ? "neutral"
+                                    : "positive"
+                            }
                           >
-                            {isPersistedDuplicate
-                              ? "já existe neste cartão"
-                              : "novo"}
+                            {isExactImported
+                              ? "já importado"
+                              : topMatch !== undefined
+                                ? installmentConfidenceLabel(
+                                    topMatch.confidence,
+                                  )
+                                : isPersistedDuplicate
+                                  ? "já existe neste cartão"
+                                  : "novo"}
                           </Badge>
                         </div>
                         <div className="ff-group__grid">
@@ -1160,29 +1219,78 @@ export default function ImportsPage() {
                             </Select>
                           </Field>
                         </div>
-                        <div className="ff-group__foot">
-                          <span className="ff-group__hint">
-                            {isPersistedDuplicate
-                              ? `a compra já foi importada neste cartão; mantenha pulada ou justifique a reimportação`
-                              : `parcela ${g.installmentNumber} de ${g.installmentCount} · ${formatBrl(g.perInstallmentCents)}`}
-                            {g.cardLast4 ? ` · final ${g.cardLast4}` : ""}
-                          </span>
-                          <label className="ff-group__skip">
-                            <input
-                              className="ff-check"
-                              type="checkbox"
-                              checked={edit.skip}
-                              onChange={() => {
-                                if (edit.skip && isPersistedDuplicate) {
-                                  const claimId = persistedGroupClaimIds[i];
+                        {matches.length > 0 ? (
+                          <div
+                            className="ff-group-matches"
+                            aria-label={`Possíveis correspondências para ${g.description}`}
+                          >
+                            <strong>Compare com o que já está no painel</strong>
+                            {matches.map((match) => (
+                              <div
+                                className="ff-group-match"
+                                key={match.installmentGroupId}
+                              >
+                                <div className="ff-group-match__head">
+                                  <span>{match.description}</span>
+                                  <Badge tone="warn">
+                                    {installmentConfidenceLabel(
+                                      match.confidence,
+                                    )}
+                                  </Badge>
+                                </div>
+                                <span className="ff-group__hint">
+                                  {formatBrl(match.amountCents)} · parcela{" "}
+                                  {match.installmentNumber} de{" "}
+                                  {match.installmentCount} · {match.cardName} ·
+                                  compra em {formatDayMonth(match.purchasedOn)}
+                                  {match.amountDifferenceCents === 0
+                                    ? " · valor exato"
+                                    : ` · diferença de ${formatBrl(match.amountDifferenceCents)}`}
+                                </span>
+                              </div>
+                            ))}
+                            <div className="ff-group-match__actions">
+                              <Button
+                                variant={
+                                  edit.skip &&
+                                  groupMatchDecisions[i] !== "import_anyway"
+                                    ? "primary"
+                                    : "ghost"
+                                }
+                                onClick={() => {
+                                  setGroupMatchDecisions((previous) => ({
+                                    ...previous,
+                                    [i]: "keep_existing",
+                                  }));
+                                  setGroupOverrides((previous) => {
+                                    const updated = { ...previous };
+                                    delete updated[i];
+                                    return updated;
+                                  });
+                                  setGroupEdits((previous) => ({
+                                    ...previous,
+                                    [i]: { ...edit, skip: true },
+                                  }));
+                                }}
+                              >
+                                Manter o existente
+                              </Button>
+                              <Button
+                                variant={
+                                  groupMatchDecisions[i] === "import_anyway"
+                                    ? "primary"
+                                    : "ghost"
+                                }
+                                onClick={() => {
                                   const reason = window.prompt(
-                                    "Este parcelamento já foi importado neste cartão. Por que deseja importar novamente?",
+                                    "Por que deseja importar este parcelamento mesmo com uma possível correspondência?",
                                   );
                                   if (
                                     reason === null ||
                                     reason.trim().length < 5
                                   )
                                     return;
+                                  const claimId = persistedGroupClaimIds[i];
                                   setGroupOverrides((previous) => ({
                                     ...previous,
                                     [i]: {
@@ -1195,22 +1303,76 @@ export default function ImportsPage() {
                                           }),
                                     },
                                   }));
-                                } else {
-                                  setGroupOverrides((previous) => {
-                                    const updated = { ...previous };
-                                    delete updated[i];
-                                    return updated;
-                                  });
-                                }
-                                setGroupEdits((prev) => ({
-                                  ...prev,
-                                  [i]: { ...edit, skip: !edit.skip },
-                                }));
-                              }}
-                              aria-label={`Pular parcelamento ${g.description}`}
-                            />
-                            pular
-                          </label>
+                                  setGroupMatchDecisions((previous) => ({
+                                    ...previous,
+                                    [i]: "import_anyway",
+                                  }));
+                                  setGroupEdits((previous) => ({
+                                    ...previous,
+                                    [i]: { ...edit, skip: false },
+                                  }));
+                                }}
+                              >
+                                Importar mesmo assim
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="ff-group__foot">
+                          <span className="ff-group__hint">
+                            {matches.length > 0
+                              ? `na fatura: parcela ${g.installmentNumber} de ${g.installmentCount} · ${formatBrl(g.perInstallmentCents)}`
+                              : isPersistedDuplicate
+                                ? `a compra já foi importada neste cartão; mantenha pulada ou justifique a reimportação`
+                                : `parcela ${g.installmentNumber} de ${g.installmentCount} · ${formatBrl(g.perInstallmentCents)}`}
+                            {g.cardLast4 ? ` · final ${g.cardLast4}` : ""}
+                          </span>
+                          {matches.length === 0 ? (
+                            <label className="ff-group__skip">
+                              <input
+                                className="ff-check"
+                                type="checkbox"
+                                checked={edit.skip}
+                                onChange={() => {
+                                  if (edit.skip && isPersistedDuplicate) {
+                                    const claimId = persistedGroupClaimIds[i];
+                                    const reason = window.prompt(
+                                      "Este parcelamento já foi importado neste cartão. Por que deseja importar novamente?",
+                                    );
+                                    if (
+                                      reason === null ||
+                                      reason.trim().length < 5
+                                    )
+                                      return;
+                                    setGroupOverrides((previous) => ({
+                                      ...previous,
+                                      [i]: {
+                                        reason: reason.trim().slice(0, 200),
+                                        ...(claimId === undefined
+                                          ? {}
+                                          : {
+                                              token: crypto.randomUUID(),
+                                              claimId,
+                                            }),
+                                      },
+                                    }));
+                                  } else {
+                                    setGroupOverrides((previous) => {
+                                      const updated = { ...previous };
+                                      delete updated[i];
+                                      return updated;
+                                    });
+                                  }
+                                  setGroupEdits((prev) => ({
+                                    ...prev,
+                                    [i]: { ...edit, skip: !edit.skip },
+                                  }));
+                                }}
+                                aria-label={`Pular parcelamento ${g.description}`}
+                              />
+                              pular
+                            </label>
+                          ) : null}
                         </div>
                       </div>
                     );

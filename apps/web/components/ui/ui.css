@@ -2210,6 +2210,15 @@ a.ff-callout:hover {
   border-color: var(--ff-accent);
 }
 
+.ff-group--match {
+  border-color: var(--ff-warn);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ff-warn) 18%, transparent);
+}
+
+.ff-group--match.ff-off {
+  opacity: 1;
+}
+
 .ff-group__head {
   display: flex;
   align-items: center;
@@ -2229,6 +2238,43 @@ a.ff-callout:hover {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
   margin-top: 16px;
+}
+
+.ff-group-matches {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--ff-warn) 35%, var(--ff-border));
+  border-radius: var(--ff-radius-sm);
+  background: color-mix(in srgb, var(--ff-warn) 7%, var(--ff-surface));
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-size: 12px;
+  color: var(--ff-ink);
+}
+
+.ff-group-match {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ff-border);
+}
+
+.ff-group-match__head,
+.ff-group-match__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ff-group-match__head > span:first-child {
+  font-weight: 600;
+}
+
+.ff-group-match__actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .ff-group__foot {
