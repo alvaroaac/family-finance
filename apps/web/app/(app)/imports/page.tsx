@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import type { ImportSource, ImportPreview } from "@family-finance/importers";
 
@@ -34,6 +34,7 @@ import {
   type ImportAiSuggestion,
   type InstallmentCandidateMatch,
 } from "./actions";
+import { INSTALLMENT_MATCH_PAGE_SIZE } from "./group-duplicates";
 import {
   normalizeMerchantKey,
   type BatchCategorizationPlan,
@@ -174,6 +175,39 @@ export default function ImportsPage() {
   const [groupMatchesByIndex, setGroupMatchesByIndex] = useState<
     Record<number, InstallmentCandidateMatch[]>
   >({});
+  const [groupMatchCountsByIndex, setGroupMatchCountsByIndex] = useState<
+    Record<number, number>
+  >({});
+  const [groupReviewRequiredIndices, setGroupReviewRequiredIndices] = useState<
+    number[]
+  >([]);
+  const [matchPageOffsets, setMatchPageOffsets] = useState<
+    Record<number, number>
+  >({});
+  const [loadingMatchPages, setLoadingMatchPages] = useState<
+    Record<number, boolean>
+  >({});
+  const [matchPageError, setMatchPageError] = useState<string | null>(null);
+  const [resolvedTargetKey, setResolvedTargetKey] = useState<string | null>(
+    null,
+  );
+  const [targetError, setTargetError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
+  const [targetRetry, setTargetRetry] = useState(0);
+  const targetKey = JSON.stringify([
+    bundle?.previewToken,
+    accountId,
+    creditCardId,
+    Object.entries(cardByLast4).sort(),
+    targetRetry,
+  ]);
+  const currentTargetKey = useRef(targetKey);
+  currentTargetKey.current = targetKey;
+  const resolutionVersion = useRef(0);
+  const reviewedGroupIndices = useRef<Set<number>>(new Set());
+  const targetsResolved = bundle !== null && resolvedTargetKey === targetKey;
   const [groupMatchDecisions, setGroupMatchDecisions] = useState<
     Record<number, "keep_existing" | "import_anyway">
   >({});
@@ -363,6 +397,11 @@ export default function ImportsPage() {
   }
 
   useEffect(() => {
+    resolutionVersion.current += 1;
+    setResolvedTargetKey(null);
+    setTargetError(null);
+    setMatchPageError(null);
+    setLoadingMatchPages({});
     if (bundle === null) return;
     const mp = bundle.mp !== undefined;
     const required = [
@@ -387,48 +426,127 @@ export default function ImportsPage() {
       accountId: mp ? undefined : accountId,
       creditCardId: mp ? creditCardId || undefined : undefined,
       creditCardByLast4: mp ? cardByLast4 : undefined,
-    }).then((result) => {
-      if (cancelled || !result.ok) return;
-      const nextPersisted = new Set(result.duplicateIndices);
-      setPersistedClaimIds(result.claimIdsByIndex);
-      const nextGroupPersisted = new Set(result.groupDuplicateIndices);
-      setGroupMatchesByIndex(result.groupMatchesByIndex);
-      setGroupMatchDecisions({});
-      setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
-      setPersistedGroupDuplicates((previousPersisted) => {
-        setGroupEdits((previousEdits) => {
-          const updated = { ...previousEdits };
-          for (const index of previousPersisted) {
-            const edit = updated[index];
-            if (edit !== undefined) updated[index] = { ...edit, skip: false };
-          }
-          for (const index of nextGroupPersisted) {
-            const edit = updated[index];
-            if (edit !== undefined) updated[index] = { ...edit, skip: true };
-          }
-          return updated;
+    })
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.ok) {
+          setTargetError({ key: targetKey, message: result.message });
+          return;
+        }
+        setResolvedTargetKey(targetKey);
+        const previousMatched = reviewedGroupIndices.current;
+        reviewedGroupIndices.current = new Set(
+          result.groupReviewRequiredIndices,
+        );
+        setGroupMatchCountsByIndex(result.groupMatchCountsByIndex);
+        setGroupReviewRequiredIndices(result.groupReviewRequiredIndices);
+        setMatchPageOffsets({});
+        const nextPersisted = new Set(result.duplicateIndices);
+        setPersistedClaimIds(result.claimIdsByIndex);
+        const nextGroupPersisted = new Set(result.groupDuplicateIndices);
+        setGroupMatchesByIndex(result.groupMatchesByIndex);
+        setGroupMatchDecisions({});
+        setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
+        setPersistedGroupDuplicates((previousPersisted) => {
+          setGroupEdits((previousEdits) => {
+            const updated = { ...previousEdits };
+            for (const index of new Set([
+              ...previousPersisted,
+              ...previousMatched,
+            ])) {
+              const edit = updated[index];
+              if (edit !== undefined) updated[index] = { ...edit, skip: false };
+            }
+            for (const index of nextGroupPersisted) {
+              const edit = updated[index];
+              if (edit !== undefined) updated[index] = { ...edit, skip: true };
+            }
+            return updated;
+          });
+          return nextGroupPersisted;
         });
-        return nextGroupPersisted;
-      });
-      setGroupOverrides({});
-      setPersistedDuplicates((previousPersisted) => {
-        setExcluded((previous) => {
-          const next = new Set(previous);
-          for (const index of previousPersisted) next.delete(index);
-          for (const index of nextPersisted) next.add(index);
-          for (const duplicate of bundle.preview.duplicates)
-            next.add(duplicate.rowIndex);
-          for (const index of bundle.mp?.installmentRowIndices ?? [])
-            next.add(index);
-          return next;
+        setGroupOverrides({});
+        setPersistedDuplicates((previousPersisted) => {
+          setExcluded((previous) => {
+            const next = new Set(previous);
+            for (const index of previousPersisted) next.delete(index);
+            for (const index of nextPersisted) next.add(index);
+            for (const duplicate of bundle.preview.duplicates)
+              next.add(duplicate.rowIndex);
+            for (const index of bundle.mp?.installmentRowIndices ?? [])
+              next.add(index);
+            return next;
+          });
+          return nextPersisted;
         });
-        return nextPersisted;
+      })
+      .catch(() => {
+        if (!cancelled)
+          setTargetError({
+            key: targetKey,
+            message:
+              "Não foi possível carregar as comparações. Tente novamente.",
+          });
       });
-    });
     return () => {
       cancelled = true;
     };
-  }, [bundle, accountId, creditCardId, cardByLast4]);
+  }, [bundle, accountId, creditCardId, cardByLast4, targetKey]);
+
+  async function loadMatchPage(groupIndex: number, offset: number) {
+    if (bundle === null || !targetsResolved) return;
+    const version = resolutionVersion.current;
+    const requestKey = targetKey;
+    setLoadingMatchPages((previous) => ({ ...previous, [groupIndex]: true }));
+    setMatchPageError(null);
+    try {
+      const result = await resolveImportTargets({
+        previewToken: bundle.previewToken,
+        snapshot: bundle.snapshot,
+        creditCardId: creditCardId || undefined,
+        creditCardByLast4: cardByLast4,
+        matchPage: { groupIndex, offset },
+      });
+      if (
+        version !== resolutionVersion.current ||
+        currentTargetKey.current !== requestKey
+      )
+        return;
+      if (!result.ok) {
+        setMatchPageError(result.message);
+        return;
+      }
+      setGroupMatchesByIndex((previous) => ({
+        ...previous,
+        [groupIndex]: result.groupMatchesByIndex[groupIndex] ?? [],
+      }));
+      setGroupMatchCountsByIndex((previous) => ({
+        ...previous,
+        [groupIndex]: result.groupMatchCountsByIndex[groupIndex] ?? 0,
+      }));
+      setMatchPageOffsets((previous) => ({
+        ...previous,
+        [groupIndex]: offset,
+      }));
+    } catch {
+      if (
+        version === resolutionVersion.current &&
+        currentTargetKey.current === requestKey
+      )
+        setMatchPageError(
+          "Não foi possível carregar mais correspondências. Tente novamente.",
+        );
+    } finally {
+      if (
+        version === resolutionVersion.current &&
+        currentTargetKey.current === requestKey
+      )
+        setLoadingMatchPages((previous) => ({
+          ...previous,
+          [groupIndex]: false,
+        }));
+    }
+  }
 
   function toggleExcluded(index: number) {
     setExcluded((prev) => {
@@ -627,15 +745,17 @@ export default function ImportsPage() {
       });
       return;
     }
-    const pendingMatchReview = Object.entries(groupMatchesByIndex).find(
-      ([rawIndex, matches]) => {
-        const index = Number.parseInt(rawIndex, 10);
-        return (
-          matches.length > 0 &&
-          groupEdits[index]?.skip === false &&
-          groupMatchDecisions[index] === undefined
-        );
-      },
+    if (!targetsResolved) {
+      setConfirmResult({
+        ok: false,
+        message: "Aguarde a conclusão das comparações antes de confirmar.",
+      });
+      return;
+    }
+    const pendingMatchReview = groupReviewRequiredIndices.find(
+      (index) =>
+        groupEdits[index]?.skip === false &&
+        groupMatchDecisions[index] === undefined,
     );
     if (pendingMatchReview !== undefined) {
       setConfirmResult({
@@ -861,6 +981,7 @@ export default function ImportsPage() {
     (!(mpNeedsDefaultTarget || mpCardLast4s.length === 0) ||
       creditCardId !== "");
   const confirmDisabled =
+    !targetsResolved ||
     isPending ||
     selectedCount + selectedGroupCount === 0 ||
     (isMp ? !hasAllMpTargets : accountId === "");
@@ -872,6 +993,23 @@ export default function ImportsPage() {
 
   return (
     <section>
+      {bundle !== null &&
+      !targetsResolved &&
+      (isMp ? hasAllMpTargets : accountId !== "") ? (
+        <div role={targetError?.key === targetKey ? "alert" : "status"}>
+          {targetError?.key === targetKey ? (
+            <>
+              <p>{targetError.message}</p>
+              <Button onClick={() => setTargetRetry((value) => value + 1)}>
+                Tentar comparações novamente
+              </Button>
+            </>
+          ) : (
+            <p>Carregando comparações antes de confirmar…</p>
+          )}
+        </div>
+      ) : null}
+      {matchPageError !== null ? <p role="alert">{matchPageError}</p> : null}
       <header>
         <div className="ff-kicker" style={{ letterSpacing: "0.26em" }}>
           Nossa casa · Importação
@@ -1065,17 +1203,20 @@ export default function ImportsPage() {
                       persistedGroupDuplicates.has(i);
                     const matches = groupMatchesByIndex[i] ?? [];
                     const topMatch = matches[0];
+                    const matchCount = groupMatchCountsByIndex[i] ?? 0;
+                    const needsReview = groupReviewRequiredIndices.includes(i);
+                    const matchOffset = matchPageOffsets[i] ?? 0;
                     const isExactImported =
                       persistedGroupClaimIds[i] !== undefined;
                     return (
                       <div
                         key={i}
                         className={`ff-group${
-                          !isPersistedDuplicate && matches.length === 0
+                          !isPersistedDuplicate && !needsReview
                             ? " ff-group--new"
                             : ""
                         }${
-                          matches.length > 0 ? " ff-group--match" : ""
+                          needsReview ? " ff-group--match" : ""
                         }${edit.skip ? " ff-off" : ""}`}
                       >
                         <div className="ff-group__head">
@@ -1088,9 +1229,11 @@ export default function ImportsPage() {
                                 ? "neutral"
                                 : topMatch !== undefined
                                   ? "warn"
-                                  : isPersistedDuplicate
-                                    ? "neutral"
-                                    : "positive"
+                                  : needsReview
+                                    ? "warn"
+                                    : isPersistedDuplicate
+                                      ? "neutral"
+                                      : "positive"
                             }
                           >
                             {isExactImported
@@ -1099,9 +1242,11 @@ export default function ImportsPage() {
                                 ? installmentConfidenceLabel(
                                     topMatch.confidence,
                                   )
-                                : isPersistedDuplicate
-                                  ? "já existe neste cartão"
-                                  : "novo"}
+                                : needsReview
+                                  ? "compra semelhante neste cartão"
+                                  : isPersistedDuplicate
+                                    ? "já existe neste cartão"
+                                    : "novo"}
                           </Badge>
                         </div>
                         <div className="ff-group__grid">
@@ -1219,12 +1364,19 @@ export default function ImportsPage() {
                             </Select>
                           </Field>
                         </div>
-                        {matches.length > 0 ? (
+                        {needsReview ? (
                           <div
                             className="ff-group-matches"
                             aria-label={`Possíveis correspondências para ${g.description}`}
                           >
                             <strong>Compare com o que já está no painel</strong>
+                            {matchCount === 0 ? (
+                              <p>
+                                Já existe uma compra com a mesma descrição,
+                                quantidade de parcelas e mês de compra neste
+                                cartão. Confira antes de importar novamente.
+                              </p>
+                            ) : null}
                             {matches.map((match) => (
                               <div
                                 className="ff-group-match"
@@ -1249,8 +1401,56 @@ export default function ImportsPage() {
                                 </span>
                               </div>
                             ))}
+                            {matchCount > INSTALLMENT_MATCH_PAGE_SIZE ? (
+                              <div
+                                className="ff-group-match__actions"
+                                aria-label={`Páginas de correspondências para ${g.description}`}
+                              >
+                                <Button
+                                  disabled={
+                                    !targetsResolved ||
+                                    loadingMatchPages[i] ||
+                                    matchOffset === 0
+                                  }
+                                  onClick={() =>
+                                    void loadMatchPage(
+                                      i,
+                                      Math.max(
+                                        0,
+                                        matchOffset -
+                                          INSTALLMENT_MATCH_PAGE_SIZE,
+                                      ),
+                                    )
+                                  }
+                                >
+                                  Anteriores
+                                </Button>
+                                <span aria-live="polite">
+                                  {loadingMatchPages[i]
+                                    ? "Carregando…"
+                                    : `${matchOffset + 1}–${Math.min(matchOffset + matches.length, matchCount)} de ${matchCount}`}
+                                </span>
+                                <Button
+                                  disabled={
+                                    !targetsResolved ||
+                                    loadingMatchPages[i] ||
+                                    matchOffset + INSTALLMENT_MATCH_PAGE_SIZE >=
+                                      matchCount
+                                  }
+                                  onClick={() =>
+                                    void loadMatchPage(
+                                      i,
+                                      matchOffset + INSTALLMENT_MATCH_PAGE_SIZE,
+                                    )
+                                  }
+                                >
+                                  Próximas
+                                </Button>
+                              </div>
+                            ) : null}
                             <div className="ff-group-match__actions">
                               <Button
+                                disabled={!targetsResolved}
                                 variant={
                                   edit.skip &&
                                   groupMatchDecisions[i] !== "import_anyway"
@@ -1276,6 +1476,7 @@ export default function ImportsPage() {
                                 Manter o existente
                               </Button>
                               <Button
+                                disabled={!targetsResolved}
                                 variant={
                                   groupMatchDecisions[i] === "import_anyway"
                                     ? "primary"
@@ -1327,7 +1528,7 @@ export default function ImportsPage() {
                                 : `parcela ${g.installmentNumber} de ${g.installmentCount} · ${formatBrl(g.perInstallmentCents)}`}
                             {g.cardLast4 ? ` · final ${g.cardLast4}` : ""}
                           </span>
-                          {matches.length === 0 ? (
+                          {!needsReview ? (
                             <label className="ff-group__skip">
                               <input
                                 className="ff-check"

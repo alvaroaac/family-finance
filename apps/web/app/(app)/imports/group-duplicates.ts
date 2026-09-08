@@ -125,3 +125,48 @@ export function hasLegacyInstallmentGroupOnCard(
     ) !== null
   );
 }
+
+export const INSTALLMENT_MATCH_PAGE_SIZE = 5;
+
+/** Keep display pages bounded, but evaluate ambiguity over every candidate. */
+export function resolveInstallmentCandidatePages(
+  groups: Array<{
+    group: InferredInstallmentGroup;
+    cardId: string | undefined;
+  }>,
+  candidates: ExistingInstallmentCandidate[],
+  page?: { groupIndex: number; offset: number },
+) {
+  const matchesByIndex: Record<number, InstallmentCandidateMatch[]> = {};
+  const matchCountsByIndex: Record<number, number> = {};
+  const candidateUses = new Map<string, number>();
+  const uniqueCandidates = new Map<number, string>();
+  groups.forEach(({ group, cardId }, index) => {
+    if (cardId === undefined) return;
+    const matches = findInstallmentCandidateMatches(group, cardId, candidates);
+    for (const id of new Set(
+      matches.map((match) => match.installmentGroupId),
+    )) {
+      candidateUses.set(id, (candidateUses.get(id) ?? 0) + 1);
+    }
+    if (hasUniqueVeryStrongMatch(matches)) {
+      uniqueCandidates.set(
+        index,
+        matches.find((match) => match.confidence === "very_strong")!
+          .installmentGroupId,
+      );
+    }
+    if (matches.length === 0) return;
+    matchCountsByIndex[index] = matches.length;
+    if (page !== undefined && page.groupIndex !== index) return;
+    const offset = page?.offset ?? 0;
+    matchesByIndex[index] = matches.slice(
+      offset,
+      offset + INSTALLMENT_MATCH_PAGE_SIZE,
+    );
+  });
+  const duplicateIndices = [...uniqueCandidates]
+    .filter(([, id]) => candidateUses.get(id) === 1)
+    .map(([index]) => index);
+  return { matchesByIndex, matchCountsByIndex, duplicateIndices };
+}

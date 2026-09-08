@@ -74,7 +74,7 @@ import { requestImportSuggestions } from "./suggestion-client";
 import {
   findInstallmentCandidateMatches,
   hasLegacyInstallmentGroupOnCard,
-  hasUniqueVeryStrongMatch,
+  resolveInstallmentCandidatePages,
   type ExistingInstallmentCandidate,
   type InstallmentCandidateMatch,
 } from "./group-duplicates";
@@ -281,6 +281,8 @@ export type ResolveImportTargetsResult =
       groupDuplicateIndices: number[];
       groupClaimIdsByIndex: Record<number, string>;
       groupMatchesByIndex: Record<number, InstallmentCandidateMatch[]>;
+      groupMatchCountsByIndex: Record<number, number>;
+      groupReviewRequiredIndices: number[];
     }
   | { ok: false; message: string };
 
@@ -659,8 +661,19 @@ export async function resolveImportTargets(input: {
   accountId?: string;
   creditCardId?: string;
   creditCardByLast4?: Record<string, string>;
+  matchPage?: { groupIndex: number; offset: number };
 }): Promise<ResolveImportTargetsResult> {
   try {
+    if (
+      input.matchPage !== undefined &&
+      (!Number.isInteger(input.matchPage.groupIndex) ||
+        input.matchPage.groupIndex < 0 ||
+        input.matchPage.groupIndex >=
+          (input.snapshot.installmentGroups?.length ?? 0) ||
+        !Number.isInteger(input.matchPage.offset) ||
+        input.matchPage.offset < 0)
+    )
+      return { ok: false, message: "Página de correspondências inválida." };
     const { client, householdId, userId } = await authed();
     const previewClaims = verifyImportPreviewToken({
       token: input.previewToken,
@@ -783,7 +796,9 @@ export async function resolveImportTargets(input: {
     });
     const groupDuplicateIndices: number[] = [];
     const groupClaimIdsByIndex: Record<number, string> = {};
-    const groupMatchesByIndex: Record<number, InstallmentCandidateMatch[]> = {};
+    let groupMatchesByIndex: Record<number, InstallmentCandidateMatch[]> = {};
+    let groupMatchCountsByIndex: Record<number, number> = {};
+    const groupReviewRequiredIndices: number[] = [];
     groupClaims.forEach((claim, index) => {
       if (claim === null) return;
       const identityKey = `${claim.claimFingerprint}:${claim.occurrenceNo}`;
@@ -830,29 +845,41 @@ export async function resolveImportTargets(input: {
           ];
         },
       );
-      input.snapshot.installmentGroups?.forEach((group, index) => {
-        const rowIndex = input.snapshot.groupSourceRowIndices?.[index];
-        const row =
-          rowIndex === undefined ? undefined : input.snapshot.rows[rowIndex];
-        const cardId =
-          row?.cardLast4 === undefined
-            ? input.creditCardId
-            : input.creditCardByLast4?.[row.cardLast4];
-        if (cardId === undefined) return;
-        const matches = findInstallmentCandidateMatches(
-          group,
-          cardId,
-          matchCandidates,
-        );
-        if (matches.length > 0) groupMatchesByIndex[index] = matches;
-        if (
-          (hasLegacyInstallmentGroupOnCard(group, cardId, legacySummaries) ||
-            hasUniqueVeryStrongMatch(matches)) &&
-          !groupDuplicateIndices.includes(index)
-        ) {
+      const resolved = resolveInstallmentCandidatePages(
+        (input.snapshot.installmentGroups ?? []).map((group, index) => {
+          const rowIndex = input.snapshot.groupSourceRowIndices?.[index];
+          const row =
+            rowIndex === undefined ? undefined : input.snapshot.rows[rowIndex];
+          const cardId =
+            row?.cardLast4 === undefined
+              ? input.creditCardId
+              : input.creditCardByLast4?.[row.cardLast4];
+          if (
+            cardId !== undefined &&
+            cardIds.has(cardId) &&
+            hasLegacyInstallmentGroupOnCard(group, cardId, legacySummaries)
+          ) {
+            groupReviewRequiredIndices.push(index);
+          }
+          return {
+            group,
+            cardId:
+              cardId !== undefined && cardIds.has(cardId) ? cardId : undefined,
+          };
+        }),
+        matchCandidates,
+        input.matchPage,
+      );
+      groupMatchesByIndex = resolved.matchesByIndex;
+      groupMatchCountsByIndex = resolved.matchCountsByIndex;
+      for (const index of Object.keys(groupMatchCountsByIndex).map(Number)) {
+        if (!groupReviewRequiredIndices.includes(index))
+          groupReviewRequiredIndices.push(index);
+      }
+      for (const index of resolved.duplicateIndices) {
+        if (!groupDuplicateIndices.includes(index))
           groupDuplicateIndices.push(index);
-        }
-      });
+      }
     }
     return {
       ok: true,
@@ -861,6 +888,8 @@ export async function resolveImportTargets(input: {
       groupDuplicateIndices,
       groupClaimIdsByIndex,
       groupMatchesByIndex,
+      groupMatchCountsByIndex,
+      groupReviewRequiredIndices,
     };
   } catch (error) {
     return {
@@ -1428,13 +1457,11 @@ export async function confirmImport(
           group.creditCardId,
           legacyInstallmentGroups,
         ) ||
-          hasUniqueVeryStrongMatch(
-            findInstallmentCandidateMatches(
-              inferredGroup,
-              group.creditCardId,
-              existingMatchCandidates,
-            ),
-          )) &&
+          findInstallmentCandidateMatches(
+            inferredGroup,
+            group.creditCardId,
+            existingMatchCandidates,
+          ).length > 0) &&
         (group.override?.reason.trim().length ?? 0) < 5
       ) {
         return {

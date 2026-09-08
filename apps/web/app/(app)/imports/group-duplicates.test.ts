@@ -141,3 +141,19 @@ describe("installment candidate confidence", () => {
     expect(hasUniqueVeryStrongMatch(matches)).toBe(false);
   });
 });
+
+describe("absolute installment tolerance", () => {
+  it("accepts R$10 and rejects R$10.01 even below the percentage thresholds", () => {
+    const matches = findInstallmentCandidateMatches(
+      { ...inferred, perInstallmentCents: 100000 },
+      "card-a",
+      [
+        candidate({ installmentGroupId: "at-cap", amountCents: 99000 }),
+        candidate({ installmentGroupId: "over-cap", amountCents: 98999 }),
+      ],
+    );
+    expect(matches.map((match) => match.installmentGroupId)).toEqual([
+      "at-cap",
+    ]);
+  });
+});
