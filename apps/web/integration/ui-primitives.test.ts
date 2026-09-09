@@ -424,9 +424,25 @@ describe("ui primitives — app shell", () => {
   it("renders the mobile bottom nav — Resumo/Transações/Cartões/Mais", () => {
     const html = renderShell();
     expect(html).toContain("ff-bottomnav");
-    expect(html).toContain("Mais");
-    // "Mais" points at Configurações per the mockup.
-    expect(html).toMatch(/ff-bottomnav[^]*href="\/settings"/);
+    expect(html).toMatch(/ff-bottomnav[^]*href="\/resumo"/);
+    expect(html).toMatch(/ff-bottomnav[^]*href="\/transactions"/);
+    expect(html).toMatch(/ff-bottomnav[^]*href="\/cards"/);
+    // "Mais" is a toggle for the sheet with every other section, not a link.
+    expect(html).toMatch(/<button[^>]*aria-controls="ff-morenav"[^>]*aria-expanded="false"[^>]*>[^]*Mais/);
+  });
+
+  it("the 'Mais' sheet lists every nav item missing from the bottom bar", () => {
+    const html = renderShell();
+    const sheet = html.match(/<nav[^>]*id="ff-morenav"[^>]*hidden[^>]*>[^]*?<\/nav>/)?.[0];
+    expect(sheet).toBeDefined();
+    const bottomHrefs = ["/resumo", "/transactions", "/cards"];
+    for (const item of items) {
+      if (bottomHrefs.includes(item.href)) {
+        expect(sheet).not.toContain(`href="${item.href}"`);
+      } else {
+        expect(sheet).toContain(`href="${item.href}"`);
+      }
+    }
   });
 
   it("nav active state matches exact paths and nested routes only", () => {
