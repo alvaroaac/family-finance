@@ -1400,6 +1400,24 @@ export async function listInstallmentGroupsByHousehold(
   return (data ?? []) as InstallmentGroupRow[];
 }
 
+/** Existing parcel rows for one billing month, used by import matching. */
+export async function listInstallmentsByDueMonth(
+  client: AppSupabaseClient,
+  householdId: string,
+  dueMonth: string,
+): Promise<InstallmentRow[]> {
+  return fetchAllRows<InstallmentRow>(
+    "listInstallmentsByDueMonth",
+    (from, to) =>
+      client
+        .from("installments")
+        .select("*")
+        .eq("household_id", householdId)
+        .eq("due_month", dueMonth)
+        .range(from, to),
+  );
+}
+
 /** Minimal card-paid transaction summary for against-DB import dedupe. */
 export type CardChargeSummary = {
   occurred_on: string;

@@ -189,6 +189,7 @@ export {
   createInstallmentPurchase,
   // Import-preview dedupe (Task 5).
   listInstallmentGroupsByHousehold,
+  listInstallmentsByDueMonth,
   findCardChargesBetween,
   // Dashboard aggregation + reads (Task 10).
   currentMonth,
