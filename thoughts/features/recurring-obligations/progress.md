@@ -130,7 +130,7 @@ EditarObrigacao).
   12-month timeline** (a month gets a badge only when a template starts, hits
   its last parcela, or drops off) with per-month `<details>` and the relief note
   "↓ alívio de R$ x/mês a partir de <mês>"; **Suas obrigações** table with term
-  progress ("n de N pagas · até mmm/aaaa") and a `?encerradas=1` toggle;
+  progress ("parcela n de N · até mmm/aaaa") and a `?encerradas=1` toggle;
   guided **"Nova obrigação"** dialog (four numbered sections + "Sem prazo |
   Parcelado" segmented term mode + live summary card); **"Editar obrigação"**
   dialog with a read-only progress panel and an inline **encerrar** confirm;
@@ -159,8 +159,10 @@ EditarObrigacao).
 - **Past months are assumed paid** for term progress. `termProgress` computes
   `elapsed = monthDiffYm(startMonth, currentMonth)` clamped to `[0, total]` —
   i.e. months _strictly before_ the current one; the current month always counts
-  as unpaid and stays in `remainingCents`. The edit dialog's label is therefore
-  `elapsed + 1` ("Parcela 12 de 72" when 11 months have elapsed). We do not read
+  as unpaid and stays in `remainingCents`. Both the table and the edit dialog
+  label it `installmentNumber(elapsed, total)` = `elapsed + 1` ("parcela 12 de
+  72" when 11 months have elapsed) — the earlier "11 de 72 pagas" wording was
+  dropped in QA because it claimed payments we never counted. We do not read
   the payments table for this — a skipped month in the past still reads as paid.
 - **Nothing writes status `ended`.** `ObligationStatus` has the value and the
   archive query asks for it, but "Encerrar" calls `cancelObligation` →
@@ -176,29 +178,51 @@ EditarObrigacao).
 - **Alternative B** (obligation × month grid) stayed out of scope; logged in
   `thoughts/tech-debt.md` as an optional secondary view of the timeline.
 
-### Visual QA checklist (not yet run — needs a human)
+### Visual QA — run 2026-09-09 (local Supabase, seeded data)
 
-No agent ran this. Every route sits behind Google OAuth with an allowlisted
-Supabase session, `E2E_STORAGE_STATE` is not available, and the only env on hand
-points at the **production** database — so create/edit/encerrar/mark-paid round
-trips could not be exercised without writing real rows. Run it manually after
-merge, at desktop 1092px and mobile 390px, in **both themes (Esmeralda and
-Sálvia)**, comparing against `docs/design/2026-09-04-obrigacoes-mockups/`:
+Run against a local Supabase (`supabase start`, seed SQL kept in the session
+scratchpad, not committed) through the author's logged-in Chrome tab. Desktop
+at ~1500px in **both themes**; mobile via a same-origin 390px iframe (Chrome's
+`resize_window` did not change the viewport). Compared against
+`docs/design/2026-09-04-obrigacoes-mockups/`. Result: all five flows pass
+after the fixes in `415fb3e`.
 
-1. **Create** — "+ Nova obrigação" → both term modes; check the live
-   "até mmm/aaaa · total R$ x" badge, the summary sentence, and the
-   "A partir de <mês>, o mês da casa passa a R$ y." second line.
-2. **Edit** — pencil on a row → progress panel numbers match the table's
-   "n de N pagas"; save an amount change and confirm only unpaid months move.
-3. **Encerrar** — "Encerrar…" reveals the confirm row; confirm the template
-   leaves the active table and reappears under "ver encerradas →".
-4. **Mark paid** — a checklist row → payment dialog → row moves to the bottom
-   faded with badge "paga"; the "Este mês" stat and the timeline's paid slice
-   both update.
-5. **Desfazer** — undo that payment; the row returns to unpaid and the stat
-   reverts. Also try it on a transaction that is not an obligation payment
-   (expect `Esse lançamento não é um pagamento de obrigação.`).
+1. **Create** — both term modes OK; live "até mmm/aaaa · total R$ x" badge,
+   summary sentence and the "A partir de <mês>…" line render. Toast
+   "Obrigação criada."
+2. **Edit** — progress panel matches the table; amount change moved only
+   unpaid months.
+3. **Encerrar** — inline confirm → row leaves the table (11 ativas), footer
+   "Total a partir de nov/2026: R$ 8.283,40/mês", row shows dimmed under
+   `?encerradas=1` with the "encerrada" pill and "esconder encerradas".
+4. **Mark paid** — dialog with amount override → row drops to the bottom faded
+   with "paga", stat + timeline paid slice update, toast "Pagamento
+   registrado."
+5. **Desfazer** — row and stat revert, toast "Pagamento desfeito."
 
-Watch for: overdue/warn row washes, the timeline badge wrapper at narrow
-widths, the segmented control's focus ring, the sticky CTA not covering the
-table footer, and skeleton → content layout shift.
+Fixed during the run (all in `415fb3e`):
+
+- "2 de 4 pagas" → "parcela N de M" (see Decisions); cancel sentence made
+  term-independent; stat "de R$ x" no longer wraps.
+- Mobile: header CTA pushed the page past the viewport → hidden on
+  `.ff-has-sticky-cta` pages ≤720px (mockup has no header button); stat
+  values clipped → 2-up grid, full-width third card, 22px values; checklist
+  name column squeezed to ~90px by the 150px button → grid-areas row
+  (chip · name · amount / badge · action) and a "Pagar" label on mobile
+  (`aria-label` keeps "Marcar como paga").
+
+Still open (product/infra, not blocking the PR):
+
+- A previous month left unpaid (Plano de saúde, Aug) is not surfaced as
+  overdue anywhere on the page.
+- Category selects list income categories; needs `category_kind` from the
+  `codex/drop-legacy-obligation-payment-overload` branch.
+- Migration drift: that branch numbers 0018–0020 differently from
+  `origin/main`'s 0018/0019; a local DB set up from one cannot run the other
+  without renumbering.
+- Local Postgres clock is UTC, so late-evening "hoje" differs from São Paulo.
+- The global "ESTILO" theme widget overlaps the mobile sticky CTA (app-wide,
+  pre-existing).
+- Not checked: mobile toast offset above the sticky CTA, skeleton → content
+  shift (the page briefly measures 386px wide at 375px during hydration, then
+  settles).
