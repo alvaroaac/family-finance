@@ -437,6 +437,192 @@ accounts, cards, categories, and subcategories across transactions,
 installments, categorization memory, and obligations. Same-household references
 are now enforced for every write path, including service-role RPCs.
 
+## 2026-09-05: Alternativa B (obligation × month grid) never built
+
+**Area:** apps/web/app/(app)/obligations (timeline-card.tsx)
+
+**Impact:** The redesign spec offered two ways to read the 12-month horizon:
+option A (the change-only list that shipped) and option B, a grid of obligation
+rows × month columns. A picked A and B went to "Out of scope". The list answers
+"what changes next month?" well but cannot answer "which months does *this one*
+obligation still hit?" without opening each month's `<details>` — B was the view
+that made a single template's future scannable.
+
+**Current workaround:** The timeline's per-month `<details>` lists that month's
+entries, and the edit dialog's progress panel gives one template's term span
+("Parcela n de N · começou em … · termina em …").
+
+**Revisit trigger:** More than ~8 active templates, or the user asking to see one
+obligation across the horizon. Build it as an optional secondary view of the same
+card (a segmented "Por mês | Grade" toggle over the existing `timeline` slots),
+not a replacement — the change-only list is the default by design choice.
+
+**Status:** open (deferred by design choice, 2026-09-04 spec "Out of scope")
+
+## 2026-09-05: No Playwright coverage for the obligation dialogs
+
+**Area:** apps/web/e2e
+
+**Impact:** The redesign added five write round trips with no browser-level test:
+create (both term modes), edit, encerrar (inline confirm), mark paid, and
+desfazer. They are covered offline — `apps/web/integration/` drives the actions
+and view model against the fake Supabase store — but nothing exercises the real
+dialogs, the pending states, or the inline error paths in a browser. Visual QA
+for this branch was also left to a human for the same reason (see
+`thoughts/features/recurring-obligations/progress.md`, 2026-09-05 entry).
+
+**Current workaround:** Integration tests over the fake store + a manual visual
+QA checklist in the progress entry.
+
+**Revisit trigger:** An e2e auth fixture exists. Both existing specs
+(`e2e/mvp-flow.spec.ts`, `e2e/manual-transaction-installments.spec.ts`) skip
+their authenticated halves unless `E2E_STORAGE_STATE` points at a pre-captured
+allowlisted Google session, because OAuth cannot be scripted headlessly. Once
+capturing that session is routine (or we add a test-only sign-in path), add an
+`e2e/obligations.spec.ts` covering the five round trips.
+
+**Status:** open
+
+## 2026-09-05: `Field` renders a `<label>` with no association, so inputs have no accessible name
+
+**Area:** apps/web/components/ui/forms.tsx
+
+**Impact:** `Field` renders `<label className="ff-field__label">{label}</label>`
+as a **sibling** of `{children}` — no `htmlFor`, no generated `id`, and the
+control is not nested inside the label either. So no input rendered through
+`Field` has an accessible name anywhere in the app: screen readers announce
+"edit text, blank", and clicking the label does not focus the control. The new
+obligation dialogs inherit this for every field they render (Nome, Valor por mês,
+Primeira parcela, Vence todo dia, Quantas parcelas, Conta, Categoria).
+
+**Current workaround:** None. The visual label is adjacent, so sighted mouse
+users are unaffected.
+
+**Revisit trigger:** Any accessibility pass, or the first screen-reader report.
+Fix in the primitive: `useId()` in `Field`, put it on the `<label htmlFor>`, and
+pass it down (a render-prop or a `cloneElement` on the child's `id`) so every
+call site is fixed at once — there are enough of them that patching call sites
+individually is the wrong move.
+
+**Status:** open
+
+## 2026-09-05: `MONTH_NAMES_PT` duplicated in two pages while `lib/format.ts` owns the helpers
+
+**Area:** apps/web/app/(app)/dashboard/page.tsx, apps/web/app/(app)/transactions/page.tsx
+
+**Impact:** Three copies of the same twelve-string array live in the web app:
+`lib/format.ts:36` (behind the exported `monthLabelPtBr` / `monthNamePtBr`, which
+the redesign introduced and `/obligations` uses) plus private copies in
+`dashboard/page.tsx:26` and `transactions/page.tsx:46`, each with its own local
+month-label function. A copy edit to a month name has to be made three times.
+
+**Current workaround:** They currently agree, so nothing is visibly wrong.
+
+**Revisit trigger:** Next time either page is touched — delete the local array
+and local formatter, import `monthNamePtBr` / `monthLabelPtBr` from
+`@/lib/format`.
+
+**Status:** open
+
+## 2026-09-05: English domain-validation messages can reach the obligations UI
+
+**Area:** apps/web/app/(app)/obligations/actions.ts
+
+**Impact:** `actionFailure` treats any `Error.message` as user-facing unless it
+matches `isInternalErrorMessage` — a small denylist (`/^\w+ (lookup )?failed: /`,
+`Missing required field`, `No active household`); everything else is shown
+verbatim in the dialog's `ff-alert--negative`, and only otherwise falls back to
+`Não foi possível salvar a obrigação.` That is deliberate for the pt-BR refusals
+we author (e.g. `Esse lançamento não é um pagamento de obrigação.`), but the same
+pass-through will surface English domain-validation text and raw Zod strings
+straight into the UI: `createObligationAction` throws
+`result.errors.map((e) => e.message).join(" ")` and those messages come from
+`createObligationInputSchema.safeParse` in `packages/domain/src/obligations.ts`,
+i.e. Zod's default English text.
+
+**Current workaround:** The form's own client-side constraints (`required`,
+`min`/`max`, number inputs) keep the common invalid submissions from reaching the
+domain validator, so this is rarely hit in practice.
+
+**Revisit trigger:** The first English string reported in a dialog. Invert the
+policy — tag public errors explicitly (a `PublicError` class or an
+`{ ok: false, error }` return from the domain layer) instead of denylisting
+internal ones, and give the obligation validators pt-BR messages.
+
+**Status:** open
+
+## 2026-09-05: `updateObligation` cannot tell "no such obligation" from "nothing to change"
+
+**Area:** packages/db/src/repositories.ts (`updateObligation`)
+
+**Impact:** The function returns `void` and checks only `error`. A Supabase
+`update` matching zero rows is not an error, so a bogus or another household's
+obligation id produces `{ ok: true }` from `updateObligationAction` — the edit
+dialog closes and toasts "Obrigação atualizada." having written nothing. It also
+returns early when the change set is empty (`Object.keys(update).length === 0`),
+so both cases look identical to callers. Not a data-integrity hole (the
+`household_id` filter still scopes the write), just a silent no-op reported as
+success.
+
+**Current workaround:** Ids only ever come from the page's own rendered rows, so
+a mismatch means the row was deleted or moved households since render.
+
+**Revisit trigger:** Any bug report of "I saved and nothing changed", or when
+another caller (bot, API) starts passing ids it did not just read. Select
+`{ count: "exact" }` on the update and throw / return a distinguishable result
+when the count is 0.
+
+**Status:** open
+
+## 2026-09-05: `payment-dialog.tsx` hand-rolls the dialog shell
+
+**Area:** apps/web/app/(app)/obligations/payment-dialog.tsx
+
+**Impact:** `obligation-dialog-shell.tsx` was extracted during the redesign and
+is used by the create and edit dialogs (and its `useObligationAction` hook by the
+undo button), but the older payment dialog still writes its own
+`ff-dialog` / `ff-dialog__surface` / `__header` / `__close` / `__actions` markup
+plus its own open/close, focus, and escape handling. Three copies of the dialog
+contract on one page: a fix to focus trapping or escape handling has to be
+applied twice.
+
+**Current workaround:** The markup and class names currently match, so the two
+shells look and behave the same.
+
+**Revisit trigger:** The next change to dialog focus/escape/scroll-lock
+behaviour, or the next a11y pass — port `payment-dialog.tsx` onto
+`obligation-dialog-shell.tsx` then.
+
+**Status:** open
+
+## 2026-09-05: Design-system inconsistencies in the new obligations styles
+
+**Area:** apps/web/components/ui/ui.css
+
+**Impact:** Three small drifts found in review of the redesign CSS, none
+user-visible on their own but each a wrong precedent to copy:
+- `.ff-dialog__close:focus-visible` (line ~451) indicates focus with
+  `color` / `background` / `border-color` and `outline: none` — no ring. The
+  convention elsewhere (e.g. `.ff-seg__item:focus-visible`) is a two-step
+  `box-shadow: 0 0 0 2px var(--ff-accent), 0 0 0 4px var(--ff-tint)` over a
+  transparent outline (which survives forced-colors mode). The close button is
+  the weakest focus target in the app.
+- **Two "faded row" opacities:** `.ff-checklist__row--paid` uses `0.72` while
+  `.ff-off` (the shared fade, used for the encerradas list) uses `0.55`. The
+  0.72 traces to the mockup and the code comment says so, but "faded" now means
+  two different things.
+- **Two progress-track naming families:** `.ff-bar__track` / `.ff-bar__fill`
+  (line ~718) and `.ff-track` / `.ff-track__fill` / `.ff-track__fill--positive`
+  (line ~2749) are the same idea under two prefixes.
+
+**Current workaround:** n/a — cosmetic and consistent within each usage.
+
+**Revisit trigger:** Next design-system pass: give `.ff-dialog__close` the
+accent+tint ring, pick one faded-row opacity (or name the two states), and
+collapse the track families into one.
+
+**Status:** open
+
 ## Entry Format
 
 ```md

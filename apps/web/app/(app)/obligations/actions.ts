@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 
 import { createObligationDraft } from "@family-finance/domain";
 import {
   cancelObligation,
   createObligation,
+  deleteObligationPayment,
   findAccountsByHousehold,
   findCategoriesByHousehold,
   findHouseholdIdForCurrentUser,
@@ -14,8 +16,8 @@ import {
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
-import { parseReaisToCents } from "../../../lib/format";
 import {
+  obligationChangesFromForm,
   obligationInputFromForm,
   obligationPaymentFromForm,
   requireField,
@@ -34,6 +36,8 @@ import {
 type ServerSupabaseClient = Awaited<
   ReturnType<typeof import("../../../lib/supabase").createServerSupabaseClient>
 >;
+
+export type ObligationActionResult = { ok: boolean; error?: string };
 
 async function authedHousehold(): Promise<{
   householdId: string;
@@ -55,81 +59,128 @@ function revalidateObligationPaths(): void {
   revalidatePath("/dashboard");
 }
 
-/** Create an obligation template from the form. */
-export async function createObligationAction(
-  formData: FormData,
+// Plain validation/refusal errors are public; only these established internal
+// message shapes are hidden (domain validation may still be in English).
+function isInternalErrorMessage(message: string): boolean {
+  return (
+    /^\w+ (lookup )?failed: /.test(message) ||
+    message.startsWith("Missing required field") ||
+    message.startsWith("No active household")
+  );
+}
+
+function actionFailure(
+  error: unknown,
+  fallback = "Não foi possível salvar a obrigação.",
+): ObligationActionResult {
+  unstable_rethrow(error);
+  return {
+    ok: false,
+    error:
+      error instanceof Error && !isInternalErrorMessage(error.message)
+        ? error.message
+        : fallback,
+  };
+}
+
+async function verifyAccountAndCategory(
+  client: ServerSupabaseClient,
+  householdId: string,
+  accountId: string | undefined,
+  categoryId: string | null | undefined,
 ): Promise<void> {
-  const { householdId, client } = await authedHousehold();
-
-  const {
-    data: { user },
-  } = await client.auth.getUser();
-  if (user === null) {
-    throw new Error("Sessão inválida. Faça login novamente.");
-  }
-
-  const input = obligationInputFromForm(formData, {
-    householdId,
-    createdByUserId: user.id,
-  });
-
-  // Ownership: the FK checks on obligations run as the table owner (they
-  // bypass RLS), so a submitted id pointing at ANOTHER household's account or
-  // category would be accepted by the database. Verify both against the
-  // caller's own household before inserting.
+  // Foreign keys bypass RLS; validate submitted selections in this household.
   const [accounts, categories] = await Promise.all([
-    findAccountsByHousehold(client, householdId),
-    findCategoriesByHousehold(client, householdId),
+    accountId === undefined ? [] : findAccountsByHousehold(client, householdId),
+    categoryId == null ? [] : findCategoriesByHousehold(client, householdId),
   ]);
-  if (!accounts.some((account) => account.id === input.accountId)) {
+  if (
+    accountId !== undefined &&
+    !accounts.some((account) => account.id === accountId)
+  ) {
     throw new Error("Conta de pagamento inválida.");
   }
-  const categoryId = input.category?.categoryId;
   if (
-    categoryId !== undefined &&
+    categoryId != null &&
     !categories.some((category) => category.id === categoryId)
   ) {
     throw new Error("Categoria inválida.");
   }
-
-  const result = createObligationDraft(input);
-  if (!result.ok) {
-    throw new Error(result.errors.map((e) => e.message).join(" "));
-  }
-
-  await createObligation(client, result.value);
-  revalidateObligationPaths();
 }
 
-/** Edit an obligation's amount, due day, and description. */
+/** Create an obligation template from the form. */
+export async function createObligationAction(
+  formData: FormData,
+): Promise<ObligationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+
+    const {
+      data: { user },
+    } = await client.auth.getUser();
+    if (user === null) {
+      throw new Error("Sessão inválida. Faça login novamente.");
+    }
+
+    const input = obligationInputFromForm(formData, {
+      householdId,
+      createdByUserId: user.id,
+    });
+
+    await verifyAccountAndCategory(
+      client,
+      householdId,
+      input.accountId,
+      input.category?.categoryId,
+    );
+
+    const result = createObligationDraft(input);
+    if (!result.ok) {
+      throw new Error(result.errors.map((e) => e.message).join(" "));
+    }
+
+    await createObligation(client, result.value);
+    revalidateObligationPaths();
+    return { ok: true };
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+/** Edit an obligation's description, amount, due day, account, and category. */
 export async function updateObligationAction(
   formData: FormData,
-): Promise<void> {
-  const { householdId, client } = await authedHousehold();
-  const obligationId = requireField(formData, "obligationId");
-
-  const amountCents = parseReaisToCents(requireField(formData, "amount"));
-  if (amountCents === null || amountCents <= 0) {
-    throw new Error("Valor mensal inválido — use por exemplo 710,44.");
+): Promise<ObligationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const { obligationId, changes } = obligationChangesFromForm(formData);
+    await verifyAccountAndCategory(
+      client,
+      householdId,
+      changes.accountId,
+      changes.categoryId,
+    );
+    await updateObligation(client, householdId, obligationId, changes);
+    revalidateObligationPaths();
+    return { ok: true };
+  } catch (error) {
+    return actionFailure(error);
   }
-  const dueDay = Number.parseInt(requireField(formData, "dueDay"), 10);
-
-  await updateObligation(client, householdId, obligationId, {
-    description: requireField(formData, "description"),
-    amountCents,
-    dueDay,
-  });
-  revalidateObligationPaths();
 }
 
 /** Cancel an obligation (soft: past payments are kept). */
 export async function cancelObligationAction(
   formData: FormData,
-): Promise<void> {
-  const { householdId, client } = await authedHousehold();
-  const obligationId = requireField(formData, "obligationId");
-  await cancelObligation(client, householdId, obligationId);
-  revalidateObligationPaths();
+): Promise<ObligationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const obligationId = requireField(formData, "obligationId");
+    await cancelObligation(client, householdId, obligationId);
+    revalidateObligationPaths();
+    return { ok: true };
+  } catch (error) {
+    return actionFailure(error);
+  }
 }
 
 /**
@@ -140,9 +191,29 @@ export async function cancelObligationAction(
  */
 export async function markObligationPaidAction(
   formData: FormData,
-): Promise<void> {
-  const { client } = await authedHousehold();
-  const payment = obligationPaymentFromForm(formData);
-  await materializeObligationPayment(client, payment);
-  revalidateObligationPaths();
+): Promise<ObligationActionResult> {
+  try {
+    const { client } = await authedHousehold();
+    const payment = obligationPaymentFromForm(formData);
+    await materializeObligationPayment(client, payment);
+    revalidateObligationPaths();
+    return { ok: true };
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+/** Undo a materialized payment and return errors to the caller. */
+export async function undoObligationPaymentAction(
+  formData: FormData,
+): Promise<ObligationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const transactionId = requireField(formData, "transactionId");
+    await deleteObligationPayment(client, householdId, transactionId);
+    revalidateObligationPaths();
+    return { ok: true };
+  } catch (error) {
+    return actionFailure(error, "Não foi possível desfazer o pagamento.");
+  }
 }
