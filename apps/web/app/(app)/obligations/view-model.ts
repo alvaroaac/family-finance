@@ -270,6 +270,11 @@ export function termProgress(
   };
 }
 
+/** Which installment the current month is: 11 elapsed -> parcela 12. */
+export function installmentNumber(elapsed: number, total: number): number {
+  return Math.min(elapsed + 1, total);
+}
+
 /** Both slices use the same maximum so they share the timeline's scale. */
 export function barWidths(
   slot: TimelineMonth,

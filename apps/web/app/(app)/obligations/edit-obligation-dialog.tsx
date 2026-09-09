@@ -30,7 +30,11 @@ import {
   type OptionItem,
 } from "./obligation-dialog-shell";
 import type { ObligationListItem } from "./queries";
-import { monthAbbrPtBr, type TermProgress } from "./view-model";
+import {
+  installmentNumber,
+  monthAbbrPtBr,
+  type TermProgress,
+} from "./view-model";
 
 /**
  * "Editar obrigação" — the pencil on an obligation row.
@@ -50,11 +54,6 @@ function amountInputValue(amountCents: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-}
-
-/** Which installment the current month is: 11 already paid -> "Parcela 12". */
-function installmentNumber(elapsed: number, total: number): number {
-  return Math.min(elapsed + 1, total);
 }
 
 /** Paid share of the term, elapsed / total, in percent. */
@@ -124,23 +123,12 @@ function TermPanel({
 /** What encerrar does, from the next month on, in the household's words. */
 function cancelSentence(
   item: ObligationListItem,
-  progress: TermProgress,
   currentMonth: string,
 ): ReactNode {
-  const paid =
-    progress.kind === "running"
-      ? installmentNumber(progress.elapsed, progress.total)
-      : 0;
-  const kept =
-    paid === 0
-      ? "O que já foi pago continua nas transações."
-      : paid === 1
-        ? "A parcela paga continua nas transações."
-        : `As ${paid} parcelas pagas continuam nas transações.`;
   return (
     <>
       Encerrar <strong>{item.description}</strong>
-      {`? A partir de ${monthNamePtBr(addMonthsYm(currentMonth, 1))}, esta obrigação sai dos próximos meses. ${kept}`}
+      {`? A partir de ${monthNamePtBr(addMonthsYm(currentMonth, 1))}, esta obrigação sai dos próximos meses. O que já foi pago continua nas transações.`}
     </>
   );
 }
@@ -366,7 +354,7 @@ export function EditObligationDialog({
             {confirming ? (
               <div className="ff-danger-zone__confirm">
                 <span className="ff-row-confirm__text">
-                  {cancelSentence(item, progress, currentMonth)}
+                  {cancelSentence(item, currentMonth)}
                 </span>
                 <button
                   type="button"

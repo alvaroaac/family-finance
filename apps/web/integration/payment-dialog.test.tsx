@@ -77,7 +77,7 @@ function createHarness(initialProps: DialogProps = baseProps): {
 
 function getOpenButton(container: HTMLElement): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find(
-    (candidate) => candidate.textContent === "Marcar como paga",
+    (candidate) => candidate.getAttribute("aria-label") === "Marcar como paga",
   );
   if (!(button instanceof HTMLButtonElement)) {
     throw new Error("Open button not found");

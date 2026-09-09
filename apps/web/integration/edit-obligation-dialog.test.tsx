@@ -505,7 +505,7 @@ describe("EditObligationDialog", () => {
     await click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(textOf(harness.container, ".ff-danger-zone__confirm")).toContain(
-      "Encerrar Kicks? A partir de setembro, esta obrigação sai dos próximos meses. As 12 parcelas pagas continuam nas transações.",
+      "Encerrar Kicks? A partir de setembro, esta obrigação sai dos próximos meses. O que já foi pago continua nas transações.",
     );
 
     await click(buttonWithText(harness.container, "Deixa pra lá"));

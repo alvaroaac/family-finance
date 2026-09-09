@@ -44,7 +44,12 @@ export function ObligationPaymentDialog({
 
   return (
     <>
-      <Button onClick={openDialog}>Marcar como paga</Button>
+      <Button onClick={openDialog} ariaLabel="Marcar como paga">
+        <span className="ff-oblig-pay-label">Marcar como paga</span>
+        <span className="ff-oblig-pay-label--short" aria-hidden="true">
+          Pagar
+        </span>
+      </Button>
       <dialog
         ref={dialogRef}
         className="ff-dialog"

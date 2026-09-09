@@ -377,7 +377,7 @@ describe("ObligationsTable", () => {
       createElement(ObligationsTable, { ...props, showEnded: false }),
     );
 
-    expect(html).toContain("13 de 360 pagas · até jul/2055");
+    expect(html).toContain("parcela 14 de 360 · até jul/2055");
     expect(html).toContain("sem prazo");
     expect(html).toContain("começa em out/2026 · 72 parcelas");
     expect(html).toContain("vence dia 10 · Conta Itaú · Moradia");

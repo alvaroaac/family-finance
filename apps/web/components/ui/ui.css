@@ -3075,9 +3075,14 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 }
 
 /* Soft "de R$ total" suffix inside the "Este mês" stat value. */
+.ff-oblig-pay-label--short {
+  display: none;
+}
+
 .ff-oblig-stat-of {
   font-size: 15px;
   color: var(--ff-ink-soft);
+  white-space: nowrap;
 }
 
 .ff-oblig-stat-track {
@@ -3160,21 +3165,79 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 }
 
 @media (max-width: 720px) {
+  /* The sticky CTA is the create entry on mobile (Mobile mockup has no
+     header button); keep the header from pushing past the viewport. */
+  .ff-has-sticky-cta .ff-page-title__actions {
+    display: none;
+  }
+
+  /* 2 up, third card full width; smaller value so "R$ 8.283,40" fits. */
   .ff-oblig-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 
+  .ff-oblig-stats > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .ff-oblig-stats .ff-stat {
+    padding: 16px;
+  }
+
+  .ff-oblig-stats .ff-stat__kicker {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+  }
+
+  .ff-oblig-stats .ff-stat__value {
+    font-size: 22px;
+  }
+
+  .ff-oblig-stat-of {
+    font-size: 13px;
+  }
+
+  /* Mobile mockup row: chip · name+sub · amount over the action; the due
+     pill drops under the name instead of squeezing it. */
   .ff-checklist__row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 12px;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "day body amount"
+      "day badge action";
+    gap: 6px 12px;
     padding: 12px 18px;
   }
 
-  .ff-checklist__body {
-    flex: 1;
+  .ff-checklist__day {
+    grid-area: day;
   }
+
+  .ff-checklist__body {
+    grid-area: body;
+  }
+
+  .ff-checklist__row > :nth-child(3) {
+    grid-area: badge;
+    justify-self: start;
+  }
+
+  .ff-checklist__row .ff-oblig-cell--amount {
+    grid-area: amount;
+  }
+
+  .ff-checklist__row .ff-oblig-cell--action {
+    grid-area: action;
+  }
+
+  /* Compact "Pagar" action (mockup's `btn-ghost-sm`) so the name keeps room. */
+  .ff-checklist__row .ff-oblig-cell--action .ff-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .ff-checklist__row .ff-oblig-pay-label { display: none; }
+  .ff-checklist__row .ff-oblig-pay-label--short { display: inline; }
 
   .ff-timeline__row {
     grid-template-columns: 72px 1fr 110px;

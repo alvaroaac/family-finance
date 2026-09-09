@@ -26,6 +26,7 @@ import type { ObligationListItem } from "./queries";
 import {
   committedPerMonth,
   monthAbbrPtBr,
+  installmentNumber,
   termProgress,
   type TermProgress,
 } from "./view-model";
@@ -58,8 +59,8 @@ function TermCell({ progress }: { progress: TermProgress }): ReactElement {
   return (
     <div>
       <div className="ff-note ff-num ff-oblig-term-count">
-        {progress.elapsed} de {progress.total} pagas · até{" "}
-        {monthAbbrPtBr(progress.endMonth)}
+        parcela {installmentNumber(progress.elapsed, progress.total)} de{" "}
+        {progress.total} · até {monthAbbrPtBr(progress.endMonth)}
       </div>
       <div className="ff-track ff-oblig-track">
         <div className="ff-track__fill" style={{ width: `${pct}%` }} />
