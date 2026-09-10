@@ -189,6 +189,9 @@ importers:
       '@family-finance/domain':
         specifier: workspace:*
         version: link:../domain
+      ofx-js:
+        specifier: ^1.1.1
+        version: 1.1.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -2134,6 +2137,9 @@ packages:
   object.values@1.2.1:
     resolution: {integrity: sha512-gXah6aZrcUxjWg2zR2MwouP2eHlCBzdV4pygudehaKXSGW4v2AsRQUK+lwwXhii6KFZcunEnmSUoYp5CXibxtA==}
     engines: {node: '>= 0.4'}
+
+  ofx-js@1.1.1:
+    resolution: {integrity: sha512-4ITJY2LuEq1fTV4FrsUgeVyEZOGz4vw9otaqPj1V2hfjN2c4RWYj8VVX6f3u6pSCwCie/ZH15VsGftWv08IsfQ==}
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
@@ -4592,6 +4598,8 @@ snapshots:
       call-bound: 1.0.4
       define-properties: 1.2.1
       es-object-atoms: 1.1.2
+
+  ofx-js@1.1.1: {}
 
   once@1.4.0:
     dependencies:

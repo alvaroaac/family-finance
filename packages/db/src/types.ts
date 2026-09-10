@@ -21,6 +21,7 @@ export type InvestmentBucketSlug =
 export type ImportSource =
   | "minhas_financas_csv"
   | "nubank_csv"
+  | "nubank_ofx"
   | "mercado_pago_pdf";
 export type ImportBatchStatus =
   | "pending"
@@ -618,6 +619,7 @@ export type ConfirmImportV2TransactionItem = ConfirmImportV2AuditFields & {
 };
 
 export type ConfirmImportV2InstallmentItem = ConfirmImportV2AuditFields & {
+  replace_transaction?: { id: string; updated_at: string };
   disposition: "imported";
   fingerprint_version: number;
   base_fingerprint: string;
@@ -758,6 +760,13 @@ export type Database = {
       };
       /** Atomic, claim-protected flat + installment import (migration 0016). */
       confirm_import_v2: {
+        Args: {
+          batch_payload: ConfirmImportV2BatchPayload;
+          items_payload: ConfirmImportV2Item[];
+        };
+        Returns: ConfirmImportV2Result;
+      };
+      confirm_import_with_replacements: {
         Args: {
           batch_payload: ConfirmImportV2BatchPayload;
           items_payload: ConfirmImportV2Item[];

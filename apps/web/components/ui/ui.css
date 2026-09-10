@@ -2135,6 +2135,21 @@ a.ff-callout:hover {
   color: var(--ff-accent);
 }
 
+@media (max-width: 480px) {
+  .ff-step {
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .ff-steps__line {
+    margin: 0 6px;
+  }
+  .ff-step__label {
+    white-space: normal;
+    text-align: center;
+  }
+}
+
 /* Dashed dropzone — "Solta o arquivo aqui". */
 .ff-dropzone {
   margin-top: 16px;

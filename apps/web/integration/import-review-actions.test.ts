@@ -18,6 +18,7 @@ const db = vi.hoisted(() => ({
   installments: vi.fn(),
   claims: vi.fn(),
   persist: vi.fn(),
+  manualExpenses: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../lib/auth", () => ({ requireAuthorizedUser: vi.fn() }));
@@ -38,6 +39,7 @@ vi.mock("@family-finance/db", async (importOriginal) => ({
   ],
   findCategoriesByHousehold: async () => [],
   findTransactionsForInstrumentBetween: async () => [],
+  findManualExpensesBetween: db.manualExpenses,
   listInstallmentGroupsByHousehold: db.groups,
   listInstallmentsByDueMonth: db.installments,
   findImportItemClaims: db.claims,
@@ -79,6 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   installCandidates();
   db.claims.mockResolvedValue([]);
+  db.manualExpenses.mockResolvedValue([]);
   db.persist.mockResolvedValue({
     batch: { id: "batch" },
     replayed: false,
@@ -92,6 +95,71 @@ beforeEach(() => {
 });
 
 describe("installment review through the real server actions", () => {
+  it("requires review for a flat expense with the same total, name and month", async () => {
+    db.groups.mockResolvedValue([]);
+    db.installments.mockResolvedValue([]);
+    db.manualExpenses.mockResolvedValue([
+      {
+        id: "flat",
+        kind: "expense",
+        amount_cents: 41990,
+        description: "MARKETPLACE LOJA 1",
+        occurred_on: "2026-08-16",
+        credit_card_id: CARD,
+        account_id: null,
+        installment_id: null,
+        import_batch_id: null,
+        obligation_id: null,
+        updated_at: "2026-08-16T12:00:00Z",
+        category_id: null,
+        subcategory_id: null,
+      },
+    ]);
+    expect(await resolveImportTargets(targets())).toMatchObject({
+      ok: true,
+      groupDuplicateIndices: [],
+      groupReviewRequiredIndices: [0],
+      flatMatchesByIndex: {
+        0: [{ transactionId: "flat", confidence: "very_strong" }],
+      },
+    });
+    expect(await confirmImport(reviewConfirmation())).toMatchObject({
+      ok: false,
+    });
+    expect(db.persist).not.toHaveBeenCalled();
+    const input = reviewConfirmation();
+    input.groups![0]!.replaceTransaction = {
+      id: "flat",
+      updatedAt: "2026-08-16T12:00:00Z",
+    };
+    expect(await confirmImport(input)).toMatchObject({ ok: true });
+    expect(db.persist.mock.calls[0]![2]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          replace_transaction: {
+            id: "flat",
+            updated_at: "2026-08-16T12:00:00Z",
+          },
+        }),
+      ]),
+    );
+  });
+  it("rejects sharing one replacement between two imported groups", async () => {
+    db.groups.mockResolvedValue([]);
+    db.installments.mockResolvedValue([]);
+    const input = reviewConfirmation(reviewPreview(2));
+    input.groups!.forEach((group) => {
+      group.replaceTransaction = {
+        id: "flat",
+        updatedAt: "2026-08-16T12:00:00Z",
+      };
+    });
+    expect(await confirmImport(input)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("duas compras"),
+    });
+    expect(db.persist).not.toHaveBeenCalled();
+  });
   it("classifies a unique exact amount/count/card match despite different descriptions", async () => {
     const result = await resolveImportTargets(targets());
     expect(result).toMatchObject({

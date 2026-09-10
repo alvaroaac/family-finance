@@ -1,5 +1,7 @@
 "use client";
 
+import type { FlatInstallmentMatch } from "./flat-installment-matches";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
@@ -92,6 +94,7 @@ type PreviewBundle = {
   subcategories: SubcategoryOption[];
   creditCards: CreditCardOption[];
   mp?: MpPreviewExtras;
+  notices?: string[];
 };
 
 const PREVIEW_COLUMNS = [
@@ -175,6 +178,12 @@ export default function ImportsPage() {
   const [groupMatchesByIndex, setGroupMatchesByIndex] = useState<
     Record<number, InstallmentCandidateMatch[]>
   >({});
+  const [flatMatchesByIndex, setFlatMatchesByIndex] = useState<
+    Record<number, FlatInstallmentMatch[]>
+  >({});
+  const [replacements, setReplacements] = useState<
+    Record<number, { id: string; updatedAt: string }>
+  >({});
   const [groupMatchCountsByIndex, setGroupMatchCountsByIndex] = useState<
     Record<number, number>
   >({});
@@ -209,7 +218,7 @@ export default function ImportsPage() {
   const reviewedGroupIndices = useRef<Set<number>>(new Set());
   const targetsResolved = bundle !== null && resolvedTargetKey === targetKey;
   const [groupMatchDecisions, setGroupMatchDecisions] = useState<
-    Record<number, "keep_existing" | "import_anyway">
+    Record<number, "keep_existing" | "import_anyway" | "replace">
   >({});
   const [mapping, setMapping] = useState<
     Record<number, { categoryId?: string; subcategoryId?: string }>
@@ -317,6 +326,7 @@ export default function ImportsPage() {
       subcategories: result.subcategories,
       creditCards: result.creditCards,
       mp: result.mp,
+      notices: result.notices,
     });
     const initialMapping: Record<
       number,
@@ -399,6 +409,8 @@ export default function ImportsPage() {
   useEffect(() => {
     resolutionVersion.current += 1;
     setResolvedTargetKey(null);
+    setReplacements({});
+    setFlatMatchesByIndex({});
     setTargetError(null);
     setMatchPageError(null);
     setLoadingMatchPages({});
@@ -445,6 +457,7 @@ export default function ImportsPage() {
         setPersistedClaimIds(result.claimIdsByIndex);
         const nextGroupPersisted = new Set(result.groupDuplicateIndices);
         setGroupMatchesByIndex(result.groupMatchesByIndex);
+        setFlatMatchesByIndex(result.flatMatchesByIndex ?? {});
         setGroupMatchDecisions({});
         setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
         setPersistedGroupDuplicates((previousPersisted) => {
@@ -774,6 +787,8 @@ export default function ImportsPage() {
           .filter((x) => x.edit !== undefined && !x.edit.skip)
           .map(({ g, edit }) => ({
             sourceGroupIndex: bundle.mp?.groups.indexOf(g) ?? -1,
+            replaceTransaction:
+              replacements[bundle.mp?.groups.indexOf(g) ?? -1],
             description: g.description,
             totalAmountCents: edit!.totalAmountCents,
             installmentCount: edit!.installmentCount,
@@ -1021,7 +1036,7 @@ export default function ImportsPage() {
         </h1>
         <p className="ff-page-title__lead">
           {step === 1
-            ? "CSV do Minhas Financas, do Nubank ou fatura em PDF do Mercado Pago."
+            ? "CSV do Minhas Financas, CSV ou OFX do Nubank e PDF do Mercado Pago."
             : "Nada entra sem a sua revisão — desmarca o que não for da casa."}
         </p>
       </header>
@@ -1096,6 +1111,7 @@ export default function ImportsPage() {
                 >
                   <option value="minhas-financas">Minhas Financas (CSV)</option>
                   <option value="nubank">Nubank (CSV)</option>
+                  <option value="nubank-ofx">Nubank (Fatura OFX)</option>
                   <option value="mercado-pago">
                     Mercado Pago (Fatura PDF)
                   </option>
@@ -1110,7 +1126,9 @@ export default function ImportsPage() {
                   accept={
                     source === "mercado-pago"
                       ? ".pdf,application/pdf"
-                      : ".csv,text/csv"
+                      : source === "nubank-ofx"
+                        ? ".ofx,application/x-ofx,application/ofx"
+                        : ".csv,text/csv"
                   }
                   onChange={(e) =>
                     setFileName(e.target.files?.[0]?.name ?? null)
@@ -1124,7 +1142,7 @@ export default function ImportsPage() {
                   {fileName ?? "Solta o arquivo aqui"}
                 </span>
                 <span className="ff-dropzone__hint">
-                  ou <strong>escolhe do computador</strong> · PDF ou CSV
+                  ou <strong>escolhe do computador</strong> · PDF, CSV ou OFX
                 </span>
               </label>
 
@@ -1151,6 +1169,11 @@ export default function ImportsPage() {
       {/* ---- Passo 2 · Revisar ---- */}
       {step === 2 && preview !== null ? (
         <>
+          {bundle?.notices?.map((notice) => (
+            <p key={notice} className="ff-note" role="status">
+              {notice}
+            </p>
+          ))}
           {/* Errors */}
           {preview.errors.length > 0 ? (
             <div style={{ marginTop: 24 }}>
@@ -1243,7 +1266,7 @@ export default function ImportsPage() {
                                     topMatch.confidence,
                                   )
                                 : needsReview
-                                  ? "compra semelhante neste cartão"
+                                  ? "compra semelhante encontrada"
                                   : isPersistedDuplicate
                                     ? "já existe neste cartão"
                                     : "novo"}
@@ -1270,6 +1293,7 @@ export default function ImportsPage() {
                                 }))
                               }
                               aria-label={`Total do parcelamento ${g.description}`}
+                              disabled={replacements[i] !== undefined}
                             />
                           </Field>
                           <Field label="Parcelas">
@@ -1290,6 +1314,7 @@ export default function ImportsPage() {
                                 }))
                               }
                               aria-label={`Quantidade de parcelas ${g.description}`}
+                              disabled={replacements[i] !== undefined}
                             />
                           </Field>
                           <Field label="Compra">
@@ -1304,6 +1329,7 @@ export default function ImportsPage() {
                                 }))
                               }
                               aria-label={`Data da compra ${g.description}`}
+                              disabled={replacements[i] !== undefined}
                             />
                           </Field>
                           <Field label="Categoria">
@@ -1321,6 +1347,7 @@ export default function ImportsPage() {
                                 }))
                               }
                               aria-label={`Categoria do parcelamento ${g.description}`}
+                              disabled={replacements[i] !== undefined}
                             >
                               <option value="">(sem categoria)</option>
                               {(bundle?.categories ?? []).map((category) => (
@@ -1334,7 +1361,10 @@ export default function ImportsPage() {
                             <Select
                               className="ff-select--compact"
                               value={edit.subcategoryId ?? ""}
-                              disabled={edit.categoryId === undefined}
+                              disabled={
+                                edit.categoryId === undefined ||
+                                replacements[i] !== undefined
+                              }
                               onChange={(event) =>
                                 setGroupEdits((previous) => ({
                                   ...previous,
@@ -1370,7 +1400,8 @@ export default function ImportsPage() {
                             aria-label={`Possíveis correspondências para ${g.description}`}
                           >
                             <strong>Compare com o que já está no painel</strong>
-                            {matchCount === 0 ? (
+                            {matchCount === 0 &&
+                            (flatMatchesByIndex[i]?.length ?? 0) === 0 ? (
                               <p>
                                 Já existe uma compra com a mesma descrição,
                                 quantidade de parcelas e mês de compra neste
@@ -1399,6 +1430,86 @@ export default function ImportsPage() {
                                     ? " · valor exato"
                                     : ` · diferença de ${formatBrl(match.amountDifferenceCents)}`}
                                 </span>
+                              </div>
+                            ))}
+                            {(flatMatchesByIndex[i] ?? []).map((match) => (
+                              <div
+                                className="ff-group-match"
+                                key={match.transactionId}
+                              >
+                                <div className="ff-group-match__head">
+                                  <span>
+                                    {match.description} · despesa única
+                                  </span>
+                                  <Badge tone="warn">
+                                    {installmentConfidenceLabel(
+                                      match.confidence,
+                                    )}
+                                  </Badge>
+                                </div>
+                                <p className="ff-group__hint">
+                                  {formatBrl(match.amountCents)} ·{" "}
+                                  {match.instrumentName} ·{" "}
+                                  {formatDayMonth(match.occurredOn)}
+                                  {match.differentInstrument
+                                    ? " · pagamento diferente"
+                                    : " · mesmo cartão"}
+                                </p>
+                                <Button
+                                  disabled={
+                                    !targetsResolved ||
+                                    isPending ||
+                                    edit.totalAmountCents !==
+                                      match.amountCents ||
+                                    edit.purchasedOn.slice(0, 7) !==
+                                      match.occurredOn.slice(0, 7)
+                                  }
+                                  variant={
+                                    replacements[i]?.id === match.transactionId
+                                      ? "primary"
+                                      : "ghost"
+                                  }
+                                  onClick={() => {
+                                    if (
+                                      !window.confirm(
+                                        `Substituir a despesa única “${match.description}” de ${formatBrl(match.amountCents)} (${match.instrumentName}) por ${edit.installmentCount} parcelas no cartão selecionado? A categoria e o registro original serão preservados. A mudança só será aplicada ao confirmar a importação.`,
+                                      )
+                                    )
+                                      return;
+                                    setReplacements((previous) => ({
+                                      ...previous,
+                                      [i]: {
+                                        id: match.transactionId,
+                                        updatedAt: match.updatedAt,
+                                      },
+                                    }));
+                                    setGroupMatchDecisions((previous) => ({
+                                      ...previous,
+                                      [i]: "replace",
+                                    }));
+                                    setGroupOverrides((previous) => {
+                                      const next = { ...previous };
+                                      delete next[i];
+                                      return next;
+                                    });
+                                    setGroupEdits((previous) => ({
+                                      ...previous,
+                                      [i]: {
+                                        ...edit,
+                                        skip: false,
+                                        purchasedOn: match.occurredOn,
+                                        categoryId:
+                                          match.categoryId ?? undefined,
+                                        subcategoryId:
+                                          match.subcategoryId ?? undefined,
+                                      },
+                                    }));
+                                  }}
+                                >
+                                  {replacements[i]?.id === match.transactionId
+                                    ? "Substituição selecionada"
+                                    : "Substituir por parcelamento"}
+                                </Button>
                               </div>
                             ))}
                             {matchCount > INSTALLMENT_MATCH_PAGE_SIZE ? (
@@ -1462,6 +1573,11 @@ export default function ImportsPage() {
                                     ...previous,
                                     [i]: "keep_existing",
                                   }));
+                                  setReplacements((previous) => {
+                                    const next = { ...previous };
+                                    delete next[i];
+                                    return next;
+                                  });
                                   setGroupOverrides((previous) => {
                                     const updated = { ...previous };
                                     delete updated[i];
@@ -1508,6 +1624,11 @@ export default function ImportsPage() {
                                     ...previous,
                                     [i]: "import_anyway",
                                   }));
+                                  setReplacements((previous) => {
+                                    const next = { ...previous };
+                                    delete next[i];
+                                    return next;
+                                  });
                                   setGroupEdits((previous) => ({
                                     ...previous,
                                     [i]: { ...edit, skip: false },

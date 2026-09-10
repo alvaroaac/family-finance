@@ -1,10 +1,16 @@
 "use server";
 
+import {
+  findFlatInstallmentMatches,
+  type FlatInstallmentMatch,
+} from "./flat-installment-matches";
+
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import {
   getImportAdapter,
+  decodeOfx,
   buildImportPreview,
   splitFlatAndInstallmentRows,
   normalizeDescription,
@@ -58,6 +64,7 @@ import {
   findImportItemClaims,
   findImportRowsByFileFingerprint,
   findTransactionsForInstrumentBetween,
+  findManualExpensesBetween,
   type ImportSource as DbImportSource,
   type ConfirmImportV2Item,
 } from "@family-finance/db";
@@ -96,6 +103,7 @@ export type { InstallmentCandidateMatch } from "./group-duplicates";
 const SOURCE_TO_DB: Record<ImportSource, DbImportSource> = {
   "minhas-financas": "minhas_financas_csv",
   nubank: "nubank_csv",
+  "nubank-ofx": "nubank_ofx",
   "mercado-pago": "mercado_pago_pdf",
 };
 
@@ -108,6 +116,7 @@ const MAX_INSTALLMENTS = 120;
 const PARSER_VERSION: Record<ImportSource, string> = {
   "minhas-financas": "minhas-financas-v1",
   nubank: "nubank-v1",
+  "nubank-ofx": "nubank-ofx-v1",
   "mercado-pago": "mercado-pago-v1",
 };
 
@@ -115,6 +124,7 @@ function parseSource(value: FormDataEntryValue | null): ImportSource {
   if (
     value === "minhas-financas" ||
     value === "nubank" ||
+    value === "nubank-ofx" ||
     value === "mercado-pago"
   ) {
     return value;
@@ -202,6 +212,7 @@ export type PreviewState = {
   subcategories: SubcategoryOption[];
   creditCards: CreditCardOption[];
   mp?: MpPreviewExtras;
+  notices?: string[];
 };
 
 export type PreviewError = { ok: false; message: string };
@@ -283,6 +294,7 @@ export type ResolveImportTargetsResult =
       groupMatchesByIndex: Record<number, InstallmentCandidateMatch[]>;
       groupMatchCountsByIndex: Record<number, number>;
       groupReviewRequiredIndices: number[];
+      flatMatchesByIndex: Record<number, FlatInstallmentMatch[]>;
     }
   | { ok: false; message: string };
 
@@ -301,7 +313,7 @@ export async function previewImport(
 
     const file = formData.get("file");
     if (!(file instanceof File) || file.size === 0) {
-      return { ok: false, message: "Selecione um arquivo CSV para importar." };
+      return { ok: false, message: "Selecione um arquivo para importar." };
     }
 
     const maxBytes = source === "mercado-pago" ? MAX_PDF_BYTES : MAX_CSV_BYTES;
@@ -322,6 +334,27 @@ export async function previewImport(
         pdfMagic !== "%PDF-"
       ) {
         return { ok: false, message: "O arquivo precisa ser um PDF válido." };
+      }
+    } else if (source === "nubank-ofx") {
+      if (
+        !lowerName.endsWith(".ofx") ||
+        bytes.includes(0) ||
+        ![
+          "",
+          "application/x-ofx",
+          "application/ofx",
+          "application/vnd.intu.qfx",
+          "application/octet-stream",
+          "text/plain",
+          "text/ofx",
+          "application/xml",
+          "text/xml",
+        ].includes(file.type)
+      ) {
+        return {
+          ok: false,
+          message: "O arquivo precisa ser um OFX de texto valido.",
+        };
       }
     } else if (
       !lowerName.endsWith(".csv") ||
@@ -359,6 +392,8 @@ export async function previewImport(
       fileText = Array.isArray(extracted.text)
         ? extracted.text.join("\n")
         : extracted.text;
+    } else if (source === "nubank-ofx") {
+      fileText = decodeOfx(bytes);
     } else {
       fileText = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
     }
@@ -490,13 +525,13 @@ export async function previewImport(
     let groupIdentities: RowIdentity[] | undefined;
     let groupSourceRowIndices: number[] | undefined;
     let installmentGroups: InferredInstallmentGroup[] | undefined;
-    if (source === "mercado-pago") {
+    if (source === "mercado-pago" || source === "nubank-ofx") {
       const referenceMonth = parsed.statement?.referenceMonth;
       if (referenceMonth === undefined) {
         return {
           ok: false,
           message:
-            "Não foi possível identificar o mês de emissão da fatura no PDF.",
+            "Não foi possível identificar o mês de referência da fatura.",
         };
       }
       const { flatRowIndices, groups } = splitFlatAndInstallmentRows(
@@ -516,7 +551,7 @@ export async function previewImport(
       }));
       groupIdentities = assignInstallmentGroupIdentities(
         groups.map((group) => ({
-          source: "mercado-pago",
+          source,
           description: group.description,
           installmentCount: group.installmentCount,
           purchasedOn: group.purchasedOn,
@@ -642,6 +677,7 @@ export async function previewImport(
       })),
       creditCards: creditCards.map((c) => ({ id: c.id, name: c.name })),
       mp,
+      notices: parsed.notices,
     };
   } catch (error) {
     return {
@@ -701,7 +737,10 @@ export async function resolveImportTargets(input: {
         row?.cardLast4 === undefined
           ? input.creditCardId
           : input.creditCardByLast4?.[row.cardLast4];
-      if (input.snapshot.source === "mercado-pago") {
+      if (
+        input.snapshot.source === "mercado-pago" ||
+        input.snapshot.source === "nubank-ofx"
+      ) {
         return cardId !== undefined && cardIds.has(cardId)
           ? claimIdentity(identity, { type: "credit_card", id: cardId })
           : null;
@@ -799,6 +838,7 @@ export async function resolveImportTargets(input: {
     let groupMatchesByIndex: Record<number, InstallmentCandidateMatch[]> = {};
     let groupMatchCountsByIndex: Record<number, number> = {};
     const groupReviewRequiredIndices: number[] = [];
+    const flatMatchesByIndex: Record<number, FlatInstallmentMatch[]> = {};
     groupClaims.forEach((claim, index) => {
       if (claim === null) return;
       const identityKey = `${claim.claimFingerprint}:${claim.occurrenceNo}`;
@@ -807,6 +847,27 @@ export async function resolveImportTargets(input: {
       if (claimId !== undefined) groupClaimIdsByIndex[index] = claimId;
     });
     if ((input.snapshot.installmentGroups?.length ?? 0) > 0) {
+      const purchaseDates = input.snapshot
+        .installmentGroups!.map((g) => g.purchasedOn)
+        .sort();
+      const lastMonth = purchaseDates.at(-1)!.slice(0, 7);
+      const lastDay = new Date(
+        Date.UTC(Number(lastMonth.slice(0, 4)), Number(lastMonth.slice(5)), 0),
+      )
+        .toISOString()
+        .slice(0, 10);
+      const manualExpenses = await findManualExpensesBetween(
+        client,
+        householdId,
+        `${purchaseDates[0]!.slice(0, 7)}-01`,
+        lastDay,
+      );
+      const instrumentNames = new Map(
+        [...cards, ...accounts].map((instrument) => [
+          instrument.id,
+          instrument.name,
+        ]),
+      );
       const [legacyGroups, existingInstallments] = await Promise.all([
         listInstallmentGroupsByHousehold(client, householdId),
         listInstallmentsByDueMonth(
@@ -854,6 +915,18 @@ export async function resolveImportTargets(input: {
             row?.cardLast4 === undefined
               ? input.creditCardId
               : input.creditCardByLast4?.[row.cardLast4];
+          if (cardId !== undefined && cardIds.has(cardId)) {
+            const matches = findFlatInstallmentMatches(
+              { ...group, totalAmountCents: group.estimatedTotalCents },
+              cardId,
+              manualExpenses,
+              instrumentNames,
+            );
+            if (matches.length > 0) {
+              flatMatchesByIndex[index] = matches;
+              groupReviewRequiredIndices.push(index);
+            }
+          }
           if (
             cardId !== undefined &&
             cardIds.has(cardId) &&
@@ -890,6 +963,7 @@ export async function resolveImportTargets(input: {
       groupMatchesByIndex,
       groupMatchCountsByIndex,
       groupReviewRequiredIndices,
+      flatMatchesByIndex,
     };
   } catch (error) {
     return {
@@ -1105,6 +1179,7 @@ export async function suggestImportCategories(input: {
 }
 
 export type ConfirmGroupInput = {
+  replaceTransaction?: { id: string; updatedAt: string };
   sourceGroupIndex: number;
   description: string;
   totalAmountCents: number;
@@ -1224,7 +1299,8 @@ export async function confirmImport(
         message: "O preview mudou. Envie o arquivo novamente.",
       };
     }
-    const isMp = input.source === "mercado-pago";
+    const isMp =
+      input.source === "mercado-pago" || input.source === "nubank-ofx";
     const createdByUserId = userId;
     const [accounts, cards, categories] = await Promise.all([
       findAccountsByHousehold(client, householdId),
@@ -1413,7 +1489,69 @@ export async function confirmImport(
       },
     );
 
-    for (const group of input.groups ?? []) {
+    const confirmationGroups = input.groups ?? [];
+    const flatDates = confirmationGroups
+      .map((group) => group.purchasedOn)
+      .sort();
+    const finalMonth = flatDates.at(-1)?.slice(0, 7);
+    const flatExpenses =
+      finalMonth === undefined
+        ? []
+        : await findManualExpensesBetween(
+            client,
+            householdId,
+            `${flatDates[0]!.slice(0, 7)}-01`,
+            new Date(
+              Date.UTC(
+                Number(finalMonth.slice(0, 4)),
+                Number(finalMonth.slice(5)),
+                0,
+              ),
+            )
+              .toISOString()
+              .slice(0, 10),
+          );
+    const replacementIds = new Set<string>();
+    for (const group of confirmationGroups) {
+      const flatMatches = findFlatInstallmentMatches(
+        group,
+        group.creditCardId,
+        flatExpenses,
+      );
+      if (group.replaceTransaction !== undefined) {
+        if (replacementIds.has(group.replaceTransaction.id)) {
+          return {
+            ok: false,
+            message:
+              "Um lançamento não pode substituir duas compras. Revise as correspondências.",
+          };
+        }
+        replacementIds.add(group.replaceTransaction.id);
+        // The RPC rechecks the locked original and handles an already-completed retry.
+        if (
+          flatExpenses.some((tx) => tx.id === group.replaceTransaction!.id) &&
+          !flatMatches.some(
+            (match) =>
+              match.transactionId === group.replaceTransaction!.id &&
+              match.updatedAt === group.replaceTransaction!.updatedAt,
+          )
+        ) {
+          return {
+            ok: false,
+            message:
+              "O lançamento ou o parcelamento mudou. Atualize as comparações antes de substituir.",
+          };
+        }
+      } else if (
+        flatMatches.length > 0 &&
+        (group.override?.reason.trim().length ?? 0) < 5
+      ) {
+        return {
+          ok: false,
+          message:
+            "Existe uma despesa única correspondente. Escolha manter, substituir ou justifique importar novamente.",
+        };
+      }
       if (
         !Number.isInteger(group.installmentCount) ||
         group.installmentCount < 1 ||
@@ -1462,6 +1600,7 @@ export async function confirmImport(
             group.creditCardId,
             existingMatchCandidates,
           ).length > 0) &&
+        group.replaceTransaction === undefined &&
         (group.override?.reason.trim().length ?? 0) < 5
       ) {
         return {
@@ -1494,6 +1633,12 @@ export async function confirmImport(
               },
       });
       if (!plan.ok) {
+        if (group.replaceTransaction !== undefined) {
+          return {
+            ok: false,
+            message: `Substituição cancelada: ${plan.errors.map((error) => error.message).join("; ")}`,
+          };
+        }
         errors.push(
           `${group.description}: ${plan.errors.map((error) => error.message).join("; ")}`,
         );
@@ -1535,6 +1680,14 @@ export async function confirmImport(
         card_last4: sourceRow.cardLast4,
         installment_group: installmentGroupInsertFromPlan(plan.value),
         installments: installmentInsertPayloadsFromPlan(plan.value),
+        ...(group.replaceTransaction === undefined
+          ? {}
+          : {
+              replace_transaction: {
+                id: group.replaceTransaction.id,
+                updated_at: group.replaceTransaction.updatedAt,
+              },
+            }),
         ...(group.override === undefined
           ? {}
           : {
@@ -1768,6 +1921,8 @@ export async function confirmImport(
 
     revalidatePath("/imports");
     revalidatePath("/dashboard");
+    revalidatePath("/transactions");
+    revalidatePath("/cards");
     return {
       ok: true,
       message: `${result.replayed ? "Importação já confirmada" : "Importação confirmada"}: ${result.transactions_created} transação(ões), ${result.installment_groups_created} parcelamento(s), ${result.duplicate_rows} duplicata(s), ${result.error_rows} erro(s). Arquivo original descartado.`,

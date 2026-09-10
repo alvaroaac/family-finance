@@ -238,7 +238,7 @@ export function claimIdentity(identity: RowIdentity, target: ClaimTarget): Claim
 
 /** Stable purchase-level identity shared by every observed monthly parcel. */
 export function installmentGroupBaseIdentityHash(input: {
-  source: "mercado-pago";
+  source: "mercado-pago" | "nubank-ofx";
   description: string;
   installmentCount: number;
   purchasedOn: string;

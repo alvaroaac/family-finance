@@ -545,7 +545,12 @@ export async function confirmImportV2(
   batch: ConfirmImportV2BatchPayload,
   items: ConfirmImportV2Item[],
 ): Promise<ConfirmImportV2Result> {
-  const { data, error } = await client.rpc("confirm_import_v2", {
+  const rpc = items.some(
+    (item) => "replace_transaction" in item && item.replace_transaction,
+  )
+    ? "confirm_import_with_replacements"
+    : "confirm_import_v2";
+  const { data, error } = await client.rpc(rpc, {
     batch_payload: batch,
     items_payload: items,
   });
@@ -720,6 +725,34 @@ export async function findTransactionsForInstrumentBetween(
     );
   }
   return (data ?? []) as TransactionRow[];
+}
+
+/** Paginate the full candidate set; never silently hide a second match. */
+export async function findManualExpensesBetween(
+  client: AppSupabaseClient,
+  householdId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<TransactionRow[]> {
+  const result: TransactionRow[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await client
+      .from("transactions")
+      .select("*")
+      .eq("household_id", householdId)
+      .eq("kind", "expense")
+      .is("installment_id", null)
+      .is("import_batch_id", null)
+      .is("obligation_id", null)
+      .gte("occurred_on", fromDate)
+      .lte("occurred_on", toDate)
+      .order("id")
+      .range(offset, offset + 499);
+    if (error !== null)
+      throw new Error(`findManualExpensesBetween failed: ${error.message}`);
+    result.push(...(data ?? []));
+    if ((data?.length ?? 0) < 500) return result;
+  }
 }
 
 export async function listImportRowsByBatchId(

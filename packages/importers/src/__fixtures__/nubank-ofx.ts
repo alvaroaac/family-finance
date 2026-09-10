@@ -1,0 +1,32 @@
+/** Synthetic statement. Never contains customer account or transaction data. */
+export function ofxTransaction(overrides: Partial<Record<"TRNTYPE" | "DTPOSTED" | "TRNAMT" | "FITID" | "MEMO", string>> = {}): string {
+  return `<STMTTRN>${Object.entries({
+    TRNTYPE: "DEBIT",
+    DTPOSTED: "20260815000000[-3:BRT]",
+    TRNAMT: "-25.50",
+    FITID: "synthetic-1",
+    MEMO: "Loja teste",
+    ...overrides,
+  })
+    .map(([key, value]) => `<${key}>${value}</${key}>`)
+    .join("")}</STMTTRN>`;
+}
+
+export function nubankOfxFixture(rows = ofxTransaction()): string {
+  return `OFXHEADER:100
+DATA:OFXSGML
+VERSION:102
+SECURITY:NONE
+ENCODING:USASCII
+CHARSET:1252
+COMPRESSION:NONE
+OLDFILEUID:NONE
+NEWFILEUID:NONE
+<OFX>
+<SIGNONMSGSRSV1><SONRS><STATUS><CODE>0</CODE><SEVERITY>INFO</SEVERITY></STATUS><FI><ORG>NU PAGAMENTOS S.A.</ORG><FID>260</FID></FI></SONRS></SIGNONMSGSRSV1>
+<CREDITCARDMSGSRSV1><CCSTMTTRNRS><STATUS><CODE>0</CODE><SEVERITY>INFO</SEVERITY></STATUS><CCSTMTRS>
+<CURDEF>BRL</CURDEF><CCACCTFROM><ACCTID>synthetic-card</ACCTID></CCACCTFROM>
+<BANKTRANLIST><DTSTART>20260801000000[-3:BRT]</DTSTART><DTEND>20260901000000[-3:BRT]</DTEND>${rows}</BANKTRANLIST>
+<LEDGERBAL><BALAMT>-25.50</BALAMT><DTASOF>20260901000000[-3:BRT]</DTASOF></LEDGERBAL>
+</CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1></OFX>`;
+}

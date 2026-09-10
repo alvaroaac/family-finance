@@ -20,6 +20,7 @@ import { normalizeDescription } from "./normalize.js";
 
 /** Build the equality key used to detect probable duplicates. */
 function duplicateKey(row: NormalizedImportRow): string {
+  if (row.providerTransactionId) return `provider:${row.providerTransactionId}`;
   const desc = normalizeDescription(row.description).toLowerCase();
   return `${row.occurredOn}|${row.kind}|${row.amount.cents}|${desc}`;
 }
@@ -45,7 +46,9 @@ export function findDuplicateCandidates(
     candidates.push({
       rowIndex: index,
       duplicateOfIndex: seenAt,
-      reason: "mesma data, valor e descrição de outra linha do arquivo",
+      reason: row.providerTransactionId
+        ? "mesmo identificador da instituição de outra linha do arquivo"
+        : "mesma data, valor e descrição de outra linha do arquivo",
     });
   });
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ImportsPage from "../app/(app)/imports/page";
@@ -64,6 +65,7 @@ function resolved(
     groupMatchesByIndex: count ? { 0: matches } : {},
     groupMatchCountsByIndex: count ? { 0: count } : {},
     groupReviewRequiredIndices: count ? [0] : [],
+    flatMatchesByIndex: {},
   };
 }
 function button(text: string): HTMLButtonElement {
@@ -119,6 +121,59 @@ afterEach(() => {
 });
 
 describe("import comparison decisions", () => {
+  it("requires explicit replacement confirmation and clears it after changing the card", async () => {
+    const response = resolved([]);
+    if (!response.ok) throw new Error("fixture");
+    response.groupReviewRequiredIndices = [0];
+    response.flatMatchesByIndex = {
+      0: [
+        {
+          transactionId: "flat",
+          updatedAt: "2026-08-16T12:00:00Z",
+          description: "MARKETPLACE LOJA 1",
+          amountCents: 41990,
+          occurredOn: "2026-08-16",
+          instrumentName: "Conta da casa",
+          differentInstrument: true,
+          confidence: "strong",
+          categoryId: null,
+          subcategoryId: null,
+        },
+      ],
+    };
+    actions.resolve.mockResolvedValue(response);
+    const confirm = vi
+      .spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    await preview();
+    await selectCard();
+    expect(container.textContent).toContain("pagamento diferente");
+    if (process.env.REPLACEMENT_UI_ARTIFACT) {
+      const css =
+        readFileSync("app/globals.css", "utf8") +
+        readFileSync("components/ui/ui.css", "utf8");
+      writeFileSync(
+        process.env.REPLACEMENT_UI_ARTIFACT,
+        `<!doctype html><html lang="pt-BR" data-theme="salvia" style="--ff-font-body:system-ui;--ff-font-display:Georgia"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><body><main style="max-width:1200px;margin:auto;padding:24px">${container.innerHTML}</main></body></html>`,
+      );
+    }
+    await click("Substituir por parcelamento");
+    await click("Gravar");
+    expect(actions.confirm).not.toHaveBeenCalled();
+    await click("Substituir por parcelamento");
+    expect(confirm).toHaveBeenCalledTimes(2);
+    await click("Gravar");
+    expect(actions.confirm.mock.calls[0]![0].groups[0]).toMatchObject({
+      replaceTransaction: { id: "flat", updatedAt: "2026-08-16T12:00:00Z" },
+      purchasedOn: "2026-08-16",
+    });
+    actions.confirm.mockClear();
+    await selectCard("other-card");
+    await click("Gravar");
+    expect(actions.confirm).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Substituição selecionada");
+  });
   it("blocks confirmation while resolution is pending, then requires a decision", async () => {
     const pending = deferred<ResolveImportTargetsResult>();
     actions.resolve.mockReturnValue(pending.promise);

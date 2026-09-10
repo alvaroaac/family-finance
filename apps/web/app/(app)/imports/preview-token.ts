@@ -10,7 +10,7 @@ export type ImportPreviewTokenClaims = {
   userId: string;
   issuedAt: number;
   expiresAt: number;
-  source: "minhas-financas" | "nubank" | "mercado-pago";
+  source: "minhas-financas" | "nubank" | "nubank-ofx" | "mercado-pago";
   fileFingerprint: string;
   normalizedFingerprint: string;
   parserVersion: string;
