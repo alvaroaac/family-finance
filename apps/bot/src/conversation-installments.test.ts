@@ -818,7 +818,42 @@ describe("card installment start: card resolution", () => {
     expect(state.status).toBe("awaiting_installment_confirmation");
     expect(state.installmentDraft?.cardId).toBe("card-1");
     expect(reply).toContain("Nubank");
-    expect(reply).toMatch(/1ª parcela jul\/2026/);
+    expect(reply).toMatch(/1ª parcela: jul\/2026/);
+  });
+
+  it("shows every persisted installment field on its own confirmation line", async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-mercado-pago", name: "Mercado Pago" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          description: "Mouse Logitech",
+          totalCents: 41990,
+          perInstallmentCents: 4199,
+          installmentCount: 10,
+          cardKeyword: "Mercado Pago",
+        }),
+      ),
+    });
+
+    const outcome = await startConversation(
+      {
+        text: "Mouse Logitech em 10x de 41,99 no credito mercado pago",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(outcome.reply).toContain("• Descrição: Mouse Logitech");
+    expect(outcome.reply).toContain("• Valor total: R$ 419,90");
+    expect(outcome.reply).toContain("• Parcelamento: 10× de R$ 41,99");
+    expect(outcome.reply).toContain("• Cartão: Mercado Pago");
+    expect(outcome.reply).toContain("• Data da compra: 06/07/2026");
+    expect(outcome.reply).toContain("• 1ª parcela: jul/2026");
+    expect(outcome.reply).toContain("• Categoria: Sem categoria (a definir)");
+    expect(outcome.reply).toContain("• Responsável: Pessoa específica");
   });
 
   it("auto-picks the sole card for an explicit installment without a card name", async () => {
@@ -954,7 +989,8 @@ describe("card installment start: card resolution", () => {
     expect(outcome.state.installmentDraft?.totalCents).toBe(360000);
     expect(outcome.state.installmentDraft?.installmentCount).toBe(12);
     expect(outcome.state.installmentDraft?.cardId).toBe("card-1");
-    expect(outcome.reply).toContain("R$ 3.600,00 em 12× de R$ 300,00");
+    expect(outcome.reply).toContain("• Valor total: R$ 3.600,00");
+    expect(outcome.reply).toContain("• Parcelamento: 12× de R$ 300,00");
   });
 
   it("keyword match picks the right card among two", async () => {
@@ -1116,7 +1152,7 @@ describe("card installment start: card resolution", () => {
     expect(outcome.state.status).toBe("awaiting_installment_confirmation");
     expect(outcome.state.installmentDraft?.description).toBe("Notebook");
     expect(outcome.state.installmentDraft?.cardId).toBe("card-mercado-pago");
-    expect(outcome.reply).toContain("no Mercado Pago");
+    expect(outcome.reply).toContain("• Cartão: Mercado Pago");
   });
 });
 
@@ -1383,7 +1419,7 @@ describe("card installment corrections", () => {
     });
     expect(outcome.state.installmentDraft?.purchasedOn).toBe("2026-02-08");
     expect(outcome.reply).toContain("Atualizei a data");
-    expect(outcome.reply).toContain("1ª parcela fev/2026");
+    expect(outcome.reply).toContain("1ª parcela: fev/2026");
   });
 
   it("stores and schedules a yearless future-date correction as its most recent occurrence", async () => {
@@ -1400,7 +1436,7 @@ describe("card installment corrections", () => {
     });
 
     expect(corrected.state.installmentDraft?.purchasedOn).toBe("2025-12-31");
-    expect(corrected.reply).toContain("1ª parcela jan/2026");
+    expect(corrected.reply).toContain("1ª parcela: jan/2026");
 
     await applyMessage(corrected.state, "confirmar", deps, { today: TODAY });
     const plan = createInstallmentPurchase.mock
@@ -2219,7 +2255,71 @@ describe("card installment callback parity", () => {
 });
 
 describe("card installment category suggestions", () => {
+  it("falls back to a pending AI category for the exact Mouse Logitech parcelado", async () => {
+    const suggestCategory = vi.fn(async () => ({
+      status: "pending_new_category" as const,
+      suggestion: {
+        confidence: 0.91,
+        explanation: "Mouse é um acessório eletrônico.",
+        source: "ai" as const,
+      },
+      pendingCategory: {
+        categoryName: "Eletrônicos",
+        subcategoryName: null,
+        confidence: 0.91,
+        explanation: "Mouse é um acessório eletrônico.",
+      },
+      requiresConfirmation: true,
+    }));
+    const { deps, createInstallmentPurchase } = buildDeps({
+      catalog: {
+        householdId: "house-1",
+        categories: [{ id: "cat-other", name: "Outros" }],
+        subcategories: [],
+      },
+      listActiveCards: () => [
+        { id: "card-mercado-pago", name: "Mercado Pago" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          description: "Mouse Logitech",
+          totalCents: 41990,
+          perInstallmentCents: 4199,
+          installmentCount: 10,
+          cardKeyword: "Mercado Pago",
+          unifiedPrimary: true,
+          categoryCandidates: [],
+        }),
+      ),
+      suggestCategory,
+    });
+
+    const outcome = await startConversation(
+      {
+        text: "Mouse Logitech em 10x de 41,99 no credito mercado pago",
+        fromUserId: "user-alvaro",
+      },
+      deps,
+      { today: TODAY },
+    );
+
+    expect(suggestCategory).toHaveBeenCalledTimes(1);
+    expect(outcome.state.proposedCategoryName).toBe("Eletrônicos");
+    expect(outcome.reply).toContain(
+      '• Categoria: "Eletrônicos" (nova — sugerida)',
+    );
+    expect(outcome.reply).toContain(
+      "Sugestão: Mouse é um acessório eletrônico.",
+    );
+    expect(createInstallmentPurchase).not.toHaveBeenCalled();
+  });
+
   it("prefills the top existing subcategory suggestion while keeping suggestion buttons", async () => {
+    const suggestCategory = vi.fn(async () => ({
+      status: "uncategorized" as const,
+      suggestion: null,
+      requiresConfirmation: true,
+    }));
     const { deps } = buildDeps({
       catalog: {
         ...CATALOG,
@@ -2242,6 +2342,7 @@ describe("card installment category suggestions", () => {
           ],
         }),
       ),
+      suggestCategory,
     });
 
     const outcome = await startConversation(
@@ -2257,6 +2358,7 @@ describe("card installment category suggestions", () => {
       text: "📂 Eletrônicos › Notebook",
       callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}0`,
     });
+    expect(suggestCategory).not.toHaveBeenCalled();
   });
 
   it("accepts a proposed new subcategory into the installment draft without saving immediately", async () => {
@@ -2278,7 +2380,12 @@ describe("card installment category suggestions", () => {
     };
     const { deps } = buildDeps({
       classifyMessage: classifierReturning(
-        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          unifiedPrimary: true,
+          categoryCandidates: [],
+        }),
       ),
       suggestCategory: vi.fn(async () => pendingSubcategory),
       listAllSubcategories: vi.fn(async () => []),
@@ -2300,6 +2407,7 @@ describe("card installment category suggestions", () => {
       subcategoryName: "Notebook gamer",
       explanation: "Notebook gamer ainda não existe.",
     });
+    expect(deps.suggestCategory).toHaveBeenCalledTimes(1);
     expect(start.reply).toContain(
       'Categoria: "Eletrônicos > Notebook gamer" (nova — sugerida)',
     );
@@ -2348,7 +2456,12 @@ function proposalDeps(
       categories: [...CATALOG.categories, { id: "cat-pets", name: "Pets" }],
     },
     classifyMessage: classifierReturning(
-      purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      purchaseIntent({
+        totalCents: 360000,
+        installmentCount: 12,
+        unifiedPrimary: true,
+        categoryCandidates: [],
+      }),
     ),
     suggestCategory: vi.fn(async () => PROPOSAL),
     listAllCategories: vi.fn(async () => [

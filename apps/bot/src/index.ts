@@ -942,7 +942,7 @@ export async function startBot(): Promise<{
       : undefined;
   const codexEnabled = env.CODEX_ENABLED === "true";
   const ai: AiCategorizer | undefined =
-    completionClient !== undefined && !codexEnabled
+    completionClient !== undefined
       ? createAiCategorizer(completionClient)
       : undefined;
   const interpretText: TextInterpreter | undefined =
@@ -952,7 +952,10 @@ export async function startBot(): Promise<{
   const anthropicClassifier: MessageClassifier | undefined =
     completionClient !== undefined
       ? codexEnabled
-        ? createUnifiedCompletionMessageClassifier(completionClient)
+        ? createUnifiedCompletionMessageClassifier(completionClient, {
+            provider: "anthropic",
+            telemetry: (event) => console.log(JSON.stringify(event)),
+          })
         : createMessageClassifier(completionClient)
       : undefined;
   const openAiClassifier: MessageClassifier | undefined =
@@ -964,6 +967,10 @@ export async function startBot(): Promise<{
             outputSchema: CODEX_OUTPUT_SCHEMA,
             timeoutMs: CLASSIFIER_FALLBACK_BUDGET_MS,
           }),
+          {
+            provider: "openai",
+            telemetry: (event) => console.log(JSON.stringify(event)),
+          },
         )
       : undefined;
   const codexClassifier: MessageClassifier | undefined = codexEnabled

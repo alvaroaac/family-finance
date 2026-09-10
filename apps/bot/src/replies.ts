@@ -280,19 +280,19 @@ export type InstallmentSummaryView = {
   totalCents?: number;
   installmentCount?: number;
   cardName?: string;
+  purchasedOn: string;
   /** `YYYY-MM` of the first parcel, when the draft is complete enough to compute it. */
   firstDueMonth?: string;
   categoryLabel: string;
   categoryExplanation?: string;
   proposedNewCategory?: string;
   responsibleLabel: string;
-  /** True when no card is resolved yet — the reply asks "Qual cartão?". */
-  needsCard: boolean;
 };
 
 /**
  * Installment confirmation SUMMARY (design: never one line per parcel).
- * `Compra parcelada: <desc> — R$ <total> em <N>× de R$ <per> no <Card> (1ª parcela <mmm/yyyy>)`.
+ * Each persisted field is rendered separately so the user can audit exactly
+ * what will be saved before confirming.
  */
 export function installmentConfirmationMessage(
   view: InstallmentSummaryView,
@@ -301,34 +301,24 @@ export function installmentConfirmationMessage(
   lines.push("Confirme a compra parcelada:");
   lines.push("");
 
-  if (
+  lines.push(`• Descrição: ${view.description || "—"}`);
+  lines.push(
+    `• Valor total: ${view.totalCents !== undefined ? `R$ ${formatBrl(view.totalCents)}` : '— (informe com "valor 3.700")'}`,
+  );
+  const perInstallment =
     view.totalCents !== undefined &&
     view.installmentCount !== undefined &&
-    view.cardName !== undefined
-  ) {
-    const perFragment =
-      view.totalCents % view.installmentCount === 0
-        ? ` de R$ ${formatBrl(view.totalCents / view.installmentCount)}`
-        : "";
-    const firstParcel =
-      view.firstDueMonth !== undefined
-        ? ` (1ª parcela ${monthAbbrPtBr(view.firstDueMonth)})`
-        : "";
-    lines.push(
-      `Compra parcelada: ${view.description} — R$ ${formatBrl(view.totalCents)} em ${view.installmentCount}×${perFragment} no ${view.cardName}${firstParcel}`,
-    );
-  } else {
-    lines.push(`Compra parcelada: ${view.description}`);
-    if (view.totalCents === undefined) {
-      lines.push('• valor? (informe com "valor 3.700")');
-    }
-    if (view.installmentCount === undefined) {
-      lines.push('• parcelas? (informe com "parcelas 12")');
-    }
-    if (view.needsCard) {
-      lines.push("• cartão?");
-    }
-  }
+    view.totalCents % view.installmentCount === 0
+      ? view.totalCents / view.installmentCount
+      : undefined;
+  lines.push(
+    `• Parcelamento: ${view.installmentCount !== undefined ? `${view.installmentCount}×${perInstallment !== undefined ? ` de R$ ${formatBrl(perInstallment)}` : ""}` : '— (informe com "parcelas 12")'}`,
+  );
+  lines.push(`• Cartão: ${view.cardName ?? "— (selecione um cartão)"}`);
+  lines.push(`• Data da compra: ${formatIsoDate(view.purchasedOn)}`);
+  lines.push(
+    `• 1ª parcela: ${view.firstDueMonth !== undefined ? monthAbbrPtBr(view.firstDueMonth) : "—"}`,
+  );
 
   if (view.proposedNewCategory !== undefined) {
     lines.push(`• Categoria: "${view.proposedNewCategory}" (nova — sugerida)`);
