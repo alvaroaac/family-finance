@@ -96,3 +96,7 @@ The development flag now replaces Google OAuth with a one-time code verified by 
 ## Inline category creation and copy (2026-09-09)
 
 All remaining mobile UI occurrences of the singular movimento were changed to movimentação with matching grammar. Capture now creates/selects categories inline and retains the transaction draft. Six regression tests cover valid creation, equivalent existing names, lost responses, archived categories, invalid input and unreconciled failure. A real isolated API/Postgres check created a category, reused it on retry, saved a transaction and verified its category foreign key and amount; disposable records were removed. Mobile tests: 65 passed; typecheck passed. Browser UI verification stopped at the local development-code sign-in failure, so this check does not establish native/UI end-to-end completion.
+
+## PR preparation after integrating main (2026-09-09)
+
+Integrated current main including import reconciliation and commitment-page updates. Fresh checks passed: all 17 typecheck tasks, 65 mobile tests, 364 web tests, 1,850 bot tests, Next.js production build and Expo exports for iOS/Android/web. The native critical-flow E2E and standalone deployment gates above remain outstanding. Generated builds, environment files and device access codes are not part of the PR.

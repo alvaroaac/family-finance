@@ -18,6 +18,7 @@ export type RouteSkeletonVariant =
 
 const THREE_ROWS = ["one", "two", "three"] as const;
 const FOUR_ROWS = [...THREE_ROWS, "four"] as const;
+const SIX_ROWS = [...FOUR_ROWS, "five", "six"] as const;
 
 function PageHeading({ action = false }: { action?: boolean }): ReactElement {
   return (
@@ -268,30 +269,67 @@ function CollectionSkeleton({
 
 function ObligationsSkeleton(): ReactElement {
   return (
-    <section className="ff-skeleton-page ff-skeleton-page--narrow">
-      <PageHeading />
-      <Card>
-        <Skeleton width={180} height={20} />
-        <TextRows />
+    <section className="ff-skeleton-page ff-skeleton-page--narrow ff-has-sticky-cta">
+      <PageHeading action />
+      <div className="ff-oblig-stats">
+        {Array.from({ length: 3 }, (_, index) => (
+          <div className="ff-stat" key={`oblig-stat-${index + 1}`}>
+            <Skeleton width={index === 1 ? 128 : 96} height={10} />
+            <Skeleton
+              width={index === 2 ? 110 : 168}
+              height={30}
+              className="ff-skeleton-gap-md"
+            />
+            <Skeleton width="76%" height={11} className="ff-skeleton-gap-sm" />
+          </div>
+        ))}
+      </div>
+      <Card className="ff-oblig-panel">
+        <div className="ff-panel__head ff-oblig-panel__head">
+          <Skeleton width={240} height={22} />
+        </div>
+        <div className="ff-checklist">
+          {FOUR_ROWS.map((row) => (
+            <div className="ff-checklist__row" key={row}>
+              <Skeleton width={44} height={44} />
+              <Skeleton width="62%" height={15} />
+              <span />
+              <Skeleton width={104} height={15} />
+              <Skeleton width={146} height={34} />
+            </div>
+          ))}
+        </div>
       </Card>
-      <div className="ff-cards-grid">
+      <Card className="ff-oblig-panel">
+        <div className="ff-panel__head ff-oblig-panel__head">
+          <Skeleton width={190} height={22} />
+        </div>
+        <div className="ff-note ff-oblig-panel__note">
+          <Skeleton width="72%" height={13} />
+        </div>
+        <div>
+          {SIX_ROWS.map((row, index) => (
+            <div className="ff-timeline__row" key={row}>
+              <Skeleton width={64} height={14} />
+              <div className="ff-timeline__badges">
+                <Skeleton width={`${92 - index * 6}%`} height={10} />
+              </div>
+              <Skeleton width={110} height={15} />
+              <span className="ff-timeline__chevron">
+                <Skeleton width={18} height={18} />
+              </span>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <div>
+        <div className="ff-panel__head">
+          <Skeleton width={190} height={22} />
+        </div>
         <Card>
-          <Skeleton width={170} height={18} />
-          <TextRows />
-        </Card>
-        <Card>
-          <Skeleton width={150} height={18} />
-          <TextRows />
+          <TextRows count={4} />
         </Card>
       </div>
-      <Card>
-        <Skeleton width={160} height={22} />
-        <FormFields count={4} />
-      </Card>
-      <Card>
-        <Skeleton width={180} height={22} />
-        <TextRows count={4} />
-      </Card>
     </section>
   );
 }

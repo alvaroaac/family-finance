@@ -7,6 +7,7 @@
  * to the household directly.
  */
 
+import type { ObligationChanges } from "@family-finance/db";
 import type { CreateObligationInput } from "@family-finance/domain";
 
 import { parseReaisToCents } from "../../../lib/format";
@@ -77,7 +78,14 @@ export function obligationInputFromForm(
     throw new Error("Valor mensal inválido — use por exemplo 710,44.");
   }
 
-  const termRaw = optionalField(formData, "termMonths");
+  const termMode = optionalField(formData, "termMode");
+  const termRaw =
+    termMode === "indefinite"
+      ? undefined
+      : optionalField(formData, "termMonths");
+  if (termMode === "installments" && termRaw === undefined) {
+    throw new Error("Informe o prazo em meses.");
+  }
   const termMonths =
     termRaw === undefined ? null : strictPositiveInt(termRaw, "Prazo");
 
@@ -99,4 +107,31 @@ export function obligationInputFromForm(
     createdByUserId: ids.createdByUserId,
     category: categoryId !== undefined ? { categoryId } : undefined,
   };
+}
+
+/** Map editable fields, preserving omitted account/category selections. */
+export function obligationChangesFromForm(formData: FormData): {
+  obligationId: string;
+  changes: ObligationChanges;
+} {
+  const obligationId = requireField(formData, "obligationId");
+  const amountCents = parseReaisToCents(requireField(formData, "amount"));
+  if (amountCents === null || amountCents <= 0) {
+    throw new Error("Valor mensal inválido — use por exemplo 710,44.");
+  }
+  const changes: ObligationChanges = {
+    description: requireField(formData, "description"),
+    amountCents,
+    dueDay: strictPositiveInt(
+      requireField(formData, "dueDay"),
+      "Dia de vencimento",
+    ),
+  };
+  if (formData.has("accountId")) {
+    changes.accountId = requireField(formData, "accountId");
+  }
+  if (formData.has("categoryId")) {
+    changes.categoryId = optionalField(formData, "categoryId") ?? null;
+  }
+  return { obligationId, changes };
 }

@@ -1,0 +1,260 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap');
+    .esmeralda {
+      --ff-bg: #16352b; --ff-surface: #1e4133; --ff-surface-soft: #1a3a2e;
+      --ff-tint: rgba(212,175,106,0.14); --ff-ink: #f2ede0; --ff-ink-soft: rgba(242,237,224,0.66);
+      --ff-accent: #d4af6a; --ff-accent-hover: #e4c488; --ff-border: rgba(212,175,106,0.24);
+      --ff-on-accent: #16352b; --ff-positive: #93c7a1; --ff-positive-wash: rgba(147,199,161,0.13);
+      --ff-negative: #e08b63; --ff-negative-wash: rgba(224,139,99,0.13);
+      --ff-warn: #e0b662; --ff-warn-wash: rgba(224,182,98,0.15);
+    }
+    .salvia {
+      --ff-bg: #e8ede3; --ff-surface: #f7f9f3; --ff-surface-soft: #eff3ea;
+      --ff-tint: rgba(168,133,60,0.12); --ff-ink: #2e3a2a; --ff-ink-soft: #5f6b58;
+      --ff-accent: #a8853c; --ff-accent-hover: #c2a258; --ff-border: #cbd6c0;
+      --ff-on-accent: #ffffff; --ff-positive: #3e7d52; --ff-positive-wash: rgba(62,125,82,0.12);
+      --ff-negative: #b4552f; --ff-negative-wash: rgba(180,85,47,0.10);
+      --ff-warn: #9a7526; --ff-warn-wash: rgba(154,117,38,0.13);
+    }
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #d4af6a; text-decoration: none; } a:hover { color: #e4c488; }
+    .serif { font-family: "Playfair Display", Georgia, serif; font-weight: 600; }
+    .num { font-variant-numeric: tabular-nums; }
+    .kicker { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--ff-accent); }
+    .card { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 24px; }
+    .h2 { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 22px; color: var(--ff-ink); margin: 0; }
+    .note { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); }
+    .name { font-family: Inter, sans-serif; font-weight: 500; font-size: 15px; color: var(--ff-ink); }
+    .sub { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 2px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; white-space: nowrap; }
+    .badge-warn { background: var(--ff-warn-wash); color: var(--ff-warn); border: 1px solid var(--ff-warn-wash); }
+    .badge-pos { background: var(--ff-positive-wash); color: var(--ff-positive); border: 1px solid var(--ff-positive-wash); }
+    .badge-acc { background: var(--ff-tint); color: var(--ff-accent); border: 1px solid var(--ff-border); }
+    .badge-neu { background: transparent; color: var(--ff-ink-soft); border: 1px solid var(--ff-border); }
+    .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--ff-accent); color: var(--ff-on-accent); border: none; border-radius: 12px; padding: 11px 20px; font-family: Inter, sans-serif; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(20,14,8,0.14); cursor: pointer; }
+    .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 12px; padding: 10px 20px; font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; cursor: pointer; }
+    .btn-ghost-sm { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 10px; padding: 9px 16px; font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; cursor: pointer; }
+    .btn-link { background: transparent; color: var(--ff-accent); border: none; padding: 8px 6px; font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .iconbtn { width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; color: var(--ff-ink-soft); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .iconbtn:hover { background: var(--ff-tint); color: var(--ff-accent); }
+    .label { display: block; font-family: Inter, sans-serif; font-weight: 500; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ff-ink-soft); margin-bottom: 6px; }
+    .input { width: 100%; box-sizing: border-box; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 10px; padding: 11px 13px; color: var(--ff-ink); font-family: Inter, sans-serif; font-weight: 400; font-size: 14px; outline: none; }
+    .input-focus { border-color: var(--ff-accent); box-shadow: 0 0 0 3px var(--ff-tint); }
+    .placeholder { color: var(--ff-ink-soft); opacity: 0.7; }
+    .select { position: relative; display: block; width: 100%; }
+    .select .input { padding-right: 30px; cursor: pointer; }
+    .caret { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); color: var(--ff-accent); font-size: 11px; pointer-events: none; }
+    .bubble { width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; background: var(--ff-tint); color: var(--ff-accent); display: flex; align-items: center; justify-content: center; }
+    .track { height: 6px; border-radius: 999px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); overflow: hidden; }
+    .fill { height: 100%; border-radius: 999px; background: var(--ff-accent); }
+    .fill-pos { height: 100%; border-radius: 999px; background: var(--ff-positive); }
+    .stat { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 22px; }
+    .stat-k { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ff-ink-soft); }
+    .stat-v { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 30px; color: var(--ff-ink); margin-top: 10px; font-variant-numeric: tabular-nums; }
+    .stat-h { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 8px; }
+    .seg { display: inline-flex; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 999px; padding: 4px; gap: 2px; }
+    .seg-item { padding: 8px 16px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft); cursor: pointer; }
+    .seg-item-on { background: var(--ff-accent); color: var(--ff-on-accent); font-weight: 600; }
+  </style>
+</helmet>
+<div class="{{themeClass}}" style="width: 390px; min-height: 1700px; position: relative; box-sizing: border-box; background: var(--ff-bg); padding: 28px 22px 110px; color: var(--ff-ink); display: flex; flex-direction: column; gap: 18px;">
+
+  <header style="display: flex; flex-direction: column; gap: 4px;">
+    <div class="kicker">Nossa casa</div>
+    <h1 class="serif" style="font-size: 30px; color: var(--ff-ink); margin: 6px 0 0;">Obrigações fixas</h1>
+    <p style="font-family: Inter, sans-serif; font-weight: 300; font-size: 14px; color: var(--ff-ink-soft); margin: 0;">O que se repete todo mês, projetado.</p>
+  </header>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+    <div class="stat" style="padding: 16px;">
+      <div class="stat-k" style="font-size: 10px;">Este mês</div>
+      <div class="stat-v" style="font-size: 22px;">R$ 3.666,66</div>
+      <div class="track" style="margin-top: 10px;"><div class="fill-pos" style="width: 24%;"></div></div>
+      <div class="stat-h">de R$ 14.996,66 · 1 de 5</div>
+    </div>
+    <div class="stat" style="padding: 16px;">
+      <div class="stat-k" style="font-size: 10px;">Por mês</div>
+      <div class="stat-v" style="font-size: 22px;">R$ 15.707,10</div>
+      <div class="stat-h" style="margin-top: 22px;">6 ativas · a partir de out</div>
+    </div>
+  </div>
+
+  <!-- Este mês -->
+  <section class="card" style="padding: 0;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 18px 18px 12px;">
+      <h2 class="h2" style="font-size: 19px;">Setembro</h2>
+      <span class="note">4 a pagar</span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border); background: var(--ff-warn-wash); box-shadow: inset 3px 0 0 var(--ff-warn);">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border);"><span style="font-size: 9px; letter-spacing: 0.14em; color: var(--ff-ink-soft); font-weight: 600;">DIA</span><span class="num" style="font-size: 16px; font-weight: 600; color: var(--ff-ink); line-height: 1.1;">05</span></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Unimed</div><div class="sub" style="color: var(--ff-warn); font-weight: 500;">vence amanhã</div></div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+        <div class="num" style="font-weight: 600; font-size: 15px; color: var(--ff-ink);">R$ 1.200,00</div>
+        <button class="btn-ghost-sm" type="button" style="padding: 7px 12px; font-size: 12px;">Pagar</button>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border);"><span style="font-size: 9px; letter-spacing: 0.14em; color: var(--ff-ink-soft); font-weight: 600;">DIA</span><span class="num" style="font-size: 16px; font-weight: 600; color: var(--ff-ink); line-height: 1.1;">10</span></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Financiamento Casa</div><div class="sub">Conta Itaú</div></div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+        <div class="num" style="font-weight: 600; font-size: 15px; color: var(--ff-ink);">R$ 7.650,00</div>
+        <button class="btn-ghost-sm" type="button" style="padding: 7px 12px; font-size: 12px;">Pagar</button>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border);"><span style="font-size: 9px; letter-spacing: 0.14em; color: var(--ff-ink-soft); font-weight: 600;">DIA</span><span class="num" style="font-size: 16px; font-weight: 600; color: var(--ff-ink); line-height: 1.1;">15</span></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Kicks</div><div class="sub">Conta Nubank</div></div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+        <div class="num" style="font-weight: 600; font-size: 15px; color: var(--ff-ink);">R$ 2.280,00</div>
+        <button class="btn-ghost-sm" type="button" style="padding: 7px 12px; font-size: 12px;">Pagar</button>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border);"><span style="font-size: 9px; letter-spacing: 0.14em; color: var(--ff-ink-soft); font-weight: 600;">DIA</span><span class="num" style="font-size: 16px; font-weight: 600; color: var(--ff-ink); line-height: 1.1;">20</span></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">SAMAE</div><div class="sub">Conta Itaú</div></div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+        <div class="num" style="font-weight: 600; font-size: 15px; color: var(--ff-ink);">R$ 200,00</div>
+        <button class="btn-ghost-sm" type="button" style="padding: 7px 12px; font-size: 12px;">Pagar</button>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border); opacity: 0.72;">
+      <div style="display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; background: var(--ff-positive-wash); color: var(--ff-positive);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 L10 17 L19 7.5"></path></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Entrada da Casa</div><div class="sub">paga dia 1º</div></div>
+      <div class="num" style="font-weight: 500; font-size: 15px; color: var(--ff-ink-soft);">R$ 3.666,66</div>
+    </div>
+  </section>
+
+  <!-- Próximos meses -->
+  <section class="card" style="padding: 0;">
+    <div style="padding: 18px 18px 12px;">
+      <h2 class="h2" style="font-size: 19px;">Próximos 12 meses</h2>
+      <div class="note" style="color: var(--ff-positive); font-weight: 500; margin-top: 4px;">↓ alívio de R$ 3.666,66/mês a partir de jun/2027</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border); background: var(--ff-tint);">
+      <div><div class="num" style="font-weight: 600; font-size: 13px; color: var(--ff-ink);">set/26</div><div class="sub" style="color: var(--ff-accent); font-weight: 600;">agora</div></div>
+      <div style="display: flex; width: 95%; height: 8px; border-radius: 999px; overflow: hidden; background: var(--ff-surface-soft);"><div style="width: 24%; height: 8px; background: var(--ff-positive);"></div><div style="width: 76%; height: 8px; background: var(--ff-accent); opacity: 0.85;"></div></div>
+      <div class="num" style="text-align: right; font-weight: 600; font-size: 13px; color: var(--ff-ink);">R$ 14.996,66</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 600; font-size: 13px; color: var(--ff-ink);">out/26</div>
+      <div style="width: 100%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.85;"></div>
+      <div class="num" style="text-align: right; font-weight: 600; font-size: 13px; color: var(--ff-ink);">R$ 15.707,10</div>
+      <div style="grid-column: 2 / -1;"><span class="badge badge-acc">+ Placas solares · R$ 710,44</span></div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">nov/26</div>
+      <div style="width: 100%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.55;"></div>
+      <div class="num" style="text-align: right; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">R$ 15.707,10</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">dez/26</div>
+      <div style="width: 100%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.55;"></div>
+      <div class="num" style="text-align: right; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">R$ 15.707,10</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">jan/27</div>
+      <div style="width: 100%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.55;"></div>
+      <div class="num" style="text-align: right; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">R$ 15.707,10</div>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 18px; border-top: 1px solid var(--ff-border);">
+      <span class="note">fev · mar · abr · mai iguais</span>
+      <span class="note num" style="color: var(--ff-ink);">R$ 15.707,10</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 600; font-size: 13px; color: var(--ff-ink);">jun/27</div>
+      <div style="width: 77%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.85;"></div>
+      <div class="num" style="text-align: right; font-weight: 600; font-size: 13px; color: var(--ff-ink);">R$ 12.040,44</div>
+      <div style="grid-column: 2 / -1;"><span class="badge badge-pos">− Entrada da Casa quitada</span></div>
+    </div>
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">jul/27</div>
+      <div style="width: 77%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.55;"></div>
+      <div class="num" style="text-align: right; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">R$ 12.040,44</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 68px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 11px 18px 16px; border-top: 1px solid var(--ff-border);">
+      <div class="num" style="font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">ago/27</div>
+      <div style="width: 77%; height: 8px; border-radius: 999px; background: var(--ff-accent); opacity: 0.55;"></div>
+      <div class="num" style="text-align: right; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft);">R$ 12.040,44</div>
+    </div>
+  </section>
+
+  <!-- Suas obrigações -->
+  <section class="card" style="padding: 0;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 18px 18px 12px;">
+      <h2 class="h2" style="font-size: 19px;">Suas obrigações</h2>
+      <span class="note">6 ativas</span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 L12 4.5 L21 11.5"></path><path d="M5.5 10 V19.5 H18.5 V10"></path></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Financiamento Casa</div><div class="sub num">14 de 360 · até jun/2055</div><div class="track" style="margin-top: 6px; width: 120px; height: 4px;"><div class="fill" style="width: 4%;"></div></div></div>
+      <div class="num" style="font-weight: 600; font-size: 14px; color: var(--ff-ink);">R$ 7.650,00</div>
+      <span style="color: var(--ff-ink-soft); display: flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="14" r="4"></circle><path d="M11 11l9-7"></path><path d="M16 6l2 2"></path><path d="M18 4l2 2"></path></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Entrada da Casa</div><div class="sub num">4 de 12 · até mai/2027</div><div class="track" style="margin-top: 6px; width: 120px; height: 4px;"><div class="fill" style="width: 33%;"></div></div></div>
+      <div class="num" style="font-weight: 600; font-size: 14px; color: var(--ff-ink);">R$ 3.666,66</div>
+      <span style="color: var(--ff-ink-soft); display: flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l2.5-5h13L21 13v5H3z"></path><circle cx="7.5" cy="17" r="1.6"></circle><circle cx="16.5" cy="17" r="1.6"></circle></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Kicks</div><div class="sub num">12 de 48 · até ago/2029</div><div class="track" style="margin-top: 6px; width: 120px; height: 4px;"><div class="fill" style="width: 25%;"></div></div></div>
+      <div class="num" style="font-weight: 600; font-size: 14px; color: var(--ff-ink);">R$ 2.280,00</div>
+      <span style="color: var(--ff-ink-soft); display: flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Unimed</div><div class="sub">sem prazo · dia 5</div></div>
+      <div class="num" style="font-weight: 600; font-size: 14px; color: var(--ff-ink);">R$ 1.200,00</div>
+      <span style="color: var(--ff-ink-soft); display: flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--ff-border);">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 3v2"></path><path d="M12 19v2"></path><path d="M3 12h2"></path><path d="M19 12h2"></path><path d="M5.6 5.6l1.4 1.4"></path><path d="M17 17l1.4 1.4"></path><path d="M5.6 18.4L7 17"></path><path d="M17 7l1.4-1.4"></path></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">Placas solares</div><div class="sub" style="color: var(--ff-accent);">começa em out/2026 · 72×</div></div>
+      <div class="num" style="font-weight: 600; font-size: 14px; color: var(--ff-ink);">R$ 710,44</div>
+      <span style="color: var(--ff-ink-soft); display: flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px 16px; border-top: 1px solid var(--ff-border);">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s-6 6.5-6 11a6 6 0 0 0 12 0c0-4.5-6-11-6-11z"></path></svg></div>
+      <div style="flex: 1; min-width: 0;"><div class="name">SAMAE</div><div class="sub">sem prazo · dia 20</div></div>
+      <div class="num" style="font-weight: 600; font-size: 14px; color: var(--ff-ink);">R$ 200,00</div>
+      <span style="color: var(--ff-ink-soft); display: flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+    </div>
+  </section>
+
+  <!-- Sticky primary action above bottom nav -->
+  <div style="position: absolute; left: 22px; right: 22px; bottom: 32px;">
+    <button class="btn-primary" type="button" style="width: 100%; padding: 14px 20px; box-shadow: 0 8px 22px rgba(20,14,8,0.3);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+      Nova obrigação
+    </button>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["esmeralda","salvia"],"default":"esmeralda","section":"Tema"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.theme ?? 'esmeralda' };
+  }
+}
+</script>
+</body>
+</html>

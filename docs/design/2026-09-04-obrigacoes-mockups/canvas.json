@@ -1,0 +1,14 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Obrigações · desktop", "x": 0, "y": 0, "w": 1092, "h": 2200 },
+    { "file": "Mobile.dc.html", "title": "Obrigações · celular", "x": 1180, "y": 0, "w": 390, "h": 1940 },
+    { "file": "NovaObrigacao.dc.html", "title": "Nova obrigação", "x": 1660, "y": 0, "w": 900, "h": 1000 },
+    { "file": "EditarObrigacao.dc.html", "title": "Editar obrigação", "x": 1660, "y": 1120, "w": 900, "h": 900 },
+    { "file": "AlternativaGrade.dc.html", "title": "Alternativa B · grade", "x": 0, "y": 2340, "w": 1092, "h": 620 }
+  ],
+  "annotations": [
+    { "id": "brief", "x": 0, "y": -260, "w": 520, "text": "O que mudou e por quê\n\n1. Próximos 12 meses: barra por mês + total. Só o que MUDA ganha etiqueta (entra Placas solares em out, sai Entrada da Casa em jun). Meses iguais ficam quietos. Um mês aberto (out/2026) mostra o detalhe.\n\n2. Este mês virou checklist: ordenado por vencimento, o próximo em destaque, pagos vão pro fim com ✓.\n\n3. Criar/editar saem da página e viram diálogos. Criar é guiado em 4 passos com resumo em português no fim (mesma frase que o bot confirma). Editar mostra o progresso e só mexe no que pode mudar; 'Cancelar' virou 'Encerrar' com confirmação — antes era fácil confundir com cancelar a edição.\n\n4. 'Nova obrigação' é o botão principal do cabeçalho (fixo no rodapé no celular)." },
+    { "id": "alt-b", "x": 560, "y": -150, "w": 380, "text": "Alternativa B (embaixo): grade obrigação × mês. Melhor pra 'quando acaba?', pior no celular e com 10+ obrigações. Se preferir, dá pra usar como visão secundária (toggle lista/grade)." }
+  ],
+  "launch": { "view": "canvas" }
+}

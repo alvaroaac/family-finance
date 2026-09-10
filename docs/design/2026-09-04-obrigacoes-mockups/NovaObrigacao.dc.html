@@ -1,0 +1,183 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap');
+    .esmeralda {
+      --ff-bg: #16352b; --ff-surface: #1e4133; --ff-surface-soft: #1a3a2e;
+      --ff-tint: rgba(212,175,106,0.14); --ff-ink: #f2ede0; --ff-ink-soft: rgba(242,237,224,0.66);
+      --ff-accent: #d4af6a; --ff-accent-hover: #e4c488; --ff-border: rgba(212,175,106,0.24);
+      --ff-on-accent: #16352b; --ff-positive: #93c7a1; --ff-positive-wash: rgba(147,199,161,0.13);
+      --ff-negative: #e08b63; --ff-negative-wash: rgba(224,139,99,0.13);
+      --ff-warn: #e0b662; --ff-warn-wash: rgba(224,182,98,0.15);
+    }
+    .salvia {
+      --ff-bg: #e8ede3; --ff-surface: #f7f9f3; --ff-surface-soft: #eff3ea;
+      --ff-tint: rgba(168,133,60,0.12); --ff-ink: #2e3a2a; --ff-ink-soft: #5f6b58;
+      --ff-accent: #a8853c; --ff-accent-hover: #c2a258; --ff-border: #cbd6c0;
+      --ff-on-accent: #ffffff; --ff-positive: #3e7d52; --ff-positive-wash: rgba(62,125,82,0.12);
+      --ff-negative: #b4552f; --ff-negative-wash: rgba(180,85,47,0.10);
+      --ff-warn: #9a7526; --ff-warn-wash: rgba(154,117,38,0.13);
+    }
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #d4af6a; text-decoration: none; } a:hover { color: #e4c488; }
+    .serif { font-family: "Playfair Display", Georgia, serif; font-weight: 600; }
+    .num { font-variant-numeric: tabular-nums; }
+    .kicker { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--ff-accent); }
+    .card { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 24px; }
+    .h2 { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 22px; color: var(--ff-ink); margin: 0; }
+    .note { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); }
+    .name { font-family: Inter, sans-serif; font-weight: 500; font-size: 15px; color: var(--ff-ink); }
+    .sub { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 2px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; white-space: nowrap; }
+    .badge-warn { background: var(--ff-warn-wash); color: var(--ff-warn); border: 1px solid var(--ff-warn-wash); }
+    .badge-pos { background: var(--ff-positive-wash); color: var(--ff-positive); border: 1px solid var(--ff-positive-wash); }
+    .badge-acc { background: var(--ff-tint); color: var(--ff-accent); border: 1px solid var(--ff-border); }
+    .badge-neu { background: transparent; color: var(--ff-ink-soft); border: 1px solid var(--ff-border); }
+    .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--ff-accent); color: var(--ff-on-accent); border: none; border-radius: 12px; padding: 11px 20px; font-family: Inter, sans-serif; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(20,14,8,0.14); cursor: pointer; }
+    .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 12px; padding: 10px 20px; font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; cursor: pointer; }
+    .btn-ghost-sm { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 10px; padding: 9px 16px; font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; cursor: pointer; }
+    .btn-link { background: transparent; color: var(--ff-accent); border: none; padding: 8px 6px; font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .iconbtn { width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; color: var(--ff-ink-soft); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .iconbtn:hover { background: var(--ff-tint); color: var(--ff-accent); }
+    .label { display: block; font-family: Inter, sans-serif; font-weight: 500; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ff-ink-soft); margin-bottom: 6px; }
+    .input { width: 100%; box-sizing: border-box; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 10px; padding: 11px 13px; color: var(--ff-ink); font-family: Inter, sans-serif; font-weight: 400; font-size: 14px; outline: none; }
+    .input-focus { border-color: var(--ff-accent); box-shadow: 0 0 0 3px var(--ff-tint); }
+    .placeholder { color: var(--ff-ink-soft); opacity: 0.7; }
+    .select { position: relative; display: block; width: 100%; }
+    .select .input { padding-right: 30px; cursor: pointer; }
+    .caret { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); color: var(--ff-accent); font-size: 11px; pointer-events: none; }
+    .bubble { width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; background: var(--ff-tint); color: var(--ff-accent); display: flex; align-items: center; justify-content: center; }
+    .track { height: 6px; border-radius: 999px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); overflow: hidden; }
+    .fill { height: 100%; border-radius: 999px; background: var(--ff-accent); }
+    .fill-pos { height: 100%; border-radius: 999px; background: var(--ff-positive); }
+    .stat { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 22px; }
+    .stat-k { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ff-ink-soft); }
+    .stat-v { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 30px; color: var(--ff-ink); margin-top: 10px; font-variant-numeric: tabular-nums; }
+    .stat-h { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 8px; }
+    .seg { display: inline-flex; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 999px; padding: 4px; gap: 2px; }
+    .seg-item { padding: 8px 16px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft); cursor: pointer; }
+    .seg-item-on { background: var(--ff-accent); color: var(--ff-on-accent); font-weight: 600; }
+  </style>
+</helmet>
+<div class="{{themeClass}}" style="width: 900px; min-height: 1000px; box-sizing: border-box; background: var(--ff-bg); padding: 60px 90px; color: var(--ff-ink); position: relative;">
+  <div style="position: absolute; inset: 0; background: rgba(42,32,24,0.48);"></div>
+
+  <div style="position: relative; width: 720px; box-sizing: border-box; background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; box-shadow: 0 24px 70px rgba(42,32,24,0.24); padding: 24px; display: flex; flex-direction: column; gap: 22px;">
+
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;">
+      <div>
+        <div class="kicker">Obrigações fixas</div>
+        <h2 class="serif" style="margin: 5px 0 0; font-size: 24px; font-weight: 500; color: var(--ff-ink);">Nova obrigação</h2>
+      </div>
+      <button type="button" aria-label="Fechar" style="width: 32px; height: 32px; padding: 0; color: var(--ff-ink-soft); background: transparent; border: 1px solid transparent; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg></button>
+    </div>
+
+    <p style="margin: 0; font-family: Inter, sans-serif; font-size: 14px; line-height: 1.5; color: var(--ff-ink-soft);">Um financiamento, uma parcela ou uma conta que chega todo mês. A gente projeta os próximos meses e você só marca quando pagar.</p>
+
+    <!-- 1 · O que é -->
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--ff-tint); color: var(--ff-accent); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">1</span>
+        <span style="font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; color: var(--ff-ink);">O que é</span>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 12px;">
+        <div>
+          <label class="label">Nome</label>
+          <div class="input input-focus">Placas solares</div>
+        </div>
+        <div>
+          <label class="label">Valor por mês</label>
+          <div style="position: relative;"><span style="position: absolute; left: 13px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--ff-ink-soft);">R$</span><div class="input num" style="padding-left: 38px;">710,44</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2 · Quando -->
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--ff-tint); color: var(--ff-accent); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">2</span>
+        <span style="font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; color: var(--ff-ink);">Quando</span>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 12px;">
+        <div>
+          <label class="label">Primeira parcela</label>
+          <div class="select"><div class="input">outubro de 2026</div><span class="caret">▾</span></div>
+          <div class="note" style="margin-top: 6px;">Pode ser um mês que já passou — as parcelas antigas contam como pagas.</div>
+        </div>
+        <div>
+          <label class="label">Vence todo dia</label>
+          <div class="select"><div class="input num">5</div><span class="caret">▾</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 · Por quanto tempo -->
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--ff-tint); color: var(--ff-accent); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">3</span>
+        <span style="font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; color: var(--ff-ink);">Por quanto tempo</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+        <div class="seg">
+          <span class="seg-item">Sem prazo</span>
+          <span class="seg-item seg-item-on">Parcelado</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="input num" style="width: 84px; text-align: center;">72</div>
+          <span style="font-size: 14px; color: var(--ff-ink-soft);">parcelas</span>
+        </div>
+        <span class="badge badge-acc num">até set/2032 · total R$ 51.151,68</span>
+      </div>
+      <div class="note">Conta de luz, plano de saúde? Escolha <strong style="color: var(--ff-ink); font-weight: 500;">Sem prazo</strong>. Financiamento ou carnê? <strong style="color: var(--ff-ink); font-weight: 500;">Parcelado</strong>.</div>
+    </div>
+
+    <!-- 4 · Sai de onde -->
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--ff-tint); color: var(--ff-accent); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">4</span>
+        <span style="font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; color: var(--ff-ink);">Sai de onde</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+        <div>
+          <label class="label">Conta</label>
+          <div class="select"><div class="input">Conta Itaú</div><span class="caret">▾</span></div>
+        </div>
+        <div>
+          <label class="label">Categoria <span style="letter-spacing: 0; text-transform: none; font-weight: 400;">· opcional</span></label>
+          <div class="select"><div class="input">Moradia</div><span class="caret">▾</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resumo -->
+    <div style="background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-top: 3px solid var(--ff-accent); border-radius: 14px; padding: 16px 18px; display: flex; align-items: center; gap: 14px;">
+      <div class="bubble"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 3v2"></path><path d="M12 19v2"></path><path d="M3 12h2"></path><path d="M19 12h2"></path><path d="M5.6 5.6l1.4 1.4"></path><path d="M17 17l1.4 1.4"></path><path d="M5.6 18.4L7 17"></path><path d="M17 7l1.4-1.4"></path></svg></div>
+      <div style="font-family: Inter, sans-serif; font-size: 14px; line-height: 1.5; color: var(--ff-ink);">
+        <strong style="font-weight: 600;">Placas solares</strong> — R$ 710,44 por mês, 72 vezes, de out/2026 a set/2032. Vence dia 5, sai da Conta Itaú.
+        <div class="note" style="margin-top: 2px;">A partir de outubro, o mês da casa passa a R$ 15.707,10.</div>
+      </div>
+    </div>
+
+    <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px;">
+      <button class="btn-ghost" type="button">Cancelar</button>
+      <button class="btn-primary" type="button">Criar obrigação</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["esmeralda","salvia"],"default":"esmeralda","section":"Tema"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.theme ?? 'esmeralda' };
+  }
+}
+</script>
+</body>
+</html>

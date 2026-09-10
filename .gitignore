@@ -14,5 +14,5 @@ apps/bot/eval-results/
 .pr-review/
 .vercel/
 supabase/config.toml
-
 .next-*
+.claude/worktrees/
