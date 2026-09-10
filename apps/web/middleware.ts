@@ -18,6 +18,9 @@ import { getSupabasePublicConfig } from "@family-finance/config";
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   let response = NextResponse.next({ request });
 
+  // Native routes authenticate their bearer token and never use browser cookies.
+  if (request.nextUrl.pathname.startsWith("/api/mobile/")) return response;
+
   const { supabaseUrl, supabaseAnonKey } = getSupabasePublicConfig();
 
   // During build/preview without secrets, skip refresh entirely.
