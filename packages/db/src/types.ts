@@ -791,6 +791,17 @@ export type Database = {
         Args: { target_nonce: string; target_expires_at: string };
         Returns: boolean;
       };
+      update_installment_group_category: {
+        Args: {
+          target_household_id: string;
+          target_group_id: string;
+          category_patch: {
+            category_id?: string | null;
+            subcategory_id?: string | null;
+          };
+        };
+        Returns: undefined;
+      };
       // Atomic category merge: re-point transactions / installment groups /
       // installments / subcategories / categorization_memory off the source
       // onto the target and archive the source, all in one transaction. See

@@ -2073,24 +2073,13 @@ export async function updateInstallmentGroup(
     return;
   }
 
-  const { error } = await client
-    .from("installment_groups")
-    .update(update)
-    .eq("household_id", householdId)
-    .eq("id", installmentGroupId);
+  const { error } = await client.rpc("update_installment_group_category", {
+    target_household_id: householdId,
+    target_group_id: installmentGroupId,
+    category_patch: update,
+  });
   if (error !== null) {
     throw new Error(`updateInstallmentGroup failed: ${error.message}`);
-  }
-
-  const { error: parcelsError } = await client
-    .from("installments")
-    .update(update)
-    .eq("household_id", householdId)
-    .eq("installment_group_id", installmentGroupId);
-  if (parcelsError !== null) {
-    throw new Error(
-      `updateInstallmentGroup(installments) failed: ${parcelsError.message}`,
-    );
   }
 }
 

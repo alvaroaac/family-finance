@@ -785,72 +785,62 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
 }
 
 describe("updateInstallmentGroup", () => {
-  /** Records every update per table so the group+parcels propagation is visible. */
-  function fakeGroupClient() {
-    const updates: Array<{
-      table: string;
-      changes: Record<string, unknown>;
-      filters: Array<[string, unknown]>;
-    }> = [];
+  function fakeGroupClient(error: { message: string } | null = null) {
+    const calls: Array<{ name: string; args: unknown }> = [];
     const client = {
-      from(table: string) {
-        const entry = {
-          table,
-          changes: {} as Record<string, unknown>,
-          filters: [] as Array<[string, unknown]>,
-        };
-        const builder = {
-          update(changes: Record<string, unknown>) {
-            entry.changes = changes;
-            updates.push(entry);
-            return builder;
-          },
-          eq(column: string, value: unknown) {
-            entry.filters.push([column, value]);
-            return builder;
-          },
-          then(resolve: (value: { error: null }) => unknown) {
-            return Promise.resolve({ error: null }).then(resolve);
-          },
-        };
-        return builder;
+      async rpc(name: string, args: unknown) {
+        calls.push({ name, args });
+        return { data: null, error };
       },
     } as unknown as AppSupabaseClient;
-    return { client, updates };
+    return { client, calls };
   }
 
-  it("patches the group and its parcels with the same categorization", async () => {
-    const { client, updates } = fakeGroupClient();
+  it("sends one atomic RPC and preserves explicit nulls", async () => {
+    const { client, calls } = fakeGroupClient();
     await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
       categoryId: "cat-1",
       subcategoryId: null,
     });
-    expect(updates.map((u) => u.table)).toEqual([
-      "installment_groups",
-      "installments",
-    ]);
-    const group = updates.find((u) => u.table === "installment_groups");
-    const parcels = updates.find((u) => u.table === "installments");
-    expect(group?.changes).toEqual({
-      category_id: "cat-1",
-      subcategory_id: null,
-    });
-    expect(group?.filters).toContainEqual(["household_id", HOUSEHOLD]);
-    expect(group?.filters).toContainEqual(["id", "group-1"]);
-    expect(parcels?.changes).toEqual({
-      category_id: "cat-1",
-      subcategory_id: null,
-    });
-    expect(parcels?.filters).toContainEqual([
-      "installment_group_id",
-      "group-1",
+    expect(calls).toEqual([
+      {
+        name: "update_installment_group_category",
+        args: {
+          target_household_id: HOUSEHOLD,
+          target_group_id: "group-1",
+          category_patch: { category_id: "cat-1", subcategory_id: null },
+        },
+      },
     ]);
   });
 
+  it("omits untouched keys so the database can validate effective values", async () => {
+    const { client, calls } = fakeGroupClient();
+    await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
+      subcategoryId: "sub-1",
+    });
+    expect(calls[0]?.args).toEqual({
+      target_household_id: HOUSEHOLD,
+      target_group_id: "group-1",
+      category_patch: { subcategory_id: "sub-1" },
+    });
+  });
+
+  it("propagates database validation and transaction failures", async () => {
+    const { client } = fakeGroupClient({ message: "Invalid expense category" });
+    await expect(
+      updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
+        categoryId: "income-1",
+      }),
+    ).rejects.toThrow(
+      "updateInstallmentGroup failed: Invalid expense category",
+    );
+  });
+
   it("is a no-op for an empty patch", async () => {
-    const { client, updates } = fakeGroupClient();
+    const { client, calls } = fakeGroupClient();
     await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {});
-    expect(updates).toHaveLength(0);
+    expect(calls).toHaveLength(0);
   });
 });
 

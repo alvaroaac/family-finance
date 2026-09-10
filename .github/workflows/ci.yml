@@ -38,6 +38,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Category migrations and atomic edits
+        run: pnpm test:category-migration
+
       - name: Build web
         run: pnpm --filter @family-finance/web build
 
