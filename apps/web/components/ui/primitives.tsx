@@ -80,7 +80,8 @@ export function StatCard({
   tone = "default",
 }: {
   kicker: string;
-  value: string;
+  /** A node so a value can carry a soft suffix ("R$ 3.666,66 de R$ 14.996,66"). */
+  value: ReactNode;
   hint?: ReactNode;
   tone?: "default" | "positive";
 }): ReactElement {
@@ -131,6 +132,7 @@ export function Button({
   loading = false,
   loadingText,
   className,
+  ariaLabel,
   children,
 }: {
   variant?: "primary" | "ghost" | "danger" | "link";
@@ -140,6 +142,8 @@ export function Button({
   loading?: boolean;
   loadingText?: ReactNode;
   className?: string;
+  /** For repeated short labels ("desfazer") that need the row's context. */
+  ariaLabel?: string;
   children: ReactNode;
 }): ReactElement {
   return (
@@ -149,6 +153,7 @@ export function Button({
       onClick={onClick}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
+      aria-label={ariaLabel}
     >
       {loading ? (
         <span className="ff-btn__pending">

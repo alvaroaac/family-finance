@@ -183,6 +183,8 @@ export type InstallmentGroupRow = {
   responsibility_scope: ResponsibilityScope;
   responsible_user_id: string | null;
   created_by_user_id: string;
+  /** Stable caller token used to replay a purchase without duplicating it. */
+  idempotency_key: string | null;
   /** Set when the group was reconstructed by confirm_import_v2. */
   import_batch_id: string | null;
   created_at: string;
@@ -467,6 +469,7 @@ export type InstallmentGroupInsertPayload = Pick<
   | "responsibility_scope"
   | "responsible_user_id"
   | "created_by_user_id"
+  | "idempotency_key"
 >;
 
 export type InstallmentInsertPayload = Pick<
@@ -811,6 +814,7 @@ export type Database = {
           target_month: string;
           paid_on?: string | null;
           target_amount_cents?: number | null;
+          target_account_id?: string | null;
         };
         Returns: MaterializeObligationPaymentResult;
       };

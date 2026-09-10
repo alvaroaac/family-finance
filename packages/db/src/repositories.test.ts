@@ -13,6 +13,7 @@ import {
   creditCardInsert,
   installmentGroupInsertFromPlan,
   installmentInsertsFromPlan,
+  createInstallmentPurchase,
   currentMonth,
   summarizeCardPressure,
   mapUpcomingInstallment,
@@ -289,7 +290,14 @@ describe("installment plan inserts", () => {
       responsibility_scope: "household",
       responsible_user_id: null,
       created_by_user_id: USER,
+      idempotency_key: null,
     });
+
+    expect(
+      installmentGroupInsertFromPlan(planResult.value, {
+        idempotencyKey: "bot-confirmation-1",
+      }).idempotency_key,
+    ).toBe("bot-confirmation-1");
 
     const groupId = "group-xyz";
     const rows = installmentInsertsFromPlan(planResult.value, groupId);
@@ -340,6 +348,53 @@ describe("installment plan inserts", () => {
     expect(rows[0]?.amount_cents).toBe(240000);
     expect(rows[0]?.responsibility_scope).toBe("user");
     expect(rows[0]?.responsible_user_id).toBe(USER);
+  });
+
+  it("passes the stable key to the RPC and returns its authoritative replayed rows", async () => {
+    const planResult = createInstallmentPlan({
+      householdId: HOUSEHOLD,
+      creditCardId: "card-1",
+      description: "Notebook",
+      totalAmount: { currency: "BRL", cents: 120000 },
+      installmentCount: 2,
+      purchasedOn: "2026-07-10",
+      createdByUserId: USER,
+    });
+    expect(planResult.ok).toBe(true);
+    if (!planResult.ok) return;
+    let rpcArgs: Record<string, unknown> | undefined;
+    const client = {
+      async rpc(_name: string, args: Record<string, unknown>) {
+        rpcArgs = args;
+        return {
+          data: {
+            group: {
+              id: "group-existing",
+              credit_card_id: "card-1",
+              description: "Notebook",
+              total_amount_cents: 120000,
+              installment_count: 2,
+              purchased_on: "2026-07-10",
+            },
+            installments: [
+              { id: "parcel-1", number: 1, due_month: "2026-08" },
+              { id: "parcel-2", number: 2, due_month: "2026-09" },
+            ],
+          },
+          error: null,
+        };
+      },
+    } as unknown as AppSupabaseClient;
+
+    const result = await createInstallmentPurchase(client, planResult.value, {
+      idempotencyKey: "stable-confirmation-key",
+    });
+
+    expect(
+      (rpcArgs?.group_payload as { idempotency_key?: string }).idempotency_key,
+    ).toBe("stable-confirmation-key");
+    expect(result.group.id).toBe("group-existing");
+    expect(result.installments[0]?.due_month).toBe("2026-08");
   });
 });
 

@@ -2210,6 +2210,15 @@ a.ff-callout:hover {
   border-color: var(--ff-accent);
 }
 
+.ff-group--match {
+  border-color: var(--ff-warn);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ff-warn) 18%, transparent);
+}
+
+.ff-group--match.ff-off {
+  opacity: 1;
+}
+
 .ff-group__head {
   display: flex;
   align-items: center;
@@ -2229,6 +2238,43 @@ a.ff-callout:hover {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
   margin-top: 16px;
+}
+
+.ff-group-matches {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--ff-warn) 35%, var(--ff-border));
+  border-radius: var(--ff-radius-sm);
+  background: color-mix(in srgb, var(--ff-warn) 7%, var(--ff-surface));
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-size: 12px;
+  color: var(--ff-ink);
+}
+
+.ff-group-match {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ff-border);
+}
+
+.ff-group-match__head,
+.ff-group-match__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ff-group-match__head > span:first-child {
+  font-weight: 600;
+}
+
+.ff-group-match__actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .ff-group__foot {
@@ -2682,6 +2728,626 @@ a.ff-callout:hover {
 
   .ff-member__field {
     max-width: none;
+  }
+}
+
+/* ---- Obrigações: segmented, checklist, timeline, danger zone ------------ */
+
+/* Segmented control (mockup `.seg`: soft pill shell, 4px padding, 2px gap). */
+.ff-seg {
+  display: inline-flex;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-pill);
+  padding: 4px;
+  gap: 2px;
+}
+
+.ff-seg__item {
+  background: transparent;
+  border: none;
+  border-radius: var(--ff-radius-pill);
+  padding: 8px 16px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ff-ink-soft);
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.ff-seg__item:hover {
+  color: var(--ff-ink);
+}
+
+/* The file's `--ff-tint` halo (`.ff-input:focus`) alone would vanish on the
+   solid `--on` chip, so an accent ring carries the contrast; the transparent
+   outline keeps an indicator where box-shadows are dropped (forced colors). */
+.ff-seg__item:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 2px var(--ff-accent),
+    0 0 0 4px var(--ff-tint);
+}
+
+/* Mockup `.seg-item-on`: solid gold chip. */
+.ff-seg__item--on,
+.ff-seg__item--on:hover {
+  background: var(--ff-accent);
+  color: var(--ff-on-accent);
+  font-weight: 600;
+}
+
+.ff-oblig-relief {
+  color: var(--ff-positive);
+  font-weight: 500;
+}
+
+/* Stats strip — 3 up (Main mockup), 2 up on mobile (Mobile mockup). */
+.ff-oblig-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+/* 6px pill progress (mockup `.track` / `.fill` / `.fill-pos`). */
+.ff-track {
+  height: 6px;
+  border-radius: var(--ff-radius-pill);
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  overflow: hidden;
+}
+
+.ff-track__fill {
+  height: 100%;
+  border-radius: var(--ff-radius-pill);
+  background: var(--ff-accent);
+}
+
+.ff-track__fill--positive {
+  background: var(--ff-positive);
+}
+
+/* "Este mês": dia · obrigação · aviso · valor · ação (Main mockup rows). */
+.ff-checklist {
+  display: flex;
+  flex-direction: column;
+}
+
+.ff-checklist__row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto 130px 170px;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 24px;
+  border-top: 1px solid var(--ff-border);
+}
+
+/* Vence hoje/amanhã — warn wash + 3px inset stripe, as in .ff-row-confirm. */
+.ff-checklist__row--warn {
+  background: var(--ff-warn-wash);
+  box-shadow: inset 3px 0 0 var(--ff-warn);
+}
+
+/* Atrasada — same shape in the negative voice. */
+.ff-checklist__row--overdue {
+  background: var(--ff-negative-wash);
+  box-shadow: inset 3px 0 0 var(--ff-negative);
+}
+
+/* Paga — the mockup's faded row (0.72; .ff-off's 0.55 is the shared fade). */
+.ff-checklist__row--paid {
+  opacity: 0.72;
+}
+
+/* Name + subtitle column; grows when the row goes flex on mobile. */
+.ff-checklist__body {
+  min-width: 0;
+}
+
+/* 44px "DIA 05" chip. */
+.ff-checklist__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--ff-radius-sm);
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+}
+
+/* Paid rows swap the chip for a positive check bubble. */
+.ff-checklist__day--paid {
+  background: var(--ff-positive-wash);
+  border-color: transparent;
+  color: var(--ff-positive);
+}
+
+.ff-checklist__day-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ff-ink-soft);
+}
+
+.ff-checklist__day-number {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--ff-ink);
+}
+
+/* "Próximos 12 meses" — one <details> per month, <summary> is the row. */
+.ff-timeline__row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 132px 24px;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 24px;
+  border-top: 1px solid var(--ff-border);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ff-timeline__row::-webkit-details-marker {
+  display: none;
+}
+
+/* The month in view (mockup: gold tint band). */
+.ff-timeline__row--now {
+  background: var(--ff-tint);
+}
+
+/* 10px bar; the page sets the width as a share of the heaviest month. */
+.ff-timeline__bar {
+  display: flex;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: var(--ff-radius-pill);
+  overflow: hidden;
+  background: var(--ff-accent);
+  opacity: 0.55;
+}
+
+/* Months that change (and the current one) read stronger — mockup 0.85. */
+.ff-timeline__row--now .ff-timeline__bar,
+.ff-timeline__bar--strong {
+  opacity: 0.85;
+}
+
+/* Already-paid slice of the current month. */
+.ff-timeline__bar-paid {
+  height: 100%;
+  background: var(--ff-positive);
+}
+
+/* The bar cell (mockup: flex row) — holds `.ff-timeline__bar` plus the badges
+   ("+ Placas solares", "última parcela"), which wrap under it once it narrows.
+   Always column 2 of the row; a row without badges still uses it. */
+.ff-timeline__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ff-timeline__chevron {
+  display: flex;
+  color: var(--ff-ink-soft);
+  transition: transform 0.16s;
+}
+
+details[open] > .ff-timeline__row .ff-timeline__chevron {
+  transform: rotate(90deg);
+  color: var(--ff-accent);
+}
+
+/* Expanded breakdown — soft band aligned under the bar column. */
+.ff-timeline__detail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 24px;
+  padding: 4px 24px 16px 136px;
+  background: var(--ff-surface-soft);
+}
+
+.ff-timeline__detail-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--ff-border);
+  font-size: 13px;
+}
+
+/* "Encerrar obrigação" (Editar mockup: hairline top, then the confirm wash). */
+.ff-danger-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--ff-border);
+  padding-top: 18px;
+}
+
+.ff-danger-zone__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ff-danger-zone__confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--ff-negative-wash);
+  box-shadow: inset 3px 0 0 var(--ff-negative);
+}
+
+/* Read-only term panel at the top of "Editar obrigação" (Editar mockup: soft
+   band, sentence on the left, "faltam …" on the right, track underneath). */
+.ff-oblig-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md);
+  background: var(--ff-surface-soft);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ff-oblig-progress__remaining {
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Track and note run the full width, under both columns. */
+.ff-oblig-progress__wide {
+  grid-column: 1 / -1;
+}
+
+/* Numbered step inside the create/edit dialogs (NovaObrigacao mockup: 22px
+   tint dot + 13px title, fields in the shared two-column form grid). */
+.ff-oblig-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ff-oblig-step__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ff-oblig-step__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--ff-accent);
+  background: var(--ff-tint);
+  border-radius: 50%;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.ff-oblig-step__title {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ff-ink);
+}
+
+/* Dialog panels and steps already provide spacing; drop the leading margin. */
+.ff-oblig-edit .ff-form-grid,
+.ff-oblig-step .ff-form-grid {
+  margin-top: 0;
+}
+
+.ff-oblig-step__hint,
+.ff-oblig-edit__hint {
+  margin-top: 6px;
+}
+
+/* Term row: segmented control, parcela count and the live "até …" badge. */
+.ff-oblig-term {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.ff-oblig-term__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ff-oblig-term__input {
+  width: 84px;
+  text-align: center;
+}
+
+/* Live summary (mockup: soft accent-edge card, icon bubble + one sentence). */
+.ff-oblig-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Flush panel: the checklist and timeline rows carry their own 24px inset and
+   hairline separators, so the card must not pad them (mockup `.card` p=0). */
+.ff-oblig-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ff-oblig-panel__head {
+  padding: 22px 24px 14px;
+}
+
+/* The figure inside a panel head's note ("4 a pagar · R$ 11.330,00"). */
+.ff-oblig-panel__head strong {
+  color: var(--ff-ink);
+  font-weight: 500;
+}
+
+/* Copy or empty state under a flush panel's head, aligned with the rows. */
+.ff-oblig-panel__note {
+  margin: 0;
+  padding: 0 24px 16px;
+}
+
+/* Soft "de R$ total" suffix inside the "Este mês" stat value. */
+.ff-oblig-pay-label--short {
+  display: none;
+}
+
+.ff-oblig-stat-of {
+  font-size: 15px;
+  color: var(--ff-ink-soft);
+  white-space: nowrap;
+}
+
+.ff-oblig-stat-track {
+  margin: 8px 0 6px;
+}
+
+/* Right-aligned figure / trailing action of a checklist, timeline or table row. */
+.ff-oblig-cell--amount {
+  text-align: right;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ff-ink);
+}
+
+.ff-oblig-cell--soft {
+  font-weight: 500;
+  color: var(--ff-ink-soft);
+}
+
+.ff-oblig-cell--action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Month label; changed months (and the current one) read in full ink. */
+.ff-timeline__month {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ff-ink-soft);
+}
+
+.ff-timeline__month--strong {
+  font-weight: 600;
+  color: var(--ff-ink);
+}
+
+.ff-timeline__now {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ff-accent);
+}
+
+/* "Suas obrigações": icon bubble + name block, and the term progress track. */
+.ff-oblig-row__name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ff-oblig-term-count {
+  color: var(--ff-ink);
+}
+
+.ff-oblig-track {
+  width: 200px;
+  max-width: 100%;
+  margin-top: 6px;
+}
+
+.ff-oblig-table__empty {
+  padding: 16px 20px;
+  color: var(--ff-ink-soft);
+  font-size: 13px;
+}
+
+.ff-oblig-rowcard__badge {
+  margin-top: 6px;
+}
+
+.ff-oblig-rowcard__body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mobile-only CTA pinned above the bottom nav (Mobile mockup: full-width
+   primary, float shadow). Desktop keeps the action in the page header. */
+.ff-sticky-cta {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  /* The sticky CTA is the create entry on mobile (Mobile mockup has no
+     header button); keep the header from pushing past the viewport. */
+  .ff-has-sticky-cta .ff-page-title__actions {
+    display: none;
+  }
+
+  /* 2 up, third card full width; smaller value so "R$ 8.283,40" fits. */
+  .ff-oblig-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .ff-oblig-stats > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .ff-oblig-stats .ff-stat {
+    padding: 16px;
+  }
+
+  .ff-oblig-stats .ff-stat__kicker {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+  }
+
+  .ff-oblig-stats .ff-stat__value {
+    font-size: 22px;
+  }
+
+  .ff-oblig-stat-of {
+    font-size: 13px;
+  }
+
+  /* Mobile mockup row: chip · name+sub · amount over the action; the due
+     pill drops under the name instead of squeezing it. */
+  .ff-checklist__row {
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "day body amount"
+      "day badge action";
+    gap: 6px 12px;
+    padding: 12px 18px;
+  }
+
+  .ff-checklist__day {
+    grid-area: day;
+  }
+
+  .ff-checklist__body {
+    grid-area: body;
+  }
+
+  .ff-checklist__row > :nth-child(3) {
+    grid-area: badge;
+    justify-self: start;
+  }
+
+  .ff-checklist__row .ff-oblig-cell--amount {
+    grid-area: amount;
+  }
+
+  .ff-checklist__row .ff-oblig-cell--action {
+    grid-area: action;
+  }
+
+  /* Compact "Pagar" action (mockup's `btn-ghost-sm`) so the name keeps room. */
+  .ff-checklist__row .ff-oblig-cell--action .ff-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .ff-checklist__row .ff-oblig-pay-label { display: none; }
+  .ff-checklist__row .ff-oblig-pay-label--short { display: inline; }
+
+  .ff-timeline__row {
+    grid-template-columns: 72px 1fr 110px;
+    gap: 10px;
+    padding: 11px 18px;
+  }
+
+  .ff-timeline__chevron {
+    display: none;
+  }
+
+  .ff-timeline__detail {
+    grid-template-columns: 1fr;
+    padding: 4px 18px 16px;
+  }
+
+  .ff-oblig-panel__head,
+  .ff-oblig-panel__note {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .ff-oblig-track {
+    width: 100%;
+  }
+
+  /* Toasts stack above the sticky CTA instead of behind it — only on the
+     pages that actually render one. */
+  body:has(.ff-sticky-cta) .ff-toast-stack {
+    bottom: calc(148px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .ff-danger-zone__head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* One column: the sentence wraps, "faltam …" sits under it, left-aligned. */
+  .ff-oblig-progress {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ff-oblig-progress__remaining {
+    text-align: left;
+  }
+
+  .ff-sticky-cta {
+    display: block;
+    position: fixed;
+    left: 22px;
+    right: 22px;
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    z-index: 45;
+  }
+
+  .ff-sticky-cta .ff-btn {
+    width: 100%;
+    padding: 14px 20px;
+    box-shadow: var(--ff-shadow-float);
+  }
+
+  /* Companion on the page column: keeps the last rows clear of the CTA. */
+  .ff-has-sticky-cta {
+    padding-bottom: 72px;
   }
 }
 

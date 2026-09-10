@@ -8,13 +8,21 @@
  * timeline, and mark-paid materialization (idempotent, anti-double-count).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { revalidatePath } from "next/cache";
 
 import type { AppSupabaseClient } from "@family-finance/db";
-import { materializeObligationPayment } from "@family-finance/db";
+import {
+  deleteObligationPayment,
+  listObligationPayments,
+  materializeObligationPayment,
+} from "@family-finance/db";
 
 import { buildObligationsData } from "../app/(app)/obligations/queries.js";
+import { undoObligationPaymentAction } from "../app/(app)/obligations/actions.js";
+import { requireAuthorizedUser } from "../lib/auth.js";
 import {
+  obligationChangesFromForm,
   obligationInputFromForm,
   obligationPaymentFromForm,
 } from "../app/(app)/obligations/form.js";
@@ -23,15 +31,46 @@ import {
   createFakeSupabaseClient,
 } from "./fake-supabase.js";
 
+const mockedSupabase = vi.hoisted(() => ({
+  client: null as AppSupabaseClient | null,
+}));
+
+vi.mock("../lib/auth.js", () => ({
+  requireAuthorizedUser: vi.fn(async () => undefined),
+}));
+
+vi.mock("../lib/supabase.js", () => ({
+  createServerSupabaseClient: vi.fn(async () => mockedSupabase.client),
+}));
+
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+}));
+
 const HOUSEHOLD = "00000000-0000-0000-0000-000000000001";
+const FOREIGN_HOUSEHOLD = "00000000-0000-0000-0000-000000000002";
 const ALVARO = "11111111-1111-1111-1111-111111111111";
 const ACCOUNT = "acc-corrente";
+const OVERRIDE_ACCOUNT = "acc-pix";
+const FOREIGN_ACCOUNT = "acc-foreign";
 
 // Inside July 2026.
 const NOW = new Date("2026-07-15T12:00:00Z");
 
-function seededClient(): { client: AppSupabaseClient; store: FakeSupabaseStore } {
+function seededClient(): {
+  client: AppSupabaseClient;
+  store: FakeSupabaseStore;
+} {
   const store = new FakeSupabaseStore({
+    accounts: [
+      { id: ACCOUNT, household_id: HOUSEHOLD, name: "Corrente" },
+      { id: OVERRIDE_ACCOUNT, household_id: HOUSEHOLD, name: "Pix" },
+      {
+        id: FOREIGN_ACCOUNT,
+        household_id: FOREIGN_HOUSEHOLD,
+        name: "Foreign",
+      },
+    ],
     obligations: [
       {
         id: "ob-solar",
@@ -83,7 +122,9 @@ function seededClient(): { client: AppSupabaseClient; store: FakeSupabaseStore }
       },
     ],
   });
-  const client = createFakeSupabaseClient(store) as unknown as AppSupabaseClient;
+  const client = createFakeSupabaseClient(
+    store,
+  ) as unknown as AppSupabaseClient;
   return { client, store };
 }
 
@@ -106,6 +147,27 @@ describe("buildObligationsData", () => {
     const rent = data.obligations.find((o) => o.id === "ob-rent");
     expect(rent?.endMonth).toBeNull();
     expect(rent?.remainingMonths).toBeNull();
+  });
+
+  it("returns ended and canceled templates separately when asked", async () => {
+    const { client } = seededClient();
+
+    const plain = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(plain.ended).toEqual([]);
+
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW, {
+      includeEnded: true,
+    });
+    // `obligations` stays the active listing.
+    expect(data.obligations.map((o) => o.description)).toEqual([
+      "Aluguel",
+      "Parcela solar",
+    ]);
+    expect(data.ended.map((o) => o.description)).toEqual([
+      "Financiamento antigo",
+    ]);
+    expect(data.ended[0]?.status).toBe("canceled");
+    expect(data.ended[0]?.endMonth).toBe("2020-12");
   });
 
   it("splits the current month into unpaid projections and paid actuals", async () => {
@@ -166,6 +228,166 @@ describe("buildObligationsData", () => {
   });
 });
 
+describe("undo obligation payments", () => {
+  it("marking a month paid then deleting the payment restores unpaid and preserves the timeline total", async () => {
+    const { client, store } = seededClient();
+    const payment = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+    const before = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(before.thisMonth.paid).toHaveLength(1);
+
+    await deleteObligationPayment(client, HOUSEHOLD, payment.transaction.id);
+
+    const after = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(after.thisMonth.paid).toEqual([]);
+    expect(after.thisMonth.unpaid.map((entry) => entry.obligationId)).toContain(
+      "ob-rent",
+    );
+    expect(after.timeline.map((entry) => entry.totalCents)).toEqual(
+      before.timeline.map((entry) => entry.totalCents),
+    );
+    expect(store.table("transactions")).toHaveLength(0);
+  });
+
+  it.each([
+    ["plain transaction", HOUSEHOLD, null],
+    ["another household's payment", FOREIGN_HOUSEHOLD, "ob-rent"],
+  ])(
+    "refuses a %s without deleting it",
+    async (_label, householdId, obligationId) => {
+      const { client, store } = seededClient();
+      const transaction = {
+        id: "tx-refused",
+        household_id: householdId,
+        obligation_id: obligationId,
+      };
+      store.table("transactions").push(transaction);
+
+      await expect(
+        deleteObligationPayment(client, HOUSEHOLD, transaction.id),
+      ).rejects.toThrow("Esse lançamento não é um pagamento de obrigação.");
+      expect(store.table("transactions")).toEqual([transaction]);
+    },
+  );
+
+  it("listObligationPayments returns transactionId and paidOn through the paid query entries", async () => {
+    const { client } = seededClient();
+    const payment = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+      paidOn: "2026-07-12",
+    });
+
+    expect(
+      await listObligationPayments(client, HOUSEHOLD, "2026-07", "2026-07"),
+    ).toEqual([
+      {
+        obligationId: "ob-rent",
+        month: "2026-07",
+        amountCents: 120000,
+        transactionId: payment.transaction.id,
+        paidOn: "2026-07-12",
+      },
+    ]);
+    const data = await buildObligationsData(client, HOUSEHOLD, NOW);
+    expect(data.thisMonth.paid).toEqual([
+      {
+        obligationId: "ob-rent",
+        transactionId: payment.transaction.id,
+        description: "Aluguel",
+        amountCents: 120000,
+        paidOn: "2026-07-12",
+      },
+    ]);
+  });
+});
+
+describe("undoObligationPaymentAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function installClient(): ReturnType<typeof seededClient> {
+    const { client, store } = seededClient();
+    store.table("household_members").push({
+      household_id: HOUSEHOLD,
+      user_id: ALVARO,
+      is_active: true,
+    });
+    mockedSupabase.client = {
+      ...client,
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: ALVARO } },
+          error: null,
+        })),
+      },
+    } as unknown as AppSupabaseClient;
+    return { client, store };
+  }
+
+  it("deletes the payment and revalidates obligation paths on success", async () => {
+    const { client, store } = installClient();
+    const payment = await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+    });
+    const form = new FormData();
+    form.set("transactionId", payment.transaction.id);
+
+    await expect(undoObligationPaymentAction(form)).resolves.toEqual({
+      ok: true,
+    });
+    expect(requireAuthorizedUser).toHaveBeenCalledOnce();
+    expect(store.table("transactions")).toHaveLength(0);
+    expect(vi.mocked(revalidatePath).mock.calls).toEqual([
+      ["/obligations"],
+      ["/resumo"],
+      ["/dashboard"],
+    ]);
+  });
+
+  it("returns repository errors without revalidating", async () => {
+    installClient();
+    const form = new FormData();
+    form.set("transactionId", "missing");
+
+    await expect(undoObligationPaymentAction(form)).resolves.toEqual({
+      ok: false,
+      error: "Esse lançamento não é um pagamento de obrigação.",
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("returns validation errors for a missing transactionId", async () => {
+    installClient();
+    await expect(undoObligationPaymentAction(new FormData())).resolves.toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error("Sessão inválida."), "unexpected"])(
+    "catches authentication failures including non-Error values: %s",
+    async (error) => {
+      vi.mocked(requireAuthorizedUser).mockRejectedValueOnce(error);
+      await expect(
+        undoObligationPaymentAction(new FormData()),
+      ).resolves.toEqual({
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não foi possível desfazer o pagamento.",
+      });
+      expect(revalidatePath).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("paid entries reflect materialized actuals (review F4)", () => {
   it("editing the template amount after payment does not rewrite the paid figure", async () => {
     const { client, store } = seededClient();
@@ -201,6 +423,25 @@ describe("obligationInputFromForm (review F9 — server-action input parsing)", 
     dueDay: "5",
     accountId: ACCOUNT,
   };
+
+  it.each([
+    ["installments", "72", 72],
+    ["indefinite", "garbage", null],
+  ])("parses termMode=%s", (termMode, termMonths, expected) => {
+    expect(
+      obligationInputFromForm(form({ ...BASE, termMode, termMonths }), IDS)
+        .termMonths,
+    ).toBe(expected);
+  });
+
+  it("requires a term for installments", () => {
+    expect(() =>
+      obligationInputFromForm(
+        form({ ...BASE, termMode: "installments", termMonths: "" }),
+        IDS,
+      ),
+    ).toThrow("Informe o prazo em meses.");
+  });
 
   it("maps the happy path: pt-BR amount to cents, term to number", () => {
     expect(obligationInputFromForm(form(BASE), IDS)).toEqual({
@@ -290,5 +531,116 @@ describe("mark-paid actual amount", () => {
         (entry) => entry.obligationId === "ob-rent",
       )?.amountCents,
     ).toBe(120000);
+  });
+
+  it("uses an account override only for the materialized payment", async () => {
+    const { client, store } = seededClient();
+    await materializeObligationPayment(client, {
+      obligationId: "ob-rent",
+      month: "2026-07",
+      accountId: OVERRIDE_ACCOUNT,
+    });
+
+    const transaction = store
+      .table("transactions")
+      .find((row) => row.obligation_id === "ob-rent");
+    const obligation = store
+      .table("obligations")
+      .find((row) => row.id === "ob-rent");
+    expect(transaction?.account_id).toBe(OVERRIDE_ACCOUNT);
+    expect(obligation?.account_id).toBe(ACCOUNT);
+  });
+
+  it("rejects an account override that does not exist", async () => {
+    const { client, store } = seededClient();
+
+    await expect(
+      materializeObligationPayment(client, {
+        obligationId: "ob-rent",
+        month: "2026-07",
+        accountId: "acc-missing",
+      }),
+    ).rejects.toThrow("account acc-missing not found in obligation household");
+    expect(store.table("transactions")).toHaveLength(0);
+  });
+
+  it("rejects an account override owned by another household", async () => {
+    const { client, store } = seededClient();
+
+    await expect(
+      materializeObligationPayment(client, {
+        obligationId: "ob-rent",
+        month: "2026-07",
+        accountId: FOREIGN_ACCOUNT,
+      }),
+    ).rejects.toThrow(
+      `account ${FOREIGN_ACCOUNT} not found in obligation household`,
+    );
+    expect(store.table("transactions")).toHaveLength(0);
+  });
+});
+
+describe("obligationChangesFromForm", () => {
+  function form(entries: Record<string, string>): FormData {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(entries)) fd.set(k, v);
+    return fd;
+  }
+
+  it.each(["cat-1", ""])(
+    "maps editable fields with category %j",
+    (categoryId) => {
+      expect(
+        obligationChangesFromForm(
+          form({
+            obligationId: "ob-rent",
+            description: " Aluguel ",
+            amount: "1.247,80",
+            dueDay: "10",
+            accountId: ACCOUNT,
+            categoryId,
+          }),
+        ),
+      ).toEqual({
+        obligationId: "ob-rent",
+        changes: {
+          description: "Aluguel",
+          amountCents: 124780,
+          dueDay: 10,
+          accountId: ACCOUNT,
+          categoryId: categoryId || null,
+        },
+      });
+    },
+  );
+
+  it("leaves omitted account and category untouched", () => {
+    expect(
+      obligationChangesFromForm(
+        form({
+          obligationId: "ob-rent",
+          description: "Aluguel",
+          amount: "100",
+          dueDay: "5",
+        }),
+      ).changes,
+    ).toEqual({ description: "Aluguel", amountCents: 10000, dueDay: 5 });
+  });
+
+  it.each([
+    [{ amount: "abc" }, "Valor mensal inválido — use por exemplo 710,44."],
+    [{ dueDay: "5abc" }, "Dia de vencimento inválido — use apenas números."],
+  ])("rejects malformed edits %j", (patch, message) => {
+    expect(() =>
+      obligationChangesFromForm(
+        form({
+          obligationId: "ob-rent",
+          description: "Aluguel",
+          amount: "100",
+          dueDay: "5",
+          ...patch,
+        }),
+      ),
+    ).toThrow(message);
   });
 });

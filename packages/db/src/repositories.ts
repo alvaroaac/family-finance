@@ -1125,6 +1125,7 @@ export function creditCardInsert(input: {
  */
 export function installmentGroupInsertFromPlan(
   plan: InstallmentPlan,
+  options: { idempotencyKey?: string } = {},
 ): InstallmentGroupInsertPayload {
   const { group } = plan;
   const isUser = group.responsibility.scope === "user";
@@ -1143,6 +1144,7 @@ export function installmentGroupInsertFromPlan(
         ? group.responsibility.userId
         : null,
     created_by_user_id: group.createdByUserId,
+    idempotency_key: options.idempotencyKey ?? null,
   };
 }
 
@@ -1404,6 +1406,24 @@ export async function listInstallmentGroupsByHousehold(
   return (data ?? []) as InstallmentGroupRow[];
 }
 
+/** Existing parcel rows for one billing month, used by import matching. */
+export async function listInstallmentsByDueMonth(
+  client: AppSupabaseClient,
+  householdId: string,
+  dueMonth: string,
+): Promise<InstallmentRow[]> {
+  return fetchAllRows<InstallmentRow>(
+    "listInstallmentsByDueMonth",
+    (from, to) =>
+      client
+        .from("installments")
+        .select("*")
+        .eq("household_id", householdId)
+        .eq("due_month", dueMonth)
+        .range(from, to),
+  );
+}
+
 /** Minimal card-paid transaction summary for against-DB import dedupe. */
 export type CardChargeSummary = {
   occurred_on: string;
@@ -1511,9 +1531,10 @@ export async function deleteCreditCard(
 export async function createInstallmentPurchase(
   client: AppSupabaseClient,
   plan: InstallmentPlan,
+  options: { idempotencyKey?: string } = {},
 ): Promise<{ group: InstallmentGroupRow; installments: InstallmentRow[] }> {
   const { data, error } = await client.rpc("create_installment_purchase", {
-    group_payload: installmentGroupInsertFromPlan(plan),
+    group_payload: installmentGroupInsertFromPlan(plan, options),
     installments_payload: installmentInsertPayloadsFromPlan(plan),
   });
   if (error !== null) {
@@ -2308,6 +2329,37 @@ export async function deleteTransaction(
   }
 }
 
+/** Delete a materialized payment, refusing rows outside this household or without an obligation. */
+export async function deleteObligationPayment(
+  client: AppSupabaseClient,
+  householdId: string,
+  transactionId: string,
+): Promise<void> {
+  const { data, error: lookupError } = await client
+    .from("transactions")
+    .select("obligation_id")
+    .eq("household_id", householdId)
+    .eq("id", transactionId)
+    .maybeSingle();
+  if (lookupError !== null) {
+    throw new Error(
+      `deleteObligationPayment lookup failed: ${lookupError.message}`,
+    );
+  }
+  if (data === null || data.obligation_id === null) {
+    throw new Error("Esse lançamento não é um pagamento de obrigação.");
+  }
+
+  const { error } = await client
+    .from("transactions")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", transactionId);
+  if (error !== null) {
+    throw new Error(`deleteObligationPayment failed: ${error.message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Household member profiles (v1.0 Task 2) — display names + Telegram link.
 // ---------------------------------------------------------------------------
@@ -2856,6 +2908,7 @@ export async function materializeObligationPayment(
     month: string;
     paidOn?: string;
     amountCents?: number;
+    accountId?: string;
   },
 ): Promise<MaterializeObligationPaymentResult> {
   const { data, error } = await client.rpc("materialize_obligation_payment", {
@@ -2863,6 +2916,7 @@ export async function materializeObligationPayment(
     target_month: args.month,
     paid_on: args.paidOn ?? null,
     target_amount_cents: args.amountCents ?? null,
+    target_account_id: args.accountId ?? null,
   });
   if (error !== null) {
     throw new Error(`materializeObligationPayment failed: ${error.message}`);
@@ -2935,6 +2989,8 @@ export function obligationMonthYm(obligationMonth: string): string {
 export type ObligationPaymentKey = {
   obligationId: string;
   month: string;
+  transactionId: string;
+  paidOn: string | null;
   /** The MATERIALIZED transaction's amount — the actual paid, not the
    * (editable) template amount. */
   amountCents: number;
@@ -2953,7 +3009,7 @@ export async function listObligationPayments(
 ): Promise<ObligationPaymentKey[]> {
   const { data, error } = await client
     .from("transactions")
-    .select("obligation_id, obligation_month, amount_cents")
+    .select("obligation_id, obligation_month, amount_cents, id, occurred_on")
     .eq("household_id", householdId)
     .not("obligation_id", "is", null)
     .gte("obligation_month", `${fromMonth}-01`)
@@ -2965,13 +3021,19 @@ export async function listObligationPayments(
     (data ?? []) as Array<
       Pick<
         TransactionRow,
-        "obligation_id" | "obligation_month" | "amount_cents"
+        | "obligation_id"
+        | "obligation_month"
+        | "amount_cents"
+        | "id"
+        | "occurred_on"
       >
     >
   ).map((row) => ({
     obligationId: row.obligation_id as string,
     month: obligationMonthYm(row.obligation_month as string),
     amountCents: row.amount_cents,
+    transactionId: row.id,
+    paidOn: row.occurred_on,
   }));
 }
 

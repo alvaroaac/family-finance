@@ -258,6 +258,7 @@ export function buildCodexPrompt(
     "Você é um interpretador financeiro pt-BR. Ação obrigatória: interpret_only.",
     "Nunca escreva, execute ações ou invente dados. Retorne somente o JSON do schema.",
     "Menção a cartão sem parcelas é plain. Parcelamento no cartão é card_installment.",
+    "Em card_installment, amount_cents e per_installment_cents podem vir juntos somente quando amount_cents = per_installment_cents × installment_count; se apenas um valor estiver explícito, deixe o outro null.",
     '"72x de 710,44" para financiamento/conta recorrente é obligation com valor mensal 71044.',
     "Em mark_paid, amount_cents é o valor real pago agora, tanto para cartão quanto obrigação; null quando ausente.",
     "Use apenas cartões conhecidos e categorias/subcategorias existentes.",
@@ -465,82 +466,111 @@ function isCalendarDate(value: string): boolean {
   );
 }
 
+class ClassifierSemanticError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "ClassifierSemanticError";
+  }
+}
+
+function semanticError(code: string): never {
+  throw new ClassifierSemanticError(code);
+}
+
+function classifierFailureCode(error: unknown): string {
+  return error instanceof ClassifierSemanticError
+    ? error.code
+    : "unexpected_classifier_error";
+}
+
 function mapResult(
   data: z.infer<typeof resultSchema>,
   options: Parameters<MessageClassifier>[1],
 ): InterpretedIntent | null {
   if (data.intent === "non_financial") return { intent: "non_financial" };
-  if (data.description === null) return null;
+  if (data.description === null) semanticError("missing_description");
   const knownCard =
     data.card_id === null
       ? undefined
       : options.knownCards?.find((card) => card.id === data.card_id);
-  if (data.card_id !== null && knownCard === undefined) return null;
+  if (data.card_id !== null && knownCard === undefined) {
+    semanticError("unknown_card_id");
+  }
   const knownAccount =
     data.account_id === null
       ? undefined
       : options.knownAccounts?.find(
           (account) => account.id === data.account_id,
         );
-  if (data.account_id !== null && knownAccount === undefined) return null;
+  if (data.account_id !== null && knownAccount === undefined) {
+    semanticError("unknown_account_id");
+  }
   if (
     data.card_name !== null &&
     (!knownCard || normalized(data.card_name) !== normalized(knownCard.name))
   ) {
-    throw new Error("card id/name mismatch");
+    semanticError("card_id_name_mismatch");
   }
   if (
     data.account_name !== null &&
     (!knownAccount ||
       normalized(data.account_name) !== normalized(knownAccount.name))
   ) {
-    throw new Error("account id/name mismatch");
+    semanticError("account_id_name_mismatch");
   }
   if (data.card_id !== null && data.account_id !== null) {
-    throw new Error("multiple payment instruments");
+    semanticError("multiple_payment_instruments");
   }
   if (data.occurred_on !== null && !isCalendarDate(data.occurred_on)) {
-    throw new Error("invalid calendar date");
+    semanticError("invalid_calendar_date");
   }
   if (
     data.intent === "plain" &&
     (data.installment_count !== null || data.per_installment_cents !== null)
   ) {
-    throw new Error("plain intent carried installment fields");
+    semanticError("plain_with_installment_fields");
   }
-  if (
-    data.intent === "card_installment" &&
-    (data.installment_count === null ||
+  if (data.intent === "card_installment") {
+    if (
+      data.installment_count === null ||
       data.installment_count < 2 ||
-      (data.amount_cents === null) === (data.per_installment_cents === null))
-  ) {
-    throw new Error("invalid installment semantics");
+      (data.amount_cents === null && data.per_installment_cents === null)
+    ) {
+      semanticError("invalid_installment_semantics");
+    }
+    if (
+      data.amount_cents !== null &&
+      data.per_installment_cents !== null &&
+      data.amount_cents !== data.per_installment_cents * data.installment_count
+    ) {
+      semanticError("inconsistent_installment_amounts");
+    }
   }
   if (data.intent === "obligation" && data.monthly_amount_cents === null) {
-    throw new Error("obligation missing monthly amount");
+    semanticError("obligation_missing_monthly_amount");
   }
   if (data.intent === "mark_paid" && data.mark_paid_target === null) {
-    throw new Error("mark_paid missing target");
+    semanticError("mark_paid_missing_target");
   }
   const candidateKeys = data.category_candidates.map(
     (candidate) =>
       `${normalized(candidate.category)}|${normalized(candidate.subcategory ?? "")}`,
   );
   if (new Set(candidateKeys).size !== candidateKeys.length) {
-    throw new Error("duplicate category candidates");
+    semanticError("duplicate_category_candidates");
   }
   const categoryCandidates = data.category_candidates.map((candidate) => {
     const category = options.catalog?.categories.find(
       (item) => normalized(item.name) === normalized(candidate.category),
     );
-    if (!category) throw new Error("unknown category candidate");
+    if (!category) semanticError("unknown_category_candidate");
     if (candidate.subcategory !== null) {
       const subcategory = options.catalog?.subcategories.find(
         (item) =>
           item.categoryId === category.id &&
           normalized(item.name) === normalized(candidate.subcategory as string),
       );
-      if (!subcategory) throw new Error("invalid subcategory parent");
+      if (!subcategory) semanticError("invalid_subcategory_parent");
     }
     return {
       categoryName: category.name,
@@ -554,14 +584,14 @@ function mapResult(
     const duplicate = options.catalog?.categories.some(
       (category) => normalized(category.name) === normalized(proposal.category),
     );
-    if (duplicate) throw new Error("duplicate category proposal");
+    if (duplicate) semanticError("duplicate_category_proposal");
   }
   if (proposal?.kind === "subcategory") {
     const parent = options.catalog?.categories.find(
       (category) => normalized(category.name) === normalized(proposal.category),
     );
     if (!parent || proposal.subcategory === null) {
-      throw new Error("invalid subcategory proposal parent");
+      semanticError("invalid_subcategory_proposal_parent");
     }
     const duplicate = options.catalog?.subcategories.some(
       (subcategory) =>
@@ -569,7 +599,7 @@ function mapResult(
         normalized(subcategory.name) ===
           normalized(proposal.subcategory as string),
     );
-    if (duplicate) throw new Error("duplicate subcategory proposal");
+    if (duplicate) semanticError("duplicate_subcategory_proposal");
   }
   const common = {
     categoryHint: data.category_hint ?? data.category_candidates[0]?.category,
@@ -712,13 +742,17 @@ export function createCodexMessageClassifier(args: {
       consecutiveFailures = 0;
       circuitOpenUntil = 0;
       return mapped;
-    } catch {
+    } catch (error) {
       noteFailure();
       args.telemetry?.({
         type: "ai_call",
         provider: "codex",
         role: "primary",
-        outcome: "fallback",
+        outcome:
+          error instanceof ClassifierSemanticError
+            ? "semantic_rejection"
+            : "fallback",
+        reason: classifierFailureCode(error),
       });
       return null;
     } finally {
@@ -730,6 +764,10 @@ export function createCodexMessageClassifier(args: {
 /** One unified completion used after a primary structured worker fails. */
 export function createUnifiedCompletionMessageClassifier(
   client: AiCompletionClient,
+  observability: {
+    provider?: string;
+    telemetry?: (event: Record<string, unknown>) => void;
+  } = {},
 ): MessageClassifier {
   return async (text, options) => {
     try {
@@ -743,8 +781,19 @@ export function createUnifiedCompletionMessageClassifier(
       const parsed = resultSchema.safeParse(
         JSON.parse(reply.slice(start, end + 1)),
       );
-      return parsed.success ? mapResult(parsed.data, options) : null;
-    } catch {
+      if (!parsed.success) semanticError("invalid_output_schema");
+      return mapResult(parsed.data, options);
+    } catch (error) {
+      observability.telemetry?.({
+        type: "ai_call",
+        provider: observability.provider ?? "completion",
+        role: "fallback",
+        outcome:
+          error instanceof ClassifierSemanticError
+            ? "semantic_rejection"
+            : "invalid_response",
+        reason: classifierFailureCode(error),
+      });
       return null;
     }
   };

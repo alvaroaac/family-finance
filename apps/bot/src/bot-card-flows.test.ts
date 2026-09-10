@@ -18,12 +18,17 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { handleWebhook } from "./index.js";
-import { createInMemoryConversationStore } from "./store.js";
+import {
+  createDbConversationStore,
+  createInMemoryConversationStore,
+  type ConversationStore,
+} from "./store.js";
 import type { TelegramClient, InlineKeyboardMarkup } from "./telegram.js";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import { summarizeMonth } from "@family-finance/db";
 import type { InterpretedIntent, MessageClassifier } from "./interpret.js";
 import { CARD_TOKEN_PREFIX, TOKENS } from "./keyboards.js";
+import type { ConversationState } from "./conversation.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures copied verbatim from bot-callbacks.test.ts (itself copied from
@@ -90,11 +95,15 @@ function fakeQueryBuilder(rows: FakeRow[]) {
     // paging with .range() — the real repos chain these on transactions and
     // installments reads.
     gte(column: string, value: unknown) {
-      filtered = filtered.filter((r) => (r[column] as string) >= (value as string));
+      filtered = filtered.filter(
+        (r) => (r[column] as string) >= (value as string),
+      );
       return api;
     },
     lte(column: string, value: unknown) {
-      filtered = filtered.filter((r) => (r[column] as string) <= (value as string));
+      filtered = filtered.filter(
+        (r) => (r[column] as string) <= (value as string),
+      );
       return api;
     },
     not(column: string, _operator: string, value: unknown) {
@@ -137,15 +146,70 @@ function fakeQueryBuilder(rows: FakeRow[]) {
  * `create_installment_purchase`: materialize group + parcels into
  * `installment_groups`/`installments`, mirroring
  * apps/web/integration/fake-supabase.ts's `createInstallmentPurchaseRpc`.
- * No idempotency check — every call inserts a fresh group + parcels (matches
- * the web fake; the real SQL function is the one atomicity guarantee).
+ * Replays carrying the same bot draft idempotency key return the original
+ * group + parcels, matching the real SQL function.
  */
 function createInstallmentPurchaseRpc(
   tables: Record<string, FakeRow[]>,
   args: { group_payload: FakeRow; installments_payload: FakeRow[] },
-): { data: { group: FakeRow; installments: FakeRow[] }; error: null } {
+): {
+  data: { group: FakeRow; installments: FakeRow[] } | null;
+  error: { message: string } | null;
+} {
   const groups = tables.installment_groups ?? (tables.installment_groups = []);
   const installments = tables.installments ?? (tables.installments = []);
+
+  const idempotencyKey = args.group_payload.idempotency_key;
+  const existing =
+    typeof idempotencyKey === "string"
+      ? groups.find(
+          (row) =>
+            row.household_id === args.group_payload.household_id &&
+            row.idempotency_key === idempotencyKey,
+        )
+      : undefined;
+  if (existing !== undefined) {
+    const payloadKeys = [
+      "household_id",
+      "credit_card_id",
+      "number",
+      "installment_count",
+      "amount_cents",
+      "due_month",
+      "description",
+      "category_id",
+      "subcategory_id",
+      "responsibility_scope",
+      "responsible_user_id",
+      "created_by_user_id",
+    ];
+    const normalize = (row: FakeRow) =>
+      Object.fromEntries(payloadKeys.map((key) => [key, row[key] ?? null]));
+    const requested = args.installments_payload
+      .map(normalize)
+      .sort((a, b) => Number(a.number) - Number(b.number));
+    const persisted = installments
+      .filter((row) => row.installment_group_id === existing.id)
+      .map(normalize)
+      .sort((a, b) => Number(a.number) - Number(b.number));
+    if (JSON.stringify(requested) !== JSON.stringify(persisted)) {
+      return {
+        data: null,
+        error: {
+          message: "idempotency key reused with different installments payload",
+        },
+      };
+    }
+    return {
+      data: {
+        group: existing,
+        installments: installments.filter(
+          (row) => row.installment_group_id === existing.id,
+        ),
+      },
+      error: null,
+    };
+  }
 
   const group: FakeRow = {
     id: `group-${groups.length + 1}`,
@@ -202,8 +266,7 @@ function settleCardBillRpc(
     };
   }
 
-  const transactions =
-    tables.transactions ?? (tables.transactions = []);
+  const transactions = tables.transactions ?? (tables.transactions = []);
   const existing = transactions.find(
     (r) =>
       r.kind === "transfer" &&
@@ -260,7 +323,12 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
     ],
     subcategories: [],
     accounts: [
-      { id: "acct-1", household_id: "house-1", kind: "checking", name: "Conta" },
+      {
+        id: "acct-1",
+        household_id: "house-1",
+        kind: "checking",
+        name: "Conta",
+      },
     ],
     credit_cards: [],
     categorization_memory: [],
@@ -332,8 +400,48 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
   return { client, tables };
 }
 
+function failFirstInteractionWrite(
+  client: AppSupabaseClient,
+): AppSupabaseClient {
+  let failNextInteraction = true;
+  const raw = client as unknown as {
+    from(table: string): object;
+    rpc(name: string, args: Record<string, unknown>): Promise<unknown>;
+  };
+  return {
+    from(table: string) {
+      const builder = raw.from(table);
+      if (table !== "bot_interactions") return builder;
+      return new Proxy(builder, {
+        get(target, property) {
+          const value = Reflect.get(target, property);
+          if (property === "insert") {
+            return (payload: unknown) => {
+              if (failNextInteraction) {
+                failNextInteraction = false;
+                throw new Error("interaction log failed after commit");
+              }
+              return Reflect.apply(
+                value as (...args: unknown[]) => unknown,
+                target,
+                [payload],
+              );
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+    rpc: raw.rpc.bind(client),
+  } as unknown as AppSupabaseClient;
+}
+
 const IDENTITIES: Record<string, BotMemberIdentity> = {
-  "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
+  "777": {
+    householdId: "house-1",
+    userId: "user-alvaro",
+    displayName: "Alvaro",
+  },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
   "@karolzinha": {
     householdId: "house-1",
@@ -425,7 +533,9 @@ function callbackUpdate(
 // Classifier stubs (Task 4 intent payloads) — the real LLM is never called.
 // ---------------------------------------------------------------------------
 
-function classifierReturning(result: InterpretedIntent | null): MessageClassifier {
+function classifierReturning(
+  result: InterpretedIntent | null,
+): MessageClassifier {
   return async () => result;
 }
 
@@ -438,6 +548,487 @@ const CARD_SEED: FakeRow = {
 };
 
 describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
+  it("keeps unresolved payment ambiguity write-free and asks a focused question", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+
+    await handleWebhook({
+      rawBody: textUpdate(777, "Paguei a parcela do carro 900"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage: classifierReturning(null),
+    });
+
+    expect(sent[0]?.text).toContain(
+      "Não ficou claro se 900 é o valor pago ou o número da parcela.",
+    );
+    expect(tables.transactions).toHaveLength(0);
+    expect(tables.installment_groups).toHaveLength(0);
+    expect(tables.installments).toHaveLength(0);
+  });
+
+  it.each([
+    ["null classifier", null],
+    [
+      "wrong classifier",
+      {
+        intent: "plain" as const,
+        expense: { description: "Academia", amountCents: 10_000 },
+      },
+    ],
+    [
+      "payment classifier",
+      {
+        intent: "mark_paid" as const,
+        target: "obligation" as const,
+        keyword: "Academia",
+        amountCents: 10_000,
+      },
+    ],
+  ])(
+    "rejects an explicit zero obligation payment end to end with a %s",
+    async (_label, classified) => {
+      const { client, tables } = fakeSupabase({
+        accounts: [
+          {
+            id: "acct-inter",
+            household_id: "house-1",
+            kind: "checking",
+            name: "Inter",
+          },
+        ],
+        obligations: [
+          {
+            id: "ob-academia",
+            household_id: "house-1",
+            description: "Academia",
+            amount_cents: 10_000,
+            status: "active",
+          },
+        ],
+      });
+      const { telegram, sent } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+
+      await handleWebhook({
+        rawBody: textUpdate(777, "paguei academia R$ 0 ontem pela conta Inter"),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(classified),
+      });
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.text).toContain("maior que R$ 0");
+      expect(sent[0]?.replyMarkup).toBeUndefined();
+      expect(tables.transactions).toHaveLength(0);
+      expect(tables.bot_interactions).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    ["null classifier", null],
+    [
+      "wrong obligation classifier",
+      {
+        intent: "mark_paid" as const,
+        target: "obligation" as const,
+        keyword: "Parcela solar",
+      },
+    ],
+  ])(
+    "settles an explicitly named obligation-shaped card with a %s",
+    async (_label, classified) => {
+      const todayIsoDate = new Date().toISOString().slice(0, 10);
+      const month = todayIsoDate.slice(0, 7);
+      const solarCard = {
+        ...CARD_SEED,
+        id: "card-solar",
+        name: "Parcela Solar",
+      };
+      const { client, tables } = fakeSupabase({
+        credit_cards: [solarCard],
+        transactions: [
+          {
+            id: "solar-expense",
+            household_id: "house-1",
+            kind: "expense",
+            amount_cents: 15000,
+            occurred_on: `${month}-02`,
+            description: "Mercado",
+            category_id: null,
+            subcategory_id: null,
+            account_id: null,
+            credit_card_id: "card-solar",
+            installment_id: null,
+            responsibility_scope: "household",
+            responsible_user_id: null,
+            created_by_user_id: "user-alvaro",
+            import_batch_id: null,
+            obligation_id: null,
+            obligation_month: null,
+            bill_month: null,
+          },
+        ],
+      });
+      const { telegram, sent } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const classifyMessage = classifierReturning(classified);
+
+      await handleWebhook({
+        rawBody: textUpdate(777, "Paguei o cartão de nome Parcela Solar"),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+      expect(sent.at(-1)?.text).toContain("Parcela Solar");
+      expect(sent.at(-1)?.text).toContain("R$ 150,00");
+      expect(tables.transactions).toHaveLength(1);
+
+      await handleWebhook({
+        rawBody: textUpdate(777, "confirmar"),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+      const transfer = tables.transactions?.find(
+        (row) => row.kind === "transfer",
+      );
+      expect(transfer).toMatchObject({
+        credit_card_id: "card-solar",
+        amount_cents: 15000,
+      });
+      expect(tables.installment_groups).toHaveLength(0);
+      expect(tables.installments).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    ["returns null", null],
+    [
+      "incorrectly returns plain",
+      {
+        intent: "plain" as const,
+        expense: { description: "Notebook 12x", amountCents: 30000 },
+      },
+    ],
+  ])(
+    "creates the canonical installment plan when the classifier %s",
+    async (_label, classified) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const classifyMessage = classifierReturning(classified);
+
+      for (const text of [
+        "Notebook em 12x de 300 no credito nubank",
+        "confirmar",
+      ]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage,
+        });
+      }
+
+      expect(tables.installment_groups).toHaveLength(1);
+      expect(tables.installments).toHaveLength(12);
+      expect(tables.transactions ?? []).toHaveLength(0);
+      expect(tables.installment_groups?.[0]?.description).toBe("Notebook");
+      expect(
+        tables.installments?.every((row) => row.description === "Notebook"),
+      ).toBe(true);
+    },
+  );
+
+  it("creates one flat card transaction for 1x even when AI says installment", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
+    const { telegram } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook 12x",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+
+    for (const text of ["Notebook 3600 em 1x no Nubank", "confirmar"]) {
+      await handleWebhook({
+        rawBody: textUpdate(777, text),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+    }
+
+    expect(tables.transactions).toHaveLength(1);
+    expect(tables.installment_groups ?? []).toHaveLength(0);
+    expect(tables.installments ?? []).toHaveLength(0);
+  });
+
+  it.each([
+    "Compra mercado paga na fatura Nubank R$50",
+    "Pedido pago na fatura Nubank R$50",
+    "Entrada paga na fatura Nubank R$50",
+    "Compra da fatura Nubank paga",
+    "Pedido da fatura Nubank pago",
+    "Entrada da fatura Nubank paga",
+    "Fatura Nubank paga, compra do mercado",
+    "Compras na fatura Nubank paga",
+    "Fatura Nubank paga, pedidos do mercado",
+    "Entradas da fatura Nubank paga",
+  ])(
+    "persists `%s` as a normal card purchase, never a bill settlement",
+    async (message) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const classifyMessage = classifierReturning({
+        intent: "plain",
+        expense: {
+          description: "Mercado",
+          amountCents: 5_000,
+          cardKeyword: "Nubank",
+        },
+      });
+
+      for (const text of [message, "confirmar"]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage,
+        });
+      }
+
+      expect(tables.transactions).toContainEqual(
+        expect.objectContaining({
+          kind: "expense",
+          amount_cents: 5_000,
+          credit_card_id: "card-1",
+        }),
+      );
+      expect(tables.transactions).not.toContainEqual(
+        expect.objectContaining({ kind: "transfer" }),
+      );
+      expect(tables.installment_groups).toHaveLength(0);
+      expect(tables.installments).toHaveLength(0);
+    },
+  );
+
+  it.each(
+    [
+      "Compra da fatura Nubank paga",
+      "Pedido da fatura Nubank pago",
+      "Entrada da fatura Nubank paga",
+      "Compras da fatura Nubank paga",
+      "Pedidos da fatura Nubank pago",
+      "Entradas da fatura Nubank paga",
+    ].flatMap((message) => [
+      [message, "no AI result", null] as const,
+      [
+        message,
+        "a wrong card-settlement AI result",
+        {
+          intent: "mark_paid" as const,
+          target: "card" as const,
+          keyword: "Nubank",
+          amountCents: 5_000,
+        },
+      ] as const,
+    ]),
+  )(
+    "keeps reordered purchase residue write-free for `%s` with %s",
+    async (message, _classificationLabel, classified) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+
+      for (const text of [message, "confirmar"]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage: classifierReturning(classified),
+        });
+      }
+
+      expect(tables.transactions).toHaveLength(0);
+      expect(tables.installment_groups).toHaveLength(0);
+      expect(tables.installments).toHaveLength(0);
+    },
+  );
+
+  it.each(["Compra", "Compras", "Pedido", "Pedidos", "Entrada", "Entradas"])(
+    "still settles a bill when the registered card itself is named %s",
+    async (cardName) => {
+      const cardId = `card-${cardName.toLowerCase()}`;
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED, id: cardId, name: cardName }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+
+      for (const text of [`Fatura ${cardName} paga por R$ 50`, "confirmar"]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage: classifierReturning(null),
+        });
+      }
+
+      expect(tables.transactions).toContainEqual(
+        expect.objectContaining({
+          kind: "transfer",
+          amount_cents: 5_000,
+          credit_card_id: cardId,
+        }),
+      );
+    },
+  );
+
+  it.each(["Compra", "Compras", "Pedido", "Pedidos", "Entrada", "Entradas"])(
+    "still settles a bill when the registered source account itself is named %s",
+    async (accountName) => {
+      const accountId = `account-${accountName.toLowerCase()}`;
+      const { client, tables } = fakeSupabase({
+        accounts: [
+          {
+            id: accountId,
+            household_id: "house-1",
+            kind: "checking",
+            name: accountName,
+          },
+        ],
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+
+      for (const text of [
+        `Fatura Nubank paga pela conta ${accountName} por R$ 50`,
+        "confirmar",
+      ]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage: classifierReturning(null),
+        });
+      }
+
+      expect(tables.transactions).toContainEqual(
+        expect.objectContaining({
+          kind: "transfer",
+          amount_cents: 5_000,
+          account_id: accountId,
+          credit_card_id: "card-1",
+        }),
+      );
+    },
+  );
+
+  it.each(
+    [
+      "Fatura Card05/08 dia06/08 Black",
+      "Fatura Card05/08 paga Black",
+      "Fatura Card05/08 R$450 Black",
+    ].flatMap((message) => [
+      [message, "no AI result", null] as const,
+      [
+        message,
+        "a wrong AI prefix",
+        {
+          intent: "mark_paid" as const,
+          target: "card" as const,
+          keyword: "Card05/08",
+          amountCents: 45_000,
+        },
+      ] as const,
+    ]),
+  )(
+    "does not persist or settle the invalid card target in `%s` with %s",
+    async (message, _classificationLabel, classified) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED, id: "card-date", name: "Card05/08" }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const classifyMessage = classifierReturning(classified);
+
+      for (const text of [message, "confirmar"]) {
+        await handleWebhook({
+          rawBody: textUpdate(777, text),
+          secretHeader: SECRET,
+          configuredSecret: SECRET,
+          client,
+          telegram,
+          resolveMember: resolveMemberFake,
+          store,
+          classifyMessage,
+        });
+      }
+
+      expect(tables.transactions).toHaveLength(0);
+      expect(tables.installment_groups).toHaveLength(0);
+      expect(tables.installments).toHaveLength(0);
+    },
+  );
+
   it("defaults plain bot expenses to the Sao Paulo date near a UTC boundary", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T01:30:00Z"));
@@ -475,7 +1066,9 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
   });
 
   it("story 1: card installment purchase -> confirmar persists group + 12 parcels, closing_day respected", async () => {
-    const { client, tables } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
     const { telegram, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
     const classifyMessage = classifierReturning({
@@ -539,6 +1132,80 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(firstParcel?.due_month).toBe(expectedFirstDue);
   });
 
+  it.each([
+    ["Fatura Nubank — paga pela conta Inter3 R$ 1500", null],
+    [
+      "Fatura Nubank (paga) R$ 1500 pela conta Inter3",
+      {
+        intent: "mark_paid" as const,
+        target: "obligation" as const,
+        keyword: "errado",
+        amountCents: 3,
+        settlementAccountKeyword: "Conta",
+      },
+    ],
+  ])(
+    "confirms and persists a punctuated card bill with a numeric source account despite classifier disagreement: %s",
+    async (message, classified) => {
+      const { client, tables } = fakeSupabase({
+        accounts: [
+          {
+            id: "acct-1",
+            household_id: "house-1",
+            kind: "checking",
+            name: "Conta",
+          },
+          {
+            id: "acct-inter3",
+            household_id: "house-1",
+            kind: "checking",
+            name: "Inter3",
+          },
+        ],
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram, sent } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const classifyMessage = classifierReturning(classified);
+
+      await handleWebhook({
+        rawBody: textUpdate(777, message),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+      expect(sent.at(-1)?.text).toContain("Nubank");
+      expect(sent.at(-1)?.text).toContain("R$ 1.500,00");
+      expect(sent.at(-1)?.text).toContain("Inter3");
+      expect(tables.transactions).toHaveLength(0);
+
+      await handleWebhook({
+        rawBody: textUpdate(777, "confirmar"),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+      expect(tables.transactions).toContainEqual(
+        expect.objectContaining({
+          kind: "transfer",
+          credit_card_id: "card-1",
+          account_id: "acct-inter3",
+          amount_cents: 150_000,
+        }),
+      );
+    },
+  );
+
   it("story 2 + 3: card-bill payment settles as ONE transfer row; summarizeMonth excludes it (no double count)", async () => {
     const todayIsoDate = new Date().toISOString().slice(0, 10);
     const month = todayIsoDate.slice(0, 7);
@@ -580,7 +1247,10 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     // Before: the month's expense total from the direct card charge alone.
     const beforeSummary = summarizeMonth(
       month,
-      tables.transactions as Array<{ kind: string; amount_cents: number }> as never,
+      tables.transactions as Array<{
+        kind: string;
+        amount_cents: number;
+      }> as never,
     );
     expect(beforeSummary.expenseCents).toBe(15000);
 
@@ -624,7 +1294,10 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     // excluded from summarizeMonth (no double count of the card spend).
     const afterSummary = summarizeMonth(
       month,
-      tables.transactions as Array<{ kind: string; amount_cents: number }> as never,
+      tables.transactions as Array<{
+        kind: string;
+        amount_cents: number;
+      }> as never,
     );
     expect(afterSummary.expenseCents).toBe(beforeSummary.expenseCents);
     expect(afterSummary.expenseCents).toBe(15000);
@@ -727,9 +1400,19 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
   });
 
   it("story 5: callback path parity — confirm installment via cf button; double-tap cf is a silent no-op with no second group", async () => {
-    const { client, tables } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
     const { telegram, answered } = fakeTelegram();
-    const store = createInMemoryConversationStore();
+    const memoryStore = createInMemoryConversationStore();
+    const savedStatuses: ConversationState["status"][] = [];
+    const store: ConversationStore = {
+      load: (chatId) => memoryStore.load(chatId),
+      async save(chatId, state) {
+        savedStatuses.push(state.status);
+        await memoryStore.save(chatId, state);
+      },
+    };
     const classifyMessage = classifierReturning({
       intent: "card_installment",
       purchase: {
@@ -763,6 +1446,10 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
 
     expect(tables.installment_groups).toHaveLength(1);
     expect(tables.installments).toHaveLength(12);
+    expect(savedStatuses).toContain("installment_submission_started");
+    expect(
+      savedStatuses.indexOf("installment_submission_started"),
+    ).toBeLessThan(savedStatuses.indexOf("saved"));
 
     // Double-tap cf on the now-saved state.
     await handleWebhook({
@@ -782,11 +1469,366 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(lastAnswer?.text).toBe("Já salvo ✅");
   });
 
+  it("durably marks submission before the RPC and reconciles a final state-save failure without allowing cancel/edit", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
+    const { telegram } = fakeTelegram();
+    const durableStore = createDbConversationStore(client);
+    let failNextSavedState = true;
+    const store: ConversationStore = {
+      load: (chatId) => durableStore.load(chatId),
+      async save(chatId, state) {
+        if (state.status === "saved" && failNextSavedState) {
+          failNextSavedState = false;
+          throw new Error("post-write conversation save failed");
+        }
+        await durableStore.save(chatId, state);
+      },
+    };
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+    const send = (text: string) =>
+      handleWebhook({
+        rawBody: textUpdate(777, text),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+    // Before the first confirmation, correction and cancellation remain
+    // ordinary draft operations and never touch the purchase RPC.
+    await send("notebook 3600 em 12x no nubank");
+    await send("valor 3.700");
+    expect((await store.load("555"))?.status).toBe(
+      "awaiting_installment_confirmation",
+    );
+    expect((await store.load("555"))?.installmentDraft?.totalCents).toBe(
+      370000,
+    );
+    await send("cancelar");
+    expect((await store.load("555"))?.status).toBe("cancelled");
+    expect(tables.installment_groups).toHaveLength(0);
+
+    await send("notebook 3600 em 12x no nubank");
+
+    await expect(send("confirmar")).rejects.toThrow(
+      "post-write conversation save failed",
+    );
+    expect(tables.installment_groups).toHaveLength(1);
+    expect((await store.load("555"))?.status).toBe(
+      "installment_submission_started",
+    );
+
+    const committedKey = tables.installment_groups?.[0]?.idempotency_key;
+    expect(committedKey).toEqual(expect.any(String));
+    const persistedConversation = tables.bot_conversations?.[0];
+    expect(
+      (persistedConversation?.state as ConversationState | undefined)
+        ?.installmentDraft?.idempotencyKey,
+    ).toBe(committedKey);
+
+    await send("cancelar");
+    expect((await store.load("555"))?.status).toBe(
+      "installment_submission_started",
+    );
+    await send("valor 4.000");
+    expect((await store.load("555"))?.installmentDraft?.totalCents).toBe(
+      360000,
+    );
+    await send("geladeira 2400 em 12x no nubank");
+    expect((await store.load("555"))?.installmentDraft?.idempotencyKey).toBe(
+      committedKey,
+    );
+    expect(tables.installment_groups).toHaveLength(1);
+
+    if (persistedConversation !== undefined) {
+      persistedConversation.updated_at = new Date(
+        Date.now() - 25 * 60 * 60 * 1000,
+      ).toISOString();
+    }
+
+    await send("confirmar");
+
+    expect(tables.installment_groups).toHaveLength(1);
+    expect(tables.installments).toHaveLength(12);
+    expect(tables.installment_groups?.[0]?.idempotency_key).toBe(committedKey);
+    expect((await store.load("555"))?.status).toBe("saved");
+  });
+
+  it("reconciles a lost RPC response with the same purchase identity and timing snapshot", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED, closing_day: 5 }],
+    });
+    let loseFirstResponse = true;
+    const lossyClient = {
+      from: client.from.bind(client),
+      async rpc(name: string, args: Record<string, unknown>) {
+        const result = await client.rpc(name as never, args as never);
+        if (name === "create_installment_purchase" && loseFirstResponse) {
+          loseFirstResponse = false;
+          throw new Error("response lost after commit");
+        }
+        return result;
+      },
+    } as unknown as AppSupabaseClient;
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+
+    await handleWebhook({
+      rawBody: textUpdate(777, "notebook 3600 em 12x no nubank"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client: lossyClient,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage,
+    });
+    await handleWebhook({
+      rawBody: textUpdate(777, "confirmar"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client: lossyClient,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage,
+    });
+
+    expect(tables.installment_groups).toHaveLength(1);
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+    expect(sent.at(-1)?.text).toContain("não vou duplicar a compra");
+    const persistedFirstDue = tables.installments?.[0]?.due_month;
+
+    // A live card configuration change must not alter the pending purchase's
+    // already-claimed parcel schedule on retry.
+    if (tables.credit_cards?.[0] !== undefined) {
+      tables.credit_cards[0].closing_day = 31;
+    }
+    await handleWebhook({
+      rawBody: textUpdate(777, "confirmar"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client: lossyClient,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage,
+    });
+
+    expect(tables.installment_groups).toHaveLength(1);
+    expect(tables.installments).toHaveLength(12);
+    expect(tables.installments?.[0]?.due_month).toBe(persistedFirstDue);
+    expect((await store.load("555"))?.status).toBe("saved");
+  });
+
+  it("reconciles a committed purchase after more than 24h with the same persisted key", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED, closing_day: 5 }],
+    });
+    let loseFirstResponse = true;
+    const lossyClient = {
+      from: client.from.bind(client),
+      async rpc(name: string, args: Record<string, unknown>) {
+        const result = await client.rpc(name as never, args as never);
+        if (name === "create_installment_purchase" && loseFirstResponse) {
+          loseFirstResponse = false;
+          throw new Error("response lost after commit");
+        }
+        return result;
+      },
+    } as unknown as AppSupabaseClient;
+    const { telegram } = fakeTelegram();
+    const store = createDbConversationStore(lossyClient);
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+    const send = (text: string) =>
+      handleWebhook({
+        rawBody: textUpdate(777, text),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client: lossyClient,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+    await send("notebook 3600 em 12x no nubank");
+    await send("confirmar");
+
+    expect(tables.installment_groups).toHaveLength(1);
+    const committedKey = tables.installment_groups?.[0]?.idempotency_key;
+    expect(committedKey).toEqual(expect.any(String));
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+
+    const persistedConversation = tables.bot_conversations?.[0];
+    if (persistedConversation !== undefined) {
+      persistedConversation.updated_at = new Date(
+        Date.now() - 25 * 60 * 60 * 1000,
+      ).toISOString();
+    }
+
+    await send("confirmar");
+
+    expect(tables.installment_groups).toHaveLength(1);
+    expect(tables.installments).toHaveLength(12);
+    expect(tables.installment_groups?.[0]?.idempotency_key).toBe(committedKey);
+    expect((await store.load("555"))?.status).toBe("saved");
+  });
+
+  it("typed cancel/edit cannot escape post-commit uncertainty; typed retry reconciles", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
+    const guardedClient = failFirstInteractionWrite(client);
+    const { telegram, sent } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+    const send = (text: string) =>
+      handleWebhook({
+        rawBody: textUpdate(777, text),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client: guardedClient,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+    await send("notebook 3600 em 12x no nubank");
+    await send("confirmar");
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+    expect(tables.installment_groups).toHaveLength(1);
+
+    await send("cancelar");
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+    expect(sent.at(-1)?.text).toContain("Não posso editar nem cancelar");
+
+    await send("valor 4.000");
+    const afterEdit = await store.load("555");
+    expect(afterEdit?.status).toBe("installment_outcome_uncertain");
+    expect(afterEdit?.installmentDraft?.totalCents).toBe(360000);
+    expect(tables.installment_groups).toHaveLength(1);
+
+    await send("confirmar");
+    expect((await store.load("555"))?.status).toBe("saved");
+    expect(tables.installment_groups).toHaveLength(1);
+    expect(tables.installments).toHaveLength(12);
+  });
+
+  it("callback cancel/edit cannot escape post-commit uncertainty; callback retry reconciles", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
+    const guardedClient = failFirstInteractionWrite(client);
+    const { telegram, answered } = fakeTelegram();
+    const store = createInMemoryConversationStore();
+    const classifyMessage = classifierReturning({
+      intent: "card_installment",
+      purchase: {
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+      },
+    });
+    const tap = (token: string) =>
+      handleWebhook({
+        rawBody: callbackUpdate(777, token),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client: guardedClient,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+
+    await handleWebhook({
+      rawBody: textUpdate(777, "notebook 3600 em 12x no nubank"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client: guardedClient,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage,
+    });
+    await tap(TOKENS.confirm);
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+
+    await tap(TOKENS.cancel);
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+    expect(answered.at(-1)?.text).toContain("Confirmação pendente");
+
+    await tap(`${CARD_TOKEN_PREFIX}card-1`);
+    expect((await store.load("555"))?.status).toBe(
+      "installment_outcome_uncertain",
+    );
+    expect(tables.installment_groups).toHaveLength(1);
+
+    await tap(TOKENS.confirm);
+    expect((await store.load("555"))?.status).toBe("saved");
+    expect(tables.installment_groups).toHaveLength(1);
+    expect(tables.installments).toHaveLength(12);
+  });
+
   it("story 5 (card grid parity): cd:<card-1> tap resolves the card exactly like the keyword path", async () => {
     const { client, tables } = fakeSupabase({
       credit_cards: [
         { ...CARD_SEED },
-        { id: "card-2", household_id: "house-1", name: "Inter", closing_day: 10, due_day: 20 },
+        {
+          id: "card-2",
+          household_id: "house-1",
+          name: "Inter",
+          closing_day: 10,
+          due_day: 20,
+        },
       ],
     });
     const { telegram, sent } = fakeTelegram();
@@ -837,8 +1879,6 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(tables.installment_groups).toHaveLength(1);
     expect(
       ((tables.installment_groups as FakeRow[])[0] as FakeRow).credit_card_id,
-    ).toBe(
-      "card-1",
-    );
+    ).toBe("card-1");
   });
 });
