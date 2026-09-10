@@ -1,0 +1,8 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+dist-ui-test/
+.env.local
+dist-e2e/

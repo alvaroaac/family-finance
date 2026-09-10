@@ -1,7 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  distDir: process.env.CASA_NEXT_DIST_DIR || ".next",
   transpilePackages: [
+    "@family-finance/intake",
+    "@family-finance/mobile-contracts",
     "@family-finance/domain",
     "@family-finance/db",
     "@family-finance/config",

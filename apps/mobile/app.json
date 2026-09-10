@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Casa",
+    "slug": "family-finance",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "br.com.alvaroekarol.casa"
+    },
+    "android": {
+      "package": "br.com.alvaroekarol.casa",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/casa-icon.png",
+        "backgroundColor": "#16352b"
+      }
+    },
+    "web": {
+      "name": "Casa • Mobile preview",
+      "favicon": "./assets/casa-favicon.png"
+    },
+    "scheme": "casa",
+    "plugins": [
+      "expo-secure-store",
+      "expo-web-browser",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Permita que a Casa grave sua descrição de um lançamento."
+        }
+      ]
+    ],
+    "icon": "./assets/casa-icon.png",
+    "owner": "b2-tech",
+    "extra": {
+      "eas": {
+        "projectId": "095bb6b2-5a72-491c-80dd-cf73845c4f00"
+      }
+    }
+  }
+}

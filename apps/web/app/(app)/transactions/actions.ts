@@ -1,5 +1,7 @@
 "use server";
 
+import { getMobileContext } from "../../../lib/mobile/context";
+
 import { revalidatePath } from "next/cache";
 
 import {
@@ -33,6 +35,8 @@ async function authedHousehold(): Promise<{
   householdId: string;
   client: ServerSupabaseClient;
 }> {
+  const mobile = getMobileContext();
+  if (mobile) return mobile;
   await requireAuthorizedUser();
   const { createServerSupabaseClient } = await import("../../../lib/supabase");
   const client = await createServerSupabaseClient();

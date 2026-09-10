@@ -369,7 +369,7 @@ export type TransactionInsert = Insertable<
   | "obligation_id"
   | "obligation_month"
   | "bill_month"
->;
+> & { id?: string };
 
 export type ObligationInsert = Insertable<
   ObligationRow,
