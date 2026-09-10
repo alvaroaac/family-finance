@@ -95,10 +95,13 @@ export type CreditCardRow = {
   updated_at: string;
 };
 
+export type CategoryKind = "expense" | "income";
+
 export type CategoryRow = {
   id: string;
   household_id: string;
   name: string;
+  kind: CategoryKind;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -787,6 +790,17 @@ export type Database = {
       claim_import_suggestion_nonce: {
         Args: { target_nonce: string; target_expires_at: string };
         Returns: boolean;
+      };
+      update_installment_group_category: {
+        Args: {
+          target_household_id: string;
+          target_group_id: string;
+          category_patch: {
+            category_id?: string | null;
+            subcategory_id?: string | null;
+          };
+        };
+        Returns: undefined;
       };
       // Atomic category merge: re-point transactions / installment groups /
       // installments / subcategories / categorization_memory off the source

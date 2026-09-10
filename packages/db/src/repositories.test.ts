@@ -22,6 +22,7 @@ import {
   transactionUpdateFromPatch,
   updateInvestmentBucketBalance,
   updateTransaction,
+  updateInstallmentGroup,
   deleteTransaction,
   findMemberByTelegramUserId,
   resolveTelegramMember,
@@ -783,6 +784,66 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
   return client;
 }
 
+describe("updateInstallmentGroup", () => {
+  function fakeGroupClient(error: { message: string } | null = null) {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const client = {
+      async rpc(name: string, args: unknown) {
+        calls.push({ name, args });
+        return { data: null, error };
+      },
+    } as unknown as AppSupabaseClient;
+    return { client, calls };
+  }
+
+  it("sends one atomic RPC and preserves explicit nulls", async () => {
+    const { client, calls } = fakeGroupClient();
+    await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
+      categoryId: "cat-1",
+      subcategoryId: null,
+    });
+    expect(calls).toEqual([
+      {
+        name: "update_installment_group_category",
+        args: {
+          target_household_id: HOUSEHOLD,
+          target_group_id: "group-1",
+          category_patch: { category_id: "cat-1", subcategory_id: null },
+        },
+      },
+    ]);
+  });
+
+  it("omits untouched keys so the database can validate effective values", async () => {
+    const { client, calls } = fakeGroupClient();
+    await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
+      subcategoryId: "sub-1",
+    });
+    expect(calls[0]?.args).toEqual({
+      target_household_id: HOUSEHOLD,
+      target_group_id: "group-1",
+      category_patch: { subcategory_id: "sub-1" },
+    });
+  });
+
+  it("propagates database validation and transaction failures", async () => {
+    const { client } = fakeGroupClient({ message: "Invalid expense category" });
+    await expect(
+      updateInstallmentGroup(client, HOUSEHOLD, "group-1", {
+        categoryId: "income-1",
+      }),
+    ).rejects.toThrow(
+      "updateInstallmentGroup failed: Invalid expense category",
+    );
+  });
+
+  it("is a no-op for an empty patch", async () => {
+    const { client, calls } = fakeGroupClient();
+    await updateInstallmentGroup(client, HOUSEHOLD, "group-1", {});
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("updateTransaction with parcela guard", () => {
   it("refuses amount/payment edits on a parcela row (installment_id set), pt-BR", async () => {
     const client = fakeClientWithRow({ installment_id: "inst-1" });
@@ -1307,6 +1368,7 @@ describe("createCategory", () => {
     expect(captured).toEqual({
       household_id: "house-1",
       name: "Pets",
+      kind: "expense",
       is_active: true,
     });
     expect(row.id).toBe("cat-new");

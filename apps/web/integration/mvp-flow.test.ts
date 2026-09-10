@@ -219,6 +219,7 @@ function seedStore(): FakeSupabaseStore {
       id: c.id,
       household_id: HOUSEHOLD,
       name: c.name,
+      kind: "expense",
       is_active: true,
       created_at: ts,
       updated_at: ts,
@@ -356,14 +357,14 @@ async function confirmImport(
 
     // The transaction payload the RPC bulk-inserts — without import_batch_id,
     // which the function fills from the batch it creates in the same transaction.
-    const { import_batch_id: _drop, ...transaction } = transactionInsertFromDraft(
-      built.value,
-    );
+    const { import_batch_id: _drop, ...transaction } =
+      transactionInsertFromDraft(built.value);
     rowPayloads.push({
       household_id: HOUSEHOLD,
       source_line: row.sourceLine,
       occurred_on: row.occurredOn,
-      amount_cents: row.kind === "expense" ? -row.amount.cents : row.amount.cents,
+      amount_cents:
+        row.kind === "expense" ? -row.amount.cents : row.amount.cents,
       description: row.description,
       error_message: null,
       is_duplicate: false,
@@ -614,13 +615,20 @@ describe("MVP review loop — Telegram text entry", () => {
       deps,
       { today: TODAY },
     );
-    const buttonConfirmed = await applyCallback(buttonStarted.state, "cf", deps, {
-      today: TODAY,
-    });
+    const buttonConfirmed = await applyCallback(
+      buttonStarted.state,
+      "cf",
+      deps,
+      {
+        today: TODAY,
+      },
+    );
     expect(buttonConfirmed.state.status).toBe("saved");
     expect(buttonConfirmed.transactionId).toBeDefined();
     expect(
-      store.table("transactions").some((t) => t.id === buttonConfirmed.transactionId),
+      store
+        .table("transactions")
+        .some((t) => t.id === buttonConfirmed.transactionId),
     ).toBe(true);
   });
 });
@@ -785,7 +793,9 @@ describe("MVP review loop — dashboard reconciles with the whole scenario", () 
     expect(summary.balanceCents).toBe(SALARY_CENTS - expectedExpense);
 
     // --- Card pressure: direct card expenses + June installment. ----------
-    expect(cardPressure.directCents).toBe(BOT_UBER_CENTS + BOT_BUTTON_UBER_CENTS);
+    expect(cardPressure.directCents).toBe(
+      BOT_UBER_CENTS + BOT_BUTTON_UBER_CENTS,
+    );
     expect(cardPressure.installmentCents).toBe(40000); // first Geladeira parcel
     expect(cardPressure.totalCents).toBe(
       BOT_UBER_CENTS + BOT_BUTTON_UBER_CENTS + 40000,

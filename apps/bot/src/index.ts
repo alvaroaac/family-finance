@@ -208,7 +208,11 @@ async function buildDeps(
   interpretText?: TextInterpreter,
   classifyMessage?: MessageClassifier,
 ): Promise<ConversationDeps> {
-  const categories = await findCategoriesByHousehold(client, householdId);
+  // The Telegram bot only registers expenses — income categories stay out of
+  // its catalog (keyboards, AI suggestions, name resolution).
+  const categories = (
+    await findCategoriesByHousehold(client, householdId)
+  ).filter((c) => c.kind === "expense");
   const subcategoryLists = await Promise.all(
     categories.map((c) =>
       findSubcategoriesByCategory(client, householdId, c.id),

@@ -11,7 +11,8 @@
     "test:import-migration": "bash scripts/verify-import-migration.sh",
     "typecheck": "turbo run typecheck",
     "format": "prettier --check .",
-    "format:write": "prettier --write ."
+    "format:write": "prettier --write .",
+    "test:category-migration": "bash scripts/verify-category-migration.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

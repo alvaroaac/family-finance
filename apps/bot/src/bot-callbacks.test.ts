@@ -105,12 +105,18 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
         id: "cat-transport",
         household_id: "house-1",
         name: "Transporte",
+        kind: "expense",
         is_active: true,
       },
     ],
     subcategories: [],
     accounts: [
-      { id: "acct-1", household_id: "house-1", kind: "checking", name: "Conta" },
+      {
+        id: "acct-1",
+        household_id: "house-1",
+        kind: "checking",
+        name: "Conta",
+      },
     ],
     credit_cards: [],
     categorization_memory: [],
@@ -150,7 +156,11 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
 }
 
 const IDENTITIES: Record<string, BotMemberIdentity> = {
-  "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
+  "777": {
+    householdId: "house-1",
+    userId: "user-alvaro",
+    displayName: "Alvaro",
+  },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
   "@karolzinha": {
     householdId: "house-1",
@@ -185,11 +195,7 @@ function textUpdate(
   };
 }
 
-function voiceUpdate(
-  fromId: number,
-  fileId: string,
-  chatId = 555,
-): unknown {
+function voiceUpdate(fromId: number, fileId: string, chatId = 555): unknown {
   return {
     update_id: 3,
     message: {
@@ -274,7 +280,9 @@ describe("handleWebhook: callback routing", () => {
       store,
     });
 
-    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
+      "cf",
+    );
     const state = await store.load("555");
     expect(state?.promptMessageId).toBe(1001);
   });
@@ -292,7 +300,10 @@ describe("handleWebhook: callback routing", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
 
     expect(answered).toHaveLength(1);
@@ -314,13 +325,19 @@ describe("handleWebhook: callback routing", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     await handleWebhook({ ...base, rawBody: textUpdate(777, "blarg nada") });
 
     expect(stripped).not.toContainEqual({ chatId: "555", messageId: 1001 });
     expect(sent.at(-1)?.replyMarkup).toBeUndefined();
 
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf", 555, 1001) });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "cf", 555, 1001),
+    });
     expect(tables.transactions).toHaveLength(1);
   });
 
@@ -337,11 +354,16 @@ describe("handleWebhook: callback routing", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     await handleWebhook({ ...base, rawBody: textUpdate(777, "valor 45,90") });
 
     expect(stripped).toContainEqual({ chatId: "555", messageId: 1001 });
-    expect(sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    expect(
+      sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
+    ).toBe("cf");
     expect((await store.load("555"))?.promptMessageId).toBe(1002);
   });
 
@@ -365,7 +387,9 @@ describe("handleWebhook: callback routing", () => {
       transcribe,
     });
 
-    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe("cf");
+    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
+      "cf",
+    );
     const state = await store.load("555");
     expect(state?.draft.inputKind).toBe("audio");
     expect(state?.promptMessageId).toBe(1001);
@@ -455,7 +479,10 @@ describe("handleWebhook: callback routing", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
 
     // Make answerCallbackQuery throw exactly once, simulating a Telegram 400
     // on a stale (>15s-old) callback. The webhook's caller (the real server)
@@ -474,7 +501,11 @@ describe("handleWebhook: callback routing", () => {
     };
 
     await expect(
-      handleWebhook({ ...base, telegram: flakyTelegram, rawBody: callbackUpdate(777, "cf") }),
+      handleWebhook({
+        ...base,
+        telegram: flakyTelegram,
+        rawBody: callbackUpdate(777, "cf"),
+      }),
     ).rejects.toThrow("Telegram 400");
 
     // Despite the throw, applyCallback already inserted the transaction and
@@ -508,7 +539,10 @@ describe("handleWebhook: callback routing", () => {
       store,
     };
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
     expect(tables.transactions).toHaveLength(1);
 
@@ -619,13 +653,17 @@ describe("integration: the Petz flow (spec §6)", () => {
       id: "cat-pets-existing",
       household_id: "house-1",
       name: "Pets",
+      kind: "expense",
       is_active: true,
     });
     // The catalog now contains "Pets", so the engine resolves the AI's
     // suggestion to the EXISTING id — no proposal, no creation.
     await handleWebhook({ ...base, rawBody: textUpdate(777, "petz 30 reais") });
     expect(sent.at(-1)?.text).not.toContain("(nova — sugerida)");
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf", 555, 1001) });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "cf", 555, 1001),
+    });
     expect(
       tables.categories!.filter((c) => String(c.name).toLowerCase() === "pets"),
     ).toHaveLength(1);
@@ -638,12 +676,16 @@ describe("integration: the Petz flow (spec §6)", () => {
       id: "cat-pets-archived",
       household_id: "house-1",
       name: "pets",
+      kind: "expense",
       is_active: false,
     });
     // Archived categories are NOT in the engine catalog → the AI proposal
     // still fires; the accept path must find and reactivate the archived row.
     await handleWebhook({ ...base, rawBody: textUpdate(777, "Petz 90 reais") });
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "nca", 555, 1001) });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "nca", 555, 1001),
+    });
 
     const rows = tables.categories!.filter(
       (c) => String(c.name).toLowerCase() === "pets",
@@ -655,16 +697,28 @@ describe("integration: the Petz flow (spec §6)", () => {
 
   it("manual: nova categoria via grid button, end to end", async () => {
     const { base, tables, sent } = petzHarness();
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cats", 555, 1001) });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "cats", 555, 1001),
+    });
     expect(sent.at(-1)?.text).toBe("Escolha a categoria:");
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "nc", 555, 1002) });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "nc", 555, 1002),
+    });
     expect(sent.at(-1)?.text).toContain("nome da nova categoria");
     await handleWebhook({ ...base, rawBody: textUpdate(777, "Viagens") });
     expect(tables.categories!.some((c) => c.name === "Viagens")).toBe(true);
     // Manual creation seeds NO memory.
     expect(tables.categorization_memory).toHaveLength(0);
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf", 555, 1004) });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, "cf", 555, 1004),
+    });
     expect(tables.transactions).toHaveLength(1);
   });
 });
@@ -688,7 +742,10 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
   it("another member's tap on ✅ does NOT confirm the creator's draft (belongsToSender parity)", async () => {
     const { base, tables, answered, stripped, sent } = harness();
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
     const sentBefore = sent.length;
 
     // Karol (888) taps confirm on Alvaro's (777) draft.
@@ -712,15 +769,22 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
       id: "cat-food",
       household_id: "house-1",
       name: "Alimentação",
+      kind: "expense",
       is_active: true,
     });
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
 
     await handleWebhook({ ...base, rawBody: callbackUpdate(888, "cx") });
     expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
 
-    await handleWebhook({ ...base, rawBody: callbackUpdate(888, "ct:cat-food") });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(888, "ct:cat-food"),
+    });
     expect((await store.load("555"))?.draft.categoryId).not.toBe("cat-food");
     expect(tables.transactions).toHaveLength(0);
   });
@@ -728,7 +792,10 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
   it("two CONCURRENT deliveries of a double-tapped ✅ insert exactly one transaction", async () => {
     const { base, tables, answered } = harness();
 
-    await handleWebhook({ ...base, rawBody: textUpdate(777, "Uber 32 reais ontem") });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
 
     await Promise.all([
       handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") }),

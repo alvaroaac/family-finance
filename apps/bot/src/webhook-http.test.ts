@@ -101,12 +101,18 @@ function fakeSupabase() {
         id: "cat-transport",
         household_id: "house-1",
         name: "Transporte",
+        kind: "expense",
         is_active: true,
       },
     ],
     subcategories: [],
     accounts: [
-      { id: "acct-1", household_id: "house-1", kind: "checking", name: "Conta" },
+      {
+        id: "acct-1",
+        household_id: "house-1",
+        kind: "checking",
+        name: "Conta",
+      },
     ],
     credit_cards: [],
     categorization_memory: [],
@@ -135,12 +141,17 @@ function fakeSupabase() {
 }
 
 const IDENTITIES: Record<string, BotMemberIdentity> = {
-  "777": { householdId: "house-1", userId: "user-alvaro", displayName: "Alvaro" },
+  "777": {
+    householdId: "house-1",
+    userId: "user-alvaro",
+    displayName: "Alvaro",
+  },
 };
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
-}): Promise<BotMemberIdentity | null> => IDENTITIES[sender.telegramUserId] ?? null;
+}): Promise<BotMemberIdentity | null> =>
+  IDENTITIES[sender.telegramUserId] ?? null;
 
 type SentMessage = {
   chatId: string;
@@ -202,7 +213,10 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
     await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
     const { port } = server.address() as AddressInfo;
     const base = `http://127.0.0.1:${port}`;
-    const post = async (update: unknown, secret: string | undefined = SECRET) => {
+    const post = async (
+      update: unknown,
+      secret: string | undefined = SECRET,
+    ) => {
       const response = await fetch(`${base}/webhook`, {
         method: "POST",
         headers: {
@@ -264,9 +278,9 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
     const catsMsgId = 1000 + tg.sent.length;
 
     // pick Transporte
-    expect((await post(tap(transportBtn!.callback_data!, catsMsgId))).status).toBe(
-      200,
-    );
+    expect(
+      (await post(tap(transportBtn!.callback_data!, catsMsgId))).status,
+    ).toBe(200);
     const updatedId = 1000 + tg.sent.length;
 
     // confirm

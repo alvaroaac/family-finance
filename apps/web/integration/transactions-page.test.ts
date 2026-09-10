@@ -52,7 +52,9 @@ describe("NewTransactionForm", () => {
   const formProps = {
     accounts: [{ id: "acct-1", name: "Conta Corrente" }],
     cards: [{ id: "card-1", name: "Nubank" }],
-    categories: [{ id: "cat-1", name: "Alimentação" }],
+    categories: [
+      { id: "cat-1", name: "Alimentação", kind: "expense" as const },
+    ],
     subcategories: [{ id: "sub-1", categoryId: "cat-1", name: "Mercado" }],
     responsibles: [
       { value: "household", label: "Casa" },
@@ -77,6 +79,24 @@ describe("NewTransactionForm", () => {
     expect(html).toContain('value="card:card-1"');
     expect(html).toContain("Conta: Conta Corrente");
     expect(html).toContain("Cartão: Nubank");
+  });
+
+  it("hides income categories while Tipo is despesa (the default)", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ToastProvider,
+        null,
+        createElement(NewTransactionForm, {
+          ...formProps,
+          categories: [
+            ...formProps.categories,
+            { id: "cat-2", name: "Salário", kind: "income" as const },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain("Alimentação");
+    expect(html).not.toContain("Salário");
   });
 
   it("shows à vista/parcelado controls when a card is selected", () => {
@@ -205,7 +225,7 @@ describe("TransactionsTable: payment select", () => {
     expect(html).toContain("Nubank");
   });
 
-  it("renders a parcelado purchase as a read-only ledger item", () => {
+  it("renders a parcelado purchase with editable categoria and read-only rest", () => {
     const row: TransactionLedgerItem = {
       itemType: "installment_purchase",
       id: "group-1",
@@ -230,7 +250,7 @@ describe("TransactionsTable: payment select", () => {
         null,
         createElement(TransactionsTable, {
           rows: [row],
-          categories: [{ id: "cat-1", name: "Casa" }],
+          categories: [{ id: "cat-1", name: "Casa", kind: "expense" as const }],
           subcategories: [],
           responsibles: [{ value: "household", label: "Casa" }],
           accounts: [{ id: "acct-1", name: "Conta Corrente" }],
@@ -241,6 +261,10 @@ describe("TransactionsTable: payment select", () => {
     expect(html).toContain("Sofá novo");
     expect(html).toContain("parcelado");
     expect(html).toContain("6x");
+    expect(html).toContain('aria-label="Categoria"');
+    expect(html).toContain('aria-label="Subcategoria"');
+    expect(html).not.toContain('aria-label="Pagamento"');
+    expect(html).not.toContain('aria-label="Responsável"');
     expect(html).not.toContain("Excluir Sofá novo");
     expect(html).not.toContain("Editar Sofá novo");
   });
