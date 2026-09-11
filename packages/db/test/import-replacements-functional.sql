@@ -13,7 +13,7 @@ declare
    'source','nubank_ofx','request_key','73000000-0000-0000-0000-000000000001',
    'payload_fingerprint',repeat('c',64),'created_by_user_id','00000000-0000-0000-0000-000000000001');
  group_data jsonb := jsonb_build_object('household_id','10000000-0000-0000-0000-000000000001',
-   'credit_card_id','21000000-0000-0000-0000-000000000001','description','Prevencar',
+   'credit_card_id','21000000-0000-0000-0000-000000000001','description','PREVENCAR*',
    'total_amount_cents',69750,'installment_count',3,'purchased_on','2026-08-17',
    'created_by_user_id','00000000-0000-0000-0000-000000000001');
  item jsonb;
@@ -67,6 +67,10 @@ begin
  result := confirm_import_with_replacements(batch, jsonb_build_array(item));
  select installment_group_id into new_group from import_transaction_replacements
    where original_transaction_id = '72000000-0000-0000-0000-000000000001';
+ if (select description from installment_groups where id = new_group) is distinct from 'PREVENCAR*'
+   or (select purchase_description from installment_groups where id = new_group) is distinct from 'Prevencar' then
+   raise exception 'replacement lost the bank name or existing purchase description';
+ end if;
  if new_group is null or exists(select 1 from transactions where id = '72000000-0000-0000-0000-000000000001')
    or (select count(*) from installments where installment_group_id = new_group) <> 3
    or (select sum(amount_cents) from installments where installment_group_id = new_group) <> 69750

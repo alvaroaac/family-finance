@@ -42,6 +42,8 @@ import {
   type BatchCategorizationPlan,
 } from "@family-finance/categorization";
 
+import { purchaseDescription } from "./purchase-description";
+
 // NOTE: server-driven page metadata cannot be exported from a client component.
 // The layout already establishes the "Casa" workspace title; this screen is the
 // "Importação" nav entry.
@@ -157,6 +159,10 @@ export default function ImportsPage() {
     Record<
       number,
       {
+        purchaseDescription?: string;
+        purchaseDescriptionEdited?: boolean;
+        existingGroupId?: string;
+        existingGroupUpdatedAt?: string;
         totalAmountCents: number;
         installmentCount: number;
         purchasedOn: string;
@@ -462,7 +468,45 @@ export default function ImportsPage() {
         setPersistedGroupClaimIds(result.groupClaimIdsByIndex);
         setPersistedGroupDuplicates((previousPersisted) => {
           setGroupEdits((previousEdits) => {
-            const updated = { ...previousEdits };
+            const updated = Object.fromEntries(
+              Object.entries(previousEdits).map(([key, edit]) => [
+                key,
+                edit.existingGroupId
+                  ? {
+                      ...edit,
+                      existingGroupId: undefined,
+                      existingGroupUpdatedAt: undefined,
+                      purchaseDescription: edit.purchaseDescriptionEdited
+                        ? edit.purchaseDescription
+                        : undefined,
+                    }
+                  : edit,
+              ]),
+            );
+            for (const [key, matches] of Object.entries(
+              result.groupMatchesByIndex,
+            )) {
+              const index = Number(key);
+              const edit = updated[index];
+              const match =
+                matches.length === 1 &&
+                result.groupMatchCountsByIndex[index] === 1
+                  ? matches[0]
+                  : undefined;
+              const bankName = bundle.mp?.groups[index]?.description;
+              if (edit && match && bankName)
+                updated[index] = {
+                  ...edit,
+                  existingGroupId: match.installmentGroupId,
+                  existingGroupUpdatedAt: match.updatedAt,
+                  purchaseDescription: edit.purchaseDescriptionEdited
+                    ? edit.purchaseDescription
+                    : (purchaseDescription(
+                        bankName,
+                        match.purchaseDescription ?? match.description,
+                      ) ?? ""),
+                };
+            }
             for (const index of new Set([
               ...previousPersisted,
               ...previousMatched,
@@ -783,9 +827,26 @@ export default function ImportsPage() {
       .filter((index) => !excluded.has(index));
     const groups = isMp
       ? (bundle.mp?.groups ?? [])
-          .map((g, i) => ({ g, edit: groupEdits[i] }))
-          .filter((x) => x.edit !== undefined && !x.edit.skip)
-          .map(({ g, edit }) => ({
+          .map((g, i) => ({
+            g,
+            edit: groupEdits[i],
+            decision: groupMatchDecisions[i],
+          }))
+          .filter(
+            (x) =>
+              x.edit !== undefined &&
+              (!x.edit.skip ||
+                (x.decision === "keep_existing" &&
+                  x.edit.existingGroupId !== undefined)),
+          )
+          .map(({ g, edit, decision }) => ({
+            purchaseDescription: edit!.purchaseDescription,
+            existingGroupUpdatedAt:
+              decision === "keep_existing"
+                ? edit!.existingGroupUpdatedAt
+                : undefined,
+            existingGroupId:
+              decision === "keep_existing" ? edit!.existingGroupId : undefined,
             sourceGroupIndex: bundle.mp?.groups.indexOf(g) ?? -1,
             replaceTransaction:
               replacements[bundle.mp?.groups.indexOf(g) ?? -1],
@@ -901,8 +962,11 @@ export default function ImportsPage() {
     [preview, excluded],
   );
   const selectedCount = selectedIndices.length;
-  const selectedGroupCount = Object.values(groupEdits).filter(
-    (edit) => !edit.skip,
+  const selectedGroupCount = Object.entries(groupEdits).filter(
+    ([index, edit]) =>
+      !edit.skip ||
+      (groupMatchDecisions[Number(index)] === "keep_existing" &&
+        edit.existingGroupId !== undefined),
   ).length;
   const excludedDuplicates = [...duplicateIndices].filter((i) =>
     excluded.has(i),
@@ -1002,9 +1066,11 @@ export default function ImportsPage() {
     (isMp ? !hasAllMpTargets : accountId === "");
   const confirmLabel = isPending
     ? "Importando…"
-    : selectedCount === 1
-      ? "Gravar 1 lançamento"
-      : `Gravar ${selectedCount} lançamentos`;
+    : selectedGroupCount > 0
+      ? "Gravar importação"
+      : selectedCount === 1
+        ? "Gravar 1 lançamento"
+        : `Gravar ${selectedCount} lançamentos`;
 
   return (
     <section>
@@ -1226,6 +1292,20 @@ export default function ImportsPage() {
                       persistedGroupDuplicates.has(i);
                     const matches = groupMatchesByIndex[i] ?? [];
                     const topMatch = matches[0];
+                    const selectedMatch =
+                      matches.find(
+                        (match) =>
+                          match.installmentGroupId === edit.existingGroupId,
+                      ) ??
+                      (matches.length === 1 && groupMatchCountsByIndex[i] === 1
+                        ? topMatch
+                        : undefined);
+                    const canLink =
+                      selectedMatch !== undefined &&
+                      selectedMatch.creditCardId ===
+                        ((g.cardLast4 ? cardByLast4[g.cardLast4] : undefined) ??
+                          creditCardId) &&
+                      selectedMatch.installmentCount === g.installmentCount;
                     const matchCount = groupMatchCountsByIndex[i] ?? 0;
                     const needsReview = groupReviewRequiredIndices.includes(i);
                     const matchOffset = matchPageOffsets[i] ?? 0;
@@ -1240,11 +1320,14 @@ export default function ImportsPage() {
                             : ""
                         }${
                           needsReview ? " ff-group--match" : ""
-                        }${edit.skip ? " ff-off" : ""}`}
+                        }${edit.skip && !edit.existingGroupId ? " ff-off" : ""}`}
                       >
                         <div className="ff-group__head">
                           <span className="ff-group__name">
-                            {g.description}
+                            {purchaseDescription(
+                              g.description,
+                              edit.purchaseDescription,
+                            ) ?? g.description}
                           </span>
                           <Badge
                             tone={
@@ -1272,7 +1355,40 @@ export default function ImportsPage() {
                                     : "novo"}
                           </Badge>
                         </div>
-                        <div className="ff-group__grid">
+                        <p className="ff-group__hint">
+                          Nome no banco: {g.description}
+                        </p>
+                        <Field label="Descrição da compra (opcional)">
+                          <Input
+                            maxLength={200}
+                            value={edit.purchaseDescription ?? ""}
+                            placeholder="Ex.: utensílios para a cozinha"
+                            aria-label={`Descrição da compra ${g.description}`}
+                            onChange={(event) =>
+                              setGroupEdits((previous) => ({
+                                ...previous,
+                                [i]: {
+                                  ...edit,
+                                  purchaseDescription: event.target.value,
+                                  purchaseDescriptionEdited: true,
+                                },
+                              }))
+                            }
+                          />
+                        </Field>
+                        <fieldset
+                          className="ff-group__grid"
+                          disabled={
+                            groupMatchDecisions[i] === "keep_existing" &&
+                            edit.existingGroupId !== undefined
+                          }
+                          style={{
+                            border: 0,
+                            padding: 0,
+                            margin: "12px 0 0",
+                            minWidth: 0,
+                          }}
+                        >
                           <Field label="Total">
                             <Input
                               className="ff-input--compact ff-num"
@@ -1393,7 +1509,7 @@ export default function ImportsPage() {
                                 ))}
                             </Select>
                           </Field>
-                        </div>
+                        </fieldset>
                         {needsReview ? (
                           <div
                             className="ff-group-matches"
@@ -1414,7 +1530,42 @@ export default function ImportsPage() {
                                 key={match.installmentGroupId}
                               >
                                 <div className="ff-group-match__head">
-                                  <span>{match.description}</span>
+                                  <label>
+                                    <input
+                                      type="radio"
+                                      name={`purchase-match-${i}`}
+                                      checked={
+                                        selectedMatch?.installmentGroupId ===
+                                        match.installmentGroupId
+                                      }
+                                      aria-label={`Selecionar ${match.purchaseDescription ?? match.description} para ${g.description}`}
+                                      onChange={() => {
+                                        setGroupMatchDecisions((previous) => {
+                                          const next = { ...previous };
+                                          delete next[i];
+                                          return next;
+                                        });
+                                        setGroupEdits((previous) => ({
+                                          ...previous,
+                                          [i]: {
+                                            ...edit,
+                                            existingGroupId:
+                                              match.installmentGroupId,
+                                            existingGroupUpdatedAt:
+                                              match.updatedAt,
+                                            purchaseDescription:
+                                              purchaseDescription(
+                                                g.description,
+                                                match.purchaseDescription ??
+                                                  match.description,
+                                              ) ?? "",
+                                          },
+                                        }));
+                                      }}
+                                    />{" "}
+                                    {match.purchaseDescription ??
+                                      match.description}
+                                  </label>
                                   <Badge tone="warn">
                                     {installmentConfidenceLabel(
                                       match.confidence,
@@ -1497,6 +1648,15 @@ export default function ImportsPage() {
                                       [i]: {
                                         ...edit,
                                         skip: false,
+                                        existingGroupId: undefined,
+                                        existingGroupUpdatedAt: undefined,
+                                        purchaseDescription:
+                                          edit.purchaseDescriptionEdited
+                                            ? edit.purchaseDescription
+                                            : (purchaseDescription(
+                                                g.description,
+                                                match.description,
+                                              ) ?? ""),
                                         purchasedOn: match.occurredOn,
                                         categoryId:
                                           match.categoryId ?? undefined,
@@ -1561,7 +1721,10 @@ export default function ImportsPage() {
                             ) : null}
                             <div className="ff-group-match__actions">
                               <Button
-                                disabled={!targetsResolved}
+                                disabled={
+                                  !targetsResolved ||
+                                  (matchCount > 0 && !canLink)
+                                }
                                 variant={
                                   edit.skip &&
                                   groupMatchDecisions[i] !== "import_anyway"
@@ -1585,7 +1748,38 @@ export default function ImportsPage() {
                                   });
                                   setGroupEdits((previous) => ({
                                     ...previous,
-                                    [i]: { ...edit, skip: true },
+                                    [i]: {
+                                      ...edit,
+                                      skip: true,
+                                      ...(selectedMatch
+                                        ? {
+                                            existingGroupId:
+                                              selectedMatch.installmentGroupId,
+                                            existingGroupUpdatedAt:
+                                              selectedMatch.updatedAt,
+                                            purchaseDescription:
+                                              edit.purchaseDescription ??
+                                              purchaseDescription(
+                                                g.description,
+                                                selectedMatch.purchaseDescription ??
+                                                  selectedMatch.description,
+                                              ) ??
+                                              "",
+                                            totalAmountCents:
+                                              selectedMatch.totalAmountCents,
+                                            installmentCount:
+                                              selectedMatch.installmentCount,
+                                            purchasedOn:
+                                              selectedMatch.purchasedOn,
+                                            categoryId:
+                                              selectedMatch.categoryId ??
+                                              undefined,
+                                            subcategoryId:
+                                              selectedMatch.subcategoryId ??
+                                              undefined,
+                                          }
+                                        : {}),
+                                    },
                                   }));
                                 }}
                               >
@@ -1631,7 +1825,16 @@ export default function ImportsPage() {
                                   });
                                   setGroupEdits((previous) => ({
                                     ...previous,
-                                    [i]: { ...edit, skip: false },
+                                    [i]: {
+                                      ...edit,
+                                      skip: false,
+                                      existingGroupId: undefined,
+                                      existingGroupUpdatedAt: undefined,
+                                      purchaseDescription:
+                                        edit.purchaseDescriptionEdited
+                                          ? edit.purchaseDescription
+                                          : undefined,
+                                    },
                                   }));
                                 }}
                               >

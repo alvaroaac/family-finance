@@ -1831,6 +1831,7 @@ export type TransactionListItem = PersistedTransaction & {
  * are editable via `updateInstallmentGroup`; everything else is read-only.
  */
 export type InstallmentPurchaseListItem = {
+  purchaseDescription?: string | null;
   id: string;
   householdId: string;
   description: string;
@@ -1886,6 +1887,7 @@ function mapInstallmentPurchaseListItem(
     id: group.id,
     householdId: group.household_id,
     description: group.description,
+    purchaseDescription: group.purchase_description ?? null,
     purchasedOn: group.purchased_on,
     totalAmountCents: group.total_amount_cents,
     installmentCount: group.installment_count,
@@ -2037,9 +2039,12 @@ export async function findInstallmentPurchasesFiltered(
     query = query.is("category_id", null);
   }
   if (filters.search !== undefined && filters.search.trim() !== "") {
-    query = query.ilike(
-      "description",
+    // Quote the PostgREST operand separately from escaping SQL LIKE wildcards.
+    const pattern = JSON.stringify(
       `%${escapeIlikePattern(filters.search.trim())}%`,
+    );
+    query = query.or(
+      `description.ilike.${pattern},purchase_description.ilike.${pattern}`,
     );
   }
 

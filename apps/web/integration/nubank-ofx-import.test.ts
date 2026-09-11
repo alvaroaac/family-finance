@@ -12,6 +12,8 @@ import {
 
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
+  groups: vi.fn(),
+  installments: vi.fn(),
   claims: vi.fn(async (..._args: unknown[]) => []),
   client: {
     auth: {
@@ -58,8 +60,8 @@ vi.mock("@family-finance/db", async (original) => ({
   findImportItemClaims: mocks.claims,
   findTransactionsForInstrumentBetween: async () => [],
   findManualExpensesBetween: async () => [],
-  listInstallmentGroupsByHousehold: async () => [],
-  listInstallmentsByDueMonth: async () => [],
+  listInstallmentGroupsByHousehold: mocks.groups,
+  listInstallmentsByDueMonth: mocks.installments,
   confirmImportV2: mocks.confirm,
 }));
 
@@ -89,6 +91,8 @@ function confirmation(bundle: PreviewState) {
 describe("Nubank OFX server import flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.groups.mockResolvedValue([]);
+    mocks.installments.mockResolvedValue([]);
     mocks.confirm.mockResolvedValue({
       transactions_created: 2,
       installment_groups_created: 0,
@@ -192,6 +196,125 @@ describe("Nubank OFX server import flow", () => {
     expect(parcel.installments).toHaveLength(3);
     expect(parcel.observed_installment_number).toBe(2);
   });
+
+  async function installmentInput() {
+    const bundle = await preview(
+      nubankOfxFixture(ofxTransaction({ MEMO: "Milium Loja - Parcela 2/3" })),
+    );
+    const group = bundle.snapshot.installmentGroups![0]!;
+    return {
+      bundle,
+      input: {
+        ...confirmation(bundle),
+        groups: [
+          {
+            sourceGroupIndex: 0,
+            description: group.description,
+            totalAmountCents: group.estimatedTotalCents,
+            installmentCount: group.installmentCount,
+            purchasedOn: group.purchasedOn,
+            creditCardId: CARD,
+          },
+        ],
+      },
+    };
+  }
+
+  it.each(["Utensílios da cozinha", "  MILIUM   LOJA  ", ""])(
+    "saves a separate purchase label without changing the bank name: %s",
+    async (label) => {
+      const { input } = await installmentInput();
+      const result = await confirmImport({
+        ...input,
+        groups: [{ ...input.groups[0]!, purchaseDescription: label }],
+      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const item = mocks.confirm.mock.calls[0]![2].find(
+        (row: { installment_group?: unknown }) => row.installment_group,
+      );
+      expect(item.description).toBe("Milium Loja");
+      expect(item.installment_group.description).toBe("Milium Loja");
+      expect(item.installment_group.purchase_description).toBe(
+        label === "Utensílios da cozinha" ? label : null,
+      );
+    },
+  );
+
+  it("rejects altered bank names and overlong purchase descriptions", async () => {
+    const { input } = await installmentInput();
+    for (const change of [
+      { description: "Outra loja" },
+      { purchaseDescription: "a".repeat(201) },
+    ]) {
+      const result = await confirmImport({
+        ...input,
+        groups: [{ ...input.groups[0]!, ...change }],
+      });
+      expect(result.ok).toBe(false);
+    }
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each(["Utensílios da cozinha", "Milium Loja"])(
+    "links only the chosen existing purchase and carries a divergent label: %s",
+    async (description) => {
+      const { bundle, input } = await installmentInput();
+      const source = bundle.snapshot.installmentGroups![0]!;
+      const existing = {
+        id: "44444444-4444-4444-8444-444444444444",
+        credit_card_id: CARD,
+        description,
+        purchase_description: null,
+        total_amount_cents: source.estimatedTotalCents,
+        installment_count: source.installmentCount,
+        purchased_on: source.purchasedOn,
+        updated_at: "2026-09-11T00:00:00Z",
+      };
+      mocks.groups.mockResolvedValue([existing]);
+      mocks.installments.mockResolvedValue([
+        {
+          installment_group_id: existing.id,
+          credit_card_id: CARD,
+          number: source.installmentNumber,
+          installment_count: source.installmentCount,
+          amount_cents: source.perInstallmentCents,
+        },
+      ]);
+      const groups = [
+        {
+          ...input.groups[0]!,
+          existingGroupId: existing.id,
+          existingGroupUpdatedAt: existing.updated_at,
+        },
+      ];
+      const result = await confirmImport({ ...input, groups });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const item = mocks.confirm.mock.calls[0]![2].find(
+        (row: { installment_group?: unknown }) => row.installment_group,
+      );
+      expect(item.existing_installment_group_id).toBe(existing.id);
+      expect(item.expected_group_updated_at).toBe(existing.updated_at);
+      expect(item.installment_group.description).toBe("Milium Loja");
+      expect(item.installment_group.purchase_description).toBe(
+        description === "Milium Loja" ? null : description,
+      );
+      mocks.confirm.mockClear();
+      mocks.groups.mockResolvedValue([
+        {
+          ...existing,
+          purchase_description: "Descrição mais recente",
+          updated_at: "2026-09-11T01:00:00Z",
+        },
+      ]);
+      expect((await confirmImport({ ...input, groups })).ok).toBe(false);
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      mocks.groups.mockResolvedValue([
+        { ...existing, credit_card_id: "another-card" },
+      ]);
+      expect((await confirmImport({ ...input, groups })).ok).toBe(false);
+      expect(mocks.confirm).not.toHaveBeenCalled();
+    },
+  );
 
   it("resolves stable OFX claims using the card destination", async () => {
     const bundle = await preview();

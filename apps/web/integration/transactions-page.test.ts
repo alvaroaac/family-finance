@@ -225,49 +225,61 @@ describe("TransactionsTable: payment select", () => {
     expect(html).toContain("Nubank");
   });
 
-  it("renders a parcelado purchase with editable categoria and read-only rest", () => {
-    const row: TransactionLedgerItem = {
-      itemType: "installment_purchase",
-      id: "group-1",
-      householdId: "00000000-0000-0000-0000-000000000001",
-      description: "Sofá novo",
-      purchasedOn: "2026-06-15",
-      totalAmountCents: 120000,
-      installmentCount: 6,
-      creditCardId: "card-1",
-      categoryId: "cat-1",
-      subcategoryId: null,
-      responsibilityScope: "household",
-      responsibleUserId: null,
-      createdByUserId: "11111111-1111-1111-1111-111111111111",
-      firstDueMonth: "2026-06",
-      lastDueMonth: "2026-11",
-      firstInstallmentCents: 20000,
-    };
-    const html = renderToStaticMarkup(
-      createElement(
-        ToastProvider,
-        null,
-        createElement(TransactionsTable, {
-          rows: [row],
-          categories: [{ id: "cat-1", name: "Casa", kind: "expense" as const }],
-          subcategories: [],
-          responsibles: [{ value: "household", label: "Casa" }],
-          accounts: [{ id: "acct-1", name: "Conta Corrente" }],
-          cards: [{ id: "card-1", name: "Nubank" }],
-        }),
-      ),
-    );
-    expect(html).toContain("Sofá novo");
-    expect(html).toContain("parcelado");
-    expect(html).toContain("6x");
-    expect(html).toContain('aria-label="Categoria"');
-    expect(html).toContain('aria-label="Subcategoria"');
-    expect(html).not.toContain('aria-label="Pagamento"');
-    expect(html).not.toContain('aria-label="Responsável"');
-    expect(html).not.toContain("Excluir Sofá novo");
-    expect(html).not.toContain("Editar Sofá novo");
-  });
+  it.each([null, "Sofá da sala"])(
+    "renders both purchase descriptions (label: %s)",
+    (purchaseDescription) => {
+      const row: TransactionLedgerItem = {
+        itemType: "installment_purchase",
+        id: "group-1",
+        householdId: "00000000-0000-0000-0000-000000000001",
+        description: "Sofá novo",
+        purchaseDescription,
+        purchasedOn: "2026-06-15",
+        totalAmountCents: 120000,
+        installmentCount: 6,
+        creditCardId: "card-1",
+        categoryId: "cat-1",
+        subcategoryId: null,
+        responsibilityScope: "household",
+        responsibleUserId: null,
+        createdByUserId: "11111111-1111-1111-1111-111111111111",
+        firstDueMonth: "2026-06",
+        lastDueMonth: "2026-11",
+        firstInstallmentCents: 20000,
+      };
+      const html = renderToStaticMarkup(
+        createElement(
+          ToastProvider,
+          null,
+          createElement(TransactionsTable, {
+            rows: [row],
+            categories: [
+              { id: "cat-1", name: "Casa", kind: "expense" as const },
+            ],
+            subcategories: [],
+            responsibles: [{ value: "household", label: "Casa" }],
+            accounts: [{ id: "acct-1", name: "Conta Corrente" }],
+            cards: [{ id: "card-1", name: "Nubank" }],
+          }),
+        ),
+      );
+      expect(html).toContain("Sofá novo");
+      if (purchaseDescription) {
+        expect(html.split("Nome no banco: Sofá novo")).toHaveLength(3);
+        expect(html.split(purchaseDescription)).toHaveLength(3);
+      } else {
+        expect(html).not.toContain("Nome no banco:");
+      }
+      expect(html).toContain("parcelado");
+      expect(html).toContain("6x");
+      expect(html).toContain('aria-label="Categoria"');
+      expect(html).toContain('aria-label="Subcategoria"');
+      expect(html).not.toContain('aria-label="Pagamento"');
+      expect(html).not.toContain('aria-label="Responsável"');
+      expect(html).not.toContain("Excluir Sofá novo");
+      expect(html).not.toContain("Editar Sofá novo");
+    },
+  );
 });
 
 describe("TransactionsTable: amount edit", () => {
@@ -733,6 +745,33 @@ let client: AppSupabaseClient;
 beforeEach(() => {
   store = seedStore();
   client = createFakeSupabaseClient(store) as unknown as AppSupabaseClient;
+});
+
+describe("purchase label search", () => {
+  it.each(["Utensílios da cozinha", '100%_ especial, \"casa\" (kit)'])(
+    "finds a purchase by its custom label as literal text: %s",
+    async (label) => {
+      const group = store.table("installment_groups")[0]!;
+      group.description = "Milium Loja";
+      group.purchase_description = label;
+      const byLabel = await findTransactionLedgerFiltered(client, HOUSEHOLD, {
+        search: label,
+      });
+      expect(byLabel.rows.map((row) => row.id)).toEqual([group.id]);
+      expect(byLabel.rows[0]).toMatchObject({
+        description: "Milium Loja",
+        purchaseDescription: label,
+      });
+      const byBank = await findTransactionLedgerFiltered(client, HOUSEHOLD, {
+        search: "milium",
+      });
+      expect(byBank.rows.map((row) => row.id)).toEqual([group.id]);
+      const absent = await findTransactionLedgerFiltered(client, HOUSEHOLD, {
+        search: "Unknown",
+      });
+      expect(absent.rows).toEqual([]);
+    },
+  );
 });
 
 describe("/transactions listing via findTransactionsFiltered", () => {

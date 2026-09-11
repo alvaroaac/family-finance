@@ -321,7 +321,12 @@ export function TransactionsTable({
               whiteSpace: "nowrap",
             }}
           >
-            {row.description}
+            {row.purchaseDescription ?? row.description}
+            {row.purchaseDescription ? (
+              <small className="ff-muted" style={{ display: "block" }}>
+                Nome no banco: {row.description}
+              </small>
+            ) : null}
           </span>
           <Badge tone="accent">parcelado</Badge>
           {isPending(row) ? <Badge tone="warn">Pendente</Badge> : null}
@@ -746,7 +751,20 @@ export function TransactionsTable({
                         minWidth: 0,
                       }}
                     >
-                      <span className="ff-txrow__desc">{row.description}</span>
+                      <span className="ff-txrow__desc">
+                        {isInstallmentPurchase(row)
+                          ? (row.purchaseDescription ?? row.description)
+                          : row.description}
+                        {isInstallmentPurchase(row) &&
+                        row.purchaseDescription ? (
+                          <small
+                            className="ff-muted"
+                            style={{ display: "block" }}
+                          >
+                            Nome no banco: {row.description}
+                          </small>
+                        ) : null}
+                      </span>
                       {isInstallmentPurchase(row) ? (
                         <Badge tone="accent">parcelado</Badge>
                       ) : row.installmentId !== null ? (
