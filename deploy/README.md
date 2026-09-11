@@ -63,7 +63,11 @@ checksums through `0021` only after `deploy/checks/migration-baseline.sql`
 proves those live effects, including both pairs historically applied under the
 colliding `0018`/`0019` numbers. Later migration files remain pending and are
 executed by `apply`; they can never be silently absorbed into this fingerprint.
-The baseline is a one-time operation and refuses an existing ledger.
+The baseline is a one-time operation and refuses an existing ledger. It also
+requires RLS and the complete expected isolation policy set, rejecting missing,
+weakened, or extra policies. Unexpected policy customizations need explicit
+review before baselining. After baseline, run `apply` to install pending `0022`,
+which restores the optional-argument payment RPC; do not replay `0020` manually.
 
 When the fingerprint is deliberately extended in the future, update the check
 and the source-pinned `baseline_version` together. Neither the check path nor
@@ -93,7 +97,8 @@ bot's service-role (null `auth.uid()`) client can call both card flows.
 reservation, and telemetry RPCs; `0017` records the actual value when a variable
 obligation is paid; `0018` adds per-payment account overrides; `0019` makes bot
 installment creation replay-safe; `0020` removes the obsolete three-argument
-payment RPC; and `0021` adds expense/income category kinds. **All migrations
+payment RPC; `0021` adds expense/income category kinds; and `0022` restores
+two- and three-argument payment calls via the current authorized implementation. **All migrations
 must be applied and `status` must be clean BEFORE a new bot or web deploy
 starts.**
 

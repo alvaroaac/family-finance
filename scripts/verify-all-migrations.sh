@@ -31,6 +31,7 @@ docker exec "$container" psql -v ON_ERROR_STOP=1 -U postgres -c \
 
 for pass in 1 2; do
   for migration in "$repo_root"/supabase/migrations/*.sql; do
+    [[ "$(basename "$migration")" < "0022_" ]] || continue
     echo "pass=$pass migration=$(basename "$migration")"
     docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d postgres -f - \
       < "$migration" >/dev/null
@@ -57,7 +58,7 @@ assert_baseline_rejected() {
     echo "incomplete schema was unexpectedly baselined" >&2
     exit 1
   fi
-  [[ "$output" == *"$expected"* ]] || {
+  [[ "$output" == *"$expected"* && ( "$expected" == "only through 0021" || "$output" == *"cannot baseline; missing schema fingerprints:"* ) ]] || {
     echo "baseline failed without expected fingerprint '$expected': $output" >&2
     exit 1
   }
@@ -73,6 +74,36 @@ assert_baseline_rejected "0012 anon RPC lock" \
   "$repo_root/deploy/migrate.sh" baseline 0021
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
   "revoke execute on function confirm_import(jsonb, jsonb) from anon;" >/dev/null
+
+# Every protected table must retain RLS. Policy mutations also prove that
+# missing, weakened and additional permissive policies fail closed.
+for table in households household_members accounts investment_buckets credit_cards \
+  categories subcategories transactions installment_groups installments import_batches \
+  import_rows categorization_memory bot_interactions obligations bot_conversations \
+  allowed_emails source_category_mappings import_suggestion_nonces import_ai_usage \
+  import_ai_daily_usage import_item_claims; do
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -c \
+    "alter table $table disable row level security" >/dev/null
+  assert_baseline_rejected "0001 household RLS and policies" \
+    "$repo_root/deploy/migrate.sh" baseline 0021
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -c \
+    "alter table $table enable row level security" >/dev/null
+done
+for mutation in \
+  'drop policy transactions_member_all on transactions' \
+  'alter policy transactions_member_all on transactions using (true)' \
+  'alter policy transactions_member_all on transactions with check (true)' \
+  'alter policy transactions_member_all on transactions to authenticated' \
+  'create policy unexpected_access on transactions for select using (true)'; do
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -c "$mutation" >/dev/null
+  assert_baseline_rejected "0001 household RLS and policies" \
+    "$repo_root/deploy/migrate.sh" baseline 0021
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -c \
+    "drop policy if exists unexpected_access on transactions;
+     drop policy if exists transactions_member_all on transactions;
+     create policy transactions_member_all on transactions for all
+       using (is_household_member(household_id)) with check (is_household_member(household_id));" >/dev/null
+done
 
 for trigger_case in \
   "auth.users|provision_member_on_signup|0009 member provisioning" \
@@ -135,17 +166,17 @@ done
 
 cp -R "$repo_root/supabase/migrations" "$scratch/pending-migrations"
 printf '%s\n' 'create table if not exists migration_runner_success(id integer);' \
-  > "$scratch/pending-migrations/0022_runner_success.sql"
+  > "$scratch/pending-migrations/0023_runner_success.sql"
 assert_baseline_rejected "only through 0021" env \
-  MIGRATION_BASELINE_VERSION=0022 \
+  MIGRATION_BASELINE_VERSION=0023 \
   MIGRATIONS_DIR="$scratch/pending-migrations" \
-  "$repo_root/deploy/migrate.sh" baseline 0022
+  "$repo_root/deploy/migrate.sh" baseline 0023
 
 MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" baseline 0021
 status_output="$(MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" status)"
-[[ "$status_output" == *"PENDING 0022_runner_success.sql"* ]] || {
+[[ "$status_output" == *"PENDING 0023_runner_success.sql"* ]] || {
   echo "post-baseline migration was not left pending" >&2
   exit 1
 }
@@ -159,9 +190,14 @@ ledger_count="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
 
 MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" apply >/dev/null
+# The compatibility migration must also be safe to reapply directly.
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -f - \
+  < "$repo_root/supabase/migrations/0022_restore_obligation_payment_compatibility.sql" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -f - \
+  < "$repo_root/scripts/check-obligation-compatibility.sql" >/dev/null
 runner_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   "select (to_regclass('public.migration_runner_success') is not null)::int || '|' ||
-          (exists(select 1 from family_finance_migrations.schema_migrations where version='0022'))::int")"
+          (exists(select 1 from family_finance_migrations.schema_migrations where version='0023'))::int")"
 [[ "$runner_state" == "1|1" ]] || {
   echo "pending migration was not applied and recorded: $runner_state" >&2
   exit 1
@@ -176,7 +212,7 @@ if MIGRATIONS_DIR="$scratch/checksum-migrations" \
   exit 1
 fi
 printf '%s\n' 'create table checksum_guard_was_bypassed(id integer);' \
-  > "$scratch/checksum-migrations/0023_checksum_guard.sql"
+  > "$scratch/checksum-migrations/0024_checksum_guard.sql"
 if checksum_output="$(MIGRATIONS_DIR="$scratch/checksum-migrations" \
   "$repo_root/deploy/migrate.sh" apply 2>&1)"; then
   echo "apply accepted a changed applied migration" >&2
@@ -188,7 +224,7 @@ fi
 }
 checksum_apply_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   "select (to_regclass('public.checksum_guard_was_bypassed') is null)::int || '|' ||
-          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0023'))::int")"
+          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0024'))::int")"
 [[ "$checksum_apply_state" == "1|1" ]] || {
   echo "checksum rejection allowed a pending migration to run: $checksum_apply_state" >&2
   exit 1
@@ -212,7 +248,7 @@ cp -R "$scratch/pending-migrations" "$scratch/failing-migrations"
 printf '%s\n' \
   'create table migration_should_rollback(id integer);' \
   'select 1 / 0;' \
-  > "$scratch/failing-migrations/0023_intentional_failure.sql"
+  > "$scratch/failing-migrations/0024_intentional_failure.sql"
 if MIGRATIONS_DIR="$scratch/failing-migrations" \
   "$repo_root/deploy/migrate.sh" apply >/dev/null 2>&1; then
   echo "failing migration unexpectedly succeeded" >&2
@@ -221,7 +257,7 @@ fi
 
 rollback_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   "select (to_regclass('public.migration_should_rollback') is null)::int || '|' ||
-          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0023'))::int")"
+          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0024'))::int")"
 [[ "$rollback_state" == "1|1" ]] || {
   echo "failed migration was not fully rolled back: $rollback_state" >&2
   exit 1

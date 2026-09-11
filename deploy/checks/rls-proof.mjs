@@ -151,7 +151,11 @@ async function setup() {
   // category so the bogus merge_category target trips the FK and rolls back.
   const { data: account, error: accError } = await admin
     .from("accounts")
-    .insert({ household_id: householdId, kind: "checking", name: `${MARKER} account` })
+    .insert({
+      household_id: householdId,
+      kind: "checking",
+      name: `${MARKER} account`,
+    })
     .select("id")
     .single();
   if (accError) throw new Error(`account insert failed: ${accError.message}`);
@@ -159,7 +163,12 @@ async function setup() {
 
   const { data: card, error: cardError } = await admin
     .from("credit_cards")
-    .insert({ household_id: householdId, name: `${MARKER} card`, closing_day: 5, due_day: 12 })
+    .insert({
+      household_id: householdId,
+      name: `${MARKER} card`,
+      closing_day: 5,
+      due_day: 12,
+    })
     .select("id")
     .single();
   if (cardError) throw new Error(`card insert failed: ${cardError.message}`);
@@ -167,7 +176,11 @@ async function setup() {
 
   const { data: category, error: catError } = await admin
     .from("categories")
-    .insert({ household_id: householdId, name: `${MARKER} category`, is_active: true })
+    .insert({
+      household_id: householdId,
+      name: `${MARKER} category`,
+      is_active: true,
+    })
     .select("id")
     .single();
   if (catError) throw new Error(`category insert failed: ${catError.message}`);
@@ -196,21 +209,33 @@ async function setup() {
 async function teardown() {
   // Order matters: transactions reference users (on delete restrict).
   const steps = [
-    () => created.transactionId &&
+    () =>
+      created.transactionId &&
       admin.from("transactions").delete().eq("id", created.transactionId),
     () => admin.from("transactions").delete().like("description", `${MARKER}%`),
     () => admin.from("import_rows").delete().like("description", `${MARKER}%`),
     () => admin.from("import_batches").delete().like("notes", `${MARKER}%`),
     () => admin.from("installments").delete().like("description", `${MARKER}%`),
-    () => admin.from("installment_groups").delete().like("description", `${MARKER}%`),
-    () => created.categoryId &&
+    () =>
+      admin
+        .from("installment_groups")
+        .delete()
+        .like("description", `${MARKER}%`),
+    () =>
+      created.categoryId &&
       admin.from("categories").delete().eq("id", created.categoryId),
-    () => created.creditCardId &&
+    () =>
+      created.creditCardId &&
       admin.from("credit_cards").delete().eq("id", created.creditCardId),
-    () => created.accountId &&
+    () =>
+      created.accountId &&
       admin.from("accounts").delete().eq("id", created.accountId),
-    () => created.membershipInserted &&
-      admin.from("household_members").delete().eq("user_id", created.memberUserId),
+    () =>
+      created.membershipInserted &&
+      admin
+        .from("household_members")
+        .delete()
+        .eq("user_id", created.memberUserId),
   ];
   for (const step of steps) {
     const op = step();
@@ -278,7 +303,10 @@ async function checkOutsiderInsert(outsider, householdId) {
     error ? `rejected: ${error.message}` : "insert unexpectedly succeeded",
   );
   if (!error) {
-    await admin.from("transactions").delete().like("description", `${MARKER} outsider%`);
+    await admin
+      .from("transactions")
+      .delete()
+      .like("description", `${MARKER} outsider%`);
   }
 }
 
@@ -375,8 +403,14 @@ async function checkConfirmImportRollback(member, householdId) {
   const [{ data: batches }, { data: txs }, { data: importRows }] =
     await Promise.all([
       admin.from("import_batches").select("id").like("notes", `${MARKER}%`),
-      admin.from("transactions").select("id").like("description", `${MARKER} import%`),
-      admin.from("import_rows").select("id").like("description", `${MARKER} import%`),
+      admin
+        .from("transactions")
+        .select("id")
+        .like("description", `${MARKER} import%`),
+      admin
+        .from("import_rows")
+        .select("id")
+        .like("description", `${MARKER} import%`),
     ]);
   record(
     "(d2) confirm_import rollback: no import_batches persisted",
@@ -415,10 +449,22 @@ async function checkInstallmentRollback(member, householdId) {
       created_by_user_id: created.memberUserId,
     },
     installments_payload: [
-      { ...parcelBase, household_id: householdId, number: 1, amount_cents: 10000, due_month: "2026-02" },
+      {
+        ...parcelBase,
+        household_id: householdId,
+        number: 1,
+        amount_cents: 10000,
+        due_month: "2026-02",
+      },
       // Invalid parcel: number > installment_count violates the CHECK → the
       // whole RPC must roll back, leaving no orphan group.
-      { ...parcelBase, household_id: householdId, number: 3, amount_cents: 10000, due_month: "2026-03" },
+      {
+        ...parcelBase,
+        household_id: householdId,
+        number: 3,
+        amount_cents: 10000,
+        due_month: "2026-03",
+      },
     ],
   });
   record(
@@ -428,7 +474,10 @@ async function checkInstallmentRollback(member, householdId) {
   );
 
   const [{ data: groups }, { data: parcels }] = await Promise.all([
-    admin.from("installment_groups").select("id").like("description", `${MARKER}%`),
+    admin
+      .from("installment_groups")
+      .select("id")
+      .like("description", `${MARKER}%`),
     admin.from("installments").select("id").like("description", `${MARKER}%`),
   ]);
   record(
@@ -453,29 +502,41 @@ async function checkInstallmentRollback(member, householdId) {
 async function checkAnonCannotExecuteRpcs(householdId) {
   const anon = anonClient();
   const rpcs = [
-    ["materialize_obligation_payment", {
-      target_obligation_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-      target_month: "2026-01",
-      paid_on: null,
-      target_amount_cents: null,
-      target_account_id: null,
-    }],
-    ["merge_category", {
-      target_household_id: householdId,
-      source_category_id: created.categoryId,
-      target_category_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-    }],
-    ["create_installment_purchase", { group_payload: {}, installments_payload: [] }],
+    [
+      "materialize_obligation_payment",
+      {
+        target_obligation_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        target_month: "2026-01",
+        paid_on: null,
+        target_amount_cents: null,
+        target_account_id: null,
+      },
+    ],
+    [
+      "merge_category",
+      {
+        target_household_id: householdId,
+        source_category_id: created.categoryId,
+        target_category_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      },
+    ],
+    [
+      "create_installment_purchase",
+      { group_payload: {}, installments_payload: [] },
+    ],
     ["confirm_import", { batch_payload: {}, rows_payload: [] }],
-    ["settle_card_bill", {
-      target_household_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-      target_credit_card_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-      target_account_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-      target_bill_month: "2026-01",
-      target_amount_cents: 100,
-      target_paid_on: "2026-01-01",
-      target_created_by_user_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-    }],
+    [
+      "settle_card_bill",
+      {
+        target_household_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        target_credit_card_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        target_account_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        target_bill_month: "2026-01",
+        target_amount_cents: 100,
+        target_paid_on: "2026-01-01",
+        target_created_by_user_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      },
+    ],
   ];
   for (const [name, args] of rpcs) {
     const { error } = await anon.rpc(name, args);
@@ -528,7 +589,9 @@ async function checkObligationMaterialization(member, householdId) {
   record(
     "(f1) member materializes an in-window month",
     !first.error && first.data && first.data.already_paid === false,
-    first.error ? first.error.message : `already_paid=${first.data?.already_paid}`,
+    first.error
+      ? first.error.message
+      : `already_paid=${first.data?.already_paid}`,
   );
 
   const repeat = await member.rpc("materialize_obligation_payment", {
@@ -541,7 +604,9 @@ async function checkObligationMaterialization(member, householdId) {
   record(
     "(f2) repeat is idempotent (already_paid=true, no double row)",
     !repeat.error && repeat.data && repeat.data.already_paid === true,
-    repeat.error ? repeat.error.message : `already_paid=${repeat.data?.already_paid}`,
+    repeat.error
+      ? repeat.error.message
+      : `already_paid=${repeat.data?.already_paid}`,
   );
 
   const outOfWindow = await member.rpc("materialize_obligation_payment", {
@@ -557,6 +622,26 @@ async function checkObligationMaterialization(member, householdId) {
       /month .* is after the .*term/i.test(outOfWindow.error.message),
     outOfWindow.error ? outOfWindow.error.message : "unexpectedly accepted",
   );
+
+  for (const payload of [
+    { target_obligation_id: ob.id, target_month: "2026-04" },
+    {
+      target_obligation_id: ob.id,
+      target_month: "2026-05",
+      paid_on: "2026-05-12",
+    },
+  ]) {
+    const legacy = await member.rpc("materialize_obligation_payment", payload);
+    record(
+      `(f4) legacy ${Object.keys(payload).length}-key RPC retains template defaults`,
+      !legacy.error &&
+        legacy.data?.transaction?.amount_cents === 71044 &&
+        legacy.data?.transaction?.account_id === created.accountId &&
+        legacy.data?.transaction?.occurred_on ===
+          (payload.paid_on ?? "2026-04-05"),
+      legacy.error ? legacy.error.message : JSON.stringify(legacy.data),
+    );
+  }
 
   // Cleanup: the materialized transaction + the obligation.
   await admin.from("transactions").delete().eq("obligation_id", ob.id);
@@ -585,7 +670,9 @@ async function checkCardBillSettlement(member, householdId) {
   record(
     "(g1) member settles a card bill (already_paid=false)",
     !first.error && first.data && first.data.already_paid === false,
-    first.error ? first.error.message : `already_paid=${first.data?.already_paid}`,
+    first.error
+      ? first.error.message
+      : `already_paid=${first.data?.already_paid}`,
   );
   record(
     "(g1b) settle row carries BOTH instruments + bill_month",
@@ -609,7 +696,9 @@ async function checkCardBillSettlement(member, householdId) {
   record(
     "(g2) repeat settle is idempotent (already_paid=true)",
     !repeat.error && repeat.data && repeat.data.already_paid === true,
-    repeat.error ? repeat.error.message : `already_paid=${repeat.data?.already_paid}`,
+    repeat.error
+      ? repeat.error.message
+      : `already_paid=${repeat.data?.already_paid}`,
   );
 
   // (g3) service-role (auth.uid() null — the bot path) settles another month.
@@ -649,33 +738,39 @@ async function checkCardBillSettlement(member, householdId) {
   await outsider.auth.signOut();
 
   // (g5) constraint matrix via admin direct inserts.
-  const { error: bothOnExpenseError } = await admin.from("transactions").insert({
-    household_id: householdId,
-    kind: "expense",
-    amount_cents: 100,
-    occurred_on: "2026-04-01",
-    description: `${MARKER} g5 expense both instruments`,
-    account_id: created.accountId,
-    credit_card_id: created.creditCardId,
-    created_by_user_id: created.memberUserId,
-  });
+  const { error: bothOnExpenseError } = await admin
+    .from("transactions")
+    .insert({
+      household_id: householdId,
+      kind: "expense",
+      amount_cents: 100,
+      occurred_on: "2026-04-01",
+      description: `${MARKER} g5 expense both instruments`,
+      account_id: created.accountId,
+      credit_card_id: created.creditCardId,
+      created_by_user_id: created.memberUserId,
+    });
   record(
     "(g5a) expense with BOTH instruments violates the CHECK",
     Boolean(bothOnExpenseError),
-    bothOnExpenseError ? bothOnExpenseError.message : "insert unexpectedly succeeded",
+    bothOnExpenseError
+      ? bothOnExpenseError.message
+      : "insert unexpectedly succeeded",
   );
 
-  const { error: transferBillMonthSingleError } = await admin.from("transactions").insert({
-    household_id: householdId,
-    kind: "transfer",
-    amount_cents: 100,
-    occurred_on: "2026-04-01",
-    description: `${MARKER} g5 transfer bill_month single instrument`,
-    account_id: created.accountId,
-    credit_card_id: null,
-    bill_month: "2026-07",
-    created_by_user_id: created.memberUserId,
-  });
+  const { error: transferBillMonthSingleError } = await admin
+    .from("transactions")
+    .insert({
+      household_id: householdId,
+      kind: "transfer",
+      amount_cents: 100,
+      occurred_on: "2026-04-01",
+      description: `${MARKER} g5 transfer bill_month single instrument`,
+      account_id: created.accountId,
+      credit_card_id: null,
+      bill_month: "2026-07",
+      created_by_user_id: created.memberUserId,
+    });
   record(
     "(g5b) transfer with bill_month + only account_id violates the CHECK",
     Boolean(transferBillMonthSingleError),
