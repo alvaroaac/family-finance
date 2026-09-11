@@ -162,6 +162,7 @@ export default function ImportsPage() {
         purchaseDescription?: string;
         purchaseDescriptionEdited?: boolean;
         existingGroupId?: string;
+        existingGroupUpdatedAt?: string;
         totalAmountCents: number;
         installmentCount: number;
         purchasedOn: string;
@@ -474,6 +475,7 @@ export default function ImportsPage() {
                   ? {
                       ...edit,
                       existingGroupId: undefined,
+                      existingGroupUpdatedAt: undefined,
                       purchaseDescription: edit.purchaseDescriptionEdited
                         ? edit.purchaseDescription
                         : undefined,
@@ -496,6 +498,7 @@ export default function ImportsPage() {
                 updated[index] = {
                   ...edit,
                   existingGroupId: match.installmentGroupId,
+                  existingGroupUpdatedAt: match.updatedAt,
                   purchaseDescription: edit.purchaseDescriptionEdited
                     ? edit.purchaseDescription
                     : (purchaseDescription(
@@ -838,6 +841,10 @@ export default function ImportsPage() {
           )
           .map(({ g, edit, decision }) => ({
             purchaseDescription: edit!.purchaseDescription,
+            existingGroupUpdatedAt:
+              decision === "keep_existing"
+                ? edit!.existingGroupUpdatedAt
+                : undefined,
             existingGroupId:
               decision === "keep_existing" ? edit!.existingGroupId : undefined,
             sourceGroupIndex: bundle.mp?.groups.indexOf(g) ?? -1,
@@ -1640,6 +1647,7 @@ export default function ImportsPage() {
                                         ...edit,
                                         skip: false,
                                         existingGroupId: undefined,
+                                        existingGroupUpdatedAt: undefined,
                                         purchaseDescription:
                                           edit.purchaseDescriptionEdited
                                             ? edit.purchaseDescription
@@ -1817,6 +1825,7 @@ export default function ImportsPage() {
                                       ...edit,
                                       skip: false,
                                       existingGroupId: undefined,
+                                      existingGroupUpdatedAt: undefined,
                                       purchaseDescription:
                                         edit.purchaseDescriptionEdited
                                           ? edit.purchaseDescription

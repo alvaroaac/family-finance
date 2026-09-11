@@ -39,6 +39,7 @@ function deferred<T>() {
 function match(id = "existing"): InstallmentCandidateMatch {
   return {
     installmentGroupId: id,
+    updatedAt: "2026-09-11T00:00:00Z",
     creditCardId: CARD,
     cardName: "Cartão A",
     description: `Teclado ${id}`,

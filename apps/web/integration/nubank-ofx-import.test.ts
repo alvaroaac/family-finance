@@ -280,7 +280,13 @@ describe("Nubank OFX server import flow", () => {
           amount_cents: source.perInstallmentCents,
         },
       ]);
-      const groups = [{ ...input.groups[0]!, existingGroupId: existing.id }];
+      const groups = [
+        {
+          ...input.groups[0]!,
+          existingGroupId: existing.id,
+          existingGroupUpdatedAt: existing.updated_at,
+        },
+      ];
       const result = await confirmImport({ ...input, groups });
       expect(result.ok, JSON.stringify(result)).toBe(true);
       const item = mocks.confirm.mock.calls[0]![2].find(
@@ -293,6 +299,15 @@ describe("Nubank OFX server import flow", () => {
         description === "Milium Loja" ? null : description,
       );
       mocks.confirm.mockClear();
+      mocks.groups.mockResolvedValue([
+        {
+          ...existing,
+          purchase_description: "Descrição mais recente",
+          updated_at: "2026-09-11T01:00:00Z",
+        },
+      ]);
+      expect((await confirmImport({ ...input, groups })).ok).toBe(false);
+      expect(mocks.confirm).not.toHaveBeenCalled();
       mocks.groups.mockResolvedValue([
         { ...existing, credit_card_id: "another-card" },
       ]);

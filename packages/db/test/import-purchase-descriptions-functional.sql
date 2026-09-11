@@ -1,4 +1,5 @@
 -- Runs after import-reliability-functional.sql, against a disposable database.
+set role authenticated;
 do $$
 declare
   original installment_groups;
@@ -11,8 +12,22 @@ declare
   failure_item jsonb;
   rejected boolean;
   old_count integer;
+  template_id uuid;
 begin
   select * into strict original from installment_groups where description = 'Notebook';
+  template_id := original.id;
+  insert into installment_groups(household_id, credit_card_id, description, total_amount_cents,
+    installment_count, purchased_on, category_id, subcategory_id, responsibility_scope, responsible_user_id, created_by_user_id)
+  values(original.household_id, original.credit_card_id, original.description, original.total_amount_cents,
+    original.installment_count, original.purchased_on, original.category_id, original.subcategory_id,
+    original.responsibility_scope, original.responsible_user_id, original.created_by_user_id)
+  returning * into original;
+  insert into installments(household_id, installment_group_id, credit_card_id, number, installment_count,
+    amount_cents, due_month, description, category_id, subcategory_id, responsibility_scope, responsible_user_id, created_by_user_id)
+  select household_id, original.id, credit_card_id, number, installment_count, amount_cents, due_month,
+    description, category_id, subcategory_id, responsibility_scope, responsible_user_id, created_by_user_id
+  from installments where installment_group_id = template_id;
+
   select jsonb_agg(to_jsonb(p) - 'description' - 'updated_at' order by p.number)
     into before_parcels from installments p where installment_group_id = original.id;
   batch := jsonb_build_object(
@@ -34,9 +49,12 @@ begin
      or (result ->> 'installment_groups_created')::integer <> 0
      or (result ->> 'transactions_created')::integer <> 0
      or (result ->> 'duplicate_rows')::integer <> 1
-     or (to_jsonb(saved) - 'description' - 'purchase_description' - 'updated_at') is distinct from
-        (to_jsonb(original) - 'description' - 'purchase_description' - 'updated_at') then
+     or (to_jsonb(saved) - 'description' - 'purchase_description' - 'updated_at' - 'import_batch_id') is distinct from
+        (to_jsonb(original) - 'description' - 'purchase_description' - 'updated_at' - 'import_batch_id') then
     raise exception 'existing purchase label/link invariant failed';
+  end if;
+  if saved.import_batch_id is distinct from (result->'batch'->>'id')::uuid then
+    raise exception 'manual purchase did not receive its source attribution';
   end if;
   select jsonb_agg(to_jsonb(p) - 'description' - 'updated_at' order by p.number)
     into after_parcels from installments p where installment_group_id = original.id;
@@ -78,6 +96,30 @@ begin
      (select purchase_description from installment_groups where id=original.id) <> 'Notebook' then
     raise exception 'reimport lost label or duplicated purchase';
   end if;
+
+  -- Direct authenticated RPC calls cannot replace an established bank name.
+  -- Source rows still record the incoming text; display names use stored provenance.
+  update installment_groups set purchase_description = 'Utensílios da cozinha' where id = original.id;
+  select * into saved from installment_groups where id = original.id;
+  item := jsonb_set(item, '{expected_group_updated_at}', to_jsonb(saved.updated_at));
+  item := jsonb_set(item, '{installment_group,description}', '"Forged merchant"');
+  result := confirm_import_v2(batch || jsonb_build_object('request_key',gen_random_uuid()), jsonb_build_array(item));
+  if (select description from installment_groups where id=original.id) <> 'Milium Loja'
+     or (select purchase_description from installment_groups where id=original.id) <> 'Utensílios da cozinha'
+     or exists(select 1 from installments where installment_group_id=original.id and description <> 'Utensílios da cozinha') then
+    raise exception 'direct link overwrote bank name or existing custom label';
+  end if;
+  -- Explicit clearing remains supported without substituting the incoming merchant.
+  select * into saved from installment_groups where id = original.id;
+  item := jsonb_set(item, '{expected_group_updated_at}', to_jsonb(saved.updated_at));
+  item := jsonb_set(item, '{installment_group,purchase_description}', 'null'::jsonb);
+  result := confirm_import_v2(batch || jsonb_build_object('request_key',gen_random_uuid()), jsonb_build_array(item));
+  if (select description from installment_groups where id=original.id) <> 'Milium Loja'
+     or (select purchase_description from installment_groups where id=original.id) is not null
+     or exists(select 1 from installments where installment_group_id=original.id and description <> 'Milium Loja') then
+    raise exception 'clearing a label changed the bank name';
+  end if;
+
 end $$;
 
 -- Newly imported purchases also store the two texts separately.
@@ -110,3 +152,5 @@ begin
     end if;
   end loop;
 end $$;
+
+reset role;

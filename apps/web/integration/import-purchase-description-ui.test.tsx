@@ -21,6 +21,7 @@ vi.mock("../app/(app)/imports/actions", () => ({
 ).IS_REACT_ACT_ENVIRONMENT = true;
 const match = {
   installmentGroupId: "group-1",
+  updatedAt: "2026-09-11T00:00:00Z",
   creditCardId: "card-1",
   cardName: "Nubank",
   description: "Utensílios da cozinha",
@@ -131,6 +132,7 @@ it("prefills the divergent label and confirms a link even when every detected gr
       description: "Milium Loja",
       purchaseDescription: "Utensílios da cozinha",
       existingGroupId: "group-1",
+      existingGroupUpdatedAt: "2026-09-11T00:00:00Z",
     }),
   ]);
 });

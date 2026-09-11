@@ -508,6 +508,11 @@ begin
          or length(group_data ->> 'description') > 200 then
         raise exception 'confirm_import_v2: invalid bank description' using errcode = '22023';
       end if;
+      -- A later statement cannot rewrite an already-recorded bank name.
+      -- Legacy manual purchases receive their first bank name on this link.
+      if selected_group.import_batch_id is not null then
+        group_data := jsonb_set(group_data, '{description}', to_jsonb(selected_group.description));
+      end if;
       inserted_group := selected_group;
       if inserted_claim.id is not null then
         update import_item_claims set installment_group_id = selected_group.id where id = inserted_claim.id;
@@ -526,7 +531,8 @@ begin
         label := null;
       end if;
       update installment_groups set
-        description = group_data ->> 'description', purchase_description = label
+        description = group_data ->> 'description', purchase_description = label,
+        import_batch_id = coalesce(installment_groups.import_batch_id, inserted_batch.id)
       where id = inserted_group.id;
       -- Parcel descriptions are display text; import identities use the original group name.
       update installments set description = coalesce(label, group_data ->> 'description')

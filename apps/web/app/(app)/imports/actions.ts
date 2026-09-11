@@ -899,6 +899,7 @@ export async function resolveImportTargets(input: {
                 cardNameById.get(installment.credit_card_id) ?? "Cartão",
               description: existingGroup.description,
               purchaseDescription: existingGroup.purchase_description ?? null,
+              updatedAt: existingGroup.updated_at,
               categoryId: existingGroup.category_id,
               subcategoryId: existingGroup.subcategory_id,
               totalAmountCents: existingGroup.total_amount_cents,
@@ -1185,6 +1186,7 @@ export async function suggestImportCategories(input: {
 export type ConfirmGroupInput = {
   purchaseDescription?: string;
   existingGroupId?: string;
+  existingGroupUpdatedAt?: string;
   replaceTransaction?: { id: string; updatedAt: string };
   sourceGroupIndex: number;
   description: string;
@@ -1486,6 +1488,7 @@ export async function confirmImport(
               cardById.get(installment.credit_card_id)?.name ?? "Cartão",
             description: existingGroup.description,
             purchaseDescription: existingGroup.purchase_description ?? null,
+            updatedAt: existingGroup.updated_at,
             categoryId: existingGroup.category_id,
             subcategoryId: existingGroup.subcategory_id,
             totalAmountCents: existingGroup.total_amount_cents,
@@ -1633,6 +1636,7 @@ export async function confirmImport(
         if (
           !existingGroup ||
           !match ||
+          group.existingGroupUpdatedAt !== existingGroup.updated_at ||
           linkedGroupIds.has(existingGroup.id) ||
           group.override !== undefined ||
           group.replaceTransaction !== undefined ||
