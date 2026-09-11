@@ -538,6 +538,7 @@ export async function previewImport(
       const { flatRowIndices, groups } = splitFlatAndInstallmentRows(
         rows,
         referenceMonth,
+        parsed.source === "nubank-ofx" ? "posted" : "statement",
       );
       installmentGroups = groups;
       const installmentRowIndices = rows

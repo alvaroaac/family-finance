@@ -3893,3 +3893,21 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   gap: 12px;
   margin-top: 12px;
 }
+@keyframes ff-import-updated {
+  from {
+    box-shadow: inset 4px 0 var(--ff-accent, #55bda4);
+    background-color: #55bda433;
+  }
+  to {
+    box-shadow: inset 0 0 transparent;
+  }
+}
+.ff-import-updated {
+  animation: ff-import-updated 900ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ff-import-updated {
+    animation: none;
+    box-shadow: inset 4px 0 #55bda4;
+  }
+}

@@ -639,17 +639,22 @@ export async function findImportItemClaims(
 ): Promise<ImportItemClaimRow[]> {
   const unique = [...new Set(baseFingerprints)];
   if (unique.length === 0) return [];
-  const { data, error } = await client
-    .from("import_item_claims")
-    .select("*")
-    .eq("household_id", householdId)
-    .eq("source", source)
-    .eq("fingerprint_version", fingerprintVersion)
-    .in("base_fingerprint", unique);
-  if (error !== null) {
-    throw new Error(`findImportItemClaims failed: ${error.message}`);
+  const claims: ImportItemClaimRow[] = [];
+  // Bound PostgREST URLs even for large statements with SHA-256 identities.
+  for (let offset = 0; offset < unique.length; offset += 50) {
+    const { data, error } = await client
+      .from("import_item_claims")
+      .select("*")
+      .eq("household_id", householdId)
+      .eq("source", source)
+      .eq("fingerprint_version", fingerprintVersion)
+      .in("base_fingerprint", unique.slice(offset, offset + 50));
+    if (error !== null) {
+      throw new Error(`findImportItemClaims failed: ${error.message}`);
+    }
+    claims.push(...((data ?? []) as ImportItemClaimRow[]));
   }
-  return (data ?? []) as ImportItemClaimRow[];
+  return claims;
 }
 
 /** Prior audited dispositions for an exact raw-file replay (review context only). */
