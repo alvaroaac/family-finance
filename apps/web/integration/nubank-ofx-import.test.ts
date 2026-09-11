@@ -197,6 +197,40 @@ describe("Nubank OFX server import flow", () => {
     expect(parcel.observed_installment_number).toBe(2);
   });
 
+  it.each([
+    ["Prevencar - Parcela 1/3", "20260818000000[-3:BRT]", "2026-08-18", 1],
+    ["Pix no Crédito - Loja - 1/2", "20260810000000[-3:BRT]", "2026-08-10", 1],
+    ["Loja - Parcela 2/12", "20260801000000[-3:BRT]", "2026-08-01", 2],
+    ["Loja - Parcela 4/6", "20260801000000[-3:BRT]", "2026-06-01", 4],
+  ])(
+    "keeps %s in the statement month after date inference",
+    async (memo, date, purchasedOn, number) => {
+      const bundle = await preview(
+        nubankOfxFixture(ofxTransaction({ MEMO: memo, DTPOSTED: date })),
+      );
+      const group = bundle.snapshot.installmentGroups![0]!;
+      expect(group.purchasedOn).toBe(purchasedOn);
+      const result = await confirmImport({
+        ...confirmation(bundle),
+        groups: [
+          {
+            sourceGroupIndex: 0,
+            description: group.description,
+            totalAmountCents: group.estimatedTotalCents,
+            installmentCount: group.installmentCount,
+            purchasedOn: group.purchasedOn,
+            creditCardId: CARD,
+          },
+        ],
+      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const item = mocks.confirm.mock.calls[0]![2].find(
+        (item: { installment_group?: unknown }) => item.installment_group,
+      );
+      expect(item.installments[number - 1].due_month).toBe("2026-09");
+    },
+  );
+
   async function installmentInput() {
     const bundle = await preview(
       nubankOfxFixture(ofxTransaction({ MEMO: "Milium Loja - Parcela 2/3" })),

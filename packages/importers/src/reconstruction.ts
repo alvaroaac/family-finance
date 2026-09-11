@@ -68,11 +68,17 @@ export function splitFlatAndInstallmentRows(
       return;
     }
     const { number, count } = row.installment;
+    const rowDay = Number.parseInt(row.occurredOn.slice(8, 10), 10);
+    // Nubank posts carried-over installments on day 1, not the purchase day.
+    // Keep their statement-based estimate so the observed installment stays
+    // in this invoice; only dated purchases use the OFX posting month.
+    const isCarriedOverPlaceholder = number > 1 && rowDay === 1;
     const purchaseMonth = subtractMonths(
-      dateBasis === "posted" ? row.occurredOn.slice(0, 7) : referenceMonth,
+      dateBasis === "posted" && !isCarriedOverPlaceholder
+        ? row.occurredOn.slice(0, 7)
+        : referenceMonth,
       number - 1,
     );
-    const rowDay = Number.parseInt(row.occurredOn.slice(8, 10), 10);
     const day = Math.min(rowDay, lastDayOfMonth(purchaseMonth));
     groups.push({
       rowIndex,

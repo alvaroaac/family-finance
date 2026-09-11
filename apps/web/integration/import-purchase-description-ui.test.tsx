@@ -118,7 +118,14 @@ function button(label: string) {
 it("shows pending comparison, not new, when the comparison request fails", async () => {
   mocks.resolve.mockResolvedValue({ ok: false, message: "URI too long" });
   await openPreview();
-  expect(container.textContent).toContain("comparação pendente");
+  const badge = container.querySelector(".ff-group__head .ff-badge");
+  const summary = container.querySelector(".ff-table__foot-note strong");
+  expect(badge).not.toBeNull();
+  expect(summary).not.toBeNull();
+  for (const label of [badge, summary]) {
+    expect(label!.textContent).toContain("comparação pendente");
+    expect(label!.textContent).not.toMatch(/\bnovos?\b/);
+  }
   expect(button("Gravar importação").disabled).toBe(true);
 });
 
