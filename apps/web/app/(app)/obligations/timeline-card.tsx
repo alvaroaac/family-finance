@@ -20,6 +20,13 @@ import {
 } from "./view-model";
 
 function changeBadge(change: TimelineChange, key: number): ReactElement {
+  if (change.kind === "single") {
+    return (
+      <Badge key={key} tone="accent">
+        {change.description} · parcela única · {formatBrlCents(change.amountCents)}
+      </Badge>
+    );
+  }
   if (change.kind === "starts") {
     return (
       <Badge key={key} tone="accent">

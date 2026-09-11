@@ -139,6 +139,34 @@ describe("TimelineCard", () => {
     expect(html.slice(openIndex, openIndex + 400)).toContain("out/2026");
   });
 
+  it("renders one badge for a single payment without changing totals or bars", () => {
+    const single = item({
+      description: "Reforço entrada", amountCents: 1000000,
+      startMonth: "2026-12", endMonth: "2026-12", termMonths: 1,
+    });
+    const months = [
+      slot({ month: "2026-11", totalCents: 1500000 }),
+      slot({ month: "2026-12", totalCents: 2500000 }),
+      slot({ month: "2027-01", totalCents: 1500000 }),
+    ];
+    const container = document.createElement("div");
+    container.innerHTML = render(createElement(TimelineCard, {
+      timeline: months, changes: timelineChanges([single], months),
+      relief: reliefNote([single], months), paidByMonth: new Map(),
+    }));
+    const badges = container.querySelectorAll(".ff-timeline__badges .ff-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.textContent).toBe(
+      `Reforço entrada · parcela única · ${formatBrlCents(1000000)}`,
+    );
+    expect(container.textContent).not.toMatch(/última parcela|quitada|alívio de/);
+    const rows = [...container.querySelectorAll("summary")];
+    expect(rows.map((row) => row.querySelector(".ff-oblig-cell--amount")?.textContent))
+      .toEqual(months.map((month) => formatBrlCents(month.totalCents)));
+    expect(rows.map((row) => row.querySelector(".ff-timeline__bar")?.getAttribute("style")))
+      .toEqual(["width:60%", "width:100%", "width:60%"]);
+  });
+
   it("shows the relief note when a term ends inside the window", () => {
     const relief = reliefNote(obligations, timeline);
     expect(relief).not.toBeNull();

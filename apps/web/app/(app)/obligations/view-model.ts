@@ -43,6 +43,7 @@ export function monthDiffYm(a: string, b: string): number {
 }
 
 export type TimelineChange =
+  | { kind: "single"; description: string; amountCents: number }
   | { kind: "starts"; description: string; amountCents: number }
   | { kind: "last"; description: string }
   | { kind: "ended"; description: string; amountCents: number };
@@ -63,6 +64,12 @@ export function timelineChanges(
     const changes: TimelineChange[] = [];
     for (const item of obligations) {
       const { description, amountCents, endMonth } = item;
+      if (item.termMonths === 1) {
+        if (item.startMonth === month) {
+          changes.push({ kind: "single", description, amountCents });
+        }
+        continue;
+      }
       if (item.startMonth === month && month > firstMonth) {
         changes.push({ kind: "starts", description, amountCents });
       }
@@ -90,6 +97,7 @@ export function reliefNote(
   let first: ObligationListItem | undefined;
   for (const item of obligations) {
     if (
+      item.termMonths !== 1 &&
       item.endMonth !== null &&
       months.has(item.endMonth) &&
       (first === undefined ||

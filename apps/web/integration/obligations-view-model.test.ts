@@ -133,10 +133,24 @@ describe("obligations view-model", () => {
         timelineWindow,
       ).get("2026-12"),
     ).toEqual([
-      { kind: "starts", description: "Parcela solar", amountCents: 10000 },
-      { kind: "last", description: "Parcela solar" },
+      { kind: "single", description: "Parcela solar", amountCents: 10000 },
     ]);
   });
+
+  it.each(["2026-08", "2026-09", "2026-12", "2027-01", "2027-02"])(
+    "shows a single payment only in its due month (%s)",
+    (month) => {
+      const single = item({ startMonth: month, endMonth: month, termMonths: 1 });
+      const changes = timelineChanges([single], timelineWindow);
+      expect([...changes.keys()]).toEqual(
+        timelineWindow.some((slot) => slot.month === month) ? [month] : [],
+      );
+      expect(reliefNote([single], timelineWindow)).toBeNull();
+      expect(reliefNote([single, item()], timelineWindow)).toEqual({
+        fromMonth: "2026-11", amountCents: 10000,
+      });
+    },
+  );
 
   it("reliefNote returns the month after the first term end and null for ends outside the window", () => {
     expect(
