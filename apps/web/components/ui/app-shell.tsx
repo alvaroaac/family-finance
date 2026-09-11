@@ -42,10 +42,17 @@ export const NAV_ICONS = {
   sliders: IconSliders,
 } as const;
 
-export type NavItem = { href: string; label: string; icon: keyof typeof NAV_ICONS };
+export type NavItem = {
+  href: string;
+  label: string;
+  icon: keyof typeof NAV_ICONS;
+};
 
 /** Active when the pathname is the item's href or a nested route under it. */
-export function isNavItemActive(pathname: string | null, href: string): boolean {
+export function isNavItemActive(
+  pathname: string | null,
+  href: string,
+): boolean {
   if (pathname === null) {
     return false;
   }
@@ -53,7 +60,11 @@ export function isNavItemActive(pathname: string | null, href: string): boolean 
 }
 
 /** Mobile bottom nav shows these three items + "Mais" (sheet with the rest). */
-const BOTTOM_NAV_HREFS: ReadonlyArray<string> = ["/resumo", "/transactions", "/cards"];
+const BOTTOM_NAV_HREFS: ReadonlyArray<string> = [
+  "/resumo",
+  "/transactions",
+  "/cards",
+];
 const MORE_NAV_ID = "ff-morenav";
 
 export function AppShell(props: {
@@ -111,7 +122,11 @@ export function AppShell(props: {
         return;
       }
       const anchor = event.target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement) || anchor.target || anchor.download) {
+      if (
+        !(anchor instanceof HTMLAnchorElement) ||
+        anchor.target ||
+        anchor.download
+      ) {
         return;
       }
       const destination = new URL(anchor.href, window.location.href);
@@ -126,7 +141,10 @@ export function AppShell(props: {
     }
 
     function handleDocumentSubmit(event: SubmitEvent): void {
-      if (!(event.target instanceof HTMLFormElement) || event.target.method !== "get") {
+      if (
+        !(event.target instanceof HTMLFormElement) ||
+        event.target.method !== "get"
+      ) {
         return;
       }
       const destination = new URL(event.target.action, window.location.href);
@@ -164,8 +182,12 @@ export function AppShell(props: {
   const bottomItems = BOTTOM_NAV_HREFS.map((href) =>
     items.find((item) => item.href === href),
   ).filter((item): item is NavItem => item !== undefined);
-  const moreItems = items.filter((item) => !BOTTOM_NAV_HREFS.includes(item.href));
-  const moreActive = moreItems.some((item) => isNavItemActive(pathname, item.href));
+  const moreItems = items.filter(
+    (item) => !BOTTOM_NAV_HREFS.includes(item.href),
+  );
+  const moreActive = moreItems.some((item) =>
+    isNavItemActive(pathname, item.href),
+  );
 
   return (
     <div className="ff-shell">
@@ -216,7 +238,11 @@ export function AppShell(props: {
 
       <div className="ff-shell__content">
         {pendingHref !== null ? (
-          <div className="ff-route-progress" role="progressbar" aria-label="Carregando página">
+          <div
+            className="ff-route-progress"
+            role="progressbar"
+            aria-label="Carregando página"
+          >
             <span />
           </div>
         ) : null}
@@ -231,7 +257,12 @@ export function AppShell(props: {
         />
 
         <div className="ff-bottombar">
-          <nav id={MORE_NAV_ID} className="ff-morenav" aria-label="Mais telas" hidden={!moreOpen}>
+          <nav
+            id={MORE_NAV_ID}
+            className="ff-morenav"
+            aria-label="Mais telas"
+            hidden={!moreOpen}
+          >
             {moreItems.map((item) => {
               const Icon = NAV_ICONS[item.icon];
               const active = isNavItemActive(pathname, item.href);
@@ -248,7 +279,19 @@ export function AppShell(props: {
                   }
                   aria-current={active ? "page" : undefined}
                   aria-busy={pendingHref === item.href || undefined}
-                  onClick={(event) => startNavigation(event, item.href)}
+                  onClick={(event) => {
+                    if (
+                      !event.defaultPrevented &&
+                      event.button === 0 &&
+                      !event.metaKey &&
+                      !event.ctrlKey &&
+                      !event.shiftKey &&
+                      !event.altKey
+                    ) {
+                      setMoreOpen(false);
+                    }
+                    startNavigation(event, item.href);
+                  }}
                 >
                   <Icon size={18} />
                   <span>{item.label}</span>
@@ -267,7 +310,9 @@ export function AppShell(props: {
                   key={item.href}
                   href={item.href}
                   className={
-                    active ? "ff-bottomnav__item ff-bottomnav__item--active" : "ff-bottomnav__item"
+                    active
+                      ? "ff-bottomnav__item ff-bottomnav__item--active"
+                      : "ff-bottomnav__item"
                   }
                   aria-current={active ? "page" : undefined}
                   aria-busy={pendingHref === item.href || undefined}

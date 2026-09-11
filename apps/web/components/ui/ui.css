@@ -1011,7 +1011,7 @@
 .ff-morenav__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 39;
+  z-index: 59;
   padding: 0;
   border: 0;
   background: rgb(42 32 24 / 32%);
@@ -1060,7 +1060,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 40;
+    z-index: 60;
   }
 }
 
