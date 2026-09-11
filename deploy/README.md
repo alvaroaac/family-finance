@@ -66,7 +66,7 @@ executed by `apply`; they can never be silently absorbed into this fingerprint.
 The baseline is a one-time operation and refuses an existing ledger. It also
 requires RLS and the complete expected isolation policy set, rejecting missing,
 weakened, or extra policies. Unexpected policy customizations need explicit
-review before baselining. After baseline, run `apply` to install pending `0022`,
+review before baselining. After baseline, run `apply` to install pending migrations through `0024`,
 which restores the optional-argument payment RPC; do not replay `0020` manually.
 
 When the fingerprint is deliberately extended in the future, update the check
@@ -97,7 +97,7 @@ bot's service-role (null `auth.uid()`) client can call both card flows.
 reservation, and telemetry RPCs; `0017` records the actual value when a variable
 obligation is paid; `0018` adds per-payment account overrides; `0019` makes bot
 installment creation replay-safe; `0020` removes the obsolete three-argument
-payment RPC; `0021` adds expense/income category kinds; and `0022` restores
+payment RPC; `0021` adds expense/income category kinds; and `0024` restores
 two- and three-argument payment calls via the current authorized implementation. **All migrations
 must be applied and `status` must be clean BEFORE a new bot or web deploy
 starts.**

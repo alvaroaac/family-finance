@@ -621,6 +621,7 @@ accent+tint ring, pick one faded-row opacity (or name the two states), and
 collapse the track families into one.
 
 **Status:** open
+
 ## 2026-09-03: No migration control on the production VPS (P0)
 
 **Priority:** P0
