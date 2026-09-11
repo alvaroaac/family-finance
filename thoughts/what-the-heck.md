@@ -6,6 +6,15 @@ Agents: always ask permission before writing here. Auto mode does not override. 
 
 ## Entries
 
+## 2026-09-05 21:34 — PostgreSQL readiness probe matched the temporary initialization server
+
+- **Where:** `scripts/verify-all-migrations.sh` and `scripts/verify-import-migration.sh`
+- **Expected:** A successful `pg_isready` probe meant the final PostgreSQL server was ready for migration tests.
+- **Found:** The official image first starts a temporary Unix-socket-only server during initialization. The probe could match it just before shutdown, so the following `psql` failed intermittently with exit code 2.
+- **Why it surprised you:** The container looked ready, but the probe observed a different server lifecycle phase than the tests needed.
+- **Resolution:** Probe the final server over TCP at `127.0.0.1`, allow a longer startup window, and print container logs if readiness times out.
+- **Context:** PR #24 migration-control CI failure.
+
 ## 2026-07-28 17:09 — Locally valid JSON Schema was rejected by every strict-output provider
 
 - **Where:** `apps/bot/src/codex.ts:137` (`CODEX_OUTPUT_SCHEMA`)

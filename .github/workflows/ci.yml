@@ -41,6 +41,9 @@ jobs:
       - name: Category migrations and atomic edits
         run: pnpm test:category-migration
 
+      - name: Verify migration controller and idempotency
+        run: pnpm test:migrations
+
       - name: Build web
         run: pnpm --filter @family-finance/web build
 

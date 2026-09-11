@@ -1114,14 +1114,13 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(group.credit_card_id).toBe("card-1");
 
     expect(tables.installments).toHaveLength(12);
-    // Today (webhook uses the real current date) is AFTER closing_day 5, so
-    // the first parcel's due_month must be the month AFTER the purchase
-    // month — verified structurally rather than against a fixed date, since
-    // handleWebhook always uses todayIso() (no injectable `today`).
-    const todayIsoDate = new Date().toISOString().slice(0, 10);
-    const purchaseMonth = todayIsoDate.slice(0, 7);
+    // Derive the expectation from the persisted purchase date. The application
+    // uses the household timezone, which can differ from CI's UTC date around
+    // midnight.
+    const purchaseDate = String(group.purchased_on);
+    const purchaseMonth = purchaseDate.slice(0, 7);
     const [py, pm] = purchaseMonth.split("-").map(Number) as [number, number];
-    const purchaseDay = Number(todayIsoDate.slice(8, 10));
+    const purchaseDay = Number(purchaseDate.slice(8, 10));
     const expectedFirstDue =
       purchaseDay > 5
         ? `${pm === 12 ? py + 1 : py}-${String(pm === 12 ? 1 : pm + 1).padStart(2, "0")}`

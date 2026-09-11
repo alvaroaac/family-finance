@@ -12,6 +12,7 @@ Artifacts in this tree:
 | `caddy/Caddyfile`      | HTTPS reverse proxy for Kong (:8000) and the bot (:8787)           |
 | `bot/`                 | Bot compose file + env template (image from `apps/bot/Dockerfile`) |
 | `checks/rls-proof.mjs` | RLS/RPC verification gate — must pass 100% before cut-over         |
+| `migrate.sh`           | Ordered, transactional migration ledger and runner                 |
 | `vercel.md`            | Web env checklist + Google OAuth prod redirect                     |
 
 Execute the steps IN ORDER. Do not cut the web/bot over before step 4 passes.
@@ -27,16 +28,56 @@ Google OAuth), `docker compose up -d`. Bring Caddy up with
 
 ## 2. Migrations
 
-From a machine with the repo and the Supabase CLI, push migrations
-`0001..0017` to the VPS database:
+Run the repository migration controller from the VPS checkout. It talks to the
+`supabase-db` container by default, takes a database advisory lock, validates
+the immutable filename/checksum ledger, and commits each pending migration in
+its own transaction:
 
 ```bash
-supabase db push --db-url "postgresql://postgres:<POSTGRES_PASSWORD>@<vps-host>:5432/postgres"
+./deploy/migrate.sh status
+./deploy/migrate.sh apply
 ```
 
-(Or apply `supabase/migrations/*.sql` in order via psql.) Then apply
-`supabase/seed.sql` the same way — it is idempotent (`on conflict do nothing`)
-and seeds the household, caixinhas, and starter categories.
+`status` and `apply` fail closed if an applied file was edited, a version was
+reused, a recorded file disappeared, or an existing database has no ledger.
+Never apply `supabase/migrations/*.sql` directly in production again.
+
+For a brand-new empty database, initialize the ledger and apply the complete
+history with:
+
+```bash
+./deploy/migrate.sh initialize
+```
+
+The current production database predates the ledger. Its one-time bootstrap is
+different: take a fresh backup, deploy these migration-control files, then run
+the schema-fingerprint gate and baseline the explicitly verified history:
+
+```bash
+./deploy/migrate.sh baseline 0021
+./deploy/migrate.sh status
+```
+
+`baseline` does not execute migrations. It records filenames and SHA-256
+checksums through `0021` only after `deploy/checks/migration-baseline.sql`
+proves those live effects, including both pairs historically applied under the
+colliding `0018`/`0019` numbers. Later migration files remain pending and are
+executed by `apply`; they can never be silently absorbed into this fingerprint.
+The baseline is a one-time operation and refuses an existing ledger. It also
+requires RLS and the complete expected isolation policy set, rejecting missing,
+weakened, or extra policies. Unexpected policy customizations need explicit
+review before baselining. After baseline, run `apply` to install pending migrations through `0024`,
+which restores the optional-argument payment RPC; do not replay `0020` manually.
+
+When the fingerprint is deliberately extended in the future, update the check
+and the source-pinned `baseline_version` together. Neither the check path nor
+its authorized version can be overridden through the environment. Never raise
+the version without adding fingerprints and rejection tests for the new
+history.
+
+After migrations, apply `supabase/seed.sql` via psql when provisioning a new
+environment. It is idempotent (conflict-safe inserts and category-kind
+upserts) and seeds the household, caixinhas, and starter categories.
 
 **Apply `seed.sql` (or otherwise create the household) BEFORE the first login.**
 Migration 0014 makes provisioning resilient (an `allowed_emails` trigger +
@@ -54,8 +95,12 @@ the `settle_card_bill` RPC, and re-gates `create_installment_purchase`, so the
 bot's service-role (null `auth.uid()`) client can call both card flows.
 `0016` adds reliable import claims, nonce replay protection, paid-fallback quota
 reservation, and telemetry RPCs; `0017` records the actual value when a variable
-obligation is paid. **Migrations through `0017` must be applied BEFORE the new
-bot or web deploy starts.**
+obligation is paid; `0018` adds per-payment account overrides; `0019` makes bot
+installment creation replay-safe; `0020` removes the obsolete three-argument
+payment RPC; `0021` adds expense/income category kinds; and `0024` restores
+two- and three-argument payment calls via the current authorized implementation. **All migrations
+must be applied and `status` must be clean BEFORE a new bot or web deploy
+starts.**
 
 ## 3. Seed household members + allowlist
 
@@ -143,6 +188,8 @@ follow-up; it is never silently dropped into or written as an existing category.
 
 ```bash
 cd deploy/bot
+../migrate.sh apply
+../migrate.sh status
 docker compose build
 docker compose up -d
 curl -s http://localhost:8787/health   # → {"ok":true,...}
@@ -236,6 +283,7 @@ Then exercise the complete paid import path with synthetic data:
    Query `import_ai_daily_usage` again and require `paid_items_reserved` to be
    exactly `paid_items_before + 1`. Any other outcome is a failed deployment
    gate, even though the application correctly degrades to manual review.
+
 6. Confirm bot logs contain request IDs/counts/outcomes but not the synthetic
    description or model response.
 7. Restore `CODEX_ENABLED=true`, restart the bot, and confirm `/health` again.
