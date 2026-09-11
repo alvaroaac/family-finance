@@ -28,6 +28,7 @@ export const AI_BATCH_SCHEMA_VERSION = "category-batch-v1" as const;
 export type CategorizationImportSource =
   | "minhas-financas"
   | "nubank"
+  | "nubank-ofx"
   | "mercado-pago";
 
 export type SourceCategoryMapping = {

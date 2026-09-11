@@ -151,6 +151,7 @@ export {
   findImportBatchById,
   listImportRowsByBatchId,
   findTransactionsForInstrumentBetween,
+  findManualExpensesBetween,
   findImportItemClaims,
   // Category cleanup + categorization memory (Task 6).
   findHouseholdIdForCurrentUser,

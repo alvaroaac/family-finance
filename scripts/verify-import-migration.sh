@@ -34,6 +34,8 @@ docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
   < packages/db/test/import-reliability-functional.sql >/dev/null
 docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
   < packages/db/test/installment-idempotency-functional.sql >/dev/null
+docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
+  < packages/db/test/import-replacements-functional.sql >/dev/null
 
 docker exec "$name" psql -v ON_ERROR_STOP=1 -U postgres -c \
   "select verify_concurrent_import('60000000-0000-0000-0000-000000000001', repeat('7',64), repeat('8',64));" >/dev/null &

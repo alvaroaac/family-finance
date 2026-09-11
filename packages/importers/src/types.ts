@@ -1,8 +1,8 @@
 /**
  * Core import contracts.
  *
- * Boundary: this package may import `@family-finance/domain` + `zod` only —
- * never web/bot/db clients. A source file is TRANSIENT input; adapters turn it
+ * Boundary: domain types, validation and file parsers only; never web/bot/db
+ * clients. A source file is TRANSIENT input; adapters turn it
  * into normalized rows and never persist the original bytes. Category mapping
  * and persistence happen in the web action layer, not here.
  */
@@ -14,7 +14,11 @@ import type { MoneyAmount } from "@family-finance/domain";
  * (`minhas_financas_csv` | `nubank_csv`); the web action maps between them so
  * this package stays free of any db coupling.
  */
-export type ImportSource = "minhas-financas" | "nubank" | "mercado-pago";
+export type ImportSource =
+  | "minhas-financas"
+  | "nubank"
+  | "nubank-ofx"
+  | "mercado-pago";
 
 /** Expense vs income, derived from the source row's sign/type column. */
 export type ImportRowKind = "expense" | "income";
@@ -74,6 +78,7 @@ export type AdapterResult = {
   rows: NormalizedImportRow[];
   errors: ImportRowError[];
   statement?: StatementInfo;
+  notices?: string[];
 };
 
 /**

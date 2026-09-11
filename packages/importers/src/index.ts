@@ -1,11 +1,10 @@
 /**
  * @family-finance/importers
  *
- * Source adapters that turn a TRANSIENT import file (CSV today; XLSX/Nubank-like
- * reports are future adapters behind the same contract) into normalized rows,
+ * Source adapters that turn TRANSIENT CSV, OFX and extracted PDF text into normalized rows,
  * reviewable errors, and a preview model with probable-duplicate detection.
  *
- * Boundary: this package imports `@family-finance/domain` + `zod` only — never
+ * Boundary: domain types, validation and file parsers only — never
  * web/bot/db clients. The original file is never persisted here; category
  * mapping and persistence are the web action layer's job.
  */
@@ -71,17 +70,20 @@ export type {
 // Source adapters.
 export { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
 export { nubankCsvAdapter } from "./nubank-csv.js";
+export { nubankOfxAdapter, decodeOfx } from "./nubank-ofx.js";
 export { mercadoPagoPdfAdapter } from "./mercado-pago-pdf.js";
 
 import type { ImportAdapter, ImportSource } from "./types.js";
 import { minhasFinancasCsvAdapter } from "./minhas-financas-csv.js";
 import { nubankCsvAdapter } from "./nubank-csv.js";
+import { nubankOfxAdapter } from "./nubank-ofx.js";
 import { mercadoPagoPdfAdapter } from "./mercado-pago-pdf.js";
 
 /** Registry of available adapters, keyed by logical source. */
 export const importAdapters: Record<ImportSource, ImportAdapter> = {
   "minhas-financas": minhasFinancasCsvAdapter,
   nubank: nubankCsvAdapter,
+  "nubank-ofx": nubankOfxAdapter,
   "mercado-pago": mercadoPagoPdfAdapter,
 };
 
