@@ -151,10 +151,16 @@ it("does not repeat the bank name when the existing description only differs in 
 it("requires choosing one candidate when two purchases match", async () => {
   mocks.resolve.mockResolvedValue({
     ...(await mocks.resolve()),
+    groupMatchCountsByIndex: { 0: 2 },
     groupMatchesByIndex: {
       0: [
         match,
-        { ...match, installmentGroupId: "group-2", description: "Ferramentas" },
+        {
+          ...match,
+          installmentGroupId: "group-2",
+          updatedAt: "2026-09-11T01:00:00Z",
+          description: "Ferramentas",
+        },
       ],
     },
   });
@@ -171,6 +177,7 @@ it("requires choosing one candidate when two purchases match", async () => {
   await act(async () => button("Gravar importação").click());
   expect(mocks.confirm.mock.calls[0]![0].groups[0]).toMatchObject({
     existingGroupId: "group-2",
+    existingGroupUpdatedAt: "2026-09-11T01:00:00Z",
     purchaseDescription: "Ferramentas",
   });
 });

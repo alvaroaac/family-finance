@@ -1551,6 +1551,8 @@ export default function ImportsPage() {
                                             ...edit,
                                             existingGroupId:
                                               match.installmentGroupId,
+                                            existingGroupUpdatedAt:
+                                              match.updatedAt,
                                             purchaseDescription:
                                               purchaseDescription(
                                                 g.description,
@@ -1753,6 +1755,8 @@ export default function ImportsPage() {
                                         ? {
                                             existingGroupId:
                                               selectedMatch.installmentGroupId,
+                                            existingGroupUpdatedAt:
+                                              selectedMatch.updatedAt,
                                             purchaseDescription:
                                               edit.purchaseDescription ??
                                               purchaseDescription(
