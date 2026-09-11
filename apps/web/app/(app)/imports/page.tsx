@@ -289,6 +289,7 @@ export default function ImportsPage() {
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [bulkSubcategoryId, setBulkSubcategoryId] = useState("");
   const [bulkChanged, setBulkChanged] = useState<number[]>([]);
+  const bulkChangedSet = useMemo(() => new Set(bulkChanged), [bulkChanged]);
   const [provenanceUndo, setProvenanceUndo] = useState<
     typeof provenance | null
   >(null);
@@ -2147,7 +2148,7 @@ export default function ImportsPage() {
               return (
                 <TableRow
                   key={index}
-                  className={`${isExcluded ? "ff-off" : ""}${bulkChanged.includes(index) ? " ff-import-updated" : ""}`}
+                  className={`${isExcluded ? "ff-off" : ""}${bulkChangedSet.has(index) ? " ff-import-updated" : ""}`}
                 >
                   <input
                     className="ff-check"
@@ -2437,7 +2438,7 @@ export default function ImportsPage() {
               return (
                 <Card
                   key={index}
-                  className={`ff-rowcard${isExcluded ? " ff-off" : ""}${bulkChanged.includes(index) ? " ff-import-updated" : ""}`}
+                  className={`ff-rowcard${isExcluded ? " ff-off" : ""}${bulkChangedSet.has(index) ? " ff-import-updated" : ""}`}
                 >
                   <input
                     className="ff-check"
