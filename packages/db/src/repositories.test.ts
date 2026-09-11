@@ -1047,6 +1047,51 @@ describe("confirmImportV2", () => {
     ]);
   });
 
+  it("dispatches replacement purchases to the replacement RPC without changing payloads", async () => {
+    const plan = createInstallmentPlan({
+      householdId: HOUSEHOLD,
+      creditCardId: "card-1",
+      description: "Notebook",
+      totalAmount: { currency: "BRL", cents: 120000 },
+      installmentCount: 2,
+      purchasedOn: "2026-07-10",
+      createdByUserId: USER,
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) throw new Error("Invalid fixture");
+    const replacementItems = [
+      {
+        household_id: HOUSEHOLD,
+        disposition: "imported" as const,
+        fingerprint_version: 1,
+        base_fingerprint: "c".repeat(64),
+        occurrence_no: 1,
+        replace_transaction: {
+          id: "manual-expense",
+          updated_at: "2026-07-10T12:00:00Z",
+        },
+        installment_group: installmentGroupInsertFromPlan(plan.value),
+        installments: installmentInsertsFromPlan(plan.value, "group-1"),
+      },
+    ];
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const client = {
+      rpc: async (name: string, args: unknown) => {
+        calls.push({ name, args });
+        return { data: {}, error: null };
+      },
+    } as unknown as AppSupabaseClient;
+    const original = structuredClone(replacementItems);
+    await confirmImportV2(client, batch, replacementItems);
+    expect(calls).toEqual([
+      {
+        name: "confirm_import_with_replacements",
+        args: { batch_payload: batch, items_payload: original },
+      },
+    ]);
+    expect(replacementItems).toEqual(original);
+  });
+
   it("names RPC failures at the repository boundary", async () => {
     const client = {
       rpc: async () => ({ data: null, error: { message: "claim failed" } }),
