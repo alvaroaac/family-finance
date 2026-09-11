@@ -2039,9 +2039,12 @@ export async function findInstallmentPurchasesFiltered(
     query = query.is("category_id", null);
   }
   if (filters.search !== undefined && filters.search.trim() !== "") {
-    query = query.ilike(
-      "description",
+    // Quote the PostgREST operand separately from escaping SQL LIKE wildcards.
+    const pattern = JSON.stringify(
       `%${escapeIlikePattern(filters.search.trim())}%`,
+    );
+    query = query.or(
+      `description.ilike.${pattern},purchase_description.ilike.${pattern}`,
     );
   }
 

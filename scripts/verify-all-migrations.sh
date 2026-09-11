@@ -2,6 +2,18 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Keep synthetic test migrations after the latest real migration.
+fixture_max_version=0
+for fixture_path in "$repo_root"/supabase/migrations/*.sql; do
+  fixture_name="$(basename "$fixture_path")"
+  fixture_number="${fixture_name%%_*}"
+  if (( 10#$fixture_number > fixture_max_version )); then
+    fixture_max_version=$((10#$fixture_number))
+  fi
+done
+printf -v fixture_success_version '%04d' "$((fixture_max_version + 1))"
+printf -v fixture_next_version '%04d' "$((fixture_max_version + 2))"
+
 scratch="$(mktemp -d)"
 container="family-finance-migrations-$(basename "$scratch")"
 
@@ -166,17 +178,17 @@ done
 
 cp -R "$repo_root/supabase/migrations" "$scratch/pending-migrations"
 printf '%s\n' 'create table if not exists migration_runner_success(id integer);' \
-  > "$scratch/pending-migrations/0027_runner_success.sql"
+  > "$scratch/pending-migrations/${fixture_success_version}_runner_success.sql"
 assert_baseline_rejected "only through 0021" env \
-  MIGRATION_BASELINE_VERSION=0027 \
+  MIGRATION_BASELINE_VERSION=${fixture_success_version} \
   MIGRATIONS_DIR="$scratch/pending-migrations" \
-  "$repo_root/deploy/migrate.sh" baseline 0027
+  "$repo_root/deploy/migrate.sh" baseline ${fixture_success_version}
 
 MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" baseline 0021
 status_output="$(MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" status)"
-[[ "$status_output" == *"PENDING 0027_runner_success.sql"* ]] || {
+[[ "$status_output" == *"PENDING ${fixture_success_version}_runner_success.sql"* ]] || {
   echo "post-baseline migration was not left pending" >&2
   exit 1
 }
@@ -197,7 +209,7 @@ docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -f - \
   < "$repo_root/scripts/check-obligation-compatibility.sql" >/dev/null
 runner_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   "select (to_regclass('public.migration_runner_success') is not null)::int || '|' ||
-          (exists(select 1 from family_finance_migrations.schema_migrations where version='0027'))::int")"
+          (exists(select 1 from family_finance_migrations.schema_migrations where version='${fixture_success_version}'))::int")"
 [[ "$runner_state" == "1|1" ]] || {
   echo "pending migration was not applied and recorded: $runner_state" >&2
   exit 1
@@ -212,7 +224,7 @@ if MIGRATIONS_DIR="$scratch/checksum-migrations" \
   exit 1
 fi
 printf '%s\n' 'create table checksum_guard_was_bypassed(id integer);' \
-  > "$scratch/checksum-migrations/0028_checksum_guard.sql"
+  > "$scratch/checksum-migrations/${fixture_next_version}_checksum_guard.sql"
 if checksum_output="$(MIGRATIONS_DIR="$scratch/checksum-migrations" \
   "$repo_root/deploy/migrate.sh" apply 2>&1)"; then
   echo "apply accepted a changed applied migration" >&2
@@ -224,7 +236,7 @@ fi
 }
 checksum_apply_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   "select (to_regclass('public.checksum_guard_was_bypassed') is null)::int || '|' ||
-          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0028'))::int")"
+          (not exists(select 1 from family_finance_migrations.schema_migrations where version='${fixture_next_version}'))::int")"
 [[ "$checksum_apply_state" == "1|1" ]] || {
   echo "checksum rejection allowed a pending migration to run: $checksum_apply_state" >&2
   exit 1
@@ -248,7 +260,7 @@ cp -R "$scratch/pending-migrations" "$scratch/failing-migrations"
 printf '%s\n' \
   'create table migration_should_rollback(id integer);' \
   'select 1 / 0;' \
-  > "$scratch/failing-migrations/0028_intentional_failure.sql"
+  > "$scratch/failing-migrations/${fixture_next_version}_intentional_failure.sql"
 if MIGRATIONS_DIR="$scratch/failing-migrations" \
   "$repo_root/deploy/migrate.sh" apply >/dev/null 2>&1; then
   echo "failing migration unexpectedly succeeded" >&2
@@ -257,7 +269,7 @@ fi
 
 rollback_state="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   "select (to_regclass('public.migration_should_rollback') is null)::int || '|' ||
-          (not exists(select 1 from family_finance_migrations.schema_migrations where version='0028'))::int")"
+          (not exists(select 1 from family_finance_migrations.schema_migrations where version='${fixture_next_version}'))::int")"
 [[ "$rollback_state" == "1|1" ]] || {
   echo "failed migration was not fully rolled back: $rollback_state" >&2
   exit 1

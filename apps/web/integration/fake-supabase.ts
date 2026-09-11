@@ -39,7 +39,12 @@ type Filter =
   | { op: "lte"; column: string; value: unknown }
   | { op: "is"; column: string; value: null }
   | { op: "not-is-null"; column: string }
-  | { op: "ilike"; column: string; pattern: string };
+  | { op: "ilike"; column: string; pattern: string }
+  | {
+      op: "or-ilike";
+      column: "";
+      conditions: { column: string; pattern: string }[];
+    };
 
 /**
  * Compile a SQL LIKE/ILIKE pattern (with `\` escapes) into a case-insensitive
@@ -195,6 +200,23 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
     return this;
   }
 
+  or(expression: string): this {
+    const terms = [
+      ...expression.matchAll(/(\w+)\.ilike\.("(?:[^"\\]|\\.)*")(?:,|$)/g),
+    ];
+    if (terms.map((term) => term[0]).join("") !== expression)
+      throw new Error("Unsupported OR filter");
+    this.filters.push({
+      op: "or-ilike",
+      column: "",
+      conditions: terms.map((term) => ({
+        column: term[1]!,
+        pattern: JSON.parse(term[2]!) as string,
+      })),
+    });
+    return this;
+  }
+
   ilike(column: string, pattern: string): this {
     this.filters.push({ op: "ilike", column, pattern });
     return this;
@@ -250,6 +272,14 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
           return cell === null || cell === undefined;
         case "not-is-null":
           return cell !== null && cell !== undefined;
+        case "or-ilike":
+          return f.conditions.some(
+            (condition) =>
+              typeof row[condition.column] === "string" &&
+              ilikePatternToRegExp(condition.pattern).test(
+                row[condition.column] as string,
+              ),
+          );
         case "ilike":
           return (
             typeof cell === "string" &&
