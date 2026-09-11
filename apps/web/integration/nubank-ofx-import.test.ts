@@ -206,6 +206,7 @@ describe("Nubank OFX server import flow", () => {
     ["Pix no Crédito - Loja - 1/2", "20260810000000[-3:BRT]", "2026-08-10", 1],
     ["Loja - Parcela 2/12", "20260801000000[-3:BRT]", "2026-08-01", 2],
     ["Loja - Parcela 4/6", "20260801000000[-3:BRT]", "2026-06-01", 4],
+    ["Loja - Parcela 2/3", "20260815000000[-3:BRT]", "2026-07-15", 2],
   ])(
     "keeps %s in the statement month after date inference",
     async (memo, date, purchasedOn, number) => {
