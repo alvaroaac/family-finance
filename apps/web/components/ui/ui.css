@@ -960,9 +960,14 @@
   padding: 48px 56px;
 }
 
-/* Mockup (Resumo mobile): bottom nav on soft bg, labels 10px. */
-.ff-bottomnav {
+/* Mockup (Resumo mobile): bottom nav on soft bg, labels 10px. The bar and
+   the "Mais" sheet share one fixed wrapper so the sheet stacks above the bar. */
+.ff-bottombar {
   display: none;
+}
+
+.ff-bottomnav {
+  display: flex;
   justify-content: space-around;
   align-items: center;
   border-top: 1px solid var(--ff-border);
@@ -979,9 +984,42 @@
   text-decoration: none;
   min-width: 60px;
   padding: 4px 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
   font-family: var(--ff-font-body), Inter, sans-serif;
   font-weight: 500;
   font-size: 10px;
+}
+
+/* "Mais" sheet: same soft bg as the bar, sidebar-style links in two columns. */
+.ff-morenav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 14px 12px;
+  background: var(--ff-surface-soft);
+  border-top: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md) var(--ff-radius-md) 0 0;
+  box-shadow: 0 -12px 32px rgb(20 14 8 / 18%);
+}
+
+.ff-morenav[hidden] {
+  display: none;
+}
+
+.ff-morenav__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  padding: 0;
+  border: 0;
+  background: rgb(42 32 24 / 32%);
+  cursor: default;
+}
+
+.ff-morenav__backdrop[hidden] {
+  display: none;
 }
 
 .ff-bottomnav__item:hover {
@@ -1015,13 +1053,14 @@
     padding: 28px 22px 110px;
   }
 
-  .ff-bottomnav {
+  .ff-bottombar {
     display: flex;
+    flex-direction: column;
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 40;
+    z-index: 60;
   }
 }
 
@@ -2401,6 +2440,13 @@ a.ff-callout:hover {
   min-width: 160px;
 }
 
+.ff-catrow__titleline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .ff-catrow__name {
   font-family: var(--ff-font-body), Inter, sans-serif;
   font-weight: 500;
@@ -2414,6 +2460,144 @@ a.ff-callout:hover {
   font-size: 12px;
   color: var(--ff-ink-soft);
   margin-top: 2px;
+}
+
+.ff-category-create {
+  margin-top: 28px;
+  animation: ff-category-reveal 0.42s ease-out both;
+}
+
+.ff-category-create__heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.ff-category-create__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.ff-category-create__card {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.ff-category-create__card:hover,
+.ff-category-create__card:focus-within {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--ff-accent) 52%, var(--ff-border));
+  box-shadow: 0 14px 34px rgb(0 0 0 / 8%);
+}
+
+.ff-category-create__intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.ff-category-create__icon {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--ff-accent);
+  color: var(--ff-bg);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--ff-accent) 20%, transparent);
+}
+
+.ff-category-create__icon--soft {
+  background: var(--ff-tint);
+  color: var(--ff-accent);
+  box-shadow: none;
+}
+
+.ff-category-create__title {
+  margin: 1px 0 3px;
+  color: var(--ff-ink);
+  font-family: var(--ff-font-display), Georgia, serif;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.ff-category-create__description {
+  margin: 0;
+  color: var(--ff-ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ff-category-create__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(130px, 0.75fr);
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 20px;
+}
+
+.ff-category-create__submit {
+  grid-column: 1 / -1;
+  justify-content: center;
+  min-height: 42px;
+}
+
+.ff-category-list {
+  margin-top: 22px;
+}
+
+@keyframes ff-category-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .ff-category-create__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ff-category-create__heading {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .ff-category-create__form {
+    grid-template-columns: 1fr;
+  }
+
+  .ff-category-create__heading .ff-badge {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-category-create {
+    animation: none;
+  }
+
+  .ff-category-create__card {
+    transition: none;
+  }
+
+  .ff-category-create__card:hover,
+  .ff-category-create__card:focus-within {
+    transform: none;
+  }
 }
 
 /* Inline pattern chip — memória de categorização. */
