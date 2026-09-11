@@ -794,7 +794,8 @@ export default function ImportsPage() {
     }
     setMappingUndo(mapping);
     setProvenanceUndo(provenance);
-    setBulkChanged(changed);
+    // Bound simultaneous paints; the toast still counts every changed row.
+    setBulkChanged(changed.slice(0, 24));
     toast.success(
       `${changed.length} ${changed.length === 1 ? "lançamento atualizado" : "lançamentos atualizados"} na revisão da importação.`,
     );
