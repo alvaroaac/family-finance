@@ -89,6 +89,15 @@ import {
 
 export type { InstallmentCandidateMatch } from "./group-duplicates";
 
+function historicalNubankGroupIdentityInputs(
+  rows: NormalizedImportRow[],
+  referenceMonth: string,
+) {
+  // Persisted claims used statement-based dates before OFX date correction.
+  // Keep this identity basis stable even when editable preview dates improve.
+  return splitFlatAndInstallmentRows(rows, referenceMonth, "statement").groups;
+}
+
 /**
  * Server actions for the import pipeline.
  *
@@ -552,7 +561,10 @@ export async function previewImport(
         status: "new",
       }));
       groupIdentities = assignInstallmentGroupIdentities(
-        groups.map((group) => ({
+        (source === "nubank-ofx"
+          ? historicalNubankGroupIdentityInputs(rows, referenceMonth)
+          : groups
+        ).map((group) => ({
           source,
           description: group.description,
           installmentCount: group.installmentCount,
