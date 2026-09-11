@@ -207,13 +207,21 @@ describe("import comparison decisions", () => {
       expect(button("Gravar").disabled).toBe(false);
     },
   );
-  it("omits a kept existing purchase while submitting another selected item", async () => {
+  it("links the explicitly kept purchase while submitting another selected item", async () => {
     await preview();
     await selectCard();
     await click("Manter o existente");
     await click("Gravar");
     expect(actions.confirm).toHaveBeenCalledWith(
-      expect.objectContaining({ groups: [], selectedIndices: [1] }),
+      expect.objectContaining({
+        groups: [
+          expect.objectContaining({
+            existingGroupId: "existing",
+            purchaseDescription: "Teclado existing",
+          }),
+        ],
+        selectedIndices: [1],
+      }),
     );
   });
   it("forwards a valid reason and includes the explicitly imported purchase", async () => {
@@ -276,6 +284,12 @@ describe("import comparison decisions", () => {
     );
     await preview();
     await selectCard();
+    expect(button("Manter o existente").disabled).toBe(true);
+    await act(async () =>
+      container
+        .querySelector<HTMLInputElement>('input[name="purchase-match-0"]')!
+        .click(),
+    );
     await click("Manter o existente");
     await click("Próximas");
     expect(actions.resolve).toHaveBeenLastCalledWith(
@@ -283,10 +297,24 @@ describe("import comparison decisions", () => {
     );
     expect(container.querySelectorAll(".ff-group-match")).toHaveLength(5);
     expect(container.textContent).toContain("6–10 de 12");
-    expect(container.textContent).not.toContain("Teclado 0");
+    expect(
+      [...container.querySelectorAll(".ff-group-match")]
+        .map((item) => item.textContent)
+        .join(" "),
+    ).not.toContain("Teclado 0");
+    expect(container.querySelector(".ff-group__name")?.textContent).toBe(
+      "Teclado 0",
+    );
     await click("Gravar");
     expect(actions.confirm).toHaveBeenCalledWith(
-      expect.objectContaining({ groups: [] }),
+      expect.objectContaining({
+        groups: [
+          expect.objectContaining({
+            existingGroupId: "0",
+            purchaseDescription: "Teclado 0",
+          }),
+        ],
+      }),
     );
   });
   it("offers explicit decisions for a legacy purchase without same-month candidates", async () => {

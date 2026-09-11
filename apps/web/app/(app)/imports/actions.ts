@@ -77,6 +77,7 @@ import {
   signImportPreviewToken,
   verifyImportPreviewToken,
 } from "./preview-token";
+import { purchaseDescription } from "./purchase-description";
 import { requestImportSuggestions } from "./suggestion-client";
 import {
   findInstallmentCandidateMatches,
@@ -897,6 +898,9 @@ export async function resolveImportTargets(input: {
               cardName:
                 cardNameById.get(installment.credit_card_id) ?? "Cartão",
               description: existingGroup.description,
+              purchaseDescription: existingGroup.purchase_description ?? null,
+              categoryId: existingGroup.category_id,
+              subcategoryId: existingGroup.subcategory_id,
               totalAmountCents: existingGroup.total_amount_cents,
               purchasedOn: existingGroup.purchased_on,
               installmentNumber: installment.number,
@@ -1179,6 +1183,8 @@ export async function suggestImportCategories(input: {
 }
 
 export type ConfirmGroupInput = {
+  purchaseDescription?: string;
+  existingGroupId?: string;
   replaceTransaction?: { id: string; updatedAt: string };
   sourceGroupIndex: number;
   description: string;
@@ -1479,6 +1485,9 @@ export async function confirmImport(
             cardName:
               cardById.get(installment.credit_card_id)?.name ?? "Cartão",
             description: existingGroup.description,
+            purchaseDescription: existingGroup.purchase_description ?? null,
+            categoryId: existingGroup.category_id,
+            subcategoryId: existingGroup.subcategory_id,
             totalAmountCents: existingGroup.total_amount_cents,
             purchasedOn: existingGroup.purchased_on,
             installmentNumber: installment.number,
@@ -1511,6 +1520,7 @@ export async function confirmImport(
               .toISOString()
               .slice(0, 10),
           );
+    const linkedGroupIds = new Set<string>();
     const replacementIds = new Set<string>();
     for (const group of confirmationGroups) {
       const flatMatches = findFlatInstallmentMatches(
@@ -1543,6 +1553,7 @@ export async function confirmImport(
           };
         }
       } else if (
+        group.existingGroupId === undefined &&
         flatMatches.length > 0 &&
         (group.override?.reason.trim().length ?? 0) < 5
       ) {
@@ -1589,6 +1600,64 @@ export async function confirmImport(
         };
       }
       if (
+        inferredGroup === undefined ||
+        group.description !== inferredGroup.description
+      ) {
+        return {
+          ok: false,
+          message: "O nome original do banco não pode ser alterado.",
+        };
+      }
+      if (
+        group.purchaseDescription !== undefined &&
+        (typeof group.purchaseDescription !== "string" ||
+          group.purchaseDescription.trim().length > MAX_DESCRIPTION_LENGTH)
+      ) {
+        return {
+          ok: false,
+          message: "A descrição da compra deve ter até 200 caracteres.",
+        };
+      }
+      const existingGroup =
+        group.existingGroupId === undefined
+          ? undefined
+          : legacyGroupById.get(group.existingGroupId);
+      if (group.existingGroupId !== undefined) {
+        const match = findInstallmentCandidateMatches(
+          inferredGroup,
+          group.creditCardId,
+          existingMatchCandidates,
+        ).find(
+          (candidate) => candidate.installmentGroupId === group.existingGroupId,
+        );
+        if (
+          !existingGroup ||
+          !match ||
+          linkedGroupIds.has(existingGroup.id) ||
+          group.override !== undefined ||
+          group.replaceTransaction !== undefined ||
+          existingGroup.credit_card_id !== group.creditCardId ||
+          existingGroup.installment_count !== inferredGroup.installmentCount
+        ) {
+          return {
+            ok: false,
+            message:
+              "A correspondência mudou ou não pertence a este cartão. Revise o parcelamento.",
+          };
+        }
+        linkedGroupIds.add(existingGroup.id);
+      }
+      const label = purchaseDescription(
+        inferredGroup.description,
+        group.purchaseDescription ??
+          existingGroup?.purchase_description ??
+          flatExpenses.find(
+            (transaction) => transaction.id === group.replaceTransaction?.id,
+          )?.description ??
+          existingGroup?.description,
+      );
+      if (
+        existingGroup === undefined &&
         inferredGroup !== undefined &&
         (hasLegacyInstallmentGroupOnCard(
           inferredGroup,
@@ -1678,7 +1747,17 @@ export async function confirmImport(
         observed_installment_number: sourceRow.installment?.number,
         observed_installment_count: sourceRow.installment?.count,
         card_last4: sourceRow.cardLast4,
-        installment_group: installmentGroupInsertFromPlan(plan.value),
+        installment_group: {
+          ...installmentGroupInsertFromPlan(plan.value),
+          purchase_description: label,
+        },
+        ...(existingGroup === undefined
+          ? {}
+          : {
+              existing_installment_group_id: existingGroup.id,
+              expected_group_updated_at: existingGroup.updated_at,
+              observed_due_month: input.snapshot.referenceMonth,
+            }),
         installments: installmentInsertPayloadsFromPlan(plan.value),
         ...(group.replaceTransaction === undefined
           ? {}

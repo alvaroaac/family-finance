@@ -1831,6 +1831,7 @@ export type TransactionListItem = PersistedTransaction & {
  * are editable via `updateInstallmentGroup`; everything else is read-only.
  */
 export type InstallmentPurchaseListItem = {
+  purchaseDescription?: string | null;
   id: string;
   householdId: string;
   description: string;
@@ -1886,6 +1887,7 @@ function mapInstallmentPurchaseListItem(
     id: group.id,
     householdId: group.household_id,
     description: group.description,
+    purchaseDescription: group.purchase_description ?? null,
     purchasedOn: group.purchased_on,
     totalAmountCents: group.total_amount_cents,
     installmentCount: group.installment_count,

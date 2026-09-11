@@ -281,8 +281,13 @@ export default async function CardsPage() {
                 <div key={purchase.id} className="ff-card-purchase">
                   <div style={{ minWidth: 0 }}>
                     <div className="ff-card-purchase__title">
-                      {purchase.description}
+                      {purchase.purchaseDescription ?? purchase.description}
                     </div>
+                    {purchase.purchaseDescription ? (
+                      <div className="ff-card-purchase__meta">
+                        Nome no banco: {purchase.description}
+                      </div>
+                    ) : null}
                     <div className="ff-card-purchase__meta">
                       {formatDate(purchase.purchasedOn)} ·{" "}
                       {cardNames.get(purchase.creditCardId) ?? "cartão"} ·{" "}

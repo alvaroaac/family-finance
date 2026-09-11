@@ -172,6 +172,8 @@ export type ObligationRow = {
 };
 
 export type InstallmentGroupRow = {
+  /** Optional user label; description retains the bank name for imported purchases. */
+  purchase_description?: string | null;
   id: string;
   household_id: string;
   credit_card_id: string;
@@ -627,7 +629,12 @@ export type ConfirmImportV2InstallmentItem = ConfirmImportV2AuditFields & {
   override_token?: string | null;
   override_of_claim_id?: string | null;
   transaction?: never;
-  installment_group: InstallmentGroupInsertPayload;
+  installment_group: InstallmentGroupInsertPayload & {
+    purchase_description?: string | null;
+  };
+  existing_installment_group_id?: string;
+  expected_group_updated_at?: string;
+  observed_due_month?: string;
   installments: InstallmentInsertPayload[];
 };
 

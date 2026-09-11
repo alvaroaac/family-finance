@@ -17,6 +17,9 @@ export type ExistingInstallmentCandidate = {
   creditCardId: string;
   cardName: string;
   description: string;
+  purchaseDescription?: string | null;
+  categoryId?: string | null;
+  subcategoryId?: string | null;
   totalAmountCents: number;
   purchasedOn: string;
   installmentNumber: number;
