@@ -54,6 +54,34 @@ const candidate = (
 });
 
 describe("installment candidate confidence", () => {
+  it("finds Ervas by installment value despite the Pix label and one-cent difference", () => {
+    const matches = findInstallmentCandidateMatches(
+      {
+        ...inferred,
+        description: "Pix no Crédito - Alvaro Augusto Alves de Carvalho",
+        installmentCount: 2,
+        installmentNumber: 1,
+        perInstallmentCents: 78694,
+        estimatedTotalCents: 157388,
+        purchaseMonth: "2026-08",
+        purchasedOn: "2026-08-10",
+      },
+      "card-a",
+      [
+        candidate({
+          description: "Ervas que aliviam e temperam",
+          installmentCount: 2,
+          amountCents: 78695,
+          totalAmountCents: 157390,
+          purchasedOn: "2026-08-10",
+        }),
+      ],
+    );
+    expect(matches).toMatchObject([
+      { confidence: "strong", amountDifferenceCents: 1 },
+    ]);
+    expect(hasUniqueVeryStrongMatch(matches)).toBe(false);
+  });
   const statementGroup = {
     ...inferred,
     description: "MARKETPLACE*LOJA",

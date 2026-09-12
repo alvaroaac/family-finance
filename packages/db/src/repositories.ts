@@ -639,17 +639,40 @@ export async function findImportItemClaims(
 ): Promise<ImportItemClaimRow[]> {
   const unique = [...new Set(baseFingerprints)];
   if (unique.length === 0) return [];
-  const { data, error } = await client
-    .from("import_item_claims")
-    .select("*")
-    .eq("household_id", householdId)
-    .eq("source", source)
-    .eq("fingerprint_version", fingerprintVersion)
-    .in("base_fingerprint", unique);
-  if (error !== null) {
-    throw new Error(`findImportItemClaims failed: ${error.message}`);
+  const claims: ImportItemClaimRow[] = [];
+  // Bound PostgREST URLs even for large statements with SHA-256 identities.
+  const batchSize = 50;
+  const concurrency = 4;
+  for (
+    let offset = 0;
+    offset < unique.length;
+    offset += batchSize * concurrency
+  ) {
+    const window = unique.slice(offset, offset + batchSize * concurrency);
+    const results = await Promise.allSettled(
+      Array.from({ length: Math.ceil(window.length / batchSize) }, (_, index) =>
+        client
+          .from("import_item_claims")
+          .select("*")
+          .eq("household_id", householdId)
+          .eq("source", source)
+          .eq("fingerprint_version", fingerprintVersion)
+          .in(
+            "base_fingerprint",
+            window.slice(index * batchSize, (index + 1) * batchSize),
+          ),
+      ),
+    );
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      const { data, error } = result.value;
+      if (error !== null) {
+        throw new Error(`findImportItemClaims failed: ${error.message}`);
+      }
+      claims.push(...((data ?? []) as ImportItemClaimRow[]));
+    }
   }
-  return (data ?? []) as ImportItemClaimRow[];
+  return claims;
 }
 
 /** Prior audited dispositions for an exact raw-file replay (review context only). */

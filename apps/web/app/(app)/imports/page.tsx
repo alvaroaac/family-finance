@@ -287,11 +287,22 @@ export default function ImportsPage() {
     >
   >({});
   const [bulkCategoryId, setBulkCategoryId] = useState("");
+  const [bulkSubcategoryId, setBulkSubcategoryId] = useState("");
+  const [bulkChanged, setBulkChanged] = useState<number[]>([]);
+  const bulkChangedSet = useMemo(() => new Set(bulkChanged), [bulkChanged]);
+  const [provenanceUndo, setProvenanceUndo] = useState<
+    typeof provenance | null
+  >(null);
   const [bulkMerchantKey, setBulkMerchantKey] = useState("");
   const [bulkSourceLabel, setBulkSourceLabel] = useState("");
   const [mappingUndo, setMappingUndo] = useState<typeof mapping | null>(null);
   const [isPending, startTransition] = useTransition();
   const toast = useToast();
+  useEffect(() => {
+    if (bulkChanged.length === 0) return;
+    const timeout = setTimeout(() => setBulkChanged([]), 900);
+    return () => clearTimeout(timeout);
+  }, [bulkChanged]);
 
   // Rows flagged as probable duplicates start excluded from the write.
   const duplicateIndices = useMemo(
@@ -309,6 +320,11 @@ export default function ImportsPage() {
   );
 
   async function onPreview(formData: FormData) {
+    setMappingUndo(null);
+    setProvenanceUndo(null);
+    setBulkChanged([]);
+    setBulkCategoryId("");
+    setBulkSubcategoryId("");
     setConfirmResult(null);
     setPreviewError(null);
     const result = await previewImport(formData);
@@ -737,8 +753,11 @@ export default function ImportsPage() {
   function applyBulkCategory(
     mode: "selected" | "unresolved" | "merchant" | "source",
   ) {
-    if (bundle === null || bulkCategoryId === "") return;
-    setMappingUndo(mapping);
+    if (bundle === null) return;
+    if (bulkCategoryId === "") {
+      toast.error("Selecione uma categoria para aplicar em lote.");
+      return;
+    }
     const next = { ...mapping };
     const changed: number[] = [];
     bundle.preview.rows.forEach((row, index) => {
@@ -756,9 +775,30 @@ export default function ImportsPage() {
               ? normalizeMerchantKey(row.description) === bulkMerchantKey
               : (row.sourceCategory ?? "") === bulkSourceLabel;
       if (!matches) return;
-      next[index] = { categoryId: bulkCategoryId };
+      if (
+        mapping[index]?.categoryId === bulkCategoryId &&
+        (mapping[index]?.subcategoryId ?? "") === bulkSubcategoryId
+      )
+        return;
+      next[index] = {
+        categoryId: bulkCategoryId,
+        subcategoryId: bulkSubcategoryId || undefined,
+      };
       changed.push(index);
     });
+    if (changed.length === 0) {
+      toast.success(
+        "Nenhum lançamento alterado na revisão: confira a seleção e as categorias atuais.",
+      );
+      return;
+    }
+    setMappingUndo(mapping);
+    setProvenanceUndo(provenance);
+    // Bound simultaneous paints; the toast still counts every changed row.
+    setBulkChanged(changed.slice(0, 24));
+    toast.success(
+      `${changed.length} ${changed.length === 1 ? "lançamento atualizado" : "lançamentos atualizados"} na revisão da importação.`,
+    );
     setMapping(next);
     setProvenance((previous) => {
       const updated = { ...previous };
@@ -772,7 +812,10 @@ export default function ImportsPage() {
   function undoBulkCategory() {
     if (mappingUndo === null) return;
     setMapping(mappingUndo);
+    if (provenanceUndo !== null) setProvenance(provenanceUndo);
+    setProvenanceUndo(null);
     setMappingUndo(null);
+    toast.success("Última ação em lote desfeita na revisão da importação.");
   }
 
   function onConfirm() {
@@ -1002,7 +1045,11 @@ export default function ImportsPage() {
   const summaryLine = (
     <span className="ff-table__foot-note ff-num">
       <strong style={{ fontWeight: 600, color: "var(--ff-ink)" }}>
-        {selectedCount === 1 ? "1 novo" : `${selectedCount} novos`}
+        {!targetsResolved
+          ? `${selectedCount} selecionados · comparação pendente`
+          : selectedCount === 1
+            ? "1 novo"
+            : `${selectedCount} novos`}
       </strong>
       {summaryParts.length > 0 ? ` · ${summaryParts.join(" · ")}` : ""}
     </span>
@@ -1331,7 +1378,7 @@ export default function ImportsPage() {
                           </span>
                           <Badge
                             tone={
-                              isExactImported
+                              !targetsResolved || isExactImported
                                 ? "neutral"
                                 : topMatch !== undefined
                                   ? "warn"
@@ -1352,7 +1399,9 @@ export default function ImportsPage() {
                                   ? "compra semelhante encontrada"
                                   : isPersistedDuplicate
                                     ? "já existe neste cartão"
-                                    : "novo"}
+                                    : !targetsResolved
+                                      ? "comparação pendente"
+                                      : "novo"}
                           </Badge>
                         </div>
                         <p className="ff-group__hint">
@@ -1934,7 +1983,10 @@ export default function ImportsPage() {
               >
                 <Select
                   value={bulkCategoryId}
-                  onChange={(event) => setBulkCategoryId(event.target.value)}
+                  onChange={(event) => {
+                    setBulkCategoryId(event.target.value);
+                    setBulkSubcategoryId("");
+                  }}
                   aria-label="Categoria para ação em lote"
                 >
                   <option value="">Categoria…</option>
@@ -1943,6 +1995,24 @@ export default function ImportsPage() {
                       {category.name}
                     </option>
                   ))}
+                </Select>
+                <Select
+                  value={bulkSubcategoryId}
+                  onChange={(event) => setBulkSubcategoryId(event.target.value)}
+                  disabled={bulkCategoryId === ""}
+                  aria-label="Subcategoria para ação em lote"
+                >
+                  <option value="">Sem subcategoria</option>
+                  {(bundle?.subcategories ?? [])
+                    .filter(
+                      (subcategory) =>
+                        subcategory.categoryId === bulkCategoryId,
+                    )
+                    .map((subcategory) => (
+                      <option key={subcategory.id} value={subcategory.id}>
+                        {subcategory.name}
+                      </option>
+                    ))}
                 </Select>
                 <Button
                   variant="ghost"
@@ -2079,7 +2149,7 @@ export default function ImportsPage() {
               return (
                 <TableRow
                   key={index}
-                  className={isExcluded ? "ff-off" : undefined}
+                  className={`${isExcluded ? "ff-off" : ""}${bulkChangedSet.has(index) ? " ff-import-updated" : ""}`}
                 >
                   <input
                     className="ff-check"
@@ -2369,7 +2439,7 @@ export default function ImportsPage() {
               return (
                 <Card
                   key={index}
-                  className={`ff-rowcard${isExcluded ? " ff-off" : ""}`}
+                  className={`ff-rowcard${isExcluded ? " ff-off" : ""}${bulkChangedSet.has(index) ? " ff-import-updated" : ""}`}
                 >
                   <input
                     className="ff-check"

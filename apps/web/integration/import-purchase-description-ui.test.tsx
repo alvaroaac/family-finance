@@ -115,6 +115,104 @@ function button(label: string) {
   if (!result) throw new Error(`Missing button ${label}`);
   return result;
 }
+it("shows pending comparison, not new, when the comparison request fails", async () => {
+  mocks.resolve.mockResolvedValue({ ok: false, message: "URI too long" });
+  await openPreview();
+  const badge = container.querySelector(".ff-group__head .ff-badge");
+  const summary = container.querySelector(".ff-table__foot-note strong");
+  expect(badge).not.toBeNull();
+  expect(summary).not.toBeNull();
+  for (const label of [badge, summary]) {
+    expect(label!.textContent).toContain("comparação pendente");
+    expect(label!.textContent).not.toMatch(/\bnovos?\b/);
+  }
+  expect(button("Gravar importação").disabled).toBe(true);
+});
+
+it.each([1, 30])(
+  "applies a subcategory to %i rows, reports all changes, bounds highlights and undoes",
+  async (count) => {
+    const preview = await mocks.preview();
+    mocks.preview.mockResolvedValue({
+      ...preview,
+      categories: [
+        { id: "food", name: "Alimentação" },
+        { id: "other", name: "Outros" },
+      ],
+      subcategories: [
+        { id: "market", categoryId: "food", name: "Supermercado" },
+        { id: "hidden", categoryId: "other", name: "Outra" },
+      ],
+      preview: {
+        ...preview.preview,
+        rows: Array.from({ length: count }, (_, index) => ({
+          sourceLine: index + 1,
+          description: `GIASSI ${index}`,
+          occurredOn: "2026-08-10",
+          amount: { cents: 1000, currency: "BRL" },
+          kind: "expense",
+        })),
+      },
+      categorizationPlan: {
+        rows: Array.from({ length: count }, () => ({ status: "unresolved" })),
+        aiItems: [],
+      },
+      mp: { groups: [], dbDuplicateIndices: [], installmentRowIndices: [] },
+    });
+    mocks.resolve.mockResolvedValue({
+      ...(await mocks.resolve()),
+      groupMatchesByIndex: {},
+      groupDuplicateIndices: [],
+      groupReviewRequiredIndices: [],
+    });
+    await openPreview();
+    const select = async (label: string, value: string) => {
+      await act(async () => {
+        const element = container.querySelector<HTMLSelectElement>(
+          `[aria-label="${label}"]`,
+        )!;
+        element.value = value;
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await select("Categoria para ação em lote", "food");
+    expect(
+      container.querySelector('[aria-label="Subcategoria para ação em lote"]')!
+        .textContent,
+    ).not.toContain("Outra");
+    await select("Subcategoria para ação em lote", "market");
+    await act(async () => button("Aplicar às linhas marcadas").click());
+    expect(document.body.textContent).toContain(
+      `${count} ${count === 1 ? "lançamento atualizado" : "lançamentos atualizados"} na revisão`,
+    );
+    expect(
+      container.querySelectorAll(".ff-import-updated").length,
+    ).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".ff-import-updated").length).toBe(
+      Math.min(count, 24) * 2,
+    );
+    const rowSelects = [
+      ...container.querySelectorAll<HTMLSelectElement>("select"),
+    ].filter(
+      (select) =>
+        !select.getAttribute("aria-label")?.includes("ação em lote") &&
+        select.value === "market",
+    );
+    expect(rowSelects.length).toBe(count * 2);
+    await act(async () => button("Aplicar às linhas marcadas").click());
+    expect(document.body.textContent).toContain("Nenhum lançamento alterado");
+    await act(async () => button("Desfazer última ação").click());
+    expect(rowSelects.every((select) => select.value === "")).toBe(true);
+    expect(document.body.textContent).toContain("Última ação em lote desfeita");
+    await select("Categoria para ação em lote", "other");
+    expect(
+      container.querySelector<HTMLSelectElement>(
+        '[aria-label="Subcategoria para ação em lote"]',
+      )!.value,
+    ).toBe("");
+  },
+  15000,
+);
 it("prefills the divergent label and confirms a link even when every detected group was initially skipped", async () => {
   await openPreview();
   expect(

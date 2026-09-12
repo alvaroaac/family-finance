@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  assignInstallmentGroupIdentities,
+  claimIdentity,
+} from "@family-finance/importers";
+import {
   previewImport,
   confirmImport,
   resolveImportTargets,
@@ -195,6 +199,112 @@ describe("Nubank OFX server import flow", () => {
     expect(parcel.installment_group.credit_card_id).toBe(CARD);
     expect(parcel.installments).toHaveLength(3);
     expect(parcel.observed_installment_number).toBe(2);
+  });
+
+  it.each([
+    ["Prevencar - Parcela 1/3", "20260818000000[-3:BRT]", "2026-08-18", 1],
+    ["Pix no Crédito - Loja - 1/2", "20260810000000[-3:BRT]", "2026-08-10", 1],
+    ["Loja - Parcela 2/12", "20260801000000[-3:BRT]", "2026-08-01", 2],
+    ["Loja - Parcela 4/6", "20260801000000[-3:BRT]", "2026-06-01", 4],
+    ["Loja - Parcela 2/3", "20260815000000[-3:BRT]", "2026-07-15", 2],
+  ])(
+    "keeps %s in the statement month after date inference",
+    async (memo, date, purchasedOn, number) => {
+      const bundle = await preview(
+        nubankOfxFixture(ofxTransaction({ MEMO: memo, DTPOSTED: date })),
+      );
+      const group = bundle.snapshot.installmentGroups![0]!;
+      expect(group.purchasedOn).toBe(purchasedOn);
+      const result = await confirmImport({
+        ...confirmation(bundle),
+        groups: [
+          {
+            sourceGroupIndex: 0,
+            description: group.description,
+            totalAmountCents: group.estimatedTotalCents,
+            installmentCount: group.installmentCount,
+            purchasedOn: group.purchasedOn,
+            creditCardId: CARD,
+          },
+        ],
+      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const item = mocks.confirm.mock.calls[0]![2].find(
+        (item: { installment_group?: unknown }) => item.installment_group,
+      );
+      expect(item.installments[number - 1].due_month).toBe("2026-09");
+    },
+  );
+
+  it("preserves historical OFX group claims after correcting the preview date", async () => {
+    const bundle = await preview(
+      nubankOfxFixture(
+        ofxTransaction({
+          MEMO: "Prevencar - Parcela 1/3",
+          DTPOSTED: "20260818000000[-3:BRT]",
+        }),
+      ),
+    );
+    const group = bundle.snapshot.installmentGroups![0]!;
+    const [historicalIdentity] = assignInstallmentGroupIdentities([
+      {
+        source: "nubank-ofx",
+        description: "Prevencar",
+        installmentCount: 3,
+        purchasedOn: "2026-09-18",
+      },
+    ]);
+    expect(group.purchasedOn).toBe("2026-08-18");
+    expect(bundle.snapshot.groupIdentities![0]).toEqual(historicalIdentity);
+    const historicalClaim = claimIdentity(historicalIdentity!, {
+      type: "credit_card",
+      id: CARD,
+    });
+    mocks.claims.mockResolvedValueOnce([
+      {
+        id: "old-claim",
+        base_fingerprint: historicalClaim.claimFingerprint,
+        occurrence_no: historicalIdentity!.occurrenceNo,
+      },
+    ] as never);
+    const resolution = await resolveImportTargets({
+      snapshot: bundle.snapshot,
+      previewToken: bundle.previewToken,
+      creditCardId: CARD,
+    });
+    expect(resolution).toMatchObject({ ok: true, groupDuplicateIndices: [0] });
+    // Confirmation sends the same historical claim to the atomic DB guard,
+    // even if the caller ignores the duplicate identified by resolution.
+    mocks.confirm.mockResolvedValueOnce({
+      transactions_created: 0,
+      installment_groups_created: 0,
+      duplicate_rows: 1,
+      error_rows: 0,
+      imported_rows: 0,
+      batch: { id: "replayed-batch" },
+      replayed: false,
+    });
+    const result = await confirmImport({
+      ...confirmation(bundle),
+      groups: [
+        {
+          sourceGroupIndex: 0,
+          description: group.description,
+          totalAmountCents: group.estimatedTotalCents,
+          installmentCount: group.installmentCount,
+          purchasedOn: group.purchasedOn,
+          creditCardId: CARD,
+        },
+      ],
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(result).toMatchObject({ duplicateRows: 1 });
+    const item = mocks.confirm.mock.calls[0]![2].find(
+      (item: { installment_group?: unknown }) => item.installment_group,
+    );
+    expect(item.base_fingerprint).toBe(historicalClaim.claimFingerprint);
+    expect(item.occurrence_no).toBe(historicalIdentity!.occurrenceNo);
+    expect(item.installment_group.purchased_on).toBe("2026-08-18");
   });
 
   async function installmentInput() {

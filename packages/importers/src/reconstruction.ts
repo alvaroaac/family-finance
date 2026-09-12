@@ -7,7 +7,8 @@
  *   count            = Y
  *   perInstallment   = the row amount
  *   estimatedTotal   = per × Y            (exact when parcels are equal)
- *   purchaseMonth    = referenceMonth − (X − 1)
+ *   purchaseMonth    = referenceMonth − (X − 1), or the row's posting month
+ *                      for OFX, whose closing month can be one month later
  *   purchasedOn      = purchaseMonth + the row's day-of-month (the parcela
  *                      row's DD/MM is the original purchase date), clamped to
  *                      the month length. Everything is editable downstream.
@@ -41,7 +42,7 @@ export type ExistingGroupSummary = {
 /** YYYY-MM minus `offset` whole months, stable across year boundaries. */
 function subtractMonths(referenceMonth: string, offset: number): string {
   const [y, m] = referenceMonth.split("-").map((p) => Number.parseInt(p, 10));
-  const zeroBased = ((y as number) * 12 + ((m as number) - 1)) - offset;
+  const zeroBased = (y as number) * 12 + ((m as number) - 1) - offset;
   const year = Math.floor(zeroBased / 12);
   const month = (zeroBased % 12) + 1;
   return `${year}-${String(month).padStart(2, "0")}`;
@@ -56,6 +57,7 @@ function lastDayOfMonth(month: string): number {
 export function splitFlatAndInstallmentRows(
   rows: NormalizedImportRow[],
   referenceMonth: string,
+  dateBasis: "statement" | "posted" = "statement",
 ): { flatRowIndices: number[]; groups: InferredInstallmentGroup[] } {
   const flatRowIndices: number[] = [];
   const groups: InferredInstallmentGroup[] = [];
@@ -66,8 +68,17 @@ export function splitFlatAndInstallmentRows(
       return;
     }
     const { number, count } = row.installment;
-    const purchaseMonth = subtractMonths(referenceMonth, number - 1);
     const rowDay = Number.parseInt(row.occurredOn.slice(8, 10), 10);
+    // Nubank posts carried-over installments on day 1, not the purchase day.
+    // Keep their statement-based estimate so the observed installment stays
+    // in this invoice; only dated purchases use the OFX posting month.
+    const isCarriedOverPlaceholder = number > 1 && rowDay === 1;
+    const purchaseMonth = subtractMonths(
+      dateBasis === "posted" && !isCarriedOverPlaceholder
+        ? row.occurredOn.slice(0, 7)
+        : referenceMonth,
+      number - 1,
+    );
     const day = Math.min(rowDay, lastDayOfMonth(purchaseMonth));
     groups.push({
       rowIndex,

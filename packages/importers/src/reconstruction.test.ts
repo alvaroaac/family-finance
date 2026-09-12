@@ -18,6 +18,31 @@ function row(over: Partial<NormalizedImportRow>): NormalizedImportRow {
 }
 
 describe("splitFlatAndInstallmentRows", () => {
+  it("uses the OFX posting month for Ervas and Prevencar instead of the due month", () => {
+    const { groups } = splitFlatAndInstallmentRows(
+      [
+        row({
+          description: "Pix no Crédito",
+          occurredOn: "2026-08-10",
+          amount: brl(78694),
+          installment: { number: 1, count: 2 },
+        }),
+        row({
+          description: "Prevencar",
+          occurredOn: "2026-08-18",
+          amount: brl(23250),
+          installment: { number: 1, count: 3 },
+        }),
+      ],
+      "2026-09",
+      "posted",
+    );
+    expect(groups.map((g) => g.purchasedOn)).toEqual([
+      "2026-08-10",
+      "2026-08-18",
+    ]);
+    expect(groups.map((g) => g.estimatedTotalCents)).toEqual([157388, 69750]);
+  });
   it("keeps flat rows and converts parcela rows into inferred groups", () => {
     const rows = [
       row({ description: "SUPERMERCADO" }),
@@ -27,7 +52,10 @@ describe("splitFlatAndInstallmentRows", () => {
         installment: { number: 14, count: 18 },
       }),
     ];
-    const { flatRowIndices, groups } = splitFlatAndInstallmentRows(rows, "2026-06");
+    const { flatRowIndices, groups } = splitFlatAndInstallmentRows(
+      rows,
+      "2026-06",
+    );
     expect(flatRowIndices).toEqual([0]);
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
@@ -78,7 +106,11 @@ describe("matchExistingGroup", () => {
 
   it("matches on normalized description + count + purchase month", () => {
     const existing = [
-      { description: "  mercadolivre*loja ", installmentCount: 18, purchasedOn: "2025-05-15" },
+      {
+        description: "  mercadolivre*loja ",
+        installmentCount: 18,
+        purchasedOn: "2025-05-15",
+      },
     ];
     expect(matchExistingGroup(inferred, existing)).toBe(0);
   });
@@ -86,8 +118,16 @@ describe("matchExistingGroup", () => {
   it("returns null when count or month differ", () => {
     expect(
       matchExistingGroup(inferred, [
-        { description: "MERCADOLIVRE*LOJA", installmentCount: 12, purchasedOn: "2025-05-02" },
-        { description: "MERCADOLIVRE*LOJA", installmentCount: 18, purchasedOn: "2025-06-02" },
+        {
+          description: "MERCADOLIVRE*LOJA",
+          installmentCount: 12,
+          purchasedOn: "2025-05-02",
+        },
+        {
+          description: "MERCADOLIVRE*LOJA",
+          installmentCount: 18,
+          purchasedOn: "2025-06-02",
+        },
       ]),
     ).toBeNull();
   });
