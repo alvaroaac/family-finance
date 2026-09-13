@@ -41,9 +41,11 @@ import { ConfirmBlockedDialog } from "./confirm-blocked-dialog";
 import { derivePendencias, type Pendencia } from "./confirm-blockers";
 import {
   clearDraft,
+  draftStorage,
   formatSavedAt,
   loadDraft,
   saveDraft,
+  type DraftGroupEdit,
 } from "./import-draft";
 import {
   buildMerchantGroups,
@@ -88,6 +90,7 @@ type PreviewBundle = {
   requestKey: string;
   previewToken: string;
   fileFingerprint: string;
+  draftOwner: { userId: string; householdId: string };
   normalizedFingerprint: string;
   parserVersion: string;
   snapshot: ImportPreviewSnapshot;
@@ -154,23 +157,9 @@ export default function ImportsPage() {
   // Purely presentational: the chosen file's name echoed in the dropzone.
   const [fileName, setFileName] = useState<string | null>(null);
   // Per-group edits + skip flags, keyed by group array index.
-  const [groupEdits, setGroupEdits] = useState<
-    Record<
-      number,
-      {
-        purchaseDescription?: string;
-        purchaseDescriptionEdited?: boolean;
-        existingGroupId?: string;
-        existingGroupUpdatedAt?: string;
-        totalAmountCents: number;
-        installmentCount: number;
-        purchasedOn: string;
-        skip: boolean;
-        categoryId?: string;
-        subcategoryId?: string;
-      }
-    >
-  >({});
+  const [groupEdits, setGroupEdits] = useState<Record<number, DraftGroupEdit>>(
+    {},
+  );
   const [persistedGroupDuplicates, setPersistedGroupDuplicates] = useState<
     Set<number>
   >(new Set());
@@ -341,6 +330,7 @@ export default function ImportsPage() {
       requestKey: result.requestKey,
       previewToken: result.previewToken,
       fileFingerprint: result.fileFingerprint,
+      draftOwner: result.draftOwner,
       normalizedFingerprint: result.normalizedFingerprint,
       parserVersion: result.parserVersion,
       snapshot: result.snapshot,
@@ -400,17 +390,7 @@ export default function ImportsPage() {
     setGroupOverrides({});
     setGroupMatchesByIndex({});
     setGroupMatchDecisions({});
-    const edits: Record<
-      number,
-      {
-        totalAmountCents: number;
-        installmentCount: number;
-        purchasedOn: string;
-        skip: boolean;
-        categoryId?: string;
-        subcategoryId?: string;
-      }
-    > = {};
+    const edits: Record<number, DraftGroupEdit> = {};
     (result.mp?.groups ?? []).forEach((g, i) => {
       edits[i] = {
         totalAmountCents: g.estimatedTotalCents,
@@ -432,11 +412,16 @@ export default function ImportsPage() {
       ...(result.mp?.dbDuplicateIndices ?? []),
       ...(result.mp?.installmentRowIndices ?? []),
     ]);
-    const draft = loadDraft(
-      window.localStorage,
-      result.fileFingerprint,
-      result.preview.rows.length,
-    );
+    const storage = draftStorage();
+    const draft =
+      storage === null
+        ? null
+        : loadDraft(
+            storage,
+            result.draftOwner,
+            result.fileFingerprint,
+            result.preview.rows.length,
+          );
     if (draft === null) {
       setExcluded(preExcluded);
       return;
@@ -456,30 +441,60 @@ export default function ImportsPage() {
     });
     setLearning(draft.learning);
     setRowEdits(draft.rowEdits);
+    // Matches against existing installment groups are recomputed on resolve.
+    setGroupEdits(
+      Object.fromEntries(
+        Object.entries(edits).map(([key, edit]) => {
+          const saved = draft.groupEdits[Number(key)];
+          return [
+            key,
+            saved === undefined
+              ? edit
+              : {
+                  ...saved,
+                  existingGroupId: undefined,
+                  existingGroupUpdatedAt: undefined,
+                },
+          ];
+        }),
+      ),
+    );
     setDetached(new Set(draft.detached));
     setExcluded(new Set([...preExcluded, ...draft.excluded]));
     setDraftSavedAt(formatSavedAt(draft.savedAt));
     toast.success("Rascunho restaurado. Você parou aqui da última vez.");
   }
 
+  // Everything the user decided in the preview, in the shape the draft keeps.
+  const reviewDraft = useMemo(
+    () =>
+      bundle === null
+        ? null
+        : {
+            rowCount: bundle.preview.rows.length,
+            mapping,
+            learning,
+            excluded: [...excluded],
+            rowEdits,
+            detached: [...detached],
+            groupEdits,
+          },
+    [bundle, mapping, learning, excluded, rowEdits, detached, groupEdits],
+  );
   // Autosave the review so closing the tab does not lose the work.
   useEffect(() => {
-    if (bundle === null) return;
-    const { fileFingerprint } = bundle;
-    const rowCount = bundle.preview.rows.length;
+    if (bundle === null || reviewDraft === null) return;
+    const { draftOwner, fileFingerprint } = bundle;
     const timeout = setTimeout(() => {
-      const saved = saveDraft(window.localStorage, fileFingerprint, {
-        rowCount,
-        mapping,
-        learning,
-        excluded: [...excluded],
-        rowEdits,
-        detached: [...detached],
-      });
-      setDraftSavedAt(formatSavedAt(saved.savedAt));
+      const storage = draftStorage();
+      const saved =
+        storage === null
+          ? null
+          : saveDraft(storage, draftOwner, fileFingerprint, reviewDraft);
+      setDraftSavedAt(saved === null ? null : formatSavedAt(saved.savedAt));
     }, 800);
     return () => clearTimeout(timeout);
-  }, [bundle, mapping, learning, excluded, rowEdits, detached]);
+  }, [bundle, reviewDraft]);
 
   useEffect(() => {
     resolutionVersion.current += 1;
@@ -983,7 +998,9 @@ export default function ImportsPage() {
       setConfirmResult(result);
       if (result.ok) {
         // The import is done; clear the in-memory preview (file already gone).
-        clearDraft(window.localStorage, bundle.fileFingerprint);
+        const storage = draftStorage();
+        if (storage !== null)
+          clearDraft(storage, bundle.draftOwner, bundle.fileFingerprint);
         setDraftSavedAt(null);
         setBundle(null);
         toast.success("Importação concluída.");
@@ -1275,7 +1292,7 @@ export default function ImportsPage() {
       ? "pending"
       : "ok";
 
-  /** Group rows the group checkbox and group selects control. */
+  /** Attached, non-installment rows: what the group selects and Lembrar control. */
   function groupEditableIndices(group: MerchantGroup): number[] {
     return group.indices.filter((index) => {
       const view = rowViews.get(index);
@@ -1354,6 +1371,11 @@ export default function ImportsPage() {
   }
   function onDetachRow(index: number) {
     setDetached((previous) => new Set(previous).add(index));
+    // The group's Lembrar no longer covers this row, and it has no control of its own.
+    setLearning((previous) => ({
+      ...previous,
+      [index]: { ...previous[index], merchant: false },
+    }));
   }
   function onAttachRow(group: MerchantGroup, index: number) {
     setDetached((previous) => {
@@ -1403,10 +1425,14 @@ export default function ImportsPage() {
   function onPendenciaAction(pendencia: Pendencia) {
     setPendenciasOpen(false);
     if (pendencia.id === "destination") {
-      const select = document.querySelector<HTMLSelectElement>(
-        isMp ? '[aria-label^="Cartão"]' : '[aria-label="Conta de destino"]',
-      );
-      select?.focus();
+      // The modal is still open (and the page inert) until its effect closes it.
+      setTimeout(() => {
+        document
+          .querySelector<HTMLSelectElement>(
+            isMp ? '[aria-label^="Cartão"]' : '[aria-label="Conta de destino"]',
+          )
+          ?.focus();
+      }, 0);
       return;
     }
     if (pendencia.id === "comparison-failed") {
@@ -1430,15 +1456,23 @@ export default function ImportsPage() {
     }
   }
   function onContinueLater() {
-    if (bundle === null) return;
-    saveDraft(window.localStorage, bundle.fileFingerprint, {
-      rowCount: bundle.preview.rows.length,
-      mapping,
-      learning,
-      excluded: [...excluded],
-      rowEdits,
-      detached: [...detached],
-    });
+    if (bundle === null || reviewDraft === null) return;
+    const storage = draftStorage();
+    const saved =
+      storage === null
+        ? null
+        : saveDraft(
+            storage,
+            bundle.draftOwner,
+            bundle.fileFingerprint,
+            reviewDraft,
+          );
+    if (saved === null) {
+      toast.error(
+        "Não consegui salvar o rascunho neste navegador. A lista continua aqui.",
+      );
+      return;
+    }
     setBundle(null);
     toast.success(
       "Rascunho salvo. Envie o mesmo arquivo de novo pra continuar de onde parou.",

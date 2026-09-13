@@ -6,6 +6,7 @@ import {
   formatGroupDates,
   formatPeriod,
   countLabel,
+  summarizeGroup,
 } from "./merchant-groups";
 import type { GroupableRow, PreviewFilter } from "./merchant-groups";
 
@@ -19,7 +20,7 @@ function row(
 }
 
 describe("merchant groups", () => {
-  it("groups normalized names, picks the shortest label, and preserves indices and net outflow", () => {
+  it("groups normalized names, picks the shortest label, and preserves indices", () => {
     const rows = [
       row("MP * IFOOD *IFD", "2026-08-19", 500),
       row("Other"),
@@ -30,12 +31,28 @@ describe("merchant groups", () => {
       key: "IFOOD *IFD",
       label: "IFOOD *IFD",
       indices: [0, 2],
-      totalCents: 300,
+    });
+    expect(rows).toEqual(before);
+  });
+  it("summarizes net outflow, date span, and distinct dates", () => {
+    expect(
+      summarizeGroup([
+        row("A", "2026-08-19", 500),
+        row("A", "2026-08-07", 200, "income"),
+        row("A", "2026-08-19", 100),
+      ]),
+    ).toEqual({
+      totalCents: 400,
       firstDate: "2026-08-07",
       lastDate: "2026-08-19",
       dateCount: 2,
     });
-    expect(rows).toEqual(before);
+    expect(summarizeGroup([])).toEqual({
+      totalCents: 0,
+      firstDate: "",
+      lastDate: "",
+      dateCount: 0,
+    });
   });
   it("uses edited descriptions including empty overrides and falls back for empty normalized keys", () => {
     expect(
@@ -44,33 +61,9 @@ describe("merchant groups", () => {
         3: "",
       }),
     ).toEqual([
-      {
-        key: "CAFE",
-        label: "Café",
-        indices: [0],
-        totalCents: 100,
-        firstDate: "2026-08-15",
-        lastDate: "2026-08-15",
-        dateCount: 1,
-      },
-      {
-        key: "—",
-        label: "Sem descrição",
-        indices: [1, 3],
-        totalCents: 200,
-        firstDate: "2026-08-15",
-        lastDate: "2026-08-15",
-        dateCount: 1,
-      },
-      {
-        key: "MP *",
-        label: "MP *",
-        indices: [2],
-        totalCents: 100,
-        firstDate: "2026-08-15",
-        lastDate: "2026-08-15",
-        dateCount: 1,
-      },
+      { key: "CAFE", label: "Café", indices: [0] },
+      { key: "—", label: "Sem descrição", indices: [1, 3] },
+      { key: "MP *", label: "MP *", indices: [2] },
     ]);
     expect(buildMerchantGroups([])).toEqual([]);
   });
@@ -143,23 +136,18 @@ describe("merchant groups", () => {
 });
 
 describe("date and count labels", () => {
-  it("counts distinct dates so repeated days do not turn a pair into a range", () => {
-    const [group] = buildMerchantGroups([
-      row("A", "2026-08-07"),
-      row("A", "2026-08-19"),
-      row("A", "2026-08-07"),
-    ]);
-    expect(group?.dateCount).toBe(2);
-  });
   it.each([
     ["2026-08-15", "2026-08-15", 1, "15 ago"],
     ["2026-08-07", "2026-08-19", 2, "07 e 19 ago"],
     ["2026-08-03", "2026-08-29", 3, "03 a 29 ago"],
     ["2026-08-28", "2026-09-02", 2, "28 ago a 02 set"],
     ["2025-12-28", "2026-01-02", 2, "28 dez a 02 jan"],
-  ])("formats group dates %s..%s (%i dates) as %s", (first, last, count, expected) => {
-    expect(formatGroupDates(first, last, count)).toBe(expected);
-  });
+  ])(
+    "formats group dates %s..%s (%i dates) as %s",
+    (first, last, count, expected) => {
+      expect(formatGroupDates(first, last, count)).toBe(expected);
+    },
+  );
   it.each([
     [[], ""],
     [["2026-08-15"], "15 ago"],

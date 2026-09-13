@@ -1,5 +1,20 @@
 import type { ConfirmInput } from "./actions";
 
+export type DraftOwner = { userId: string; householdId: string };
+
+export type DraftGroupEdit = {
+  purchaseDescription?: string;
+  purchaseDescriptionEdited?: boolean;
+  existingGroupId?: string;
+  existingGroupUpdatedAt?: string;
+  totalAmountCents: number;
+  installmentCount: number;
+  purchasedOn: string;
+  skip: boolean;
+  categoryId?: string;
+  subcategoryId?: string;
+};
+
 export type ImportDraft = {
   rowCount: number;
   savedAt: string;
@@ -8,23 +23,35 @@ export type ImportDraft = {
   excluded: number[];
   rowEdits: NonNullable<ConfirmInput["edits"]>;
   detached: number[];
+  groupEdits: Record<number, DraftGroupEdit>;
 };
 
-export function draftKey(fileFingerprint: string): string {
-  return `ff-import-draft:${fileFingerprint}`;
+/** Browser storage, or null when the browser refuses access to it. */
+export function draftStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
+export function draftKey(owner: DraftOwner, fileFingerprint: string): string {
+  return `ff-import-draft:v2:${owner.householdId}:${owner.userId}:${fileFingerprint}`;
+}
+
+/** Returns the saved draft, or null when storage refused the write. */
 export function saveDraft(
   storage: Pick<Storage, "setItem">,
+  owner: DraftOwner,
   fileFingerprint: string,
   draft: Omit<ImportDraft, "savedAt">,
   now = new Date(),
-): ImportDraft {
+): ImportDraft | null {
   const saved = { ...draft, savedAt: now.toISOString() };
   try {
-    storage.setItem(draftKey(fileFingerprint), JSON.stringify(saved));
+    storage.setItem(draftKey(owner, fileFingerprint), JSON.stringify(saved));
   } catch {
-    // Draft persistence is best-effort when browser storage is unavailable.
+    return null;
   }
   return saved;
 }
@@ -40,11 +67,12 @@ function isNumberArray(value: unknown): value is number[] {
 
 export function loadDraft(
   storage: Pick<Storage, "getItem">,
+  owner: DraftOwner,
   fileFingerprint: string,
   rowCount: number,
 ): ImportDraft | null {
   try {
-    const raw = storage.getItem(draftKey(fileFingerprint));
+    const raw = storage.getItem(draftKey(owner, fileFingerprint));
     if (raw === null) return null;
     const payload: unknown = JSON.parse(raw);
     if (
@@ -58,7 +86,13 @@ export function loadDraft(
     const mapping = payload.mapping ?? {};
     const learning = payload.learning ?? {};
     const rowEdits = payload.rowEdits ?? {};
-    if (!isRecord(mapping) || !isRecord(learning) || !isRecord(rowEdits))
+    const groupEdits = payload.groupEdits ?? {};
+    if (
+      !isRecord(mapping) ||
+      !isRecord(learning) ||
+      !isRecord(rowEdits) ||
+      !isRecord(groupEdits)
+    )
       return null;
     return {
       rowCount,
@@ -66,6 +100,7 @@ export function loadDraft(
       mapping,
       learning,
       rowEdits,
+      groupEdits,
       excluded: payload.excluded,
       detached: payload.detached,
     } as ImportDraft;
@@ -76,10 +111,11 @@ export function loadDraft(
 
 export function clearDraft(
   storage: Pick<Storage, "removeItem">,
+  owner: DraftOwner,
   fileFingerprint: string,
 ): void {
   try {
-    storage.removeItem(draftKey(fileFingerprint));
+    storage.removeItem(draftKey(owner, fileFingerprint));
   } catch {
     // Browser storage can also become unavailable after a draft was saved.
   }

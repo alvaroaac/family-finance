@@ -4003,6 +4003,12 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   background: var(--ff-tint);
 }
 
+.ff-preview__merchant-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .ff-preview__merchant {
   display: grid;
   gap: 2px;
@@ -4220,7 +4226,7 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
     align-self: start;
   }
 
-  .ff-preview__merchant {
+  .ff-preview__merchant-cell {
     grid-area: merchant;
   }
 

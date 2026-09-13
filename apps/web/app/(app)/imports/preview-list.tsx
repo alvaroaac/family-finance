@@ -14,6 +14,7 @@ import type {
 import {
   countLabel,
   formatGroupDates,
+  summarizeGroup,
   type MerchantGroup,
   type PreviewFilter,
 } from "./merchant-groups";
@@ -305,8 +306,15 @@ function MerchantGroupRow({
   const categoryId = uniform(editable.map((view) => view.categoryId));
   const subcategoryId = uniform(editable.map((view) => view.subcategoryId));
   const remember = editable.some((view) => view.rememberMerchant);
-  const groupCategory =
-    categoryId === undefined || categoryId === "mixed" ? "" : categoryId;
+  const mixed = categoryId === "mixed";
+  const groupCategory = categoryId === undefined || mixed ? "" : categoryId;
+  const summary = summarizeGroup(
+    views.map((view) => ({
+      occurredOn: view.occurredOn,
+      amount: { cents: view.amountCents },
+      kind: view.kind,
+    })),
+  );
   const subs = subsByCategory.get(groupCategory) ?? [];
 
   const selectable = views.filter(
@@ -381,22 +389,30 @@ function MerchantGroupRow({
           onChange={() => props.onToggleGroup(group, !allSelected)}
           aria-label={`Importar estabelecimento ${group.label}`}
         />
-        <button
-          type="button"
-          className="ff-preview__merchant"
-          onClick={onToggleExpanded}
-          aria-expanded={expanded}
-        >
-          <span className="ff-preview__label">{group.label}</span>
-          <span className="ff-preview__sub">
-            {countLabel(views.length, "lançamento", "lançamentos")}
-            {" · "}
-            {formatGroupDates(group.firstDate, group.lastDate, group.dateCount)}
-            {state !== null ? <> · {state}</> : null}
-          </span>
-        </button>
+        <div className="ff-preview__merchant-cell">
+          <button
+            type="button"
+            className="ff-preview__merchant"
+            onClick={onToggleExpanded}
+            aria-expanded={expanded}
+          >
+            <span className="ff-preview__label">{group.label}</span>
+            <span className="ff-preview__sub">
+              {countLabel(views.length, "lançamento", "lançamentos")}
+              {" · "}
+              {formatGroupDates(
+                summary.firstDate,
+                summary.lastDate,
+                summary.dateCount,
+              )}
+            </span>
+          </button>
+          {state !== null ? (
+            <span className="ff-preview__sub">{state}</span>
+          ) : null}
+        </div>
         <span className="ff-preview__right ff-num ff-preview__total">
-          {formatBrl(group.totalCents)}
+          {formatBrl(summary.totalCents)}
         </span>
         <span>
           {editable.length === 0 ? (
@@ -483,6 +499,7 @@ function MerchantGroupRow({
               view={view}
               group={group}
               groupCategory={groupCategory}
+              mixed={mixed}
               props={props}
               editing={editing.has(view.index)}
               onToggleEditing={() => onToggleEditing(view.index)}
@@ -507,6 +524,7 @@ function OccurrenceRow({
   view,
   group,
   groupCategory,
+  mixed,
   props,
   editing,
   onToggleEditing,
@@ -514,6 +532,8 @@ function OccurrenceRow({
   view: PreviewRowView;
   group: MerchantGroup;
   groupCategory: string;
+  /** Attached rows disagree, so each one shows its own category. */
+  mixed: boolean;
   props: PreviewListProps;
   editing: boolean;
   onToggleEditing: () => void;
@@ -569,7 +589,12 @@ function OccurrenceRow({
   ) : (
     <span className="ff-preview__follows">
       <span className="ff-dim">
-        {groupCategory === "" ? "sem categoria" : "segue o grupo"}
+        {mixed
+          ? (categories.find((c) => c.id === view.categoryId)?.name ??
+            "sem categoria")
+          : groupCategory === ""
+            ? "sem categoria"
+            : "segue o grupo"}
       </span>
       {" · "}
       <button

@@ -53,12 +53,17 @@ beforeEach(() => {
     requestKey: "preview",
     previewToken: "token",
     fileFingerprint: "fp-1",
+    draftOwner: { userId: "user-1", householdId: "house-1" },
     normalizedFingerprint: "nfp-1",
     parserVersion: "1",
     snapshot: {},
     preview: { source: "nubank-ofx", rows: ROWS, errors: [], duplicates: [] },
     categorizationPlan: {
-      rows: ROWS.map(() => ({ status: "unresolved", candidates: [] })),
+      rows: ROWS.map(() => ({
+        status: "unresolved",
+        selection: null,
+        candidates: [],
+      })),
       aiItems: [],
     },
     priorDispositions: {},
@@ -140,6 +145,17 @@ async function openPreview() {
 async function chooseAccount() {
   await select("Conta de destino", "acc-1");
 }
+const DRAFT_KEY = "ff-import-draft:v2:house-1:user-1:fp-1";
+async function waitForAutosave() {
+  await act(() => new Promise((resolve) => setTimeout(resolve, 900)));
+}
+function remount() {
+  act(() => root.unmount());
+  container.remove();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+}
 function groupLabels(): string[] {
   return [...container.querySelectorAll(".ff-preview__label")].map(
     (el) => el.textContent ?? "",
@@ -181,31 +197,57 @@ it("groups rows by merchant and applies the group category to every row", async 
   );
 });
 
-it("lets one row leave the group and shows the group as mixed", async () => {
+it("lets one row leave the group, keep its own category, and rejoin later", async () => {
   await openPreview();
   await chooseAccount();
   await select("Categoria do grupo IFOOD *RESTAURANTE", "food");
   await clickLabel("Ver lançamentos de IFOOD *RESTAURANTE");
-  await act(async () => {
-    [...container.querySelectorAll("button")]
-      .find((el) => el.textContent?.includes("mudar só esta"))!
-      .click();
-  });
+  await click("mudar só esta");
   await select("Categoria linha 1", "transport");
   expect(selectValue("Categoria do grupo IFOOD *RESTAURANTE")).toBe("food");
   expect(selectValue("Categoria linha 1")).toBe("transport");
 
-  await select("Categoria do grupo IFOOD *RESTAURANTE", "transport");
+  // Group changes no longer reach the detached row.
+  await select("Subcategoria do grupo IFOOD *RESTAURANTE", "delivery");
   expect(selectValue("Categoria linha 1")).toBe("transport");
+  await click("Gravar 3 lançamentos");
+  await click("Gravar mesmo assim");
+  expect(mocks.confirm.mock.calls[0]![0]).toMatchObject({
+    mapping: {
+      0: { categoryId: "transport", subcategoryId: undefined },
+      1: { categoryId: "food", subcategoryId: "delivery" },
+    },
+    learning: { 0: { merchant: false }, 1: { merchant: true } },
+  });
+
+  // Rejoining copies what the group has now.
   await click("segue o grupo");
   expect(selectValue("Categoria linha 1")).toBeUndefined();
   await select("Categoria do grupo UBER TRIP", "transport");
   await click("Gravar 3 lançamentos");
-  expect(mocks.confirm.mock.calls[0]![0].mapping).toEqual({
-    0: { categoryId: "transport", subcategoryId: undefined },
-    1: { categoryId: "transport", subcategoryId: undefined },
+  expect(mocks.confirm.mock.calls[1]![0].mapping).toEqual({
+    0: { categoryId: "food", subcategoryId: "delivery" },
+    1: { categoryId: "food", subcategoryId: "delivery" },
     2: { categoryId: "transport", subcategoryId: undefined },
   });
+});
+
+it("shows each row's own category when the group is mixed", async () => {
+  await openPreview();
+  await chooseAccount();
+  await select("Categoria do grupo IFOOD *RESTAURANTE", "food");
+  await clickLabel("Ver lançamentos de IFOOD *RESTAURANTE");
+  await click("mudar só esta");
+  await select("Categoria linha 1", "transport");
+  await click("segue o grupo");
+  expect(container.textContent).toContain("segue o grupo");
+  expect(container.textContent).not.toContain("misto");
+
+  // A second detach that keeps its own value, then leaves siblings disagreeing.
+  await click("mudar só esta");
+  await select("Categoria linha 1", "transport");
+  expect(container.textContent).toContain("Transporte");
+  expect(container.textContent).toContain("Alimentação");
 });
 
 it("keeps Gravar enabled and explains what is missing in a dialog", async () => {
@@ -222,6 +264,7 @@ it("keeps Gravar enabled and explains what is missing in a dialog", async () => 
   expect(dialogText()).toContain("IFOOD *RESTAURANTE ×2");
   await click("Escolher");
   expect(container.querySelector("dialog[open]")).toBeNull();
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   expect(document.activeElement?.getAttribute("aria-label")).toBe(
     "Conta de destino",
   );
@@ -261,13 +304,15 @@ it("saves a draft on 'Continuar depois' and restores it for the same file", asyn
   await chooseAccount();
   await select("Categoria do grupo UBER TRIP", "transport");
   await clickLabel("Importar estabelecimento IFOOD *RESTAURANTE");
-  await act(() => new Promise((resolve) => setTimeout(resolve, 900)));
+  await waitForAutosave();
   expect(container.textContent).toContain("Rascunho salvo às");
   await click("Continuar depois");
   expect(container.querySelector('[data-testid="preview-list"]')).toBeNull();
-  expect(window.localStorage.getItem("ff-import-draft:fp-1")).not.toBeNull();
+  expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull();
 
+  remount();
   await openPreview();
+  expect(document.body.textContent).toContain("Rascunho restaurado");
   expect(selectValue("Categoria do grupo UBER TRIP")).toBe("transport");
   expect(
     container.querySelector<HTMLInputElement>(
@@ -278,5 +323,41 @@ it("saves a draft on 'Continuar depois' and restores it for the same file", asyn
   mocks.confirm.mockResolvedValue({ ok: true, message: "ok" });
   await chooseAccount();
   await click("Gravar 1 lançamento");
-  expect(window.localStorage.getItem("ff-import-draft:fp-1")).toBeNull();
+  expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+});
+
+it("restores the autosaved draft after the tab is closed without 'Continuar depois'", async () => {
+  await openPreview();
+  await chooseAccount();
+  await select("Categoria do grupo IFOOD *RESTAURANTE", "food");
+  await clickLabel("Ver lançamentos de IFOOD *RESTAURANTE");
+  await click("mudar só esta");
+  await select("Categoria linha 1", "transport");
+  await waitForAutosave();
+
+  remount();
+  await openPreview();
+  expect(document.body.textContent).toContain("Rascunho restaurado");
+  expect(selectValue("Categoria do grupo IFOOD *RESTAURANTE")).toBe("food");
+  await clickLabel("Ver lançamentos de IFOOD *RESTAURANTE");
+  expect(selectValue("Categoria linha 1")).toBe("transport");
+});
+
+it("ignores drafts saved by another account for the same file", async () => {
+  window.localStorage.setItem(
+    "ff-import-draft:v2:house-1:user-2:fp-1",
+    JSON.stringify({
+      rowCount: 3,
+      savedAt: "2026-09-13T12:00:00.000Z",
+      mapping: { 2: { categoryId: "transport" } },
+      learning: {},
+      rowEdits: {},
+      groupEdits: {},
+      excluded: [],
+      detached: [],
+    }),
+  );
+  await openPreview();
+  expect(document.body.textContent).not.toContain("Rascunho restaurado");
+  expect(selectValue("Categoria do grupo UBER TRIP")).toBe("");
 });

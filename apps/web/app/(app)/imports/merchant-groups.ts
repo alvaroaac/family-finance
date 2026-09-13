@@ -10,6 +10,8 @@ export type MerchantGroup = {
   key: string;
   label: string;
   indices: number[];
+};
+export type GroupSummary = {
   totalCents: number;
   firstDate: string;
   lastDate: string;
@@ -29,34 +31,33 @@ export function buildMerchantGroups(
     const key =
       normalizeMerchantKey(description) || description.toUpperCase() || "—";
     const label = description || "Sem descrição";
-    const amount =
-      row.kind === "expense" ? row.amount.cents : -row.amount.cents;
     const group = groups.get(key);
     if (!group) {
-      groups.set(key, {
-        key,
-        label,
-        indices: [index],
-        totalCents: amount,
-        firstDate: row.occurredOn,
-        lastDate: row.occurredOn,
-        dateCount: 1,
-      });
+      groups.set(key, { key, label, indices: [index] });
       return;
     }
     group.indices.push(index);
-    group.totalCents += amount;
-    if (
-      !group.indices.some(
-        (other) => other !== index && rows[other]!.occurredOn === row.occurredOn,
-      )
-    )
-      group.dateCount += 1;
     if (label.length < group.label.length) group.label = label;
-    if (row.occurredOn < group.firstDate) group.firstDate = row.occurredOn;
-    if (row.occurredOn > group.lastDate) group.lastDate = row.occurredOn;
   });
   return [...groups.values()];
+}
+
+/** Net outflow and date span of the rows as they will be imported (edits applied). */
+export function summarizeGroup(
+  rows: Pick<GroupableRow, "occurredOn" | "amount" | "kind">[],
+): GroupSummary {
+  const dates = new Set<string>();
+  let totalCents = 0;
+  let firstDate = "";
+  let lastDate = "";
+  for (const row of rows) {
+    totalCents += row.kind === "expense" ? row.amount.cents : -row.amount.cents;
+    dates.add(row.occurredOn);
+    if (firstDate === "" || row.occurredOn < firstDate)
+      firstDate = row.occurredOn;
+    if (row.occurredOn > lastDate) lastDate = row.occurredOn;
+  }
+  return { totalCents, firstDate, lastDate, dateCount: dates.size };
 }
 
 export type GroupOrderInput = {

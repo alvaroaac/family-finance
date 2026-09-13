@@ -8,6 +8,8 @@ import {
 } from "./import-draft";
 import type { ImportDraft } from "./import-draft";
 
+const owner = { userId: "user-1", householdId: "house-1" };
+const other = { userId: "user-2", householdId: "house-1" };
 const draft: Omit<ImportDraft, "savedAt"> = {
   rowCount: 2,
   mapping: { 0: { categoryId: "food", subcategoryId: "dining" } },
@@ -20,6 +22,15 @@ const draft: Omit<ImportDraft, "savedAt"> = {
       description: "Café",
       amountCents: 250,
       kind: "expense",
+    },
+  },
+  groupEdits: {
+    0: {
+      totalAmountCents: 30000,
+      installmentCount: 3,
+      purchasedOn: "2026-08-01",
+      skip: true,
+      categoryId: "food",
     },
   },
 };
@@ -39,25 +50,34 @@ function storage() {
 }
 
 describe("import drafts", () => {
-  it("round trips every field under the fingerprint and clears only that draft", () => {
+  it("round trips every field under the owner and fingerprint and clears only that draft", () => {
     const store = storage();
-    expect(draftKey("abc")).toBe("ff-import-draft:abc");
-    expect(saveDraft(store, "abc", draft, now)).toEqual(saved);
-    saveDraft(store, "other", draft, now);
-    expect(store.getItem(draftKey("abc"))).toBe(JSON.stringify(saved));
-    expect(loadDraft(store, "abc", 2)).toEqual(saved);
-    clearDraft(store, "abc");
-    expect(loadDraft(store, "abc", 2)).toBeNull();
-    expect(loadDraft(store, "other", 2)).toEqual(saved);
+    expect(draftKey(owner, "abc")).toBe(
+      "ff-import-draft:v2:house-1:user-1:abc",
+    );
+    expect(saveDraft(store, owner, "abc", draft, now)).toEqual(saved);
+    saveDraft(store, owner, "other", draft, now);
+    expect(store.getItem(draftKey(owner, "abc"))).toBe(JSON.stringify(saved));
+    expect(loadDraft(store, owner, "abc", 2)).toEqual(saved);
+    clearDraft(store, owner, "abc");
+    expect(loadDraft(store, owner, "abc", 2)).toBeNull();
+    expect(loadDraft(store, owner, "other", 2)).toEqual(saved);
     expect(draft).not.toHaveProperty("savedAt");
   });
-  it("tolerates inaccessible storage", () => {
+  it("keeps drafts of different accounts apart", () => {
+    const store = storage();
+    saveDraft(store, owner, "abc", draft, now);
+    expect(loadDraft(store, other, "abc", 2)).toBeNull();
+    clearDraft(store, other, "abc");
+    expect(loadDraft(store, owner, "abc", 2)).toEqual(saved);
+  });
+  it("reports a refused write and tolerates inaccessible storage", () => {
     const fail = () => {
       throw new Error("Storage unavailable");
     };
-    expect(saveDraft({ setItem: fail }, "abc", draft, now)).toEqual(saved);
-    expect(loadDraft({ getItem: fail }, "abc", 2)).toBeNull();
-    expect(() => clearDraft({ removeItem: fail }, "abc")).not.toThrow();
+    expect(saveDraft({ setItem: fail }, owner, "abc", draft, now)).toBeNull();
+    expect(loadDraft({ getItem: fail }, owner, "abc", 2)).toBeNull();
+    expect(() => clearDraft({ removeItem: fail }, owner, "abc")).not.toThrow();
   });
   it.each([
     null,
@@ -74,8 +94,9 @@ describe("import drafts", () => {
     JSON.stringify({ ...saved, mapping: [] }),
     JSON.stringify({ ...saved, learning: false }),
     JSON.stringify({ ...saved, rowEdits: "invalid" }),
+    JSON.stringify({ ...saved, groupEdits: [] }),
   ])("rejects invalid or mismatched storage %s", (raw) => {
-    expect(loadDraft({ getItem: () => raw }, "abc", 2)).toBeNull();
+    expect(loadDraft({ getItem: () => raw }, owner, "abc", 2)).toBeNull();
   });
   it("defaults omitted maps", () => {
     expect(
@@ -89,6 +110,7 @@ describe("import drafts", () => {
               detached: [],
             }),
         },
+        owner,
         "abc",
         2,
       ),
@@ -100,6 +122,7 @@ describe("import drafts", () => {
       mapping: {},
       learning: {},
       rowEdits: {},
+      groupEdits: {},
     });
   });
   it.each([
