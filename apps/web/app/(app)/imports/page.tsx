@@ -14,11 +14,8 @@ import {
   Field,
   IconUpload,
   Input,
-  RowCardList,
   Select,
   SubmitButton,
-  Table,
-  TableRow,
   useToast,
 } from "../../../components/ui";
 import {
@@ -37,12 +34,28 @@ import {
   type InstallmentCandidateMatch,
 } from "./actions";
 import { INSTALLMENT_MATCH_PAGE_SIZE } from "./group-duplicates";
-import {
-  normalizeMerchantKey,
-  type BatchCategorizationPlan,
-} from "@family-finance/categorization";
+import type { BatchCategorizationPlan } from "@family-finance/categorization";
 
 import { purchaseDescription } from "./purchase-description";
+import { ConfirmBlockedDialog } from "./confirm-blocked-dialog";
+import { derivePendencias, type Pendencia } from "./confirm-blockers";
+import {
+  clearDraft,
+  draftStorage,
+  formatSavedAt,
+  loadDraft,
+  saveDraft,
+  type DraftGroupEdit,
+} from "./import-draft";
+import {
+  buildMerchantGroups,
+  filterGroups,
+  formatPeriod,
+  orderMerchantGroups,
+  type MerchantGroup,
+  type PreviewFilter,
+} from "./merchant-groups";
+import { PreviewList, type PreviewRowView } from "./preview-list";
 
 // NOTE: server-driven page metadata cannot be exported from a client component.
 // The layout already establishes the "Casa" workspace title; this screen is the
@@ -77,6 +90,7 @@ type PreviewBundle = {
   requestKey: string;
   previewToken: string;
   fileFingerprint: string;
+  draftOwner: { userId: string; householdId: string };
   normalizedFingerprint: string;
   parserVersion: string;
   snapshot: ImportPreviewSnapshot;
@@ -98,18 +112,6 @@ type PreviewBundle = {
   mp?: MpPreviewExtras;
   notices?: string[];
 };
-
-const PREVIEW_COLUMNS = [
-  { key: "check", label: "" },
-  { key: "dia", label: "Dia" },
-  { key: "descricao", label: "Descrição" },
-  { key: "valor", label: "Valor", align: "right" as const },
-  { key: "categoria", label: "Categoria" },
-  { key: "subcategoria", label: "Subcategoria" },
-  { key: "status", label: "" },
-];
-
-const PREVIEW_GRID = "44px 56px minmax(150px, 1fr) 110px 150px 150px 150px";
 
 /** 3-dot progress (Importacao mockup): Enviar arquivo · Revisar · Confirmar. */
 function Stepper({ step }: { step: 1 | 2 | 3 }) {
@@ -155,23 +157,9 @@ export default function ImportsPage() {
   // Purely presentational: the chosen file's name echoed in the dropzone.
   const [fileName, setFileName] = useState<string | null>(null);
   // Per-group edits + skip flags, keyed by group array index.
-  const [groupEdits, setGroupEdits] = useState<
-    Record<
-      number,
-      {
-        purchaseDescription?: string;
-        purchaseDescriptionEdited?: boolean;
-        existingGroupId?: string;
-        existingGroupUpdatedAt?: string;
-        totalAmountCents: number;
-        installmentCount: number;
-        purchasedOn: string;
-        skip: boolean;
-        categoryId?: string;
-        subcategoryId?: string;
-      }
-    >
-  >({});
+  const [groupEdits, setGroupEdits] = useState<Record<number, DraftGroupEdit>>(
+    {},
+  );
   const [persistedGroupDuplicates, setPersistedGroupDuplicates] = useState<
     Set<number>
   >(new Set());
@@ -293,7 +281,12 @@ export default function ImportsPage() {
   const [provenanceUndo, setProvenanceUndo] = useState<
     typeof provenance | null
   >(null);
-  const [bulkMerchantKey, setBulkMerchantKey] = useState("");
+  // Rows whose category the user set individually ("mudar só esta").
+  const [detached, setDetached] = useState<Set<number>>(new Set());
+  const [filter, setFilter] = useState<PreviewFilter>("all");
+  const [search, setSearch] = useState("");
+  const [pendenciasOpen, setPendenciasOpen] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [bulkSourceLabel, setBulkSourceLabel] = useState("");
   const [mappingUndo, setMappingUndo] = useState<typeof mapping | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -337,6 +330,7 @@ export default function ImportsPage() {
       requestKey: result.requestKey,
       previewToken: result.previewToken,
       fileFingerprint: result.fileFingerprint,
+      draftOwner: result.draftOwner,
       normalizedFingerprint: result.normalizedFingerprint,
       parserVersion: result.parserVersion,
       snapshot: result.snapshot,
@@ -376,7 +370,6 @@ export default function ImportsPage() {
     });
     setProvenance(initialProvenance);
     setBulkCategoryId("");
-    setBulkMerchantKey("");
     setBulkSourceLabel("");
     setMappingUndo(null);
     setMapping(initialMapping);
@@ -397,17 +390,8 @@ export default function ImportsPage() {
     setGroupOverrides({});
     setGroupMatchesByIndex({});
     setGroupMatchDecisions({});
-    const edits: Record<
-      number,
-      {
-        totalAmountCents: number;
-        installmentCount: number;
-        purchasedOn: string;
-        skip: boolean;
-        categoryId?: string;
-        subcategoryId?: string;
-      }
-    > = {};
+    reviewedGroupIndices.current = new Set();
+    const edits: Record<number, DraftGroupEdit> = {};
     (result.mp?.groups ?? []).forEach((g, i) => {
       edits[i] = {
         totalAmountCents: g.estimatedTotalCents,
@@ -417,16 +401,107 @@ export default function ImportsPage() {
       };
     });
     setGroupEdits(edits);
+    setDetached(new Set());
+    setFilter("all");
+    setSearch("");
+    setPendenciasOpen(false);
+    setDraftSavedAt(null);
     // Pre-exclude: probable in-file duplicates + rows already in the DB +
     // parcela rows (they import via groups, never as flat charges).
-    setExcluded(
-      new Set([
-        ...result.preview.duplicates.map((d) => d.rowIndex),
-        ...(result.mp?.dbDuplicateIndices ?? []),
-        ...(result.mp?.installmentRowIndices ?? []),
-      ]),
+    const preExcluded = new Set([
+      ...result.preview.duplicates.map((d) => d.rowIndex),
+      ...(result.mp?.dbDuplicateIndices ?? []),
+      ...(result.mp?.installmentRowIndices ?? []),
+    ]);
+    const storage = draftStorage();
+    const draft =
+      storage === null
+        ? null
+        : loadDraft(
+            storage,
+            result.draftOwner,
+            result.fileFingerprint,
+            result.preview.rows.length,
+          );
+    if (draft === null) {
+      setExcluded(preExcluded);
+      return;
+    }
+    // Same file, same row count: pick up where the user stopped.
+    setMapping({ ...initialMapping, ...draft.mapping });
+    setProvenance((previous) => {
+      const updated = { ...previous };
+      for (const key of Object.keys(draft.mapping)) {
+        const index = Number(key);
+        if (
+          draft.mapping[index]?.categoryId !== initialMapping[index]?.categoryId
+        )
+          updated[index] = { source: "user", accepted: true, changed: true };
+      }
+      return updated;
+    });
+    setLearning(draft.learning);
+    setRowEdits(draft.rowEdits);
+    // Matches against existing installment groups are recomputed on resolve,
+    // so a group that was matched goes back to needing review: its skip and
+    // match-derived description are not the user's own decisions.
+    setGroupEdits(
+      Object.fromEntries(
+        Object.entries(edits).map(([key, edit]) => {
+          const saved = draft.groupEdits[Number(key)];
+          if (saved === undefined) return [key, edit];
+          const matched = saved.existingGroupId !== undefined;
+          return [
+            key,
+            {
+              ...saved,
+              existingGroupId: undefined,
+              existingGroupUpdatedAt: undefined,
+              skip: matched ? edit.skip : saved.skip,
+              purchaseDescription: saved.purchaseDescriptionEdited
+                ? saved.purchaseDescription
+                : undefined,
+            },
+          ];
+        }),
+      ),
     );
+    setDetached(new Set(draft.detached));
+    setExcluded(new Set([...preExcluded, ...draft.excluded]));
+    setDraftSavedAt(formatSavedAt(draft.savedAt));
+    toast.success("Rascunho restaurado. Você parou aqui da última vez.");
   }
+
+  // Everything the user decided in the preview, in the shape the draft keeps.
+  const reviewDraft = useMemo(
+    () =>
+      bundle === null
+        ? null
+        : {
+            rowCount: bundle.preview.rows.length,
+            mapping,
+            learning,
+            excluded: [...excluded],
+            rowEdits,
+            detached: [...detached],
+            groupEdits,
+          },
+    [bundle, mapping, learning, excluded, rowEdits, detached, groupEdits],
+  );
+  // Autosave the review so closing the tab does not lose the work.
+  useEffect(() => {
+    if (bundle === null || reviewDraft === null) return;
+    const { draftOwner, fileFingerprint } = bundle;
+    const timeout = setTimeout(() => {
+      const storage = draftStorage();
+      const saved =
+        storage === null
+          ? null
+          : saveDraft(storage, draftOwner, fileFingerprint, reviewDraft);
+      setDraftSavedAt(saved === null ? null : formatSavedAt(saved.savedAt));
+    }, 800);
+    return () => clearTimeout(timeout);
+  }, [bundle, reviewDraft]);
 
   useEffect(() => {
     resolutionVersion.current += 1;
@@ -750,9 +825,7 @@ export default function ImportsPage() {
     });
   }
 
-  function applyBulkCategory(
-    mode: "selected" | "unresolved" | "merchant" | "source",
-  ) {
+  function applyBulkCategory(mode: "selected" | "unresolved" | "source") {
     if (bundle === null) return;
     if (bulkCategoryId === "") {
       toast.error("Selecione uma categoria para aplicar em lote.");
@@ -771,9 +844,7 @@ export default function ImportsPage() {
           ? true
           : mode === "unresolved"
             ? (mapping[index]?.categoryId ?? "") === ""
-            : mode === "merchant"
-              ? normalizeMerchantKey(row.description) === bulkMerchantKey
-              : (row.sourceCategory ?? "") === bulkSourceLabel;
+            : (row.sourceCategory ?? "") === bulkSourceLabel;
       if (!matches) return;
       if (
         mapping[index]?.categoryId === bulkCategoryId &&
@@ -934,6 +1005,10 @@ export default function ImportsPage() {
       setConfirmResult(result);
       if (result.ok) {
         // The import is done; clear the in-memory preview (file already gone).
+        const storage = draftStorage();
+        if (storage !== null)
+          clearDraft(storage, bundle.draftOwner, bundle.fileFingerprint);
+        setDraftSavedAt(null);
         setBundle(null);
         toast.success("Importação concluída.");
       } else {
@@ -957,17 +1032,6 @@ export default function ImportsPage() {
     confirmResult?.ok === true ? 3 : preview !== null ? 2 : 1;
 
   const isMp = bundle?.mp !== undefined;
-  const bulkMerchantKeys = useMemo(
-    () =>
-      [
-        ...new Set(
-          (bundle?.preview.rows ?? []).map((row) =>
-            normalizeMerchantKey(row.description),
-          ),
-        ),
-      ].sort(),
-    [bundle],
-  );
   const bulkSourceLabels = useMemo(
     () =>
       [
@@ -1043,13 +1107,9 @@ export default function ImportsPage() {
   }
 
   const summaryLine = (
-    <span className="ff-table__foot-note ff-num">
+    <span className="ff-num">
       <strong style={{ fontWeight: 600, color: "var(--ff-ink)" }}>
-        {!targetsResolved
-          ? `${selectedCount} selecionados · comparação pendente`
-          : selectedCount === 1
-            ? "1 novo"
-            : `${selectedCount} novos`}
+        {selectedCount === 1 ? "1 novo" : `${selectedCount} novos`}
       </strong>
       {summaryParts.length > 0 ? ` · ${summaryParts.join(" · ")}` : ""}
     </span>
@@ -1106,11 +1166,6 @@ export default function ImportsPage() {
     mpCardLast4s.every((last4) => (cardByLast4[last4] ?? "") !== "") &&
     (!(mpNeedsDefaultTarget || mpCardLast4s.length === 0) ||
       creditCardId !== "");
-  const confirmDisabled =
-    !targetsResolved ||
-    isPending ||
-    selectedCount + selectedGroupCount === 0 ||
-    (isMp ? !hasAllMpTargets : accountId === "");
   const confirmLabel = isPending
     ? "Importando…"
     : selectedGroupCount > 0
@@ -1119,24 +1174,320 @@ export default function ImportsPage() {
         ? "Gravar 1 lançamento"
         : `Gravar ${selectedCount} lançamentos`;
 
+  // --- Grouped preview (one row per merchant) ---
+  const installmentRowSet = useMemo(
+    () => new Set(bundle?.mp?.installmentRowIndices ?? []),
+    [bundle],
+  );
+  const rowViews = useMemo(() => {
+    const views = new Map<number, PreviewRowView>();
+    if (bundle === null) return views;
+    bundle.preview.rows.forEach((row, index) => {
+      views.set(index, {
+        index,
+        row,
+        occurredOn: rowEdits[index]?.occurredOn ?? row.occurredOn,
+        description: rowEdits[index]?.description ?? row.description,
+        amountCents: rowEdits[index]?.amountCents ?? row.amount.cents,
+        kind: rowEdits[index]?.kind ?? row.kind,
+        excluded: excluded.has(index),
+        duplicate: duplicateIndices.has(index),
+        dbDuplicate: persistedDuplicates.has(index),
+        installmentRow: installmentRowSet.has(index),
+        suppressed: suppressedIndices.has(index),
+        categoryId: mapping[index]?.categoryId ?? "",
+        subcategoryId: mapping[index]?.subcategoryId ?? "",
+        detached: detached.has(index),
+        rememberMerchant: learning[index]?.merchant === true,
+        learnSourceCategory: learning[index]?.sourceCategory === true,
+        aiSuggestion: aiSuggestions[index],
+        priorDisposition: bundle.priorDispositions[row.sourceLine],
+        recentlyChanged: bulkChangedSet.has(index),
+      });
+    });
+    return views;
+  }, [
+    bundle,
+    rowEdits,
+    excluded,
+    duplicateIndices,
+    persistedDuplicates,
+    installmentRowSet,
+    suppressedIndices,
+    mapping,
+    detached,
+    learning,
+    aiSuggestions,
+    bulkChangedSet,
+  ]);
+  const isUncategorizedRow = (index: number): boolean => {
+    const view = rowViews.get(index);
+    return (
+      view !== undefined &&
+      !view.excluded &&
+      !view.suppressed &&
+      !view.installmentRow &&
+      view.categoryId === ""
+    );
+  };
+  // Order is fixed when the preview loads (merchants still uncategorized by
+  // the plan come first) so groups do not jump around while the user works.
+  const orderedGroups = useMemo(() => {
+    if (bundle === null) return [];
+    const plan = bundle.categorizationPlan.rows;
+    return orderMerchantGroups(
+      buildMerchantGroups(bundle.preview.rows).map((group) => ({
+        group,
+        uncategorizedSelected: group.indices.filter(
+          (index) =>
+            !installmentRowSet.has(index) &&
+            !duplicateIndices.has(index) &&
+            plan[index]?.status !== "suppressed" &&
+            plan[index]?.selection == null,
+        ).length,
+      })),
+    );
+  }, [bundle, installmentRowSet, duplicateIndices]);
+  const isDuplicateRow = (index: number) =>
+    duplicateIndices.has(index) || persistedDuplicates.has(index);
+  const isInstallmentRow = (index: number) => installmentRowSet.has(index);
+  const groupsFor = (which: PreviewFilter, term: string) =>
+    filterGroups(orderedGroups, {
+      filter: which,
+      search: term,
+      isUncategorized: isUncategorizedRow,
+      isDuplicate: isDuplicateRow,
+      isInstallment: isInstallmentRow,
+    });
+  const visibleGroups = groupsFor(filter, search);
+  const filterCounts: Record<PreviewFilter, number> = {
+    all: orderedGroups.length,
+    uncategorized: groupsFor("uncategorized", "").length,
+    duplicates: groupsFor("duplicates", "").length,
+    installments: groupsFor("installments", "").length,
+  };
+
+  // --- Pendências: why "Gravar" would not go through right now ---
+  const destinationMissing = isMp ? !hasAllMpTargets : accountId === "";
+  const comparisonFailed =
+    !destinationMissing && targetError?.key === targetKey;
+  const comparisonPending =
+    !destinationMissing && !targetsResolved && !comparisonFailed;
+  const pendingInstallmentReviews = groupReviewRequiredIndices.filter(
+    (index) =>
+      groupEdits[index]?.skip === false &&
+      groupMatchDecisions[index] === undefined,
+  ).length;
+  const uncategorizedByGroup = orderedGroups
+    .map((group) => ({
+      label: group.label,
+      count: group.indices.filter(isUncategorizedRow).length,
+    }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count);
+  const pendencias = derivePendencias({
+    destinationMissing,
+    comparisonFailed,
+    comparisonPending,
+    selectedCount: selectedCount + selectedGroupCount,
+    pendingInstallmentReviews,
+    uncategorized: uncategorizedByGroup,
+  });
+  const comparison: "ok" | "pending" | "failed" = comparisonFailed
+    ? "failed"
+    : comparisonPending
+      ? "pending"
+      : "ok";
+
+  /** Attached, non-installment rows: what the group selects and Lembrar control. */
+  function groupEditableIndices(group: MerchantGroup): number[] {
+    return group.indices.filter((index) => {
+      const view = rowViews.get(index);
+      return view !== undefined && !view.detached && !view.installmentRow;
+    });
+  }
+  function markUserChoice(indices: number[]) {
+    setProvenance((previous) => {
+      const updated = { ...previous };
+      for (const index of indices)
+        updated[index] = { source: "user", accepted: true, changed: true };
+      return updated;
+    });
+  }
+  function onGroupCategory(group: MerchantGroup, categoryId: string) {
+    const indices = groupEditableIndices(group);
+    setMapping((previous) => {
+      const next = { ...previous };
+      for (const index of indices)
+        next[index] = {
+          categoryId: categoryId || undefined,
+          subcategoryId: undefined,
+        };
+      return next;
+    });
+    setLearning((previous) => {
+      const next = { ...previous };
+      for (const index of indices)
+        next[index] = { ...next[index], merchant: categoryId !== "" };
+      return next;
+    });
+    markUserChoice(indices);
+  }
+  function onGroupSubcategory(group: MerchantGroup, subcategoryId: string) {
+    const indices = groupEditableIndices(group);
+    setMapping((previous) => {
+      const next = { ...previous };
+      for (const index of indices)
+        next[index] = {
+          categoryId: previous[index]?.categoryId,
+          subcategoryId: subcategoryId || undefined,
+        };
+      return next;
+    });
+    markUserChoice(indices);
+  }
+  function onGroupRemember(group: MerchantGroup, remember: boolean) {
+    const indices = groupEditableIndices(group);
+    setLearning((previous) => {
+      const next = { ...previous };
+      for (const index of indices)
+        next[index] = { ...next[index], merchant: remember };
+      return next;
+    });
+  }
+  function onToggleGroup(group: MerchantGroup, selected: boolean) {
+    // Duplicates keep their per-row confirmation; installment rows enter via
+    // the installment panel. The group checkbox only moves the plain rows.
+    const plain = group.indices.filter((index) => {
+      const view = rowViews.get(index);
+      return (
+        view !== undefined &&
+        !view.duplicate &&
+        !view.dbDuplicate &&
+        !view.installmentRow
+      );
+    });
+    setExcluded((previous) => {
+      const next = new Set(previous);
+      for (const index of plain) {
+        if (selected) next.delete(index);
+        else next.add(index);
+      }
+      return next;
+    });
+  }
+  function onDetachRow(index: number) {
+    setDetached((previous) => new Set(previous).add(index));
+    // The group's Lembrar no longer covers this row, and it has no control of its own.
+    setLearning((previous) => ({
+      ...previous,
+      [index]: { ...previous[index], merchant: false },
+    }));
+  }
+  function onAttachRow(group: MerchantGroup, index: number) {
+    setDetached((previous) => {
+      const next = new Set(previous);
+      next.delete(index);
+      return next;
+    });
+    const sibling = groupEditableIndices(group).find((i) => i !== index);
+    if (sibling === undefined) return;
+    setMapping((previous) => ({
+      ...previous,
+      [index]: { ...previous[sibling] },
+    }));
+    setLearning((previous) => ({
+      ...previous,
+      [index]: { ...previous[index], merchant: previous[sibling]?.merchant },
+    }));
+    markUserChoice([index]);
+  }
+  function onRowEdit(
+    index: number,
+    patch: {
+      occurredOn?: string;
+      description?: string;
+      amountCents?: number;
+      kind?: "expense" | "income";
+    },
+  ) {
+    setRowEdits((previous) => ({
+      ...previous,
+      [index]: { ...previous[index], ...patch },
+    }));
+  }
+  function onLearnSourceCategory(index: number, checked: boolean) {
+    setLearning((previous) => ({
+      ...previous,
+      [index]: { ...previous[index], sourceCategory: checked },
+    }));
+  }
+  function scrollTo(selector: string) {
+    document.querySelector(selector)?.scrollIntoView({ block: "start" });
+  }
+  function onGravar() {
+    if (pendencias.length > 0) setPendenciasOpen(true);
+    else onConfirm();
+  }
+  function onPendenciaAction(pendencia: Pendencia) {
+    setPendenciasOpen(false);
+    if (pendencia.id === "destination") {
+      // The modal is still open (and the page inert) until its effect closes it.
+      setTimeout(() => {
+        document
+          .querySelector<HTMLSelectElement>(
+            isMp ? '[aria-label^="Cartão"]' : '[aria-label="Conta de destino"]',
+          )
+          ?.focus();
+      }, 0);
+      return;
+    }
+    if (pendencia.id === "comparison-failed") {
+      setTargetRetry((value) => value + 1);
+      return;
+    }
+    if (pendencia.id === "nothing-selected") {
+      setFilter("all");
+      setSearch("");
+      scrollTo('[data-testid="preview-list"]');
+      return;
+    }
+    if (pendencia.id === "installment-review") {
+      scrollTo(".ff-group--match");
+      return;
+    }
+    if (pendencia.id === "uncategorized") {
+      setFilter("uncategorized");
+      setSearch("");
+      scrollTo('[data-testid="preview-list"]');
+    }
+  }
+  function onContinueLater() {
+    if (bundle === null || reviewDraft === null) return;
+    const storage = draftStorage();
+    const saved =
+      storage === null
+        ? null
+        : saveDraft(
+            storage,
+            bundle.draftOwner,
+            bundle.fileFingerprint,
+            reviewDraft,
+          );
+    if (saved === null) {
+      toast.error(
+        "Não consegui salvar o rascunho neste navegador. A lista continua aqui.",
+      );
+      return;
+    }
+    setBundle(null);
+    toast.success(
+      "Rascunho salvo. Envie o mesmo arquivo de novo pra continuar de onde parou.",
+    );
+  }
+
   return (
     <section>
-      {bundle !== null &&
-      !targetsResolved &&
-      (isMp ? hasAllMpTargets : accountId !== "") ? (
-        <div role={targetError?.key === targetKey ? "alert" : "status"}>
-          {targetError?.key === targetKey ? (
-            <>
-              <p>{targetError.message}</p>
-              <Button onClick={() => setTargetRetry((value) => value + 1)}>
-                Tentar comparações novamente
-              </Button>
-            </>
-          ) : (
-            <p>Carregando comparações antes de confirmar…</p>
-          )}
-        </div>
-      ) : null}
       {matchPageError !== null ? <p role="alert">{matchPageError}</p> : null}
       <header>
         <div className="ff-kicker" style={{ letterSpacing: "0.26em" }}>
@@ -1965,13 +2316,6 @@ export default function ImportsPage() {
                     Revise a seleção antes de confirmar.
                   </span>
                 </div>
-                <Button
-                  variant="ghost"
-                  onClick={undoBulkCategory}
-                  disabled={mappingUndo === null}
-                >
-                  Desfazer última ação
-                </Button>
               </div>
               <div
                 style={{
@@ -2025,25 +2369,6 @@ export default function ImportsPage() {
                   onClick={() => applyBulkCategory("selected")}
                 >
                   Aplicar às linhas marcadas
-                </Button>
-                <Select
-                  value={bulkMerchantKey}
-                  onChange={(event) => setBulkMerchantKey(event.target.value)}
-                  aria-label="Estabelecimento para ação em lote"
-                >
-                  <option value="">Estabelecimento…</option>
-                  {bulkMerchantKeys.map((merchant) => (
-                    <option key={merchant} value={merchant}>
-                      {merchant}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  variant="ghost"
-                  disabled={bulkMerchantKey === ""}
-                  onClick={() => applyBulkCategory("merchant")}
-                >
-                  Aplicar ao estabelecimento
                 </Button>
                 {bulkSourceLabels.length > 0 ? (
                   <>
@@ -2124,547 +2449,86 @@ export default function ImportsPage() {
             </Card>
           ) : null}
 
-          <Table columns={PREVIEW_COLUMNS} gridTemplate={PREVIEW_GRID}>
-            {preview.rows.map((row, index) => {
-              const isDuplicate = duplicateIndices.has(index);
-              const isExcluded = excluded.has(index);
-              const isDbDuplicate = persistedDuplicates.has(index);
-              const isInstallmentRow =
-                bundle?.mp?.installmentRowIndices.includes(index) ?? false;
-              const selectedCategory = mapping[index]?.categoryId ?? "";
-              const aiSuggestion = aiSuggestions[index];
-              const aiCategoryName = bundle?.categories.find(
-                (category) => category.id === aiSuggestion?.categoryId,
-              )?.name;
-              const subs = selectedCategory
-                ? (subsByCategory.get(selectedCategory) ?? [])
-                : [];
-              const finalKind = rowEdits[index]?.kind ?? row.kind;
-              const finalDescription =
-                rowEdits[index]?.description ?? row.description;
-              const finalOccurredOn =
-                rowEdits[index]?.occurredOn ?? row.occurredOn;
-              const finalAmountCents =
-                rowEdits[index]?.amountCents ?? row.amount.cents;
-              return (
-                <TableRow
-                  key={index}
-                  className={`${isExcluded ? "ff-off" : ""}${bulkChangedSet.has(index) ? " ff-import-updated" : ""}`}
-                >
-                  <input
-                    className="ff-check"
-                    type="checkbox"
-                    checked={!isExcluded}
-                    onChange={() => toggleExcluded(index)}
-                    disabled={isInstallmentRow}
-                    title={
-                      isInstallmentRow
-                        ? "Parcelas entram pelo painel de parcelamentos"
-                        : undefined
-                    }
-                    aria-label={`Importar linha ${row.sourceLine}`}
-                  />
-                  <Input
-                    className="ff-input--compact ff-num"
-                    type="date"
-                    value={finalOccurredOn}
-                    onChange={(event) =>
-                      setRowEdits((previous) => ({
-                        ...previous,
-                        [index]: {
-                          ...previous[index],
-                          occurredOn: event.target.value,
-                        },
-                      }))
-                    }
-                    aria-label={`Data linha ${row.sourceLine}`}
-                  />
-                  <span
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      minWidth: 0,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {aiSuggestion !== undefined &&
-                    aiCategoryName !== undefined ? (
-                      <button
-                        type="button"
-                        className="ff-btn ff-btn--ghost"
-                        style={{ padding: "3px 7px", fontSize: 11 }}
-                        onClick={() => applyAiSuggestion(index)}
-                        title={aiSuggestion.explanation}
-                      >
-                        usar {aiCategoryName} ·{" "}
-                        {providerLabel(aiSuggestion.provider)}
-                      </button>
-                    ) : null}
-                    {!isInstallmentRow && selectedCategory !== "" ? (
-                      <label
-                        className="ff-note"
-                        title="Opcional: reutilizar esta escolha em próximas importações"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={learning[index]?.merchant === true}
-                          onChange={(event) =>
-                            setLearning((previous) => ({
-                              ...previous,
-                              [index]: {
-                                ...previous[index],
-                                merchant: event.target.checked,
-                              },
-                            }))
-                          }
-                        />{" "}
-                        ensinar estabelecimento
-                      </label>
-                    ) : null}
-                    {!isInstallmentRow &&
-                    selectedCategory !== "" &&
-                    row.sourceCategory ? (
-                      <label
-                        className="ff-note"
-                        title="Opcional: mapear esta categoria do arquivo"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={learning[index]?.sourceCategory === true}
-                          onChange={(event) =>
-                            setLearning((previous) => ({
-                              ...previous,
-                              [index]: {
-                                ...previous[index],
-                                sourceCategory: event.target.checked,
-                              },
-                            }))
-                          }
-                        />{" "}
-                        ensinar categoria da origem
-                      </label>
-                    ) : null}
-                    <Input
-                      className="ff-input--compact"
-                      value={finalDescription}
-                      maxLength={200}
-                      onChange={(event) =>
-                        setRowEdits((previous) => ({
-                          ...previous,
-                          [index]: {
-                            ...previous[index],
-                            description: event.target.value,
-                          },
-                        }))
-                      }
-                      aria-label={`Descrição linha ${row.sourceLine}`}
-                    />
-                    {row.installment !== undefined ? (
-                      <Badge tone="accent">
-                        {row.installment.number}/{row.installment.count}
-                      </Badge>
-                    ) : null}
-                  </span>
-                  <span style={{ display: "grid", gap: 4 }}>
-                    <Input
-                      className="ff-input--compact ff-num"
-                      type="number"
-                      min={0.01}
-                      step={0.01}
-                      value={(finalAmountCents / 100).toFixed(2)}
-                      onChange={(event) =>
-                        setRowEdits((previous) => ({
-                          ...previous,
-                          [index]: {
-                            ...previous[index],
-                            amountCents: Math.round(
-                              Number(event.target.value) * 100,
-                            ),
-                          },
-                        }))
-                      }
-                      aria-label={`Valor linha ${row.sourceLine}`}
-                    />
-                    <Select
-                      className="ff-select--compact"
-                      value={finalKind}
-                      onChange={(event) =>
-                        setRowEdits((previous) => ({
-                          ...previous,
-                          [index]: {
-                            ...previous[index],
-                            kind: event.target.value as "expense" | "income",
-                          },
-                        }))
-                      }
-                      aria-label={`Tipo linha ${row.sourceLine}`}
-                    >
-                      <option value="expense">saída</option>
-                      <option value="income">entrada</option>
-                    </Select>
-                  </span>
-                  <span>
-                    {isInstallmentRow ? (
-                      <span className="ff-dim" style={{ fontStyle: "italic" }}>
-                        —
-                      </span>
-                    ) : (
-                      <Select
-                        className={`ff-select--compact${
-                          selectedCategory === "" ? " ff-select--warn" : ""
-                        }`}
-                        value={selectedCategory}
-                        onChange={(e) => setRowCategory(index, e.target.value)}
-                        aria-label={`Categoria linha ${row.sourceLine}`}
-                      >
-                        <option value="">escolher…</option>
-                        {(bundle?.categories ?? []).map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </span>
-                  <span>
-                    {isInstallmentRow ? null : (
-                      <Select
-                        className="ff-select--compact"
-                        value={mapping[index]?.subcategoryId ?? ""}
-                        onChange={(e) =>
-                          setRowSubcategory(index, e.target.value)
-                        }
-                        disabled={selectedCategory === ""}
-                        aria-label={`Subcategoria linha ${row.sourceLine}`}
-                      >
-                        <option value="">(nenhuma)</option>
-                        {subs.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      display: "flex",
-                      gap: 6,
-                      justifyContent: "flex-end",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {isDuplicate ? (
-                      <Badge tone="negative">duplicata provável</Badge>
-                    ) : null}
-                    {isDbDuplicate ? (
-                      <Badge tone="neutral">já importada</Badge>
-                    ) : null}
-                    {isInstallmentRow ? (
-                      <span className="ff-note">entra pelo parcelamento</span>
-                    ) : null}
-                    {bundle?.priorDispositions[row.sourceLine] !== undefined ? (
-                      <Badge tone="neutral">
-                        antes: {bundle.priorDispositions[row.sourceLine]}
-                      </Badge>
-                    ) : null}
-                    {!isDuplicate &&
-                    !isDbDuplicate &&
-                    !isInstallmentRow &&
-                    !isExcluded &&
-                    selectedCategory === "" ? (
-                      <Badge tone="warn">sem categoria</Badge>
-                    ) : null}
-                    {suppressedIndices.has(index) ? (
-                      <Badge tone="neutral">sem categoria por memória</Badge>
-                    ) : null}
-                  </span>
-                </TableRow>
-              );
-            })}
-
-            {/* Footer (desktop): summary + destino + voltar/gravar */}
-            <div className="ff-table__foot">
-              {summaryLine}
-              <span
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
+          {comparisonFailed && targetError !== null ? (
+            <div
+              className="ff-alert ff-alert--negative"
+              role="alert"
+              style={{ marginBottom: 12 }}
+            >
+              <strong>Não consegui comparar com o que já está no banco</strong>
+              <p style={{ margin: "6px 0 10px" }}>
+                A lista continua aqui pra você revisar; a gravação só é liberada
+                quando a comparação funcionar.
+              </p>
+              <Button
+                variant="ghost"
+                onClick={() => setTargetRetry((value) => value + 1)}
               >
-                <span style={{ minWidth: 190 }}>{destinationSelect}</span>
-                <Button variant="ghost" onClick={() => setBundle(null)}>
-                  ‹ Voltar
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={onConfirm}
-                  disabled={confirmDisabled}
-                  loading={isPending}
-                  loadingText="Importando…"
-                >
-                  {confirmLabel}
-                </Button>
-              </span>
-            </div>
-          </Table>
-
-          {/* Mobile collapse of the preview rows */}
-          <RowCardList>
-            {preview.rows.map((row, index) => {
-              const isDuplicate = duplicateIndices.has(index);
-              const isExcluded = excluded.has(index);
-              const isDbDuplicate = persistedDuplicates.has(index);
-              const isInstallmentRow =
-                bundle?.mp?.installmentRowIndices.includes(index) ?? false;
-              const selectedCategory = mapping[index]?.categoryId ?? "";
-              const aiSuggestion = aiSuggestions[index];
-              const aiCategoryName = bundle?.categories.find(
-                (category) => category.id === aiSuggestion?.categoryId,
-              )?.name;
-              const subs = selectedCategory
-                ? (subsByCategory.get(selectedCategory) ?? [])
-                : [];
-              const finalKind = rowEdits[index]?.kind ?? row.kind;
-              const finalDescription =
-                rowEdits[index]?.description ?? row.description;
-              const finalOccurredOn =
-                rowEdits[index]?.occurredOn ?? row.occurredOn;
-              const finalAmountCents =
-                rowEdits[index]?.amountCents ?? row.amount.cents;
-              const isExpense = finalKind === "expense";
-              return (
-                <Card
-                  key={index}
-                  className={`ff-rowcard${isExcluded ? " ff-off" : ""}${bulkChangedSet.has(index) ? " ff-import-updated" : ""}`}
-                >
-                  <input
-                    className="ff-check"
-                    type="checkbox"
-                    checked={!isExcluded}
-                    onChange={() => toggleExcluded(index)}
-                    disabled={isInstallmentRow}
-                    aria-label={`Importar linha ${row.sourceLine}`}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 12,
-                      }}
-                    >
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          minWidth: 0,
-                        }}
-                      >
-                        <span className="ff-txrow__desc">
-                          {finalDescription}
-                        </span>
-                        {row.installment !== undefined ? (
-                          <Badge tone="accent">
-                            {row.installment.number}/{row.installment.count}
-                          </Badge>
-                        ) : null}
-                      </span>
-                      <span
-                        className={`ff-txrow__amount ff-num ${
-                          isExpense ? "ff-amount--neg" : "ff-amount--pos"
-                        }`}
-                      >
-                        {isExpense ? "− " : "+ "}
-                        {formatBrl(finalAmountCents)}
-                      </span>
-                    </div>
-                    <div
-                      className="ff-txrow__meta"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {formatDayMonth(finalOccurredOn)}
-                      {isDuplicate ? (
-                        <Badge tone="negative">duplicata provável</Badge>
-                      ) : null}
-                      {isDbDuplicate ? (
-                        <Badge tone="neutral">já importada</Badge>
-                      ) : null}
-                      {aiSuggestion !== undefined &&
-                      aiCategoryName !== undefined ? (
-                        <button
-                          type="button"
-                          className="ff-btn ff-btn--ghost"
-                          style={{ padding: "3px 7px", fontSize: 11 }}
-                          onClick={() => applyAiSuggestion(index)}
-                          title={aiSuggestion.explanation}
-                        >
-                          usar {aiCategoryName} ·{" "}
-                          {providerLabel(aiSuggestion.provider)}
-                        </button>
-                      ) : null}
-                      {isInstallmentRow ? (
-                        <span className="ff-note">entra pelo parcelamento</span>
-                      ) : null}
-                    </div>
-                    {!isInstallmentRow ? (
-                      <details style={{ marginTop: 8 }}>
-                        <summary className="ff-note">editar lançamento</summary>
-                        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                          <Input
-                            value={finalDescription}
-                            maxLength={200}
-                            onChange={(event) =>
-                              setRowEdits((previous) => ({
-                                ...previous,
-                                [index]: {
-                                  ...previous[index],
-                                  description: event.target.value,
-                                },
-                              }))
-                            }
-                            aria-label={`Descrição linha ${row.sourceLine}`}
-                          />
-                          <Input
-                            type="date"
-                            value={finalOccurredOn}
-                            onChange={(event) =>
-                              setRowEdits((previous) => ({
-                                ...previous,
-                                [index]: {
-                                  ...previous[index],
-                                  occurredOn: event.target.value,
-                                },
-                              }))
-                            }
-                            aria-label={`Data linha ${row.sourceLine}`}
-                          />
-                          <Input
-                            type="number"
-                            min={0.01}
-                            step={0.01}
-                            value={(finalAmountCents / 100).toFixed(2)}
-                            onChange={(event) =>
-                              setRowEdits((previous) => ({
-                                ...previous,
-                                [index]: {
-                                  ...previous[index],
-                                  amountCents: Math.round(
-                                    Number(event.target.value) * 100,
-                                  ),
-                                },
-                              }))
-                            }
-                            aria-label={`Valor linha ${row.sourceLine}`}
-                          />
-                          <Select
-                            value={finalKind}
-                            onChange={(event) =>
-                              setRowEdits((previous) => ({
-                                ...previous,
-                                [index]: {
-                                  ...previous[index],
-                                  kind: event.target.value as
-                                    | "expense"
-                                    | "income",
-                                },
-                              }))
-                            }
-                            aria-label={`Tipo linha ${row.sourceLine}`}
-                          >
-                            <option value="expense">saída</option>
-                            <option value="income">entrada</option>
-                          </Select>
-                        </div>
-                      </details>
-                    ) : null}
-                    {!isInstallmentRow ? (
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          marginTop: 10,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <span style={{ flex: 1, minWidth: 130 }}>
-                          <Select
-                            className={`ff-select--compact${
-                              selectedCategory === "" ? " ff-select--warn" : ""
-                            }`}
-                            value={selectedCategory}
-                            onChange={(e) =>
-                              setRowCategory(index, e.target.value)
-                            }
-                            aria-label={`Categoria linha ${row.sourceLine}`}
-                          >
-                            <option value="">escolher categoria…</option>
-                            {(bundle?.categories ?? []).map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </Select>
-                        </span>
-                        <span style={{ flex: 1, minWidth: 130 }}>
-                          <Select
-                            className="ff-select--compact"
-                            value={mapping[index]?.subcategoryId ?? ""}
-                            onChange={(e) =>
-                              setRowSubcategory(index, e.target.value)
-                            }
-                            disabled={selectedCategory === ""}
-                            aria-label={`Subcategoria linha ${row.sourceLine}`}
-                          >
-                            <option value="">(nenhuma)</option>
-                            {subs.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </Select>
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                </Card>
-              );
-            })}
-          </RowCardList>
-
-          {/* Mobile twin of the footer (the table is hidden under 720px). */}
-          <div className="ff-mobile-foot" style={{ alignItems: "stretch" }}>
-            <div style={{ textAlign: "center" }}>{summaryLine}</div>
-            {destinationSelect}
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button variant="ghost" onClick={() => setBundle(null)}>
-                ‹ Voltar
+                Tentar novamente
               </Button>
-              <span style={{ flex: 1, display: "flex" }}>
-                <span style={{ flex: 1 }}>
-                  <Button
-                    variant="primary"
-                    className="ff-btn--block"
-                    onClick={onConfirm}
-                    disabled={confirmDisabled}
-                    loading={isPending}
-                    loadingText="Importando…"
-                  >
-                    {confirmLabel}
-                  </Button>
-                </span>
-              </span>
+              <details style={{ marginTop: 8 }}>
+                <summary className="ff-note">Detalhe técnico</summary>
+                <p className="ff-note" style={{ margin: "4px 0 0" }}>
+                  {targetError.message}
+                </p>
+              </details>
             </div>
-          </div>
+          ) : null}
+
+          <PreviewList
+            groups={visibleGroups}
+            rowsByIndex={rowViews}
+            totalGroupCount={orderedGroups.length}
+            categories={bundle?.categories ?? []}
+            subsByCategory={subsByCategory}
+            providerLabel={providerLabel}
+            comparison={comparison}
+            toolbar={{
+              filter,
+              onFilter: setFilter,
+              counts: filterCounts,
+              search,
+              onSearch: setSearch,
+              period: formatPeriod(preview.rows),
+              canUndo: mappingUndo !== null,
+              onUndo: undoBulkCategory,
+            }}
+            onToggleRow={toggleExcluded}
+            onToggleGroup={onToggleGroup}
+            onGroupCategory={onGroupCategory}
+            onGroupSubcategory={onGroupSubcategory}
+            onGroupRemember={onGroupRemember}
+            onRowCategory={setRowCategory}
+            onRowSubcategory={setRowSubcategory}
+            onDetachRow={onDetachRow}
+            onAttachRow={onAttachRow}
+            onRowEdit={onRowEdit}
+            onLearnSourceCategory={onLearnSourceCategory}
+            onApplyAiSuggestion={applyAiSuggestion}
+            footer={{
+              summary: summaryLine,
+              pendenciasCount: pendencias.length,
+              onOpenPendencias: () => setPendenciasOpen(true),
+              draftSavedAt,
+              onContinueLater,
+              destination: destinationSelect,
+              onBack: () => setBundle(null),
+              onConfirm: onGravar,
+              confirmLabel,
+              isPending,
+            }}
+          />
+          <ConfirmBlockedDialog
+            open={pendenciasOpen}
+            pendencias={pendencias}
+            selectedCount={selectedCount + selectedGroupCount}
+            onClose={() => setPendenciasOpen(false)}
+            onAction={onPendenciaAction}
+            onConfirmAnyway={() => {
+              setPendenciasOpen(false);
+              onConfirm();
+            }}
+          />
 
           {isMp && (bundle?.creditCards ?? []).length === 0 ? (
             <div className="ff-alert ff-alert--warn" style={{ marginTop: 16 }}>

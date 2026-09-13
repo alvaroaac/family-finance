@@ -85,6 +85,7 @@ export function reviewPreview(groupCount = 1): PreviewState {
     requestKey: claims.requestKey,
     previewToken: signImportPreviewToken(claims, SECRET),
     fileFingerprint: claims.fileFingerprint,
+    draftOwner: { userId: "user-1", householdId: "household-1" },
     normalizedFingerprint,
     parserVersion: claims.parserVersion,
     snapshot,

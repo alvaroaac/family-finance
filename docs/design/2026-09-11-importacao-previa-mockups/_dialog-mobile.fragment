@@ -1,0 +1,37 @@
+<div class="{{themeClass}}" style="width: 390px; height: 760px; box-sizing: border-box; background: var(--ff-bg); color: var(--ff-ink); position: relative; overflow: hidden;">
+  <div style="position: absolute; inset: 0; padding: 20px 16px; opacity: 0.35; filter: blur(1px);">
+    <div class="kicker" style="margin-bottom: 8px;">Nossa casa · Importação</div>
+    <div class="h1" style="font-size: 28px;">Dá uma olhada antes de gravar</div>
+    <div class="table" style="margin-top: 16px; height: 420px;"></div>
+  </div>
+  <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.45);"></div>
+
+  <div role="dialog" style="position: absolute; left: 0; right: 0; bottom: 0; background: var(--ff-surface); border: 1px solid var(--ff-border); border-bottom: none; border-radius: 16px 16px 0 0; box-shadow: 0 -12px 40px rgba(0,0,0,0.4); padding: 10px 16px 28px; display: flex; flex-direction: column; gap: 14px;">
+    <div style="width: 36px; height: 4px; border-radius: 999px; background: var(--ff-border); margin: 0 auto;"></div>
+    <div>
+      <div class="kicker" style="margin-bottom: 6px; color: var(--ff-warn);">Ainda não dá pra gravar</div>
+      <div class="serif" style="font-size: 20px; font-weight: 600; line-height: 1.2;">Faltam 3 coisas antes de gravar</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--ff-border); border-radius: 12px; background: var(--ff-surface-soft);">
+        <span class="badge badge-warn num" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">3</span>
+        <span style="flex: 1; min-width: 0;"><div class="name">Sem categoria</div><div class="sub">IFOOD ×2, 99APP ×1</div></span>
+        <button class="btn-ghost-sm" type="button">Ver</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--ff-border); border-radius: 12px; background: var(--ff-surface-soft);">
+        <span class="badge badge-warn" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">!</span>
+        <span style="flex: 1; min-width: 0;"><div class="name">Destino não escolhido</div><div class="sub">Conta ou cartão</div></span>
+        <button class="btn-ghost-sm" type="button">Escolher</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--ff-negative); border-radius: 12px; background: var(--ff-negative-wash);">
+        <span class="badge badge-neg" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">×</span>
+        <span style="flex: 1; min-width: 0;"><div class="name">Comparação falhou</div><div class="sub">Não sei o que já existe</div></span>
+        <button class="btn-ghost-sm" type="button">De novo</button>
+      </div>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-ghost" type="button">Fechar</button>
+      <button class="btn-primary" type="button" style="flex: 1;">Resolver a primeira</button>
+    </div>
+  </div>
+</div>
