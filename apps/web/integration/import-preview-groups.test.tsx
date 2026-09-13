@@ -233,21 +233,41 @@ it("lets one row leave the group, keep its own category, and rejoin later", asyn
 });
 
 it("shows each row's own category when the group is mixed", async () => {
+  const selected = (categoryId: string) => ({
+    status: "selected",
+    selection: { categoryId, subcategoryId: undefined, source: "memory" },
+    candidates: [],
+  });
+  const base = await mocks.preview.getMockImplementation()!();
+  mocks.preview.mockResolvedValueOnce({
+    ...base,
+    categorizationPlan: {
+      rows: [
+        selected("food"),
+        selected("transport"),
+        { status: "unresolved", selection: null, candidates: [] },
+      ],
+      aiItems: [],
+    },
+  });
   await openPreview();
   await chooseAccount();
-  await select("Categoria do grupo IFOOD *RESTAURANTE", "food");
+  expect(container.textContent).toContain("misto");
   await clickLabel("Ver lançamentos de IFOOD *RESTAURANTE");
-  await click("mudar só esta");
-  await select("Categoria linha 1", "transport");
-  await click("segue o grupo");
-  expect(container.textContent).toContain("segue o grupo");
-  expect(container.textContent).not.toContain("misto");
+  const follows = [...container.querySelectorAll(".ff-preview__follows")].map(
+    (el) => el.textContent ?? "",
+  );
+  expect(follows[0]).toContain("Alimentação");
+  expect(follows[1]).toContain("Transporte");
+  expect(follows.join("")).not.toContain("sem categoria");
 
-  // A second detach that keeps its own value, then leaves siblings disagreeing.
-  await click("mudar só esta");
-  await select("Categoria linha 1", "transport");
-  expect(container.textContent).toContain("Transporte");
-  expect(container.textContent).toContain("Alimentação");
+  await select("Categoria do grupo IFOOD *RESTAURANTE", "food");
+  expect(container.textContent).not.toContain("misto");
+  expect(
+    [...container.querySelectorAll(".ff-preview__follows")].every((el) =>
+      el.textContent?.includes("segue o grupo"),
+    ),
+  ).toBe(true);
 });
 
 it("keeps Gravar enabled and explains what is missing in a dialog", async () => {

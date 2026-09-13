@@ -390,6 +390,7 @@ export default function ImportsPage() {
     setGroupOverrides({});
     setGroupMatchesByIndex({});
     setGroupMatchDecisions({});
+    reviewedGroupIndices.current = new Set();
     const edits: Record<number, DraftGroupEdit> = {};
     (result.mp?.groups ?? []).forEach((g, i) => {
       edits[i] = {
@@ -441,20 +442,26 @@ export default function ImportsPage() {
     });
     setLearning(draft.learning);
     setRowEdits(draft.rowEdits);
-    // Matches against existing installment groups are recomputed on resolve.
+    // Matches against existing installment groups are recomputed on resolve,
+    // so a group that was matched goes back to needing review: its skip and
+    // match-derived description are not the user's own decisions.
     setGroupEdits(
       Object.fromEntries(
         Object.entries(edits).map(([key, edit]) => {
           const saved = draft.groupEdits[Number(key)];
+          if (saved === undefined) return [key, edit];
+          const matched = saved.existingGroupId !== undefined;
           return [
             key,
-            saved === undefined
-              ? edit
-              : {
-                  ...saved,
-                  existingGroupId: undefined,
-                  existingGroupUpdatedAt: undefined,
-                },
+            {
+              ...saved,
+              existingGroupId: undefined,
+              existingGroupUpdatedAt: undefined,
+              skip: matched ? edit.skip : saved.skip,
+              purchaseDescription: saved.purchaseDescriptionEdited
+                ? saved.purchaseDescription
+                : undefined,
+            },
           ];
         }),
       ),
