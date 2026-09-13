@@ -1,0 +1,12 @@
+  <header>
+    <div class="kicker">Nossa casa · Importação</div>
+    <h1 class="h1">Dá uma olhada antes de gravar</h1>
+    <p class="lead">Nada entra sem a sua revisão — desmarca o que não for da casa.</p>
+  </header>
+  <div class="steps">
+    <div class="step"><span class="dot dot-done">✓</span><span class="step-label">Enviar arquivo</span></div>
+    <div class="steps-line steps-line-done"></div>
+    <div class="step"><span class="dot dot-cur">2</span><span class="step-label" style="color: var(--ff-ink);">Revisar</span></div>
+    <div class="steps-line"></div>
+    <div class="step"><span class="dot">3</span><span class="step-label">Confirmar</span></div>
+  </div>
