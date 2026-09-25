@@ -18,6 +18,7 @@ import {
   summarizeCardPressure,
   mapUpcomingInstallment,
   mapDashboardTransaction,
+  mapRecentExpense,
   needsReview,
   transactionUpdateFromPatch,
   updateInvestmentBucketBalance,
@@ -501,6 +502,34 @@ describe("mapDashboardTransaction", () => {
         credit_card_id: null,
       }),
     ).toMatchObject({ hasCategory: true, onCard: false });
+  });
+});
+
+describe("mapRecentExpense", () => {
+  it("maps all fields needed by the bot list", () => {
+    expect(
+      mapRecentExpense({
+        id: "tx-1",
+        amount_cents: 4590,
+        occurred_on: "2026-09-02",
+        description: "Farmácia",
+        category_id: "cat-health",
+        subcategory_id: "sub-medicine",
+        account_id: null,
+        credit_card_id: "card-nubank",
+        responsible_user_id: "user-karol",
+      }),
+    ).toEqual({
+      id: "tx-1",
+      amountCents: 4590,
+      occurredOn: "2026-09-02",
+      description: "Farmácia",
+      categoryId: "cat-health",
+      subcategoryId: "sub-medicine",
+      accountId: null,
+      creditCardId: "card-nubank",
+      responsibleUserId: "user-karol",
+    });
   });
 });
 
