@@ -287,6 +287,10 @@ export function buildCodexExecArgs(request: CodexRunRequest): string[] {
     "--skip-git-repo-check",
     "-c",
     'web_search="disabled"',
+    // Import categorization is short structured output; low effort keeps it
+    // inside the 12 s budget.
+    "-c",
+    'model_reasoning_effort="low"',
     ...[
       "shell_tool",
       "unified_exec",

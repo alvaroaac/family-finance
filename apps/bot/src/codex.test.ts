@@ -158,6 +158,7 @@ describe("Unified structured classifier", () => {
       expect(argv[index - 1]).toBe("--disable");
     }
     expect(argv).toContain('web_search="disabled"');
+    expect(argv).toContain('model_reasoning_effort="low"');
   });
   it("makes one schema-constrained call with parser/card/catalog context", async () => {
     const complete = vi.fn();

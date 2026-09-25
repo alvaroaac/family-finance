@@ -519,7 +519,10 @@ second OpenAI tier adds no protection against an OpenAI outage — Haiku covers 
 luna misreads in production. Not re-evaluated on GPT-6: the post-deploy p95 check below
 confirms the timeout. Import categorization: `CODEX_MODEL` default `gpt-6-sol` and the image
 pins `@openai/codex@0.156.1` (0.144.0 predates GPT-6); the bot's exact exec args ran clean on
-0.156.1 against `gpt-6-sol` (5.2 s, valid structured output).
+0.156.1 against `gpt-6-sol` (5.2 s, valid structured output). Import exec args add
+`-c model_reasoning_effort="low"` (accepted under `--strict-config`; 4 sample rows correct at
+4.3–4.9 s vs 5.1–7.1 s default). The message classifier stays at `none`: `low` on luna fixed
+2/20 NULL reads but pushed p95 to 4.0 s, at the 4 s timeout.
 
 **Deploy**: on the VPS `.env`, set `CODEX_MODEL=gpt-6-sol` (or remove the line to take
 the default) — the deploy README had it pinned to `gpt-5.5`; drop any `OPENAI_FALLBACK_MODEL`
