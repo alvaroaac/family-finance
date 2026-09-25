@@ -145,7 +145,7 @@ On the VPS, with the repo checked out and `deploy/bot/.env` filled from
 the service-role key lives outside the Supabase stack):
 
 Telegram message reading runs on the OpenAI API (`OPENAI_API_KEY`; defaults
-`gpt-5.6-terra` → `gpt-5.6-luna`, then Claude) and needs no extra setup.
+`gpt-6-sol` → `gpt-6-luna`, then Claude) and needs no extra setup.
 
 The image pins `@openai/codex@0.144.0` for **import categorization only**. Before
 enabling that Codex primary, authenticate once into its named volume (never copy

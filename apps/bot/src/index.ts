@@ -120,12 +120,13 @@ import { TOKENS } from "./keyboards.js";
 /**
  * Message classifier chain: OpenAI primary → OpenAI cheap fallback → Anthropic
  * last resort, every tier the same unified structured prompt. Timeouts come
- * from the 2026-09 eval (thoughts/notes/PROGRESS.md): terra p95 ≈ 3.5 s and
- * luna p95 ≈ 2.9 s with reasoning off, Haiku ≈ 3.3 s. Effort `none` scored the
- * same as `low` on that set and is faster, so it is the default for both tiers.
+ * from the 2026-09 eval of the same tiers one generation back
+ * (thoughts/notes/PROGRESS.md): gpt-5.6-terra p95 ≈ 3.5 s and gpt-5.6-luna
+ * p95 ≈ 2.9 s with reasoning off, Haiku ≈ 3.3 s. Effort `none` scored the same
+ * as `low` on that set and is faster, so it is the default for both tiers.
  */
-const CLASSIFIER_PRIMARY_MODEL = "gpt-5.6-terra";
-const CLASSIFIER_FALLBACK_MODEL = "gpt-5.6-luna";
+const CLASSIFIER_PRIMARY_MODEL = "gpt-6-sol";
+const CLASSIFIER_FALLBACK_MODEL = "gpt-6-luna";
 const CLASSIFIER_REASONING_EFFORT = "none";
 const CLASSIFIER_PRIMARY_TIMEOUT_MS = 6_000;
 const CLASSIFIER_FALLBACK_TIMEOUT_MS = 4_000;

@@ -213,7 +213,7 @@ describe("createOpenAiCompletionClient", () => {
     });
     await createOpenAiCompletionClient({
       apiKey: "sk-test",
-      model: "gpt-5.6-terra",
+      model: "gpt-6-sol",
       outputSchema: { type: "object" },
       reasoningEffort: "none",
       logCall: vi.fn(),

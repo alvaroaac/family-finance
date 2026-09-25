@@ -511,14 +511,19 @@ fallback, drop Codex from message reading, effort `none` on both.
   classifier (same semantic-validity cases, plus a three-tier chain-order test).
 - Docs: `deploy/bot/.env.example`, root `.env.example`, `deploy/README.md` §5.
 
+**2026-09-25 — GPT-6 swap**: defaults moved to the same tiers one generation up —
+`gpt-6-sol` (balanced; replaces terra, $2/$10 vs $2/$12 per 1M) primary, `gpt-6-luna`
+(efficient) fallback, both still effort `none`. Not re-evaluated: timeouts carry over from
+the 5.6 eval above, so the post-deploy p95 check below is what confirms them.
+
 **Deploy**: VPS `.env` needs no change (`OPENAI_API_KEY` already set; no `OPENAI_MODEL`
 override). rsync + `docker compose build && up -d` per the usual recipe, then watch
 `docker logs` for `"label":"message_classifier"` with `outcome: "ok"` and p95 < 6 s.
 
 ## Current state
 
-As of 2026-09-08, the bot message classifier chain is OpenAI `gpt-5.6-terra` →
-`gpt-5.6-luna` → Claude Haiku with reasoning effort `none` (built + tested locally; deploy
+As of 2026-09-25, the bot message classifier chain is OpenAI `gpt-6-sol` →
+`gpt-6-luna` → Claude Haiku with reasoning effort `none` (built + tested locally; deploy
 pending Alvaro's go). Codex CLI remains only for import categorization.
 
 As of 2026-07-25, production runs `main` @ `fd7fa8b`: web on Vercel
