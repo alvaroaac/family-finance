@@ -418,7 +418,113 @@ applied, 0012 grants effective, bot container running merged code (obligations +
 
 ---
 
+## 2026-07-25 — Deployed `main` (`fd7fa8b`) to production: migration 0017 + bot + web
+
+Prod was 12 days stale: web on `b3d9609`, bot container the same vintage. Shipped the
+obligation payment modal / actual amount, the loading-skeleton UI pass, and the bot's
+Codex context routing + bounded classifier chain.
+
+### The blocker: migration 0017 was never applied
+Verified against the VPS DB, not git: `0015` ✅ (`transactions.bill_month`), `0016` ✅
+(`import_ai_usage`), **`0017` ❌** — `materialize_obligation_payment` still had its 3-arg
+signature. The new web code sends `target_amount_cents`, and **PostgREST resolves overloads
+by argument name**, so a 4-arg call against a 3-arg-only DB returns `PGRST202`. Deploying web
+first would have broken "marcar como pago" in prod. Correct order is therefore
+**migration → bot → web**.
+
+**There is no migration ledger.** `supabase_migrations.schema_migrations` does not exist on
+the VPS — migrations were applied by raw psql, so the CLI never recorded them. The only way to
+know what's applied is to probe for the schema objects each migration creates. Budget for this
+on every deploy; git history tells you nothing about prod.
+
+Second trap: after `create or replace function`, **PostgREST caches the schema**. Without
+`notify pgrst, 'reload schema'` the new signature stays invisible and you get `PGRST202`
+anyway — the migration looks applied and the app still breaks.
+
+### Sequence run
+1. `psql -f 0017` on the VPS → 4-arg overload created, grants `authenticated`+`service_role`,
+   no `anon`. Additive: no drop, no data touched. The old 3-arg overload survives (0017 has no
+   `drop`) — logged as tech debt.
+2. `notify pgrst, 'reload schema'` → 20 functions reloaded.
+3. rsync → `docker compose build && up -d` → `/health` ok, clean logs, Telegram webhook
+   0 pending / no `last_error_message`.
+4. `vercel --prod` from repo root → `dpl_BCypfASEXzA5QwdpfUgXbxaQHqUH`, aliased
+   `casa.alvaroekarol.com.br`. `/login` 200, `/obligations` 307 → `/login`.
+
+Verified the fix end-to-end by calling the RPC through PostgREST with a nonexistent obligation
+UUID: got `22023 obligation ... not found`, i.e. it resolves and reaches the function body
+(which raises before any insert) rather than `PGRST202`.
+
+### Gotchas worth keeping
+- **Local `node_modules` was stale** — `apps/bot` had no `typescript`, so `pnpm typecheck`
+  died with `MODULE_NOT_FOUND` and looked like a code failure. `pnpm install` fixed it. Run
+  install before trusting a pre-deploy gate.
+- `deploy/bot/.env` stayed untouched (excluded from rsync) — confirmed by mtime + mode 600
+  after the sync, not assumed.
+- `CODEX_ENABLED=true` and `OPENAI_API_KEY` are both set on the VPS, so the **OpenAI API
+  fallback classifier tier is already live at the `gpt-5-nano` default**. `OPENAI_MODEL` only
+  chooses the model; it does not enable the tier. Codex itself uses `CODEX_MODEL=gpt-5.5` via
+  the CLI (subscription auth), a different billing path entirely.
+
+### `supabase-storage` / `supabase-studio` "unhealthy" — investigated, benign
+Both have failed their healthcheck since first start (~441k failures × 5s ≈ 25 days) while
+serving 200 the whole time. Both healthchecks probe loopback; neither service listens there.
+Details + why we're not fixing it: `thoughts/tech-debt.md` (2026-07-25).
+
+Not done: the human smoke test (runbook step 9 — Telegram lançamento text+voice, and a
+"marcar como pago" with a custom amount, the path 0017 unblocked).
+
+---
+
+## 2026-09-08 — "Leitura inteligente" failing: root cause + classifier chain moved off Codex
+
+**Symptom** (reported by Alvaro): every message got the `AI_UNAVAILABLE_NOTICE` prefix.
+Global, not per-profile.
+
+**Root cause** (VPS logs + timing runs inside the container): the Codex CLI primary
+(`gpt-5.5`, 11.9k-token system prompt) has a ~5 s floor and regularly crossed its 12 s
+timeout; the `gpt-5-nano` OpenAI fallback always timed out at 8 s because the request set
+no `reasoning.effort` (default reasoning ≈ 640–1024 hidden tokens); the chain deadline
+(12 s + 8 s) then fired before Anthropic — which answered in ~3.3 s — could run.
+
+**Model eval** (14 real-shaped prompts, scratch harness, `reasoning.effort` varied): terra
+`none` 14/14 intent across 3 runs, 17/18 fields, 8/8 category, p50 2.5 s / p95 3.5 s;
+terra `low` identical scores, same or slower; luna `none` 13–14/14, 18/18 fields,
+p50 2.2 s / p95 2.9 s; gpt-5.5 14/14 but p50 2.8 s; sol p95 10.5 s; 5.4-mini unstable;
+5.4-nano 9/14. `minimal` returns HTTP 400 on 5.5/5.6. Effort `none` = 0 reasoning
+tokens; `low` spent 30–100 with no accuracy gain. Decision (Alvaro): terra primary, luna
+fallback, drop Codex from message reading, effort `none` on both.
+
+**Changes** (`apps/bot`, `packages/config`, deploy docs):
+- `providers.ts`: `createOpenAiCompletionClient` gains `reasoningEffort` →
+  `reasoning: { effort }` in the Responses body (omitted when unset; import fallback
+  unchanged). Test added.
+- `index.ts`: chain is now `gpt-5.6-terra` (6 s, effort none) → `gpt-5.6-luna` (4 s,
+  effort none) → Claude Haiku (5 s); deadline = 15 s (sum of tiers). Enabled by
+  `OPENAI_API_KEY` alone; `CODEX_ENABLED` no longer touches message reading (still gates
+  import categorization in `server.ts`). Overrides: `OPENAI_MODEL`, new
+  `OPENAI_FALLBACK_MODEL`. Telemetry hops: `openai → openai_fallback → anthropic`;
+  ai_call label `message_classifier` (was `codex_fallback`).
+- `codex.ts`: removed dead `createCodexMessageClassifier` and the deprecated
+  `createUnifiedAnthropicMessageClassifier` alias; `runCodexStructured` /
+  `createNodeCodexRunner` stay for imports. `codex.test.ts` rewritten against the unified
+  classifier (same semantic-validity cases, plus a three-tier chain-order test).
+- Docs: `deploy/bot/.env.example`, root `.env.example`, `deploy/README.md` §5.
+
+**Deploy**: VPS `.env` needs no change (`OPENAI_API_KEY` already set; no `OPENAI_MODEL`
+override). rsync + `docker compose build && up -d` per the usual recipe, then watch
+`docker logs` for `"label":"message_classifier"` with `outcome: "ok"` and p95 < 6 s.
+
 ## Current state
+
+As of 2026-09-08, the bot message classifier chain is OpenAI `gpt-5.6-terra` →
+`gpt-5.6-luna` → Claude Haiku with reasoning effort `none` (built + tested locally; deploy
+pending Alvaro's go). Codex CLI remains only for import categorization.
+
+As of 2026-07-25, production runs `main` @ `fd7fa8b`: web on Vercel
+(`casa.alvaroekarol.com.br`), bot container on the VPS, self-hosted Supabase with migrations
+through **0017** applied. Local gates at deploy time: typecheck 12/12, 506 tests passing
+(bot 348, web 158).
 
 As of 2026-07-09, `origin/main` contains the v1.0 web application and production bot,
 recurring obligations, the cozy UI, persistent bot conversations, member identity,
@@ -436,8 +542,10 @@ with Codex reviewing the prompt and dataset.
 
 Card-installment creation and card-bill settlement are not part of `main` at this snapshot;
 they remain a separate feature integration. When that work lands, migration `0015` must be
-applied before the updated bot is restarted. Production deployment state should always be
-verified independently of Git history before a redeploy.
+applied before the updated bot is restarted. (Superseded: as of 2026-07-25 that work is in
+`main` and `0015` is applied in prod.) Production deployment state should always be
+verified independently of Git history before a redeploy — there is no migration ledger on the
+VPS, so probe for schema objects.
 
 The next product-design input is
 `thoughts/product/category-taxonomy-and-planning-purposes.md`: planning purposes are

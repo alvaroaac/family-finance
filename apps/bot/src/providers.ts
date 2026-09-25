@@ -144,16 +144,25 @@ export function createAnthropicCompletionClient(args: {
   };
 }
 
+export type OpenAiReasoningEffort = "none" | "low" | "medium" | "high";
+
 /**
- * OpenAI Responses API completion client. The paid import fallback uses JSON
- * schema mode and still validates the returned object locally before accepting
- * any financial suggestion. `store:false` disables Responses application-state
- * storage; provider retention remains governed by the account's data controls.
+ * OpenAI Responses API completion client, shared by the message classifier and
+ * the paid import fallback. Both use JSON schema mode and still validate the
+ * returned object locally before accepting any financial suggestion.
+ * `store:false` disables Responses application-state storage; provider
+ * retention remains governed by the account's data controls.
  */
 export function createOpenAiCompletionClient(args: {
   apiKey: string;
   model: string;
   outputSchema: Record<string, unknown>;
+  /**
+   * Responses `reasoning.effort`. Omitted = provider default (a few hundred
+   * hidden reasoning tokens on GPT-5.x, which dominates latency for short
+   * extraction prompts). `"none"` skips reasoning entirely.
+   */
+  reasoningEffort?: OpenAiReasoningEffort;
   timeoutMs?: number;
   logCall?: AiCallLogger;
 }): AiCompletionClient {
@@ -180,6 +189,9 @@ export function createOpenAiCompletionClient(args: {
               input: prompt,
               max_output_tokens: 1600,
               store: false,
+              ...(args.reasoningEffort !== undefined
+                ? { reasoning: { effort: args.reasoningEffort } }
+                : {}),
               text: {
                 format: {
                   type: "json_schema",

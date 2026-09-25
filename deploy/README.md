@@ -144,9 +144,12 @@ On the VPS, with the repo checked out and `deploy/bot/.env` filled from
 [`bot/.env.example`](./bot/.env.example) (chmod 600 — this is the ONLY place
 the service-role key lives outside the Supabase stack):
 
-The image pins `@openai/codex@0.144.0`. Before enabling the Codex primary,
-authenticate once into its named volume (never copy auth files into the repo or
-image):
+Telegram message reading runs on the OpenAI API (`OPENAI_API_KEY`; defaults
+`gpt-5.6-terra` → `gpt-5.6-luna`, then Claude) and needs no extra setup.
+
+The image pins `@openai/codex@0.144.0` for **import categorization only**. Before
+enabling that Codex primary, authenticate once into its named volume (never copy
+auth files into the repo or image):
 
 ```bash
 cd deploy/bot
@@ -168,7 +171,7 @@ IMPORT_PAID_FALLBACK_MAX_ITEMS=10
 OPENAI_API_KEY=<openai-api-key>
 ```
 
-Paid fallback has an 8-second request timeout and runs only for operational
+Import paid fallback has an 8-second request timeout and runs only for operational
 Codex failures or omitted/invalid items; explicit Codex abstentions stay manual.
 The quota is capped per preview and at 25 items per household/day. OpenAI is the
 evaluated recommendation; Anthropic remains available only when explicitly
@@ -176,8 +179,8 @@ configured with `provider=anthropic`, an exact model, and `ANTHROPIC_API_KEY`.
 The `codex-auth` volume
 persists device credentials across container replacement. This CLI login is
 operationally more fragile than a service API: monitor the structured Codex
-fallback telemetry and repeat device login if credentials expire. Whisper is
-unchanged.
+fallback telemetry and repeat device login if credentials expire. Message
+reading and Whisper do not depend on it.
 The CLI still holds a reusable device credential in-process; the deny list,
 event audit, non-root user, read-only filesystem, empty cwd, and secret-free
 child environment reduce exposure but do not eliminate credential risk. A

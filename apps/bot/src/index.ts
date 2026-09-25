@@ -104,7 +104,6 @@ import {
 } from "./interpret.js";
 import {
   CODEX_OUTPUT_SCHEMA,
-  createCodexMessageClassifier,
   createUnifiedCompletionMessageClassifier,
   withClassifierDeadline,
   withClassifierFallback,
@@ -119,11 +118,18 @@ import {
 import { TOKENS } from "./keyboards.js";
 
 /**
- * Time every paid classifier tier SHARES once the primary gives up. It is a
- * single slot, not one per provider, so the fallback chain cannot grow the
- * webhook's worst-case latency as tiers are added.
+ * Message classifier chain: OpenAI primary → OpenAI cheap fallback → Anthropic
+ * last resort, every tier the same unified structured prompt. Timeouts come
+ * from the 2026-09 eval (thoughts/notes/PROGRESS.md): terra p95 ≈ 3.5 s and
+ * luna p95 ≈ 2.9 s with reasoning off, Haiku ≈ 3.3 s. Effort `none` scored the
+ * same as `low` on that set and is faster, so it is the default for both tiers.
  */
-const CLASSIFIER_FALLBACK_BUDGET_MS = 8_000;
+const CLASSIFIER_PRIMARY_MODEL = "gpt-5.6-terra";
+const CLASSIFIER_FALLBACK_MODEL = "gpt-5.6-luna";
+const CLASSIFIER_REASONING_EFFORT = "none";
+const CLASSIFIER_PRIMARY_TIMEOUT_MS = 6_000;
+const CLASSIFIER_FALLBACK_TIMEOUT_MS = 4_000;
+const CLASSIFIER_LAST_RESORT_TIMEOUT_MS = 5_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -929,47 +935,48 @@ export async function startBot(): Promise<{
     });
   }
 
-  // AI features — only when an Anthropic key is configured. ONE completion
-  // client backs both the categorization fallback and the text interpretation
-  // fallback (spec §3.4); no key = both features simply absent.
+  // AI features. With an OpenAI key the unified classifier chain reads every
+  // message (one structured call handles intent, fields, and category), so the
+  // separate categorizer/interpreter stay off. Without one, the legacy Anthropic
+  // path (spec §3.4) backs categorization + interpretation; no keys = no AI.
+  const unifiedEnabled = env.OPENAI_API_KEY !== undefined;
   const llm = getLlmConfig();
   const completionClient =
     llm.isConfigured && llm.apiKey !== undefined
       ? createAnthropicCompletionClient({
           apiKey: llm.apiKey,
           model: llm.model,
-          timeoutMs:
-            env.CODEX_ENABLED === "true"
-              ? CLASSIFIER_FALLBACK_BUDGET_MS
-              : undefined,
+          timeoutMs: unifiedEnabled
+            ? CLASSIFIER_LAST_RESORT_TIMEOUT_MS
+            : undefined,
         })
       : undefined;
-  const codexEnabled = env.CODEX_ENABLED === "true";
   const ai: AiCategorizer | undefined =
     completionClient !== undefined
       ? createAiCategorizer(completionClient)
       : undefined;
   const interpretText: TextInterpreter | undefined =
-    completionClient !== undefined && !codexEnabled
+    completionClient !== undefined && !unifiedEnabled
       ? createTextInterpreter(completionClient)
       : undefined;
   const anthropicClassifier: MessageClassifier | undefined =
     completionClient !== undefined
-      ? codexEnabled
+      ? unifiedEnabled
         ? createUnifiedCompletionMessageClassifier(completionClient, {
             provider: "anthropic",
             telemetry: (event) => console.log(JSON.stringify(event)),
           })
         : createMessageClassifier(completionClient)
       : undefined;
-  const openAiClassifier: MessageClassifier | undefined =
-    codexEnabled && env.OPENAI_API_KEY !== undefined
+  const openAiClassifier = (model: string, timeoutMs: number) =>
+    env.OPENAI_API_KEY !== undefined
       ? createUnifiedCompletionMessageClassifier(
           createOpenAiCompletionClient({
             apiKey: env.OPENAI_API_KEY,
-            model: env.OPENAI_MODEL ?? "gpt-5-nano",
+            model,
             outputSchema: CODEX_OUTPUT_SCHEMA,
-            timeoutMs: CLASSIFIER_FALLBACK_BUDGET_MS,
+            reasoningEffort: CLASSIFIER_REASONING_EFFORT,
+            timeoutMs,
           }),
           {
             provider: "openai",
@@ -977,39 +984,31 @@ export async function startBot(): Promise<{
           },
         )
       : undefined;
-  const codexClassifier: MessageClassifier | undefined = codexEnabled
-    ? createCodexMessageClassifier({
-        enabled: true,
-        model: env.CODEX_MODEL ?? "gpt-5.5",
-        timeoutMs: env.CODEX_TIMEOUT_MS ?? 12000,
-        codexHome: "/var/lib/family-finance-codex",
-        telemetry: (event) => console.log(JSON.stringify(event)),
-      })
-    : undefined;
-  const paidFallbackClassifier = withClassifierFallback(
-    openAiClassifier,
-    anthropicClassifier,
-    undefined,
-    {
-      from: "openai",
-      to: "anthropic",
-    },
+  const primaryClassifier = openAiClassifier(
+    env.OPENAI_MODEL ?? CLASSIFIER_PRIMARY_MODEL,
+    CLASSIFIER_PRIMARY_TIMEOUT_MS,
+  );
+  const fallbackClassifier = openAiClassifier(
+    env.OPENAI_FALLBACK_MODEL ?? CLASSIFIER_FALLBACK_MODEL,
+    CLASSIFIER_FALLBACK_TIMEOUT_MS,
   );
   const classifierChain = withClassifierFallback(
-    codexClassifier,
-    paidFallbackClassifier,
+    primaryClassifier,
+    withClassifierFallback(fallbackClassifier, anthropicClassifier, undefined, {
+      from: "openai_fallback",
+      to: "anthropic",
+    }),
     undefined,
-    {
-      from: "codex",
-      to: openAiClassifier !== undefined ? "openai" : "anthropic",
-    },
+    { from: "openai", to: "openai_fallback" },
   );
-  // The chain is awaited on the webhook hot path, so it gets ONE budget: the
-  // primary's timeout plus a single fallback slot shared by every paid tier.
-  // Adding another tier can no longer stretch how long a message waits.
+  // The chain is awaited on the webhook hot path, so its budget is exactly the
+  // sum of the per-tier timeouts: a tier that hangs cannot steal the next one's
+  // slot, and nothing waits longer than the tiers themselves allow.
   const classifyMessage = withClassifierDeadline(
     classifierChain,
-    (env.CODEX_TIMEOUT_MS ?? 12000) + CLASSIFIER_FALLBACK_BUDGET_MS,
+    CLASSIFIER_PRIMARY_TIMEOUT_MS +
+      CLASSIFIER_FALLBACK_TIMEOUT_MS +
+      CLASSIFIER_LAST_RESORT_TIMEOUT_MS,
   );
 
   // Voice transcription — only when both a bot token (to fetch the file) and a
@@ -1106,9 +1105,8 @@ export {
   type MessageClassifier,
 } from "./interpret.js";
 export {
-  createCodexMessageClassifier,
   createNodeCodexRunner,
-  createUnifiedAnthropicMessageClassifier,
+  createUnifiedCompletionMessageClassifier,
   withClassifierFallback,
   buildCodexPrompt,
   CODEX_OUTPUT_SCHEMA,

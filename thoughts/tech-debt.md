@@ -645,6 +645,67 @@ schema-fingerprint gate, canonical `0020`/`0021` files, and repeat-application
 test are implemented locally. Production remains unledgered until the explicit
 one-time baseline is approved and run.
 
+## 2026-07-25: supabase-storage and supabase-studio permanently report "unhealthy"
+
+**Area:** VPS `/opt/supabase/docker-compose.yml` (upstream-pinned)
+
+**Impact:** Both containers have failed their healthcheck since first start
+(~441k failures × 5s ≈ 25 days) while serving 200 the entire time. Both probe
+loopback; neither service listens there:
+
+- **storage** — healthcheck `wget http://localhost:5000/status`. `localhost`
+  resolves to `::1` first; the server binds IPv4 only (`/proc/net/tcp` shows
+  `0.0.0.0:5000`, no `:::5000`). Serves 200 on `172.16.2.14:5000` and through
+  Kong at `/storage/v1/version`.
+- **studio** — healthcheck `node http.get('http://localhost:3000/api/profile')`.
+  Next.js standalone binds the **container IP only** (`/proc/net/tcp` entry
+  `0C0210AC:0BB8` = `172.16.2.12:3000`); nothing on loopback, so `127.0.0.1`
+  refuses. Serves 200 on `172.16.2.12:3000`.
+
+The real cost is signal loss: a genuine storage or studio outage would look
+identical to today's noise. No functional impact — the app never touches
+Supabase Storage (grep across `apps/web` and `apps/bot` is empty), and nothing
+in the compose file gates on either being healthy (both only wait on
+`analytics` themselves), so there is no restart deadlock.
+
+**Current workaround:** none needed — ignore the `unhealthy` flag in
+`docker ps` for these two. Investigated and deliberately left alone; this entry
+exists so the next agent doesn't re-derive it.
+
+**Revisit trigger:** If the app starts using Supabase Storage, or if any
+health-based alerting/monitoring gets wired up. Fix is a
+`docker-compose.override.yml` beside the pinned upstream file (never edit the
+pin): point storage's healthcheck at `127.0.0.1:5000`, and set
+`HOSTNAME=0.0.0.0` on studio so Next binds loopback too. Needs a recreate of
+both containers.
+
+**Status:** open (won't-fix for now)
+
+## 2026-07-25: materialize_obligation_payment has a leftover 3-arg overload
+
+**Area:** `supabase/migrations/0017_obligation_actual_amount.sql`, prod DB
+
+**Impact:** `0017` adds the 4-arg signature via `create or replace function`
+but never drops the old `(uuid, text, date)` one, so prod now carries both
+overloads. Harmless today — PostgREST resolves by argument name and the current
+web code always sends `target_amount_cents` — but it is a second, silently
+callable code path that skips the actual-amount logic and falls back to the
+obligation's configured amount. Two functions to keep in sync on the next
+change to this RPC.
+
+**Current workaround:** n/a — the live callers all use the 4-arg form.
+
+**Revisit trigger:** Next migration that touches
+`materialize_obligation_payment`. Confirm no caller sends 3 args, then
+`drop function materialize_obligation_payment(uuid, text, date)` in that
+migration.
+
+**Status:** resolved (2026-08-17) — added
+`supabase/migrations/0020_drop_legacy_obligation_payment_overload.sql`, which
+drops only the old 3-arg `materialize_obligation_payment(uuid, text, date)`
+overload. The current 4-arg RPC from `0017` remains the single callable path for
+obligation payments with actual-amount support.
+
 ## Entry Format
 
 ```md

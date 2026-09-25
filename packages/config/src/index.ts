@@ -45,7 +45,10 @@ export const envSchema = z.object({
   CODEX_ENABLED: z.enum(["true", "false"]).optional(),
   CODEX_MODEL: z.string().min(1).optional(),
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).optional(),
+  // Bot message classifier chain (OpenAI primary → OpenAI fallback → Claude);
+  // defaults live in apps/bot. OPENAI_API_KEY above is what enables the chain.
   OPENAI_MODEL: optionalNonEmptyString,
+  OPENAI_FALLBACK_MODEL: optionalNonEmptyString,
   // Import previews are signed by the web app; AI category batches are sent to
   // the bot VPS over a separately authenticated internal endpoint.
   IMPORT_PREVIEW_SIGNING_SECRET: z.string().min(32).optional(),

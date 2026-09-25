@@ -84,8 +84,8 @@ export function needsAmountMessage(description: string): string {
 }
 
 /**
- * Prefix shown when every AI tier failed (Codex error/timeout, then the paid
- * fallbacks) and the deterministic parser filled the draft alone. The entry
+ * Prefix shown when every AI tier failed (OpenAI primary and fallback, then
+ * Claude) and the deterministic parser filled the draft alone. The entry
  * still works — the reader just needs to know it was read the simple way.
  */
 export const AI_UNAVAILABLE_NOTICE =
