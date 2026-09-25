@@ -22,8 +22,8 @@ RUN corepack disable && npm install --global pnpm@9.15.4
 
 # Production text interpreter. Pin exactly; auth is mounted at runtime and is
 # never baked into the image.
-RUN npm install --global @openai/codex@0.144.0
-RUN codex --version | grep -F "codex-cli 0.144.0"
+RUN npm install --global @openai/codex@0.156.1
+RUN codex --version | grep -F "codex-cli 0.156.1"
 
 # Workspace manifests first so dependency layers cache across source edits.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./

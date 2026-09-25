@@ -511,19 +511,29 @@ fallback, drop Codex from message reading, effort `none` on both.
   classifier (same semantic-validity cases, plus a three-tier chain-order test).
 - Docs: `deploy/bot/.env.example`, root `.env.example`, `deploy/README.md` §5.
 
-**2026-09-25 — GPT-6 swap**: defaults moved to the same tiers one generation up —
-`gpt-6-sol` (balanced; replaces terra, $2/$10 vs $2/$12 per 1M) primary, `gpt-6-luna`
-(efficient) fallback, both still effort `none`. Not re-evaluated: timeouts carry over from
-the 5.6 eval above, so the post-deploy p95 check below is what confirms them.
+**2026-09-25 — GPT-6, two tiers** (decision: Alvaro): chain is now `gpt-6-luna` (4 s,
+effort `none`) → Claude Haiku (5 s); deadline 9 s. The balanced tier was dropped: on the eval
+above luna matched terra (13–14/14 intent, 18/18 fields) faster and ~20× cheaper, and a
+second OpenAI tier adds no protection against an OpenAI outage — Haiku covers that.
+`OPENAI_FALLBACK_MODEL` removed; `OPENAI_MODEL=gpt-6-sol` is the no-code escape hatch if
+luna misreads in production. Not re-evaluated on GPT-6: the post-deploy p95 check below
+confirms the timeout. Import categorization: `CODEX_MODEL` default `gpt-6-sol` and the image
+pins `@openai/codex@0.156.1` (0.144.0 predates GPT-6); the bot's exact exec args ran clean on
+0.156.1 against `gpt-6-sol` (5.2 s, valid structured output).
 
-**Deploy**: VPS `.env` needs no change (`OPENAI_API_KEY` already set; no `OPENAI_MODEL`
-override). rsync + `docker compose build && up -d` per the usual recipe, then watch
-`docker logs` for `"label":"message_classifier"` with `outcome: "ok"` and p95 < 6 s.
+**Deploy**: on the VPS `.env`, set `CODEX_MODEL=gpt-6-sol` (or remove the line to take
+the default) — the deploy README had it pinned to `gpt-5.5`; drop any `OPENAI_FALLBACK_MODEL`
+line. `OPENAI_API_KEY` is already set; no `OPENAI_MODEL` override. rsync +
+`docker compose build && up -d` per the usual recipe, then:
+- `docker compose run --rm bot codex login status` — confirm the volume's auth still works
+  on CLI 0.156.1; if not, `codex login --device-auth` again.
+- watch `docker logs` for `"label":"message_classifier"` with `outcome: "ok"` and p95 < 4 s,
+  and for an import categorization run succeeding on `gpt-6-sol`.
 
 ## Current state
 
-As of 2026-09-25, the bot message classifier chain is OpenAI `gpt-6-sol` →
-`gpt-6-luna` → Claude Haiku with reasoning effort `none` (built + tested locally; deploy
+As of 2026-09-25, the bot message classifier chain is OpenAI `gpt-6-luna` → Claude Haiku
+with reasoning effort `none` (built + tested locally; deploy
 pending Alvaro's go). Codex CLI remains only for import categorization.
 
 As of 2026-07-25, production runs `main` @ `fd7fa8b`: web on Vercel

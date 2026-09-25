@@ -351,33 +351,6 @@ describe("Unified structured classifier", () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it("walks a three-tier chain in order and reports each hop", async () => {
-    const primary = vi.fn(async () => null);
-    const second = vi.fn(async () => null);
-    const third = vi.fn(async () => JSON.stringify(VALID));
-    const telemetry = vi.fn();
-    const chain = withClassifierFallback(
-      createUnifiedCompletionMessageClassifier({ complete: primary }),
-      withClassifierFallback(
-        createUnifiedCompletionMessageClassifier({ complete: second }),
-        createUnifiedCompletionMessageClassifier({ complete: third }),
-        telemetry,
-        { from: "openai_fallback", to: "anthropic" },
-      ),
-      telemetry,
-      { from: "openai", to: "openai_fallback" },
-    );
-    const result = await chain?.("giassi", OPTIONS);
-    expect(result?.intent).toBe("plain");
-    expect(primary).toHaveBeenCalledTimes(1);
-    expect(second).toHaveBeenCalledTimes(1);
-    expect(third).toHaveBeenCalledTimes(1);
-    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
-      expect.objectContaining({ from: "openai", to: "openai_fallback" }),
-      expect.objectContaining({ from: "openai_fallback", to: "anthropic" }),
-    ]);
-  });
-
   it("reports fallback semantic rejection without logging the message", async () => {
     const telemetry = vi.fn();
     const fallback = createUnifiedCompletionMessageClassifier(

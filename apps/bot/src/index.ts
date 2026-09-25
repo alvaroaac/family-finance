@@ -118,18 +118,15 @@ import {
 import { TOKENS } from "./keyboards.js";
 
 /**
- * Message classifier chain: OpenAI primary → OpenAI cheap fallback → Anthropic
- * last resort, every tier the same unified structured prompt. Timeouts come
- * from the 2026-09 eval of the same tiers one generation back
- * (thoughts/notes/PROGRESS.md): gpt-5.6-terra p95 ≈ 3.5 s and gpt-5.6-luna
+ * Message classifier chain: OpenAI efficient tier → Anthropic last resort, both
+ * the same unified structured prompt. Timeouts come from the 2026-09 eval of
+ * the same tier one generation back (thoughts/notes/PROGRESS.md): gpt-5.6-luna
  * p95 ≈ 2.9 s with reasoning off, Haiku ≈ 3.3 s. Effort `none` scored the same
- * as `low` on that set and is faster, so it is the default for both tiers.
+ * as `low` on that set and is faster, so it is the default.
  */
-const CLASSIFIER_PRIMARY_MODEL = "gpt-6-sol";
-const CLASSIFIER_FALLBACK_MODEL = "gpt-6-luna";
+const CLASSIFIER_PRIMARY_MODEL = "gpt-6-luna";
 const CLASSIFIER_REASONING_EFFORT = "none";
-const CLASSIFIER_PRIMARY_TIMEOUT_MS = 6_000;
-const CLASSIFIER_FALLBACK_TIMEOUT_MS = 4_000;
+const CLASSIFIER_PRIMARY_TIMEOUT_MS = 4_000;
 const CLASSIFIER_LAST_RESORT_TIMEOUT_MS = 5_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
@@ -969,15 +966,15 @@ export async function startBot(): Promise<{
           })
         : createMessageClassifier(completionClient)
       : undefined;
-  const openAiClassifier = (model: string, timeoutMs: number) =>
+  const openAiClassifier: MessageClassifier | undefined =
     env.OPENAI_API_KEY !== undefined
       ? createUnifiedCompletionMessageClassifier(
           createOpenAiCompletionClient({
             apiKey: env.OPENAI_API_KEY,
-            model,
+            model: env.OPENAI_MODEL ?? CLASSIFIER_PRIMARY_MODEL,
             outputSchema: CODEX_OUTPUT_SCHEMA,
             reasoningEffort: CLASSIFIER_REASONING_EFFORT,
-            timeoutMs,
+            timeoutMs: CLASSIFIER_PRIMARY_TIMEOUT_MS,
           }),
           {
             provider: "openai",
@@ -985,31 +982,18 @@ export async function startBot(): Promise<{
           },
         )
       : undefined;
-  const primaryClassifier = openAiClassifier(
-    env.OPENAI_MODEL ?? CLASSIFIER_PRIMARY_MODEL,
-    CLASSIFIER_PRIMARY_TIMEOUT_MS,
-  );
-  const fallbackClassifier = openAiClassifier(
-    env.OPENAI_FALLBACK_MODEL ?? CLASSIFIER_FALLBACK_MODEL,
-    CLASSIFIER_FALLBACK_TIMEOUT_MS,
-  );
   const classifierChain = withClassifierFallback(
-    primaryClassifier,
-    withClassifierFallback(fallbackClassifier, anthropicClassifier, undefined, {
-      from: "openai_fallback",
-      to: "anthropic",
-    }),
+    openAiClassifier,
+    anthropicClassifier,
     undefined,
-    { from: "openai", to: "openai_fallback" },
+    { from: "openai", to: "anthropic" },
   );
   // The chain is awaited on the webhook hot path, so its budget is exactly the
   // sum of the per-tier timeouts: a tier that hangs cannot steal the next one's
   // slot, and nothing waits longer than the tiers themselves allow.
   const classifyMessage = withClassifierDeadline(
     classifierChain,
-    CLASSIFIER_PRIMARY_TIMEOUT_MS +
-      CLASSIFIER_FALLBACK_TIMEOUT_MS +
-      CLASSIFIER_LAST_RESORT_TIMEOUT_MS,
+    CLASSIFIER_PRIMARY_TIMEOUT_MS + CLASSIFIER_LAST_RESORT_TIMEOUT_MS,
   );
 
   // Voice transcription — only when both a bot token (to fetch the file) and a

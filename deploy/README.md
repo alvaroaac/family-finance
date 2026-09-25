@@ -144,10 +144,10 @@ On the VPS, with the repo checked out and `deploy/bot/.env` filled from
 [`bot/.env.example`](./bot/.env.example) (chmod 600 — this is the ONLY place
 the service-role key lives outside the Supabase stack):
 
-Telegram message reading runs on the OpenAI API (`OPENAI_API_KEY`; defaults
-`gpt-6-sol` → `gpt-6-luna`, then Claude) and needs no extra setup.
+Telegram message reading runs on the OpenAI API (`OPENAI_API_KEY`; default
+`gpt-6-luna`, then Claude) and needs no extra setup.
 
-The image pins `@openai/codex@0.144.0` for **import categorization only**. Before
+The image pins `@openai/codex@0.156.1` (the first release with GPT-6 Sol) for **import categorization only**. Before
 enabling that Codex primary, authenticate once into its named volume (never copy
 auth files into the repo or image):
 
@@ -161,7 +161,7 @@ Then configure the VPS-only `.env`:
 
 ```dotenv
 CODEX_ENABLED=true
-CODEX_MODEL=gpt-5.5
+CODEX_MODEL=gpt-6-sol
 CODEX_TIMEOUT_MS=12000
 IMPORT_SUGGESTION_SHARED_SECRET=<same-random-32+-character-secret-as-vercel>
 IMPORT_PAID_FALLBACK_ENABLED=true

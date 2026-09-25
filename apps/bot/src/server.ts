@@ -292,15 +292,14 @@ async function main(): Promise<void> {
             claimImportSuggestionNonce(client, nonce, expiresAt),
           handle: createImportSuggestionHandler({
             codexEnabled: env.CODEX_ENABLED === "true",
-            codexModel: env.CODEX_MODEL ?? "gpt-5.5",
+            codexModel: env.CODEX_MODEL ?? "gpt-6-sol",
             codexTimeoutMs: env.CODEX_TIMEOUT_MS ?? 12_000,
             codexHome: "/var/lib/family-finance-codex",
             paidFallbackEnabled: env.IMPORT_PAID_FALLBACK_ENABLED === "true",
             paidFallbackMaxItems: env.IMPORT_PAID_FALLBACK_MAX_ITEMS,
             paidFallbackProvider:
               env.IMPORT_PAID_FALLBACK_PROVIDER ?? "unconfigured",
-            paidFallbackModel:
-              env.IMPORT_PAID_FALLBACK_MODEL ?? "unconfigured",
+            paidFallbackModel: env.IMPORT_PAID_FALLBACK_MODEL ?? "unconfigured",
             paidFallbackClient,
             reservePaidItems: (input) =>
               reserveImportAiPaidItems(client, input),
