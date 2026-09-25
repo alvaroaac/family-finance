@@ -660,3 +660,49 @@ one-time baseline is approved and run.
 
 **Status:** open | in-progress | resolved
 ```
+
+## 2026-09-03: Recent-expenses command regex is a single rigid pattern
+
+**Area:** `apps/bot/src/conversation.ts` (`RECENT_EXPENSES_RE`, `parseRecentExpensesCommand`)
+
+**Impact:** The "últimos N" trigger is one anchored regex with fixed slot
+order (verb · artigo · últimos · N · noun). Any new phrasing ("me mostra os
+gastos", "quais foram os últimos 10") means growing the regex again, and
+ordering variations silently fall through to the AI classifier as if they were
+expenses.
+
+**Current workaround:** Loose token grammar with every slot optional; covers
+the phrasings tried so far.
+
+**Revisit trigger:** Third time a real user phrasing misses. Then break the
+sentence into tokens and match each component (verb / count / noun) with its
+own small regex independent of position, instead of one ordered pattern.
+
+**Status:** open
+
+## 2026-09-03: No migration control on the production VPS (P0)
+
+**Priority:** P0
+
+**Area:** `deploy/`, `supabase/migrations/`, self-hosted Supabase on the VPS
+
+**Impact:** Prod has no migration ledger (`supabase_migrations.schema_migrations`
+does not exist) and no apply step in the deploy recipe. Nobody can answer
+"which migrations are applied?" without probing schema objects by hand
+(`\d categories`, `pg_proc` overloads). Found today: 0018 and 0019 sit in the
+repo while prod is at 0017, and the bot working tree already depends on 0019
+(`categories.kind`). A full-tree rsync would have shipped a bot with zero
+categories. Every deploy is a guess about schema state, and the guess is
+made by an agent with no ledger to read.
+
+**Current workaround:** Probe prod schema by hand before each deploy (see
+`thoughts/notes/PROGRESS.md`, "verify independently of Git history"). Deploy
+only committed `HEAD` subsets when uncommitted migrations exist locally.
+
+**Revisit trigger:** Now. Before the next schema-changing deploy: add a
+`schema_migrations(version text primary key, applied_at timestamptz)` table,
+backfill 0001–0017, and a `deploy/migrate.sh` that applies unapplied
+`supabase/migrations/*.sql` in order inside a transaction and records each
+version. Wire it into the deploy README as step 1 before `docker compose build`.
+
+**Status:** open
