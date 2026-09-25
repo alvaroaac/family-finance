@@ -309,6 +309,47 @@ export function mapDashboardTransaction(
   };
 }
 
+/** An expense surfaced in the bot's latest-registered list. */
+export type RecentExpense = {
+  id: string;
+  amountCents: number;
+  occurredOn: string;
+  description: string;
+  categoryId: string | null;
+  subcategoryId: string | null;
+  accountId: string | null;
+  creditCardId: string | null;
+  responsibleUserId: string | null;
+};
+
+/** Pure: map a transaction row to the bot's recent-expense shape. */
+export function mapRecentExpense(
+  row: Pick<
+    TransactionRow,
+    | "id"
+    | "amount_cents"
+    | "occurred_on"
+    | "description"
+    | "category_id"
+    | "subcategory_id"
+    | "account_id"
+    | "credit_card_id"
+    | "responsible_user_id"
+  >,
+): RecentExpense {
+  return {
+    id: row.id,
+    amountCents: row.amount_cents,
+    occurredOn: row.occurred_on,
+    description: row.description,
+    categoryId: row.category_id,
+    subcategoryId: row.subcategory_id,
+    accountId: row.account_id,
+    creditCardId: row.credit_card_id,
+    responsibleUserId: row.responsible_user_id,
+  };
+}
+
 /**
  * Decide whether a transaction needs review. In the MVP an item "needs review"
  * when it has no macro category yet (imports and quick bot entries can land
@@ -1770,6 +1811,43 @@ export async function findRecentTransactions(
       >
     >
   ).map(mapDashboardTransaction);
+}
+
+/** Latest registered household expenses, newest insert first. */
+export async function findLatestExpenses(
+  client: AppSupabaseClient,
+  householdId: string,
+  limit: number,
+): Promise<RecentExpense[]> {
+  const { data, error } = await client
+    .from("transactions")
+    .select(
+      "id, amount_cents, occurred_on, description, category_id, subcategory_id, account_id, credit_card_id, responsible_user_id",
+    )
+    .eq("household_id", householdId)
+    .eq("kind", "expense")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
+  if (error !== null) {
+    throw new Error(`findLatestExpenses failed: ${error.message}`);
+  }
+  return (
+    (data ?? []) as Array<
+      Pick<
+        TransactionRow,
+        | "id"
+        | "amount_cents"
+        | "occurred_on"
+        | "description"
+        | "category_id"
+        | "subcategory_id"
+        | "account_id"
+        | "credit_card_id"
+        | "responsible_user_id"
+      >
+    >
+  ).map(mapRecentExpense);
 }
 
 /**

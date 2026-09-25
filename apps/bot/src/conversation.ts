@@ -91,12 +91,15 @@ import {
   obligationSavedMessage,
   obligationSettleFailedMessage,
   obligationUnavailableMessage,
+  recentExpensesMessage,
+  recentExpensesUnavailableMessage,
   savedMessage,
   ALREADY_SAVED_TOAST,
   CATEGORY_NOT_FOUND_TOAST,
   SESSION_EXPIRED_TOAST,
   type InstallmentSummaryView,
   type ObligationSummaryView,
+  type RecentExpenseView,
   type SummaryView,
 } from "./replies.js";
 import type { InlineKeyboardMarkup } from "./telegram.js";
@@ -311,6 +314,19 @@ export type BotInteractionLog = {
   transactionId?: string;
 };
 
+/** DB-independent expense shape consumed by the latest-registered list. */
+export type RecentExpenseItem = {
+  id: string;
+  amountCents: number;
+  occurredOn: string;
+  description: string;
+  categoryId: string | null;
+  subcategoryId: string | null;
+  accountId: string | null;
+  creditCardId: string | null;
+  responsibleUserId: string | null;
+};
+
 export type ConversationDeps = {
   householdId: string;
   catalog: CategoryCatalog;
@@ -340,6 +356,8 @@ export type ConversationDeps = {
   createTransaction: (draft: TransactionDraft) => Promise<{ id: string }>;
   /** Record the interaction for auditing (wired to bot_interactions). */
   logInteraction: (entry: BotInteractionLog) => Promise<void>;
+  /** Latest REGISTERED expenses of the household, newest first ("últimos N"). */
+  listRecentExpenses?: (limit: number) => Promise<RecentExpenseItem[]>;
   /**
    * OPTIONAL LLM interpretation (spec §3.4): consulted on EVERY new entry in
    * `startConversation` for a clean description + category hint; the
@@ -530,6 +548,19 @@ function paymentLabel(draft: DraftInProgress, deps: ConversationDeps): string {
   return `Conta ${deps.accountNameById?.(draft.accountId ?? "") ?? ""}`.trim();
 }
 
+function instrumentName(
+  item: RecentExpenseItem,
+  deps: ConversationDeps,
+): string {
+  if (item.creditCardId !== null) {
+    return deps.cardNameById?.(item.creditCardId) ?? "Cartão";
+  }
+  if (item.accountId !== null) {
+    return deps.accountNameById?.(item.accountId) ?? "Conta";
+  }
+  return "Conta";
+}
+
 function responsibleLabel(
   responsibleUserId: string | undefined,
   deps: ConversationDeps,
@@ -538,6 +569,36 @@ function responsibleLabel(
     return "Casa";
   }
   return deps.memberDisplayName?.(responsibleUserId) ?? "Pessoa específica";
+}
+
+async function recentExpensesReply(
+  limit: number,
+  deps: ConversationDeps,
+): Promise<string> {
+  if (deps.listRecentExpenses === undefined) {
+    return recentExpensesUnavailableMessage();
+  }
+  try {
+    const items = await deps.listRecentExpenses(limit);
+    const views: RecentExpenseView[] = items.map((item) => ({
+      amountCents: item.amountCents,
+      occurredOn: item.occurredOn,
+      description: item.description,
+      categoryLabel: categoryLabel(
+        deps.catalog,
+        item.categoryId ?? undefined,
+        item.subcategoryId ?? undefined,
+      ),
+      paymentLabel: instrumentName(item, deps),
+      responsibleLabel: responsibleLabel(
+        item.responsibleUserId ?? undefined,
+        deps,
+      ),
+    }));
+    return recentExpensesMessage(views);
+  } catch {
+    return recentExpensesUnavailableMessage();
+  }
 }
 
 function summaryView(
@@ -2473,6 +2534,21 @@ export async function startConversation(
     };
   }
 
+  const recentExpensesCommand = parseRecentExpensesCommand(input.text);
+  if (recentExpensesCommand !== null) {
+    const ballast = placeholderDraft(input, inputKind, options.today);
+    const reply = await recentExpensesReply(recentExpensesCommand.limit, deps);
+    await deps.logInteraction({
+      fromUserId: input.fromUserId,
+      inputKind,
+      messageText: input.text,
+    });
+    return {
+      state: { status: "cancelled", draft: ballast },
+      reply,
+    };
+  }
+
   // Deterministic parsing runs first only to provide hints and a final fallback.
   // A successful unified interpreter owns the structured plain-expense fields.
   const textWithAuthoritativeInstrumentNamesMasked =
@@ -3164,6 +3240,31 @@ export function isBareConfirmation(message: string): boolean {
 
 /** "nova categoria" [name] — manual category creation (spec §4). */
 const NEW_CATEGORY_RE = /^\s*nova\s+categoria\b\s*(.*)$/i;
+
+/**
+ * "últimos 10", "listar os últimos 5 gastos", "extrato", "mostrar despesas" —
+ * a loose token grammar: every slot is optional, but at least ONE of
+ * verb / "últimos" / noun must be present. Anchored, so "mercado 50" or
+ * "últimos dias fui ao mercado 50" never match.
+ */
+const RECENT_EXPENSES_RE =
+  /^\s*(?:(listar|lista|mostrar|mostra|extrato)\s*)?(?:(?:os|as)\s+)?(?:([uú]ltim(?:os|as))\s*)?(?:(\d+)\s*)?(lan[cç]amentos|gastos|despesas)?\s*$/i;
+
+/** Parse and clamp a command that lists the latest registered expenses. */
+export function parseRecentExpensesCommand(
+  text: string,
+): { limit: number } | null {
+  const match = RECENT_EXPENSES_RE.exec(text);
+  if (match === null) {
+    return null;
+  }
+  const [, verb, ultimos, rawLimit, noun] = match;
+  if (verb === undefined && ultimos === undefined && noun === undefined) {
+    return null;
+  }
+  const requested = rawLimit === undefined ? 5 : Number.parseInt(rawLimit, 10);
+  return { limit: Math.min(15, Math.max(1, requested)) };
+}
 
 /** Trimmed, non-empty, ≤ 40 chars (spec §4 validation). */
 function validateCategoryName(
@@ -4296,6 +4397,14 @@ export async function applyMessage(
       return { state, reply: validated.error };
     }
     return createCategoryForDraft(state, validated.name, deps);
+  }
+
+  const recentExpensesCommand = parseRecentExpensesCommand(message);
+  if (recentExpensesCommand !== null) {
+    return {
+      state,
+      reply: await recentExpensesReply(recentExpensesCommand.limit, deps),
+    };
   }
 
   if (CANCEL_RE.test(message)) {

@@ -33,6 +33,7 @@ import {
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
   findAccountsByHousehold,
+  findLatestExpenses,
   resolveTelegramMember,
   listCreditCards,
   listHouseholdMembers,
@@ -284,6 +285,8 @@ async function buildDeps(
         transaction_id: entry.transactionId ?? null,
       });
     },
+    listRecentExpenses: (limit) =>
+      findLatestExpenses(client, householdId, limit),
     // LLM text interpretation (spec §3.4) — consulted on every new entry for a
     // clean description + category hint; the deterministic parser stays the
     // amount/date source. Result stays behind confirmation.

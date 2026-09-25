@@ -112,6 +112,7 @@ export type {
   CardPressure,
   UpcomingInstallment,
   DashboardTransaction,
+  RecentExpense,
   CardChargeSummary,
   TransactionFilters,
   TransactionListItem,
@@ -199,11 +200,13 @@ export {
   summarizeCardPressure,
   mapUpcomingInstallment,
   mapDashboardTransaction,
+  mapRecentExpense,
   needsReview,
   getCardPressure,
   getCardPressureForCard,
   findUpcomingInstallments,
   findRecentTransactions,
+  findLatestExpenses,
   findPendingReviewTransactions,
   // Transações view + member profiles + caixinha balance + bot heartbeat
   // (v1.0 Task 2).

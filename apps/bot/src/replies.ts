@@ -25,6 +25,47 @@ export function formatIsoDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+function formatDayMonth(iso: string): string {
+  const [, month, day] = iso.split("-");
+  if (month === undefined || day === undefined) {
+    return iso;
+  }
+  return `${day}/${month}`;
+}
+
+/** Display fields for one expense in the latest-registered list. */
+export type RecentExpenseView = {
+  amountCents: number;
+  occurredOn: string;
+  description: string;
+  categoryLabel: string;
+  paymentLabel: string;
+  responsibleLabel: string;
+};
+
+/** Format the latest registered expenses as a compact two-line list. */
+export function recentExpensesMessage(items: RecentExpenseView[]): string {
+  if (items.length === 0) {
+    return "Nenhum lançamento registrado ainda.";
+  }
+  const header =
+    items.length === 1
+      ? "Último lançamento:"
+      : `Últimos ${items.length} lançamentos:`;
+  const rows = items.map((item, index) =>
+    [
+      `${index + 1}. ${formatDayMonth(item.occurredOn)} · R$ ${formatBrl(item.amountCents)} · ${item.description}`,
+      `   ${item.categoryLabel} · ${item.paymentLabel} · ${item.responsibleLabel}`,
+    ].join("\n"),
+  );
+  return `${header}\n\n${rows.join("\n")}`;
+}
+
+/** Temporary failure message for the latest-expenses query. */
+export function recentExpensesUnavailableMessage(): string {
+  return "A lista de lançamentos não está disponível agora. Tente de novo em instantes.";
+}
+
 /** What a confirmation summary needs to render. */
 export type SummaryView = {
   amountCents?: number;

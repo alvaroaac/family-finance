@@ -660,3 +660,22 @@ one-time baseline is approved and run.
 
 **Status:** open | in-progress | resolved
 ```
+
+## 2026-09-03: Recent-expenses command regex is a single rigid pattern
+
+**Area:** `apps/bot/src/conversation.ts` (`RECENT_EXPENSES_RE`, `parseRecentExpensesCommand`)
+
+**Impact:** The "últimos N" trigger is one anchored regex with fixed slot
+order (verb · artigo · últimos · N · noun). Any new phrasing ("me mostra os
+gastos", "quais foram os últimos 10") means growing the regex again, and
+ordering variations silently fall through to the AI classifier as if they were
+expenses.
+
+**Current workaround:** Loose token grammar with every slot optional; covers
+the phrasings tried so far.
+
+**Revisit trigger:** Third time a real user phrasing misses. Then break the
+sentence into tokens and match each component (verb / count / noun) with its
+own small regex independent of position, instead of one ordered pattern.
+
+**Status:** open
