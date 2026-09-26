@@ -13,9 +13,14 @@ import {
   listAllSubcategories,
   type CategorizationMemoryInsert,
 } from "@family-finance/db";
+import type { CategoryKind } from "@family-finance/db";
 import { describeMemory } from "@family-finance/categorization";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import {
+  createOrRestoreCategory,
+  createOrRestoreSubcategory,
+} from "./category-creation";
 
 /**
  * Server actions for the "Categorias" cleanup screen. Each action:
@@ -30,7 +35,11 @@ import { requireAuthorizedUser } from "../../../lib/auth";
 
 async function authedHousehold(): Promise<{
   householdId: string;
-  client: Awaited<ReturnType<typeof import("../../../lib/supabase").createServerSupabaseClient>>;
+  client: Awaited<
+    ReturnType<
+      typeof import("../../../lib/supabase").createServerSupabaseClient
+    >
+  >;
 }> {
   await requireAuthorizedUser();
   const { createServerSupabaseClient } = await import("../../../lib/supabase");
@@ -48,6 +57,80 @@ function requireField(formData: FormData, name: string): string {
     throw new Error(`Missing required field: ${name}`);
   }
   return value.trim();
+}
+
+export type CategoryCreationActionResult = {
+  ok: boolean;
+  message: string;
+};
+
+function cleanName(formData: FormData): string {
+  const name = requireField(formData, "name").replace(/\s+/g, " ");
+  if (name.length > 60) {
+    throw new Error("Use um nome com até 60 caracteres.");
+  }
+  return name;
+}
+
+function categoryKind(formData: FormData): CategoryKind {
+  const kind = requireField(formData, "kind");
+  if (kind !== "expense" && kind !== "income") {
+    throw new Error("Escolha entre despesa e entrada.");
+  }
+  return kind;
+}
+
+function creationError(
+  error: unknown,
+  fallback: string,
+): CategoryCreationActionResult {
+  const message = error instanceof Error ? error.message : fallback;
+  if (/duplicate key|unique constraint/i.test(message)) {
+    return { ok: false, message: "Esse nome já está em uso." };
+  }
+  return { ok: false, message };
+}
+
+/** Create a category, or restore an archived exact-equivalent name. */
+export async function createCategoryAction(
+  formData: FormData,
+): Promise<CategoryCreationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const name = cleanName(formData);
+    const kind = categoryKind(formData);
+    const message = await createOrRestoreCategory(
+      client,
+      householdId,
+      name,
+      kind,
+    );
+    revalidatePath("/categories");
+    return { ok: true, message };
+  } catch (error) {
+    return creationError(error, "Não foi possível criar a categoria.");
+  }
+}
+
+/** Create a subcategory under an active parent, restoring archived matches. */
+export async function createSubcategoryAction(
+  formData: FormData,
+): Promise<CategoryCreationActionResult> {
+  try {
+    const { householdId, client } = await authedHousehold();
+    const name = cleanName(formData);
+    const categoryId = requireField(formData, "categoryId");
+    const message = await createOrRestoreSubcategory(
+      client,
+      householdId,
+      categoryId,
+      name,
+    );
+    revalidatePath("/categories");
+    return { ok: true, message };
+  } catch (error) {
+    return creationError(error, "Não foi possível criar a subcategoria.");
+  }
 }
 
 /** Archive (soft-delete) a macro category so it leaves active pickers. */

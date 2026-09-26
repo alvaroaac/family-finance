@@ -961,14 +961,15 @@ export async function createCategory(
   client: AppSupabaseClient,
   householdId: string,
   name: string,
+  kind: CategoryRow["kind"] = "expense",
 ): Promise<CategoryRow> {
   const { data, error } = await client
     .from("categories")
-    // kind is explicit: the bot only registers expenses.
+    // Defaults to expense: the bot only registers expenses.
     .insert({
       household_id: householdId,
       name,
-      kind: "expense",
+      kind,
       is_active: true,
     })
     .select("*")
