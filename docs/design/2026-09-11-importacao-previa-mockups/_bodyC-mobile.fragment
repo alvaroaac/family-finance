@@ -1,0 +1,69 @@
+<div class="{{themeClass}}" style="width: 390px; min-height: 0; box-sizing: border-box; background: var(--ff-bg); padding: 20px 16px 0; color: var(--ff-ink); display: flex; flex-direction: column; gap: 16px; position: relative;">
+HDR
+  <section class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; justify-content: space-between; align-items: baseline;">
+      <span class="h2" style="font-size: 16px;">Fila de categorização</span>
+      <span class="note num">5 de 19</span>
+    </div>
+    <div class="track"><div class="fill" style="width: 26%;"></div></div>
+    <div style="display: flex; gap: 6px; overflow-x: auto;">
+      <button class="chip chip-on" type="button">IFOOD ×7</button>
+      <button class="chip" type="button">UBER ×5</button>
+      <button class="chip" type="button">MERCADOLIVRE ×3</button>
+      <button class="chip" type="button">99APP ×4</button>
+    </div>
+  </section>
+
+  <!-- Card stack: current merchant on top, next peeks below -->
+  <div style="position: relative; padding-bottom: 14px;">
+    <div style="position: absolute; left: 14px; right: 14px; bottom: 0; height: 40px; background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 16px; opacity: 0.7;"></div>
+    <div style="position: absolute; left: 7px; right: 7px; bottom: 7px; height: 40px; background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 16px; opacity: 0.85;"></div>
+    <section class="card" style="position: relative; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; border-color: var(--ff-accent);">
+      <div>
+        <div class="kicker" style="margin-bottom: 6px;">Estabelecimento 5 de 19</div>
+        <div class="serif" style="font-size: 24px; font-weight: 600; line-height: 1.15;">IFOOD *IFD</div>
+        <div class="note num" style="margin-top: 4px;">7 lançamentos · R$ 312,40 · 03 a 29/08</div>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <button class="chip chip-on" type="button">Alimentação · Delivery</button>
+        <button class="chip" type="button">Restaurante</button>
+        <button class="chip" type="button">Mercado</button>
+        <button class="chip" type="button">Lazer</button>
+        <button class="chip" type="button">Outra…</button>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <span class="select" style="flex: 1;"><input class="input-sm" type="text" value="Alimentação" readonly style="padding: 9px 24px 9px 11px; font-size: 13px;"><span class="caret caret-sm">▼</span></span>
+        <span class="select" style="flex: 1;"><input class="input-sm" type="text" value="Delivery" readonly style="padding: 9px 24px 9px 11px; font-size: 13px;"><span class="caret caret-sm">▼</span></span>
+      </div>
+      <label style="display: flex; align-items: center; gap: 8px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft);"><span class="toggle"></span>Lembrar pra próxima fatura</label>
+
+      <div style="border: 1px solid var(--ff-border); border-radius: 12px; overflow: hidden;">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft);"><span class="check check-on">✓</span>7 lançamentos · 6 marcados</div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--ff-border);"><span class="check check-on">✓</span><span class="note num" style="width: 44px;">03/08</span><span style="flex: 1;"></span><span class="amount">R$ 48,90</span></div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--ff-border);"><span class="check check-on">✓</span><span class="note num" style="width: 44px;">09/08</span><span style="flex: 1;"></span><span class="amount">R$ 36,50</span></div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--ff-border); opacity: 0.55;"><span class="check"></span><span class="note num" style="width: 44px;">09/08</span><span class="badge badge-neg" style="font-size: 10px; padding: 2px 8px;">duplicata</span><span style="flex: 1;"></span><span class="amount">R$ 36,50</span></div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--ff-border);"><span class="check check-on">✓</span><span class="note num" style="width: 44px;">14/08</span><span style="flex: 1;"></span><span class="amount">R$ 62,00</span></div>
+        <div style="padding: 8px 12px; border-top: 1px solid var(--ff-border);"><button class="btn-link" type="button" style="font-size: 12px;">ver as outras 3 →</button></div>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="btn-ghost" type="button">Pular</button>
+        <button class="btn-primary" type="button" style="flex: 1;">Aplicar e próximo →</button>
+      </div>
+    </section>
+  </div>
+
+  <button class="btn-ghost" type="button" style="width: 100%;">Ver todos os 148 lançamentos</button>
+
+  <div style="position: sticky; bottom: 0; margin: 0 -16px; padding: 12px 16px 24px; background: var(--ff-surface-soft); border-top: 1px solid var(--ff-border); display: flex; flex-direction: column; gap: 10px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <span class="foot-note num">142 de 148 · R$ 6.089,20</span>
+      <a href="#" style="font-family: Inter, sans-serif; font-weight: 600; font-size: 12px; color: var(--ff-warn);">14 na fila ›</a>
+    </div>
+    <span class="select"><input class="input" type="text" value="Cartão Nubank ····4321" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-ghost" type="button">‹</button>
+      <button class="btn-primary" type="button" style="flex: 1;">Gravar 142 lançamentos</button>
+    </div>
+  </div>
+</div>

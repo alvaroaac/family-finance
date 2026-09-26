@@ -1,0 +1,10 @@
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["esmeralda","salvia"],"default":"esmeralda","section":"Tema"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.theme ?? 'esmeralda' };
+  }
+}
+</script>
+</body>
+</html>

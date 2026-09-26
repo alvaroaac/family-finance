@@ -1,0 +1,152 @@
+<div class="{{themeClass}}" style="width: 1092px; min-height: 0; box-sizing: border-box; background: var(--ff-bg); padding: 48px 56px; color: var(--ff-ink);">
+<div style="max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+HDR
+SUMMARY
+  <!-- Queue: left = merchants pending, right = current merchant -->
+  <div style="display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start;">
+    <section class="card" style="padding: 0; overflow: hidden;">
+      <div style="padding: 16px 18px 12px; border-bottom: 1px solid var(--ff-border); display: flex; flex-direction: column; gap: 10px;">
+        <div class="h2" style="font-size: 16px;">Fila de categorização</div>
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <span class="note num">5 de 19 estabelecimentos</span>
+          <span class="note num">R$ 1.482,10 pendentes</span>
+        </div>
+        <div class="track"><div class="fill" style="width: 26%;"></div></div>
+        <div class="search" style="margin-top: 2px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input class="input" type="text" value="" placeholder="Buscar na fila…">
+        </div>
+      </div>
+      <div class="scrollbox" style="max-height: 420px;">
+        <div style="padding: 12px 18px; display: flex; align-items: center; gap: 10px; background: var(--ff-tint); border-left: 3px solid var(--ff-accent);">
+          <span style="flex: 1; min-width: 0;"><div class="name">IFOOD *IFD</div><div class="sub">7 lançamentos · R$ 312,40</div></span>
+          <span class="badge badge-warn" style="font-size: 10px; padding: 2px 8px;">agora</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">UBER *TRIP</div><div class="sub">5 lançamentos · R$ 148,90</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">MERCADOLIVRE*MERC</div><div class="sub">3 lançamentos · R$ 402,00</div></span>
+          <span class="badge badge-acc" style="font-size: 10px; padding: 2px 8px;">Codex</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">99APP *99</div><div class="sub">4 lançamentos · R$ 92,30</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">RAPPI*RAPPI BRASIL</div><div class="sub">2 lançamentos · R$ 71,80</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">SPOTIFY</div><div class="sub">1 lançamento · R$ 21,90</div></span>
+          <span class="badge badge-acc" style="font-size: 10px; padding: 2px 8px;">Codex</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">PET CENTER MARGIN</div><div class="sub">1 lançamento · R$ 88,00</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">LOJAS RENNER</div><div class="sub">1 lançamento · R$ 159,90</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); opacity: 0.55; display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">PAG*SUPERMERCADO</div><div class="sub">Mercado · Semanal</div></span>
+          <span class="badge badge-pos" style="font-size: 10px; padding: 2px 8px;">feito</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); opacity: 0.55; display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">POSTO SHELL VILA</div><div class="sub">Transporte · Combustível</div></span>
+          <span class="badge badge-pos" style="font-size: 10px; padding: 2px 8px;">feito</span>
+        </div>
+        <div class="scrollbox-fade"></div>
+      </div>
+      <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; justify-content: space-between; align-items: center;">
+        <span class="note">Pular só adia. Volta no fim.</span>
+        <span class="kbd">J</span>
+      </div>
+    </section>
+
+    <section class="card" style="display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+        <span>
+          <div class="kicker" style="margin-bottom: 6px;">Estabelecimento 5 de 19</div>
+          <div class="serif" style="font-size: 26px; font-weight: 600; line-height: 1.15;">IFOOD *IFD</div>
+          <div class="note num" style="margin-top: 4px;">7 lançamentos · R$ 312,40 · 03/08 a 29/08</div>
+        </span>
+        <span class="badge badge-neu">sem histórico na casa</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="note" style="font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; font-size: 11px;">Categoria pra todos os 7</div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <button class="chip chip-on" type="button">Alimentação · Delivery <span class="chip-count" style="opacity: 0.7;">Codex</span></button>
+          <button class="chip" type="button">Alimentação · Restaurante</button>
+          <button class="chip" type="button">Mercado</button>
+          <button class="chip" type="button">Lazer</button>
+          <button class="chip" type="button">Casa</button>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 4px;">
+          <span class="select" style="flex: 1;"><input class="input" type="text" value="Alimentação" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+          <span class="select" style="flex: 1;"><input class="input" type="text" value="Delivery" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); margin-top: 2px;"><span class="toggle"></span>Lembrar pra próxima fatura desse estabelecimento</label>
+      </div>
+
+      <div style="border: 1px solid var(--ff-border); border-radius: 12px; overflow: hidden;">
+        <div class="thead" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 8px 14px;">
+          <span><span class="check check-on">✓</span></span><span>Dia</span><span>Descrição</span><span style="text-align: right;">Valor</span>
+        </div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px; border-top: none;"><span class="check check-on">✓</span><span class="num note">03/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 48,90</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">09/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 36,50</span></div>
+        <div class="row row-off" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check"></span><span class="num note">09/08</span><span style="display: flex; gap: 8px; align-items: center;"><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="badge badge-neg" style="font-size: 10px; padding: 2px 8px;">duplicata</span></span><span class="amount">R$ 36,50</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">14/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 62,00</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">18/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 41,30</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">22/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 55,70</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">29/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 68,00</span></div>
+      </div>
+      <div class="note">Desmarca uma linha pra ela não seguir o grupo.</div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 4px;">
+        <button class="btn-ghost" type="button">Pular <span class="kbd" style="margin-left: 6px;">J</span></button>
+        <span style="display: flex; gap: 10px; align-items: center;">
+          <button class="btn-ghost" type="button">‹ Anterior</button>
+          <button class="btn-primary" type="button">Aplicar e próximo → <span class="kbd" style="margin-left: 6px; border-color: rgba(0,0,0,0.25); color: inherit;">↵</span></button>
+        </span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Compact full list below the queue -->
+  <section class="table">
+    <div class="toolbar" style="border-radius: 16px 16px 0 0;">
+      <span class="h2" style="font-size: 15px;">Todos os lançamentos</span>
+      <span class="note num">148</span>
+      <span style="flex: 1;"></span>
+      <div class="search" style="width: 260px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <input class="input" type="text" value="" placeholder="Buscar por nome…">
+      </div>
+      <button class="chip" type="button">01 – 31 ago</button>
+      <button class="chip chip-warn" type="button">Sem categoria <span class="chip-count">23</span></button>
+    </div>
+    <div class="thead" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;">
+      <span><span class="check check-mixed">–</span></span><span>Dia</span><span>Descrição</span><span style="text-align: right;">Valor</span><span>Categoria</span><span>Subcategoria</span><span></span>
+    </div>
+    <div class="scrollbox" style="max-height: 300px;">
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px; border-top: none;"><span class="check check-on">✓</span><span class="num note">01/08</span><span><input class="input-sm" type="text" value="PAG*SUPERMERCADO" readonly></span><span class="amount">R$ 312,40</span><span class="select"><input class="input-sm" type="text" value="Mercado" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Semanal" readonly><span class="caret caret-sm">▼</span></span><span></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">02/08</span><span><input class="input-sm" type="text" value="UBER *TRIP" readonly></span><span class="amount">R$ 24,90</span><span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><button class="btn-link" type="button" style="font-size: 11px;">ir na fila ›</button></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px; background: var(--ff-tint);"><span class="check check-on">✓</span><span class="num note">03/08</span><span><input class="input-sm" type="text" value="IFOOD *IFD" readonly></span><span class="amount">R$ 48,90</span><span class="select"><input class="input-sm" type="text" value="Alimentação" readonly style="opacity: 0.7;"><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Delivery" readonly style="opacity: 0.7;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><span class="badge badge-acc" style="font-size: 10px; padding: 2px 8px;">na fila agora</span></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">04/08</span><span><input class="input-sm" type="text" value="POSTO SHELL VILA" readonly></span><span class="amount">R$ 200,00</span><span class="select"><input class="input-sm" type="text" value="Transporte" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Combustível" readonly><span class="caret caret-sm">▼</span></span><span></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">05/08</span><span><input class="input-sm" type="text" value="99APP *99" readonly></span><span class="amount">R$ 18,70</span><span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><button class="btn-link" type="button" style="font-size: 11px;">ir na fila ›</button></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">07/08</span><span><input class="input-sm" type="text" value="DROGASIL 1201" readonly></span><span class="amount">R$ 44,20</span><span class="select"><input class="input-sm" type="text" value="Saúde" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Farmácia" readonly><span class="caret caret-sm">▼</span></span><span></span></div>
+      <div class="scrollbox-fade"></div>
+    </div>
+    <div class="tfoot" style="border-radius: 0 0 16px 16px;">
+      <span style="display: flex; align-items: center; gap: 14px;">
+        <span class="foot-note num">142 de 148 marcados · R$ 6.089,20</span>
+        <a href="#" style="font-family: Inter, sans-serif; font-weight: 600; font-size: 12px; color: var(--ff-warn);">14 na fila antes de gravar ›</a>
+      </span>
+      <span style="display: flex; gap: 10px; align-items: center;">
+        <span class="select" style="width: 200px;"><input class="input" type="text" value="Cartão Nubank ····4321" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+        <button class="btn-ghost" type="button">‹ Voltar</button>
+        <button class="btn-primary" type="button">Gravar 142 lançamentos</button>
+      </span>
+    </div>
+  </section>
+</div>
+</div>

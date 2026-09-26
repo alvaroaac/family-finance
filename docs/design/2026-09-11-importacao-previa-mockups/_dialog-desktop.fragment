@@ -1,0 +1,52 @@
+<div class="{{themeClass}}" style="width: 1092px; height: 640px; box-sizing: border-box; background: var(--ff-bg); color: var(--ff-ink); position: relative; overflow: hidden;">
+  <!-- Dimmed page behind -->
+  <div style="position: absolute; inset: 0; padding: 48px 56px; opacity: 0.35; filter: blur(1px);">
+    <div style="max-width: 980px; margin: 0 auto;">
+      <div class="kicker" style="margin-bottom: 10px;">Nossa casa · Importação</div>
+      <div class="h1">Dá uma olhada antes de gravar</div>
+      <div class="table" style="margin-top: 24px; height: 380px;"></div>
+    </div>
+  </div>
+  <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.45);"></div>
+
+  <!-- Dialog -->
+  <div role="dialog" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 460px; box-sizing: border-box; background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.45); padding: 24px; display: flex; flex-direction: column; gap: 18px;">
+    <div>
+      <div class="kicker" style="margin-bottom: 8px; color: var(--ff-warn);">Ainda não dá pra gravar</div>
+      <div class="serif" style="font-size: 22px; font-weight: 600; line-height: 1.2;">Faltam 3 coisas antes de gravar os 142 lançamentos</div>
+      <div class="note" style="margin-top: 6px;">O botão fica sempre ativo. Quando falta algo, a gente te conta aqui em vez de travar em silêncio.</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--ff-border); border-radius: 12px; background: var(--ff-surface-soft);">
+        <span class="badge badge-warn num" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">3</span>
+        <span style="flex: 1; min-width: 0;">
+          <div class="name">Lançamentos sem categoria</div>
+          <div class="sub">IFOOD ×2, 99APP ×1</div>
+        </span>
+        <button class="btn-ghost-sm" type="button">Ver</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--ff-border); border-radius: 12px; background: var(--ff-surface-soft);">
+        <span class="badge badge-warn" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">!</span>
+        <span style="flex: 1; min-width: 0;">
+          <div class="name">Conta ou cartão de destino não escolhido</div>
+          <div class="sub">Onde esses lançamentos entram</div>
+        </span>
+        <button class="btn-ghost-sm" type="button">Escolher</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--ff-negative); border-radius: 12px; background: var(--ff-negative-wash);">
+        <span class="badge badge-neg" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">×</span>
+        <span style="flex: 1; min-width: 0;">
+          <div class="name">Comparação com o banco falhou</div>
+          <div class="sub">Sem ela, não dá pra saber o que já existe</div>
+        </span>
+        <button class="btn-ghost-sm" type="button">Tentar de novo</button>
+      </div>
+    </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 4px;">
+      <button class="btn-link" type="button" style="color: var(--ff-ink-soft);">Fechar</button>
+      <button class="btn-primary" type="button">Resolver a primeira</button>
+    </div>
+  </div>
+</div>
