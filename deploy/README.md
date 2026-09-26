@@ -198,6 +198,19 @@ docker compose up -d
 curl -s http://localhost:8787/health   # → {"ok":true,...}
 ```
 
+The VPS copy at `/opt/family-finance` is not a git checkout; redeploys rsync it
+from a clean local `main`. Never sync over `.env` files: `deploy/bot/.env` holds
+the service-role key. Plain rsync never deletes, so migrations get a second,
+scoped `--delete` pass — a renamed migration otherwise leaves its old file behind
+and `migrate.sh` refuses the duplicate version:
+
+```bash
+rsync -az --exclude='.git' --exclude='node_modules' --exclude='.turbo' --exclude='.vercel' --exclude='.env' --exclude='.env.*' --exclude='*.tsbuildinfo' --exclude='.DS_Store' --exclude='.claude' ./ minesupply:/opt/family-finance/
+rsync -az --delete supabase/migrations/ minesupply:/opt/family-finance/supabase/migrations/
+```
+
+Then run the `migrate.sh` and `docker compose` steps above on the VPS.
+
 The bot accepts both v1 and v2 suggestion contracts during the rollback window.
 Deploy it before the v2 web caller so either deployment order within this step
 remains compatible without allowing legacy callers to spend paid quota.

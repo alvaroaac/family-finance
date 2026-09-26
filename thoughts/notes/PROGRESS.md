@@ -524,22 +524,26 @@ pins `@openai/codex@0.156.1` (0.144.0 predates GPT-6); the bot's exact exec args
 4.3–4.9 s vs 5.1–7.1 s default). The message classifier stays at `none`: `low` on luna fixed
 2/20 NULL reads but pushed p95 to 4.0 s, at the 4 s timeout.
 
-**Deploy**: on the VPS `.env`, set `CODEX_MODEL=gpt-6-sol` (or remove the line to take
-the default) — the deploy README had it pinned to `gpt-5.5`; drop any `OPENAI_FALLBACK_MODEL`
-line. `OPENAI_API_KEY` is already set; no `OPENAI_MODEL` override. rsync +
-`docker compose build && up -d` per the usual recipe, then:
-- `docker compose run --rm bot codex login status` — confirm the volume's auth still works
-  on CLI 0.156.1; if not, `codex login --device-auth` again.
-- watch `docker logs` for `"label":"message_classifier"` with `outcome: "ok"` and p95 < 4 s,
-  and for an import categorization run succeeding on `gpt-6-sol`.
+**Deployed 2026-09-26** (bot, `main` @ `b6c6570`): pre-deploy `pg_dump` and `.env` copy in
+`/var/backups/family-finance/`; VPS `.env` `CODEX_MODEL` `gpt-5.5` → `gpt-6-sol` (no
+`OPENAI_FALLBACK_MODEL` line existed). Health `{"ok":true}`, `codex-cli 0.156.1`, `codex
+login status` → logged in via ChatGPT. Still to watch on real traffic: `"label":"message_classifier"`
+with `outcome: "ok"` and p95 < 4 s, and an import categorization run on `gpt-6-sol`.
+
+Gotcha: `migrate.sh` refused with `duplicate migration version: 0018`. Plain rsync never
+deletes, so the VPS still held the pre-rename `0018_drop_legacy…`, `0019_category_kind` and
+`0020_nubank_ofx…` files. The deploy recipe (`deploy/README.md` §5) now syncs
+`supabase/migrations/` with `--delete`. No migrations were pending: the ledger was baselined
+on 2026-09-11 and records 0001–0027 with matching checksums.
 
 ## Current state
 
-As of 2026-09-25, the bot message classifier chain is OpenAI `gpt-6-luna` → Claude Haiku
-with reasoning effort `none` (built + tested locally; deploy
-pending Alvaro's go). Codex CLI remains only for import categorization.
+As of 2026-09-26, the production bot runs `main` @ `b6c6570`: message classifier chain
+OpenAI `gpt-6-luna` (effort `none`) → Claude Haiku; import categorization on Codex CLI
+0.156.1 with `gpt-6-sol` (effort `low`). Production migrations are under the
+`deploy/migrate.sh` ledger (baselined 2026-09-11), with 0001–0027 applied.
 
-As of 2026-07-25, production runs `main` @ `fd7fa8b`: web on Vercel
+As of 2026-07-25 (superseded above), production ran `main` @ `fd7fa8b`: web on Vercel
 (`casa.alvaroekarol.com.br`), bot container on the VPS, self-hosted Supabase with migrations
 through **0017** applied. Local gates at deploy time: typecheck 12/12, 506 tests passing
 (bot 348, web 158).
