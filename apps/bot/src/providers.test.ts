@@ -165,9 +165,7 @@ describe("createOpenAiCompletionClient", () => {
   it("uses non-stored JSON Responses output and records usage", async () => {
     globalThis.fetch = jsonFetch(200, {
       status: "completed",
-      output: [
-        { content: [{ type: "output_text", text: '{"items":[]}' }] },
-      ],
+      output: [{ content: [{ type: "output_text", text: '{"items":[]}' }] }],
       usage: { input_tokens: 80, output_tokens: 12 },
     });
     const logCall = vi.fn();
@@ -208,6 +206,32 @@ describe("createOpenAiCompletionClient", () => {
     );
   });
 
+  it("sends reasoning.effort only when configured", async () => {
+    globalThis.fetch = jsonFetch(200, {
+      status: "completed",
+      output: [{ content: [{ type: "output_text", text: "{}" }] }],
+    });
+    await createOpenAiCompletionClient({
+      apiKey: "sk-test",
+      model: "gpt-6-sol",
+      outputSchema: { type: "object" },
+      reasoningEffort: "none",
+      logCall: vi.fn(),
+    }).complete("classify");
+    await createOpenAiCompletionClient({
+      apiKey: "sk-test",
+      model: "gpt-5.4",
+      outputSchema: { type: "object" },
+      logCall: vi.fn(),
+    }).complete("categorize");
+
+    const bodies = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map((call) => JSON.parse(String(call[1]?.body)) as object);
+    expect(bodies[0]).toMatchObject({ reasoning: { effort: "none" } });
+    expect(bodies[1]).not.toHaveProperty("reasoning");
+  });
+
   it("returns null and records an HTTP failure without response contents", async () => {
     globalThis.fetch = jsonFetch(429, { error: { message: "secret detail" } });
     const logCall = vi.fn();
@@ -246,9 +270,7 @@ describe("createOpenAiCompletionClient", () => {
     globalThis.fetch = jsonFetch(200, {
       status: "incomplete",
       incomplete_details: { reason: "max_output_tokens" },
-      output: [
-        { content: [{ type: "output_text", text: '{"items":[]}' }] },
-      ],
+      output: [{ content: [{ type: "output_text", text: '{"items":[]}' }] }],
       usage: { input_tokens: 80, output_tokens: 1600 },
     });
     const logCall = vi.fn();

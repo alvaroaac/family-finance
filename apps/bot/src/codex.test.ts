@@ -1,15 +1,11 @@
-import { writeFile } from "node:fs/promises";
-
 import { describe, expect, it, vi } from "vitest";
 
 import {
   CODEX_OUTPUT_SCHEMA,
-  createCodexMessageClassifier,
   createUnifiedCompletionMessageClassifier,
   buildCodexExecArgs,
   withClassifierDeadline,
   withClassifierFallback,
-  type CodexProcessRunner,
 } from "./codex.js";
 import {
   applyCallback,
@@ -86,21 +82,15 @@ const VALID = {
   proposed_taxonomy_change: null,
 };
 
-function classifier(
-  runner: CodexProcessRunner,
-  telemetry?: (event: Record<string, unknown>) => void,
-) {
-  return createCodexMessageClassifier({
-    enabled: true,
-    model: "gpt-5.5",
-    timeoutMs: 1000,
-    codexHome: "/tmp/family-finance-codex-test-home",
-    runner,
-    telemetry,
-  });
+/** Unified classifier over a provider that answers with `reply`. */
+function classifier(reply: unknown, complete = vi.fn()) {
+  complete.mockImplementation(async () =>
+    typeof reply === "string" ? reply : JSON.stringify(reply),
+  );
+  return createUnifiedCompletionMessageClassifier({ complete });
 }
 
-describe("Codex unified primary", () => {
+describe("Unified structured classifier", () => {
   it("declares explicit types for every provider-constrained schema field", () => {
     expect(findConstrainedSchemasWithoutType(CODEX_OUTPUT_SCHEMA)).toEqual([]);
   });
@@ -168,19 +158,23 @@ describe("Codex unified primary", () => {
       expect(argv[index - 1]).toBe("--disable");
     }
     expect(argv).toContain('web_search="disabled"');
+    expect(argv).toContain('model_reasoning_effort="low"');
   });
   it("makes one schema-constrained call with parser/card/catalog context", async () => {
-    const runner = vi.fn<CodexProcessRunner>(async (request) => {
-      await writeFile(request.outputPath, JSON.stringify(VALID));
-      return { exitCode: 0, timedOut: false, stderr: "" };
+    const complete = vi.fn();
+    const result = await classifier(VALID, complete)(
+      "giassi 123,45 no nubank",
+      OPTIONS,
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+    const prompt = complete.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain("12345");
+    expect(prompt).toContain("Nubank");
+    expect(prompt).toContain("Conta Nubank");
+    expect(prompt).toContain("Alimentação");
+    expect(complete.mock.calls[0]?.[1]).toEqual({
+      label: "message_classifier",
     });
-    const result = await classifier(runner)("giassi 123,45 no nubank", OPTIONS);
-    expect(runner).toHaveBeenCalledTimes(1);
-    const request = runner.mock.calls[0]?.[0];
-    expect(request?.prompt).toContain("12345");
-    expect(request?.prompt).toContain("Nubank");
-    expect(request?.prompt).toContain("Conta Nubank");
-    expect(request?.prompt).toContain("Alimentação");
     expect(result).toMatchObject({
       intent: "plain",
       expense: {
@@ -192,18 +186,16 @@ describe("Codex unified primary", () => {
   });
 
   it.each([
-    [
-      "missing binary",
-      { exitCode: null, timedOut: false, stderr: "", errorCode: "ENOENT" },
-    ],
-    [
-      "not logged in",
-      { exitCode: 1, timedOut: false, stderr: "login required" },
-    ],
-    ["timeout", { exitCode: null, timedOut: true, stderr: "" }],
-    ["nonzero exit", { exitCode: 2, timedOut: false, stderr: "failed" }],
-  ])("falls back on %s", async (_name, outcome) => {
-    const primary = classifier(async () => outcome);
+    ["provider abstains", null],
+    ["provider throws", new Error("boom")],
+    ["no JSON object", "sorry"],
+    ["invalid schema", '{"action":"write"}'],
+  ])("falls back when the %s", async (_name, reply) => {
+    const complete = vi.fn(async () => {
+      if (reply instanceof Error) throw reply;
+      return reply;
+    });
+    const primary = createUnifiedCompletionMessageClassifier({ complete });
     const fallback = vi.fn(async () => ({
       intent: "plain" as const,
       expense: { description: "legacy" },
@@ -211,25 +203,6 @@ describe("Codex unified primary", () => {
     const chained = withClassifierFallback(primary, fallback, () => undefined);
     expect(await chained?.("x", OPTIONS)).toMatchObject({ intent: "plain" });
     expect(fallback).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back on missing output and invalid schema", async () => {
-    for (const runner of [
-      async () => ({ exitCode: 0, timedOut: false, stderr: "" }),
-      async (request: Parameters<CodexProcessRunner>[0]) => {
-        await writeFile(request.outputPath, '{"action":"write"}');
-        return { exitCode: 0, timedOut: false, stderr: "" };
-      },
-    ]) {
-      const fallback = vi.fn(async () => null);
-      const chained = withClassifierFallback(
-        classifier(runner as CodexProcessRunner),
-        fallback,
-        () => undefined,
-      );
-      await chained?.("x", OPTIONS);
-      expect(fallback).toHaveBeenCalledTimes(1);
-    }
   });
 
   it.each([
@@ -285,13 +258,9 @@ describe("Codex unified primary", () => {
       },
     ],
   ])("rejects semantic invalidity: %s", async (_name, output) => {
-    const primary = classifier(async (request) => {
-      await writeFile(request.outputPath, JSON.stringify(output));
-      return { exitCode: 0, timedOut: false, stderr: "" };
-    });
     const fallback = vi.fn(async () => null);
     await withClassifierFallback(
-      primary,
+      classifier(output),
       fallback,
       () => undefined,
     )?.("x", OPTIONS);
@@ -299,24 +268,16 @@ describe("Codex unified primary", () => {
   });
 
   it("accepts consistent total and per-installment values from one reading", async () => {
-    const primary = classifier(async (request) => {
-      await writeFile(
-        request.outputPath,
-        JSON.stringify({
-          ...VALID,
-          intent: "card_installment",
-          description: "Mouse Logitech",
-          amount_cents: 41990,
-          per_installment_cents: 4199,
-          installment_count: 10,
-          category_candidates: [],
-        }),
-      );
-      return { exitCode: 0, timedOut: false, stderr: "" };
-    });
-
     await expect(
-      primary("mouse logitech 10x de 41,99", OPTIONS),
+      classifier({
+        ...VALID,
+        intent: "card_installment",
+        description: "Mouse Logitech",
+        amount_cents: 41990,
+        per_installment_cents: 4199,
+        installment_count: 10,
+        category_candidates: [],
+      })("mouse logitech 10x de 41,99", OPTIONS),
     ).resolves.toMatchObject({
       intent: "card_installment",
       purchase: {
@@ -329,28 +290,28 @@ describe("Codex unified primary", () => {
 
   it("logs only a sanitized semantic rejection code", async () => {
     const telemetry = vi.fn();
-    const primary = classifier(async (request) => {
-      await writeFile(
-        request.outputPath,
-        JSON.stringify({
-          ...VALID,
-          intent: "card_installment",
-          amount_cents: 41990,
-          per_installment_cents: 4200,
-          installment_count: 10,
-          category_candidates: [],
-        }),
-      );
-      return { exitCode: 0, timedOut: false, stderr: "" };
-    }, telemetry);
+    const unified = createUnifiedCompletionMessageClassifier(
+      {
+        complete: async () =>
+          JSON.stringify({
+            ...VALID,
+            intent: "card_installment",
+            amount_cents: 41990,
+            per_installment_cents: 4200,
+            installment_count: 10,
+            category_candidates: [],
+          }),
+      },
+      { provider: "openai", telemetry },
+    );
 
     await expect(
-      primary("private financial text", OPTIONS),
+      unified("private financial text", OPTIONS),
     ).resolves.toBeNull();
     expect(telemetry).toHaveBeenCalledWith({
       type: "ai_call",
-      provider: "codex",
-      role: "primary",
+      provider: "openai",
+      role: "fallback",
       outcome: "semantic_rejection",
       reason: "inconsistent_installment_amounts",
     });
@@ -359,64 +320,36 @@ describe("Codex unified primary", () => {
     );
   });
 
-  it("does not invoke Anthropic when Codex succeeds", async () => {
-    const primary = classifier(async (request) => {
-      await writeFile(request.outputPath, JSON.stringify(VALID));
-      return { exitCode: 0, timedOut: false, stderr: "" };
-    });
+  it("does not invoke the fallback when the primary succeeds", async () => {
     const fallback = vi.fn(async () => null);
     await withClassifierFallback(
-      primary,
+      classifier(VALID),
       fallback,
       () => undefined,
     )?.("giassi 123,45", OPTIONS);
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it("treats a valid non-financial result as success without Anthropic fallback", async () => {
-    const primary = classifier(async (request) => {
-      await writeFile(
-        request.outputPath,
-        JSON.stringify({
-          ...VALID,
-          intent: "non_financial",
-          description: null,
-          amount_cents: null,
-          card_id: null,
-          card_name: null,
-          account_id: null,
-          account_name: null,
-          category_hint: null,
-          category_candidates: [],
-        }),
-      );
-      return { exitCode: 0, timedOut: false, stderr: "" };
-    });
+  it("treats a valid non-financial result as success without fallback", async () => {
     const fallback = vi.fn(async () => null);
     const result = await withClassifierFallback(
-      primary,
+      classifier({
+        ...VALID,
+        intent: "non_financial",
+        description: null,
+        amount_cents: null,
+        card_id: null,
+        card_name: null,
+        account_id: null,
+        account_name: null,
+        category_hint: null,
+        category_candidates: [],
+      }),
       fallback,
       () => undefined,
     )?.("bom dia", OPTIONS);
     expect(result).toEqual({ intent: "non_financial" });
     expect(fallback).not.toHaveBeenCalled();
-  });
-
-  it("uses at most one unified Anthropic completion after Codex failure", async () => {
-    const complete = vi.fn(async () => JSON.stringify(VALID));
-    const primary = classifier(async () => ({
-      exitCode: null,
-      timedOut: true,
-      stderr: "",
-    }));
-    const fallback = createUnifiedCompletionMessageClassifier({ complete });
-    const result = await withClassifierFallback(
-      primary,
-      fallback,
-      () => undefined,
-    )?.("giassi", OPTIONS);
-    expect(result?.intent).toBe("plain");
-    expect(complete).toHaveBeenCalledTimes(1);
   });
 
   it("reports fallback semantic rejection without logging the message", async () => {
@@ -483,29 +416,23 @@ describe("Codex unified primary", () => {
       "card_installment",
     ],
   ])(
-    "uses exactly one Codex and zero Anthropic calls for %s",
+    "uses exactly one primary and zero fallback calls for %s",
     async (_name, output, intent) => {
-      const runner = vi.fn<CodexProcessRunner>(async (request) => {
-        await writeFile(request.outputPath, JSON.stringify(output));
-        return { exitCode: 0, timedOut: false, stderr: "" };
-      });
-      const anthropic = vi.fn(async () => null);
+      const complete = vi.fn();
+      const fallback = vi.fn(async () => null);
       const result = await withClassifierFallback(
-        classifier(runner),
-        anthropic,
+        classifier(output, complete),
+        fallback,
         () => undefined,
       )?.("mensagem", OPTIONS);
       expect(result?.intent).toBe(intent);
-      expect(runner).toHaveBeenCalledTimes(1);
-      expect(anthropic).not.toHaveBeenCalled();
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(fallback).not.toHaveBeenCalled();
     },
   );
 
   it("persists top-3 existing choices in state, skips second AI, and clears them on tap", async () => {
-    const codex = classifier(async (request) => {
-      await writeFile(request.outputPath, JSON.stringify(VALID));
-      return { exitCode: 0, timedOut: false, stderr: "" };
-    });
+    const unified = classifier(VALID);
     const suggestCategory = vi.fn(async () => ({
       status: "uncategorized" as const,
       suggestion: null,
@@ -521,7 +448,7 @@ describe("Codex unified primary", () => {
       suggestCategory,
       createTransaction: async () => ({ id: "tx-1" }),
       logInteraction: async () => undefined,
-      classifyMessage: codex,
+      classifyMessage: unified,
       listActiveCards: () => [{ id: "card-1", name: "Nubank" }],
     };
     const started = await startConversation(

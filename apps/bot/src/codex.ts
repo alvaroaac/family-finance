@@ -287,6 +287,10 @@ export function buildCodexExecArgs(request: CodexRunRequest): string[] {
     "--skip-git-repo-check",
     "-c",
     'web_search="disabled"',
+    // Import categorization is short structured output; low effort keeps it
+    // inside the 12 s budget.
+    "-c",
+    'model_reasoning_effort="low"',
     ...[
       "shell_tool",
       "unified_exec",
@@ -673,95 +677,11 @@ function mapResult(
   };
 }
 
-export function createCodexMessageClassifier(args: {
-  enabled: boolean;
-  model: string;
-  timeoutMs: number;
-  codexHome: string;
-  runner?: CodexProcessRunner;
-  telemetry?: (event: Record<string, unknown>) => void;
-}): MessageClassifier {
-  const runner = args.runner ?? createNodeCodexRunner();
-  let active = 0;
-  let consecutiveFailures = 0;
-  let circuitOpenUntil = 0;
-  const noteFailure = () => {
-    consecutiveFailures += 1;
-    if (consecutiveFailures >= 3) circuitOpenUntil = Date.now() + 60_000;
-  };
-  return async (text, options) => {
-    if (!args.enabled) return null;
-    if (active >= 2 || Date.now() < circuitOpenUntil) {
-      args.telemetry?.({
-        type: "ai_call",
-        provider: "codex",
-        role: "primary",
-        outcome: active >= 2 ? "saturated" : "circuit_open",
-      });
-      return null;
-    }
-    active += 1;
-    try {
-      const result = await runCodexStructured({
-        prompt: buildCodexPrompt(text, options),
-        outputSchema: CODEX_OUTPUT_SCHEMA,
-        validate: (value) => {
-          const parsed = resultSchema.safeParse(value);
-          return parsed.success ? parsed.data : null;
-        },
-        runner,
-        codexHome: args.codexHome,
-        model: args.model,
-        timeoutMs: args.timeoutMs,
-        maxOutputBytes: 64 * 1024,
-      });
-      if (result.outcome !== "success" || result.data === undefined) {
-        noteFailure();
-        args.telemetry?.({
-          type: "ai_call",
-          provider: "codex",
-          role: "primary",
-          outcome:
-            result.outcome === "timeout"
-              ? "timeout"
-              : result.outcome === "invalid_schema"
-                ? "invalid_schema"
-                : "fallback",
-          latencyMs: result.latencyMs,
-        });
-        return null;
-      }
-      const mapped = mapResult(result.data, options);
-      args.telemetry?.({
-        type: "ai_call",
-        provider: "codex",
-        role: "primary",
-        outcome: "success",
-        latencyMs: result.latencyMs,
-      });
-      consecutiveFailures = 0;
-      circuitOpenUntil = 0;
-      return mapped;
-    } catch (error) {
-      noteFailure();
-      args.telemetry?.({
-        type: "ai_call",
-        provider: "codex",
-        role: "primary",
-        outcome:
-          error instanceof ClassifierSemanticError
-            ? "semantic_rejection"
-            : "fallback",
-        reason: classifierFailureCode(error),
-      });
-      return null;
-    } finally {
-      active -= 1;
-    }
-  };
-}
-
-/** One unified completion used after a primary structured worker fails. */
+/**
+ * One schema-constrained completion per message: the same prompt and local
+ * validation whichever provider sits behind `client`, so every tier of the
+ * classifier chain agrees on what a valid result is.
+ */
 export function createUnifiedCompletionMessageClassifier(
   client: AiCompletionClient,
   observability: {
@@ -772,7 +692,7 @@ export function createUnifiedCompletionMessageClassifier(
   return async (text, options) => {
     try {
       const reply = await client.complete(buildCodexPrompt(text, options), {
-        label: "codex_fallback",
+        label: "message_classifier",
       });
       if (!reply) return null;
       const start = reply.indexOf("{");
@@ -798,10 +718,6 @@ export function createUnifiedCompletionMessageClassifier(
     }
   };
 }
-
-/** @deprecated Use createUnifiedCompletionMessageClassifier. */
-export const createUnifiedAnthropicMessageClassifier =
-  createUnifiedCompletionMessageClassifier;
 
 /**
  * Bound the WHOLE classifier chain with one deadline. Each provider keeps its
@@ -842,7 +758,7 @@ export function withClassifierFallback(
   fallback: MessageClassifier | undefined,
   telemetry: (event: Record<string, unknown>) => void = (event) =>
     console.log(JSON.stringify(event)),
-  labels: { from: string; to: string } = { from: "codex", to: "anthropic" },
+  labels: { from: string; to: string } = { from: "primary", to: "fallback" },
 ): MessageClassifier | undefined {
   if (!primary) return fallback;
   return async (text, options) => {
