@@ -62,19 +62,12 @@ describe("getBotServerEnv", () => {
     expect(() => getBotServerEnv(env as NodeJS.ProcessEnv)).toThrow();
   });
 
-  it("requires an explicit paid provider and model when enabled", () => {
+  it("rejects retired Anthropic fallback configuration", () => {
     const env = parseEnvExample(templatePath);
     env.IMPORT_PAID_FALLBACK_ENABLED = "true";
-    expect(() => getBotServerEnv(env as NodeJS.ProcessEnv)).toThrow(
-      /IMPORT_PAID_FALLBACK_PROVIDER/,
-    );
-
     env.IMPORT_PAID_FALLBACK_PROVIDER = "anthropic";
     env.IMPORT_PAID_FALLBACK_MODEL = "claude-sonnet-4-5";
-    expect(getBotServerEnv(env as NodeJS.ProcessEnv)).toMatchObject({
-      IMPORT_PAID_FALLBACK_PROVIDER: "anthropic",
-      IMPORT_PAID_FALLBACK_MODEL: "claude-sonnet-4-5",
-    });
+    expect(() => getBotServerEnv(env as NodeJS.ProcessEnv)).toThrow();
   });
 
   it("accepts OpenAI only with its matching API key", () => {

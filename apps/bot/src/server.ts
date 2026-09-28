@@ -1,3 +1,5 @@
+import { DEFAULT_OPENAI_MODEL } from "@family-finance/config";
+import { createCategoryRuntime } from "./category-runtime.js";
 /**
  * Standalone webhook server for the Telegram bot (spec §3.1).
  *
@@ -31,10 +33,7 @@ import {
   createImportSuggestionHandler,
   IMPORT_SUGGESTION_OUTPUT_SCHEMA,
 } from "./import-suggestions.js";
-import {
-  createAnthropicCompletionClient,
-  createOpenAiCompletionClient,
-} from "./providers.js";
+import { createOpenAiCompletionClient } from "./providers.js";
 
 /** Telegram updates are small; anything above this is not a real update. */
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -44,32 +43,29 @@ const IMPORT_SUGGESTION_PATH = "/internal/v1/import-category-suggestions";
 const DEFAULT_PORT = 8787;
 
 type PaidFallbackFactories = {
-  anthropic: typeof createAnthropicCompletionClient;
   openai: typeof createOpenAiCompletionClient;
+  /** Historical injection seam; production never constructs Anthropic. */
+  anthropic?: unknown;
 };
 
-/** Production provider composition, exported so provider-selection mutations
- * are covered independently from each provider adapter's unit tests. */
 export function createPaidFallbackClient(
   env: BotEnv,
-  factories: PaidFallbackFactories = {
-    anthropic: createAnthropicCompletionClient,
-    openai: createOpenAiCompletionClient,
-  },
+  factories: PaidFallbackFactories = { openai: createOpenAiCompletionClient },
 ): AiCompletionClient | undefined {
-  if (env.IMPORT_PAID_FALLBACK_ENABLED !== "true") return undefined;
-  const model = env.IMPORT_PAID_FALLBACK_MODEL as string;
-  if (env.IMPORT_PAID_FALLBACK_PROVIDER === "openai") {
-    return factories.openai({
-      apiKey: env.OPENAI_API_KEY as string,
-      model,
-      outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
-      timeoutMs: 8_000,
-    });
-  }
-  return factories.anthropic({
-    apiKey: env.ANTHROPIC_API_KEY as string,
-    model,
+  if (
+    env.IMPORT_PAID_FALLBACK_ENABLED !== "true" ||
+    (env.IMPORT_PAID_FALLBACK_PROVIDER !== undefined &&
+      env.IMPORT_PAID_FALLBACK_PROVIDER !== "openai") ||
+    !env.OPENAI_API_KEY
+  )
+    return undefined;
+  return factories.openai({
+    apiKey: env.OPENAI_API_KEY,
+    model:
+      env.IMPORT_PAID_FALLBACK_MODEL ??
+      env.OPENAI_MODEL ??
+      DEFAULT_OPENAI_MODEL,
+    outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
     timeoutMs: 8_000,
   });
 }
@@ -283,6 +279,7 @@ async function main(): Promise<void> {
   const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const paidFallbackClient = createPaidFallbackClient(env);
+  const { jev } = createCategoryRuntime(env);
   const importSuggestions =
     env.IMPORT_SUGGESTION_SHARED_SECRET === undefined
       ? undefined
@@ -291,15 +288,20 @@ async function main(): Promise<void> {
           claimNonce: (nonce: string, expiresAt: Date) =>
             claimImportSuggestionNonce(client, nonce, expiresAt),
           handle: createImportSuggestionHandler({
-            codexEnabled: env.CODEX_ENABLED === "true",
+            jevPrimary: true,
+            jevClient: jev,
+            jevModel: env.JEV_MODEL,
+            codexEnabled: false,
             codexModel: env.CODEX_MODEL ?? "gpt-6-sol",
             codexTimeoutMs: env.CODEX_TIMEOUT_MS ?? 12_000,
             codexHome: "/var/lib/family-finance-codex",
             paidFallbackEnabled: env.IMPORT_PAID_FALLBACK_ENABLED === "true",
             paidFallbackMaxItems: env.IMPORT_PAID_FALLBACK_MAX_ITEMS,
-            paidFallbackProvider:
-              env.IMPORT_PAID_FALLBACK_PROVIDER ?? "unconfigured",
-            paidFallbackModel: env.IMPORT_PAID_FALLBACK_MODEL ?? "unconfigured",
+            paidFallbackProvider: "openai",
+            paidFallbackModel:
+              env.IMPORT_PAID_FALLBACK_MODEL ??
+              env.OPENAI_MODEL ??
+              DEFAULT_OPENAI_MODEL,
             paidFallbackClient,
             reservePaidItems: (input) =>
               reserveImportAiPaidItems(client, input),

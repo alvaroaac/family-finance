@@ -246,7 +246,7 @@ const suggestionResponseSchema = z
                     subcategoryId: z.string().nullable(),
                     confidence: z.number().min(0).max(1),
                     explanation: z.string().max(500),
-                    provider: z.enum(["codex", "paid_fallback"]),
+                    provider: z.enum(["jev", "codex", "paid_fallback"]),
                   })
                   .strict(),
               )
@@ -257,7 +257,7 @@ const suggestionResponseSchema = z
                 categoryName: z.string().min(1).max(100),
                 subcategoryName: z.string().max(100).nullable(),
                 explanation: z.string().max(500),
-                provider: z.enum(["codex", "paid_fallback"]),
+                provider: z.enum(["jev", "codex", "paid_fallback"]),
               })
               .strict()
               .nullable(),
@@ -275,7 +275,7 @@ export type ImportAiSuggestion = {
   subcategoryId?: string;
   confidence: number;
   explanation: string;
-  provider: "codex" | "paid_fallback";
+  provider: "jev" | "codex" | "paid_fallback";
 };
 
 export type SuggestImportResult =
@@ -287,7 +287,7 @@ export type SuggestImportResult =
         categoryName: string;
         subcategoryName: string | null;
         explanation: string;
-        provider: "codex" | "paid_fallback";
+        provider: "jev" | "codex" | "paid_fallback";
       }>;
       unresolvedCount: number;
       providerRuns: unknown[];
@@ -1259,6 +1259,7 @@ export type ConfirmInput = {
         | "memory"
         | "source_mapping"
         | "rule"
+        | "jev"
         | "codex"
         | "paid_fallback"
         | "user";

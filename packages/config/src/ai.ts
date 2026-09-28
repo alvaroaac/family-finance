@@ -25,6 +25,9 @@
  */
 export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5";
 
+/** Current efficient GPT model used for extraction and categorization fallback. */
+export const DEFAULT_OPENAI_MODEL = "gpt-6-luna";
+
 /** Default OpenAI transcription model (Whisper). */
 export const DEFAULT_TRANSCRIPTION_MODEL = "whisper-1";
 
@@ -53,9 +56,7 @@ export type TranscriptionConfig = {
  * `ANTHROPIC_MODEL`. The key comes from `ANTHROPIC_API_KEY`. Build-safe: returns
  * `isConfigured: false` (never throws) when the key is absent.
  */
-export function getLlmConfig(
-  env: NodeJS.ProcessEnv = process.env,
-): LlmConfig {
+export function getLlmConfig(env: NodeJS.ProcessEnv = process.env): LlmConfig {
   const apiKey = nonEmpty(env.ANTHROPIC_API_KEY);
   const model = nonEmpty(env.ANTHROPIC_MODEL) ?? DEFAULT_ANTHROPIC_MODEL;
   return {

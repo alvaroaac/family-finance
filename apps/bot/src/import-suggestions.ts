@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { JevClient } from "./jev.js";
 
 import type { AiCompletionClient } from "@family-finance/categorization";
 
@@ -49,7 +50,10 @@ const legacyImportSuggestionRequestSchema = z
     scopeKey: z.string().min(1).max(128),
     ...requestCatalogAndItemsSchema,
     fallback: z
-      .object({ haiku: z.boolean(), maxPaidItems: z.number().int().min(0).max(25) })
+      .object({
+        haiku: z.boolean(),
+        maxPaidItems: z.number().int().min(0).max(25),
+      })
       .strict(),
   })
   .strict()
@@ -142,14 +146,14 @@ const modelResultSchema = z
   .strict();
 
 export type ImportSuggestionCandidate = z.infer<typeof candidateSchema> & {
-  provider: "codex" | "paid_fallback";
+  provider: "jev" | "codex" | "paid_fallback";
 };
 export type ImportSuggestionItem = {
   key: string;
   candidates: ImportSuggestionCandidate[];
   proposedTaxonomyChange:
     | (z.infer<typeof proposalSchema> & {
-        provider: "codex" | "paid_fallback";
+        provider: "jev" | "codex" | "paid_fallback";
       })
     | null;
 };
@@ -159,7 +163,7 @@ export type ImportSuggestionResponse = {
   requestId: string;
   outcome: "success" | "partial" | "unavailable";
   providerRuns: Array<{
-    provider: "codex" | "paid_fallback";
+    provider: "jev" | "codex" | "paid_fallback";
     model: string;
     outcome:
       | StructuredCodexOutcome
@@ -303,6 +307,9 @@ function parseCompletionJson(reply: string): unknown {
 }
 
 export function createImportSuggestionHandler(args: {
+  jevPrimary?: boolean;
+  jevClient?: JevClient;
+  jevModel?: string;
   codexEnabled: boolean;
   codexModel: string;
   codexTimeoutMs: number;
@@ -348,7 +355,66 @@ export function createImportSuggestionHandler(args: {
       const codexReturnedKeys = new Set<string>();
       let codexOutcome: StructuredCodexOutcome | "disabled" = "disabled";
 
-      if (args.codexEnabled) {
+      const jevPrimary =
+        args.jevPrimary === true || args.jevClient !== undefined;
+      const jevFallbackKeys = new Set<string>();
+      if (jevPrimary) {
+        const started = Date.now();
+        let validItems = 0;
+        for (let offset = 0; offset < request.items.length; offset += 4) {
+          await Promise.all(
+            request.items.slice(offset, offset + 4).map(async (item) => {
+              const result = await args.jevClient
+                ?.classify(item.description, request.catalog)
+                .catch(() => null);
+              if (!result) {
+                jevFallbackKeys.add(item.key);
+                return;
+              }
+              const validated = validatedModelResult(
+                {
+                  items: [
+                    {
+                      key: item.key,
+                      candidates: result.candidates,
+                      proposedTaxonomyChange: null,
+                    },
+                  ],
+                },
+                { ...request, items: [item] },
+              );
+              if (!validated?.items.length) {
+                jevFallbackKeys.add(item.key);
+                return;
+              }
+              validItems++;
+              if (result.needsFallback) jevFallbackKeys.add(item.key);
+              if (
+                result.decision !== "abstain" &&
+                result.decision !== "propose_new" &&
+                result.candidates.length
+              ) {
+                resolved.set(item.key, {
+                  key: item.key,
+                  candidates: result.candidates.map((candidate) => ({
+                    ...candidate,
+                    provider: "jev" as const,
+                  })),
+                  proposedTaxonomyChange: null,
+                });
+              }
+            }),
+          );
+        }
+        providerRuns.push({
+          provider: "jev",
+          model: args.jevModel ?? "jev-1.13.0",
+          outcome: validItems === request.items.length ? "success" : "error",
+          attemptedItems: request.items.length,
+          resolvedItems: resolved.size,
+          latencyMs: Date.now() - started,
+        });
+      } else if (args.codexEnabled) {
         const codex = await runCodexStructured({
           prompt: buildPrompt(request),
           outputSchema: IMPORT_SUGGESTION_OUTPUT_SCHEMA,
@@ -406,11 +472,12 @@ export function createImportSuggestionHandler(args: {
         });
       }
 
-      // A successful Codex item with an empty result is an intentional
-      // abstention and stays manual. Paid fallback is reserved only for an
-      // operational failure or a key missing from otherwise-valid output.
-      const operationallyMissing =
-        codexOutcome === "success"
+      // Jev uncertainty/proposals and operational failures may use the bounded
+      // GPT fallback. Intentional abstentions stay manual. Legacy Codex replies
+      // retain their operational-failure-only fallback policy.
+      const operationallyMissing = jevPrimary
+        ? request.items.filter((item) => jevFallbackKeys.has(item.key))
+        : codexOutcome === "success"
           ? request.items.filter((item) => !codexReturnedKeys.has(item.key))
           : request.items;
       if (

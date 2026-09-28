@@ -62,26 +62,36 @@ describe("createPaidFallbackClient", () => {
     expect(anthropic).not.toHaveBeenCalled();
   });
 
-  it("maps Anthropic config to the Anthropic client with its key", () => {
+  it("never constructs the retired Anthropic provider even for stale config", () => {
     const anthropic = vi.fn(() => fakeClient);
     const openai = vi.fn();
-    expect(
-      createPaidFallbackClient(
-        paidEnv({
-          IMPORT_PAID_FALLBACK_ENABLED: "true",
-          IMPORT_PAID_FALLBACK_PROVIDER: "anthropic",
-          IMPORT_PAID_FALLBACK_MODEL: "claude-haiku-4-5",
-          ANTHROPIC_API_KEY: "anthropic-key",
-        }),
-        { anthropic, openai },
-      ),
-    ).toBe(fakeClient);
-    expect(anthropic).toHaveBeenCalledWith({
-      apiKey: "anthropic-key",
-      model: "claude-haiku-4-5",
-      timeoutMs: 8_000,
+    const stale = paidEnv({
+      IMPORT_PAID_FALLBACK_ENABLED: "true",
+      OPENAI_API_KEY: "openai-key",
     });
+    Object.assign(stale, {
+      IMPORT_PAID_FALLBACK_PROVIDER: "anthropic",
+      IMPORT_PAID_FALLBACK_MODEL: "claude-haiku-4-5",
+    });
+    expect(
+      createPaidFallbackClient(stale, { anthropic, openai }),
+    ).toBeUndefined();
+    expect(anthropic).not.toHaveBeenCalled();
     expect(openai).not.toHaveBeenCalled();
+  });
+  it("uses the configured GPT model when the import override is absent", () => {
+    const openai = vi.fn(() => fakeClient);
+    createPaidFallbackClient(
+      paidEnv({
+        IMPORT_PAID_FALLBACK_ENABLED: "true",
+        OPENAI_API_KEY: "key",
+        OPENAI_MODEL: "gpt-test",
+      }),
+      { openai },
+    );
+    expect(openai).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-test" }),
+    );
   });
 });
 

@@ -10,6 +10,7 @@ const optionalNonEmptyString = z.preprocess(
 // `@family-finance/config` is the single entry point.
 export {
   DEFAULT_ANTHROPIC_MODEL,
+  DEFAULT_OPENAI_MODEL,
   DEFAULT_TRANSCRIPTION_MODEL,
   getLlmConfig,
   getTranscriptionConfig,
@@ -42,6 +43,9 @@ export const envSchema = z.object({
   //   (Anthropic Claude); OPENAI_API_KEY powers audio transcription (e.g. Whisper).
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_MODEL: z.string().min(1).optional(),
+  TYPESAFE_API_KEY: optionalNonEmptyString,
+  JEV_MODEL: optionalNonEmptyString,
+  JEV_TIMEOUT_MS: z.coerce.number().int().min(100).max(10000).optional(),
   CODEX_ENABLED: z.enum(["true", "false"]).optional(),
   CODEX_MODEL: z.string().min(1).optional(),
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).optional(),
@@ -57,7 +61,7 @@ export const envSchema = z.object({
   IMPORT_PAID_FALLBACK_PROVIDER: z.preprocess(
     (value) =>
       typeof value === "string" && value.trim() === "" ? undefined : value,
-    z.enum(["anthropic", "openai"]).optional(),
+    z.enum(["openai"]).optional(),
   ),
   IMPORT_PAID_FALLBACK_MODEL: optionalNonEmptyString,
   IMPORT_PAID_FALLBACK_MAX_ITEMS: z.coerce
@@ -95,25 +99,6 @@ export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
   const parsed = botEnvSchema.parse(env);
   if (
     parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
-    (parsed.IMPORT_PAID_FALLBACK_PROVIDER === undefined ||
-      parsed.IMPORT_PAID_FALLBACK_MODEL === undefined)
-  ) {
-    throw new Error(
-      "IMPORT_PAID_FALLBACK_PROVIDER and IMPORT_PAID_FALLBACK_MODEL are required when paid fallback is enabled",
-    );
-  }
-  if (
-    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
-    parsed.IMPORT_PAID_FALLBACK_PROVIDER === "anthropic" &&
-    parsed.ANTHROPIC_API_KEY === undefined
-  ) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is required for the Anthropic paid fallback",
-    );
-  }
-  if (
-    parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
-    parsed.IMPORT_PAID_FALLBACK_PROVIDER === "openai" &&
     parsed.OPENAI_API_KEY === undefined
   ) {
     throw new Error("OPENAI_API_KEY is required for the OpenAI paid fallback");

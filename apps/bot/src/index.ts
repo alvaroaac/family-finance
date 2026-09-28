@@ -21,7 +21,7 @@
 
 import {
   getBotServerEnv,
-  getLlmConfig,
+  DEFAULT_OPENAI_MODEL,
   getTranscriptionConfig,
 } from "@family-finance/config";
 import {
@@ -54,7 +54,6 @@ import {
 } from "@family-finance/db";
 import {
   suggestCategory,
-  createAiCategorizer,
   type CategoryCatalog,
   type CategorizationContext,
   type CategorizationMemoryStore,
@@ -62,6 +61,7 @@ import {
   type AiCategorizer,
 } from "@family-finance/categorization";
 import { currentHouseholdDate } from "@family-finance/domain";
+import { createCategoryRuntime } from "./category-runtime.js";
 
 import {
   createHttpTelegramClient,
@@ -93,21 +93,14 @@ import {
   type TranscriptionProvider,
 } from "./audio.js";
 import {
-  createAnthropicCompletionClient,
   createOpenAiCompletionClient,
   createOpenAiTranscriptionProvider,
 } from "./providers.js";
-import {
-  createMessageClassifier,
-  createTextInterpreter,
-  type MessageClassifier,
-  type TextInterpreter,
-} from "./interpret.js";
+import { type MessageClassifier, type TextInterpreter } from "./interpret.js";
 import {
   CODEX_OUTPUT_SCHEMA,
   createUnifiedCompletionMessageClassifier,
   withClassifierDeadline,
-  withClassifierFallback,
 } from "./codex.js";
 import { STARTER_MERCHANT_ALIASES } from "./merchant-aliases.js";
 import { createDbConversationStore, type ConversationStore } from "./store.js";
@@ -119,16 +112,12 @@ import {
 import { TOKENS } from "./keyboards.js";
 
 /**
- * Message classifier chain: OpenAI efficient tier → Anthropic last resort, both
- * the same unified structured prompt. Timeouts come from the 2026-09 eval of
- * the same tier one generation back (thoughts/notes/PROGRESS.md): gpt-5.6-luna
- * p95 ≈ 2.9 s with reasoning off, Haiku ≈ 3.3 s. Effort `none` scored the same
- * as `low` on that set and is faster, so it is the default.
+ * GPT extracts financial fields under a four-second deadline. Categorization
+ * is handled independently by the Jev-first household engine.
  */
-const CLASSIFIER_PRIMARY_MODEL = "gpt-6-luna";
+const CLASSIFIER_PRIMARY_MODEL = DEFAULT_OPENAI_MODEL;
 const CLASSIFIER_REASONING_EFFORT = "none";
 const CLASSIFIER_PRIMARY_TIMEOUT_MS = 4_000;
-const CLASSIFIER_LAST_RESORT_TIMEOUT_MS = 5_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
@@ -936,67 +925,29 @@ export async function startBot(): Promise<{
     });
   }
 
-  // AI features. With an OpenAI key the unified classifier chain reads every
-  // message (one structured call handles intent, fields, and category), so the
-  // separate categorizer/interpreter stay off. Without one, the legacy Anthropic
-  // path (spec §3.4) backs categorization + interpretation; no keys = no AI.
-  const unifiedEnabled = env.OPENAI_API_KEY !== undefined;
-  const llm = getLlmConfig();
-  const completionClient =
-    llm.isConfigured && llm.apiKey !== undefined
-      ? createAnthropicCompletionClient({
-          apiKey: llm.apiKey,
-          model: llm.model,
-          timeoutMs: unifiedEnabled
-            ? CLASSIFIER_LAST_RESORT_TIMEOUT_MS
-            : undefined,
-        })
-      : undefined;
-  const ai: AiCategorizer | undefined =
-    completionClient !== undefined
-      ? createAiCategorizer(completionClient)
-      : undefined;
-  const interpretText: TextInterpreter | undefined =
-    completionClient !== undefined && !unifiedEnabled
-      ? createTextInterpreter(completionClient)
-      : undefined;
-  const anthropicClassifier: MessageClassifier | undefined =
-    completionClient !== undefined
-      ? unifiedEnabled
-        ? createUnifiedCompletionMessageClassifier(completionClient, {
-            provider: "anthropic",
-            telemetry: (event) => console.log(JSON.stringify(event)),
-          })
-        : createMessageClassifier(completionClient)
-      : undefined;
-  const openAiClassifier: MessageClassifier | undefined =
-    env.OPENAI_API_KEY !== undefined
-      ? createUnifiedCompletionMessageClassifier(
-          createOpenAiCompletionClient({
-            apiKey: env.OPENAI_API_KEY,
-            model: env.OPENAI_MODEL ?? CLASSIFIER_PRIMARY_MODEL,
-            outputSchema: CODEX_OUTPUT_SCHEMA,
-            reasoningEffort: CLASSIFIER_REASONING_EFFORT,
-            timeoutMs: CLASSIFIER_PRIMARY_TIMEOUT_MS,
-          }),
-          {
-            provider: "openai",
-            telemetry: (event) => console.log(JSON.stringify(event)),
-          },
-        )
-      : undefined;
-  const classifierChain = withClassifierFallback(
-    openAiClassifier,
-    anthropicClassifier,
-    undefined,
-    { from: "openai", to: "anthropic" },
-  );
-  // The chain is awaited on the webhook hot path, so its budget is exactly the
-  // sum of the per-tier timeouts: a tier that hangs cannot steal the next one's
-  // slot, and nothing waits longer than the tiers themselves allow.
+  // GPT extracts financial fields. Category decisions flow through household
+  // memory/rules, then Jev, with GPT used only when Jev needs a fallback.
+  const { categorizer: ai } = createCategoryRuntime(env);
+  const interpretText: TextInterpreter | undefined = undefined;
+  const openAiClassifier: MessageClassifier | undefined = env.OPENAI_API_KEY
+    ? createUnifiedCompletionMessageClassifier(
+        createOpenAiCompletionClient({
+          apiKey: env.OPENAI_API_KEY,
+          model: env.OPENAI_MODEL ?? CLASSIFIER_PRIMARY_MODEL,
+          outputSchema: CODEX_OUTPUT_SCHEMA,
+          reasoningEffort: CLASSIFIER_REASONING_EFFORT,
+          timeoutMs: CLASSIFIER_PRIMARY_TIMEOUT_MS,
+        }),
+        {
+          provider: "openai",
+          extractionOnly: true,
+          telemetry: (event) => console.log(JSON.stringify(event)),
+        },
+      )
+    : undefined;
   const classifyMessage = withClassifierDeadline(
-    classifierChain,
-    CLASSIFIER_PRIMARY_TIMEOUT_MS + CLASSIFIER_LAST_RESORT_TIMEOUT_MS,
+    openAiClassifier,
+    CLASSIFIER_PRIMARY_TIMEOUT_MS,
   );
 
   // Voice transcription — only when both a bot token (to fetch the file) and a

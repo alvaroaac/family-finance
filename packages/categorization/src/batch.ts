@@ -50,6 +50,7 @@ export type SuggestionProvenance =
   | "memory"
   | "source_mapping"
   | "rule"
+  | "jev"
   | "codex"
   | "paid_fallback";
 
@@ -77,6 +78,7 @@ export const suggestionCandidateSchema = z
       "memory",
       "source_mapping",
       "rule",
+      "jev",
       "codex",
       "paid_fallback",
     ]),
@@ -194,6 +196,7 @@ function candidate(input: {
     explanation: bounded(input.explanation, 240) || "Sugestão de categoria.",
     // AI is review-required regardless of self-reported confidence.
     requiresReview:
+      input.source === "jev" ||
       input.source === "codex" ||
       input.source === "paid_fallback" ||
       confidence < 0.85,
@@ -617,7 +620,7 @@ export function parseAiBatchReply(
 
 export type TaxonomyProposal = {
   requestKey: string;
-  provider: "codex" | "paid_fallback";
+  provider: "jev" | "codex" | "paid_fallback";
   categoryName: string;
   subcategoryName: string | null;
   confidence: number;
@@ -634,7 +637,7 @@ export type AppliedAiBatch = {
 export function applyAiBatchReply(
   plan: BatchCategorizationPlan,
   parsed: ParsedAiBatchReply,
-  provider: "codex" | "paid_fallback",
+  provider: "jev" | "codex" | "paid_fallback",
   catalog: CategoryCatalog,
   versions: { modelVersion: string; promptVersion: string },
 ): AppliedAiBatch {

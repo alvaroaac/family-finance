@@ -91,3 +91,10 @@ each candidate three to five times and compare the mean plus the worst run.
 Select the smallest model with zero catastrophic errors on the critical cases;
 route only ambiguous/new-category cases to a stronger model if that meets the
 quality bar more economically.
+
+## Additive Portuguese / Jev benchmark
+
+The separate [Portuguese category benchmark](portuguese-v1/README.md) adds native
+Jev support and 24 cases without changing this full extraction/evaluation suite.
+Run `pnpm --filter @family-finance/bot eval:portuguese --dry-run` to inspect its
+scope, or omit `--dry-run` for the live Jev/Haiku comparison.
