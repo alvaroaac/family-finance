@@ -53,6 +53,12 @@ export type BucketActionResult = {
   message: string;
 };
 
+const USER_FACING_BUCKET_ERRORS = new Set([
+  "Informe um nome para o objetivo.",
+  "Já existe um objetivo com esse nome.",
+  "Só é possível excluir um objetivo com saldo zerado.",
+]);
+
 /** Run a bucket change, revalidate on success, and report the outcome. */
 async function runBucketAction(
   change: () => Promise<unknown>,
@@ -61,12 +67,13 @@ async function runBucketAction(
   try {
     await change();
   } catch (error) {
+    console.error("runBucketAction failed:", error);
     return {
       ok: false,
       message:
-        error instanceof Error
+        error instanceof Error && USER_FACING_BUCKET_ERRORS.has(error.message)
           ? error.message
-          : "Não foi possível salvar a caixinha.",
+          : "Não deu pra salvar a caixinha agora. Tenta de novo em instantes.",
     };
   }
   revalidatePath("/investments");

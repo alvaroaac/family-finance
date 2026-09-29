@@ -832,3 +832,18 @@ production will already have applied, and it was written without the
 rebase over `main` and renumber its migration to the next free number.
 
 **Status:** open
+
+## 2026-09-29: A member can rename another member of the same household
+
+**Area:** `household_members_update` policy (`supabase/migrations/0010_*`), column grant in `0032`
+
+**Impact:** The policy allows updates on any row of the member's household,
+and `0032` limits the column to `display_name`. The display name feeds the
+"<nome> comprou" routing and the AI prompts, so one member can change how
+another is addressed. Same household only; no effect on isolation.
+
+**Current workaround:** None; the first household edits both names on purpose.
+
+**Revisit trigger:** A household asks for it, or an administrator role appears.
+
+**Status:** open

@@ -767,6 +767,10 @@ export type Database = {
           display_name: string | null;
         }[];
       };
+      discard_telegram_link_code: {
+        Args: { p_code: string };
+        Returns: undefined;
+      };
       is_household_member: {
         Args: { target_household_id: string };
         Returns: boolean;

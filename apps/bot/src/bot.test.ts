@@ -1127,18 +1127,13 @@ const resolveMemberFake = async (sender: {
 }): Promise<BotMemberIdentity | null> =>
   IDENTITIES[sender.telegramUserId] ?? null;
 
-function textUpdate(
-  fromId: number,
-  text: string,
-  chatId = 555,
-  fromUsername?: string,
-): unknown {
+function textUpdate(fromId: number, text: string, chatId = 555): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
       chat: { id: chatId, type: "private" },
-      from: { id: fromId, username: fromUsername },
+      from: { id: fromId },
       text,
     },
   };
@@ -1166,6 +1161,7 @@ describe("Telegram link commands", () => {
         telegram,
         resolveMember,
         redeemLinkCode,
+        discardLinkCode: vi.fn(),
         store: createInMemoryConversationStore(),
         interpretText,
       });
@@ -1182,10 +1178,11 @@ describe("Telegram link commands", () => {
   );
 
   it.each(["group", "supergroup"])(
-    "keeps a link code out of redemption in a %s chat",
+    "discards a link code sent in a %s chat",
     async (chatType) => {
       const { telegram, sent } = fakeTelegram();
       const redeemLinkCode = vi.fn();
+      const discardLinkCode = vi.fn().mockResolvedValue(undefined);
       const resolveMember = vi.fn(resolveMemberFake);
       const rawBody = textUpdate(999, "/vincular ABCD2345") as {
         message: { chat: { type?: string } };
@@ -1199,8 +1196,10 @@ describe("Telegram link commands", () => {
         telegram,
         resolveMember,
         redeemLinkCode,
+        discardLinkCode,
         store: createInMemoryConversationStore(),
       });
+      expect(discardLinkCode).toHaveBeenCalledWith("ABCD2345");
       expect(redeemLinkCode).not.toHaveBeenCalled();
       expect(resolveMember).not.toHaveBeenCalled();
       expect(sent.at(-1)?.text).toBe(
@@ -1208,6 +1207,36 @@ describe("Telegram link commands", () => {
       );
     },
   );
+
+  it("still sends the private-only reply when discarding fails", async () => {
+    const { telegram, sent } = fakeTelegram();
+    const cause = new Error("database unavailable");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rawBody = textUpdate(999, "/vincular ABCD2345") as {
+      message: { chat: { type?: string } };
+    };
+    rawBody.message.chat.type = "group";
+    try {
+      await handleWebhook({
+        rawBody,
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        memberClient: () => fakeSupabase({}).client,
+        telegram,
+        resolveMember: vi.fn(resolveMemberFake),
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn().mockRejectedValue(cause),
+        store: createInMemoryConversationStore(),
+      });
+      expect(sent.at(-1)?.text).toContain("só funciona no chat privado");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("discardLinkCode"),
+        cause,
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
   it.each([
     ["/vincular ABCD2345", "ABCD2345"],
@@ -1231,6 +1260,7 @@ describe("Telegram link commands", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn().mockResolvedValue(null),
+      discardLinkCode: vi.fn(),
       store: createInMemoryConversationStore(),
     };
     await handleWebhook({
@@ -1244,7 +1274,7 @@ describe("Telegram link commands", () => {
   });
 });
 
-it("keeps every bot repository call on the member path except the resolver", () => {
+it("keeps business repository calls on the member path", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const serverSource = readFileSync(
     new URL("./server.ts", import.meta.url),
@@ -1289,6 +1319,7 @@ it("keeps every bot repository call on the member path except the resolver", () 
       "createMemberClient",
       "resolveTelegramMember",
       "redeemTelegramLinkCode",
+      "discardTelegramLinkCode",
       "type AppSupabaseClient",
       "type BotMemberIdentity",
     ].sort(),
@@ -1395,6 +1426,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1414,6 +1446,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1432,6 +1465,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store: createInMemoryConversationStore(),
     };
     await handleWebhook({
@@ -1462,6 +1496,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -1484,14 +1519,19 @@ describe("handleWebhook: telegram identity", () => {
     const { telegram, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
 
+    const rawBody = textUpdate(999, "mercado 54,30") as {
+      message: { from: { id: number; username?: string } };
+    };
+    rawBody.message.from.username = "KarolZinha";
     const result = await handleWebhook({
-      rawBody: textUpdate(999, "mercado 54,30", 555, "KarolZinha"),
+      rawBody,
       secretHeader: SECRET,
       configuredSecret: SECRET,
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -1513,6 +1553,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -1541,6 +1582,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -1585,6 +1627,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -1619,6 +1662,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -1655,6 +1699,7 @@ describe("handleWebhook: telegram identity", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 

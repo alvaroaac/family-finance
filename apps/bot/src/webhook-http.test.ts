@@ -207,6 +207,7 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
         telegram: tg.telegram,
         resolveMember: resolveMemberFake,
         redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
       }),
     );

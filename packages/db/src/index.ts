@@ -290,10 +290,10 @@ export {
   updateInvestmentBucketBalance,
   findLastBotInteraction,
   // Bot identity + persistent conversations (v1.0 Task 8).
-  findMemberByTelegramUserId,
   resolveTelegramMember,
   createTelegramLinkCode,
   redeemTelegramLinkCode,
+  discardTelegramLinkCode,
   unlinkTelegram,
   loadBotConversation,
   saveBotConversation,

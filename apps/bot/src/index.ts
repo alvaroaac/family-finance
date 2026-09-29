@@ -37,6 +37,7 @@ import {
   findLatestExpenses,
   resolveTelegramMember,
   redeemTelegramLinkCode,
+  discardTelegramLinkCode,
   listCreditCards,
   listHouseholdMembers,
   listActiveCategorizationMemory,
@@ -528,6 +529,7 @@ export async function handleWebhook(args: {
     code: string,
     telegramUserId: number,
   ) => Promise<BotMemberIdentity | null>;
+  discardLinkCode: (code: string) => Promise<void>;
   /** Per-chat conversation persistence (DB-backed in production). */
   store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
@@ -729,6 +731,13 @@ export async function handleWebhook(args: {
   const linkCode = message === null ? null : parseLinkCommand(message.text);
   if (message !== null && linkCode !== null) {
     if (message.chatType !== "private") {
+      if (linkCode !== "") {
+        try {
+          await args.discardLinkCode(linkCode);
+        } catch (error) {
+          console.warn("[bot] discardLinkCode failed:", error);
+        }
+      }
       await args.telegram.sendMessage(message.chatId, LINK_PRIVATE_ONLY_REPLY);
       return { status: 200, body: { ok: true } };
     }
@@ -1038,6 +1047,8 @@ export async function startBot(): Promise<{
     });
   const redeemLinkCode = (code: string, telegramUserId: number) =>
     redeemTelegramLinkCode(client, code, telegramUserId);
+  const discardLinkCode = (code: string) =>
+    discardTelegramLinkCode(client, code);
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(
@@ -1122,6 +1133,7 @@ export async function startBot(): Promise<{
         telegram,
         resolveMember,
         redeemLinkCode,
+        discardLinkCode,
         store,
         ai,
         interpretText,

@@ -1461,22 +1461,32 @@ function requireBucketName(name: string): string {
   return trimmed;
 }
 
+async function requireAvailableBucketName(
+  client: AppSupabaseClient,
+  householdId: string,
+  name: string,
+  exceptBucketId?: string,
+): Promise<void> {
+  const existing = await listInvestmentBuckets(client, householdId);
+  if (
+    existing.some(
+      (bucket) =>
+        bucket.id !== exceptBucketId &&
+        bucket.name.toLocaleLowerCase("pt-BR") ===
+          name.toLocaleLowerCase("pt-BR"),
+    )
+  ) {
+    throw new Error(BUCKET_SLUG_TAKEN);
+  }
+}
+
 /** Create a named goal with a household-unique name and slug. */
 export async function createInvestmentBucket(
   client: AppSupabaseClient,
   input: { householdId: string; name: string },
 ): Promise<InvestmentBucketRow> {
   const name = requireBucketName(input.name);
-  const existing = await listInvestmentBuckets(client, input.householdId);
-  if (
-    existing.some(
-      (bucket) =>
-        bucket.name.toLocaleLowerCase("pt-BR") ===
-        name.toLocaleLowerCase("pt-BR"),
-    )
-  ) {
-    throw new Error(BUCKET_SLUG_TAKEN);
-  }
+  await requireAvailableBucketName(client, input.householdId, name);
   const { data, error } = await client
     .from("investment_buckets")
     .insert(investmentBucketInsert({ householdId: input.householdId, name }))
@@ -1498,6 +1508,12 @@ export async function renameInvestmentBucket(
   input: { householdId: string; bucketId: string; name: string },
 ): Promise<void> {
   const name = requireBucketName(input.name);
+  await requireAvailableBucketName(
+    client,
+    input.householdId,
+    name,
+    input.bucketId,
+  );
   const { error } = await client
     .from("investment_buckets")
     .update({ name, slug: slugifyBucketName(name) })
@@ -2759,36 +2775,16 @@ export async function redeemTelegramLinkCode(
       };
 }
 
-/**
- * Resolve a Telegram user id to an active household member. Returns null when
- * no active member is linked to that Telegram id — the bot then politely
- * refuses instead of writing anything.
- */
-export async function findMemberByTelegramUserId(
+export async function discardTelegramLinkCode(
   client: AppSupabaseClient,
-  telegramUserId: number,
-): Promise<BotMemberIdentity | null> {
-  const { data, error } = await client
-    .from("household_members")
-    .select("household_id, user_id, display_name")
-    .eq("telegram_user_id", telegramUserId)
-    .eq("is_active", true)
-    .maybeSingle();
+  code: string,
+): Promise<void> {
+  const { error } = await client.rpc("discard_telegram_link_code", {
+    p_code: code,
+  });
   if (error !== null) {
-    throw new Error(`findMemberByTelegramUserId failed: ${error.message}`);
+    throw new Error(`discardTelegramLinkCode failed: ${error.message}`);
   }
-  if (data === null) {
-    return null;
-  }
-  const row = data as Pick<
-    HouseholdMemberRow,
-    "household_id" | "user_id" | "display_name"
-  >;
-  return {
-    householdId: row.household_id,
-    userId: row.user_id,
-    displayName: row.display_name,
-  };
 }
 
 /** Resolve a Telegram sender by the linked numeric id. Service-role only. */

@@ -1,7 +1,7 @@
 # Multi-tenancy, spec 1 of 2: tenancy
 
 Date: 2026-09-29
-Status: draft, awaiting review
+Status: approved, implemented (see progress.md)
 Follow-up: spec 2 (encryption at rest), not yet written
 
 ## Goal
@@ -136,9 +136,10 @@ existing trigger.
 
 ### Copy and prompts
 
-- Unknown-sender replies stop naming a person. New copy (pt-BR):
-  "Oi! Eu ainda não conheço você por aqui — peça para quem administra a sua casa
-  vincular seu Telegram nas Configurações."
+- Unknown-sender replies stop naming a person. In pt-BR,
+  the reply explains how to link: open Configurações in Family Finance, choose
+  "Vincular Telegram" and send the code in a private chat. The exact text lives in
+  `apps/bot/src/index.ts`.
 - LLM prompt examples and reply examples use neutral placeholder names.
 - The routing rules that match "Karol comprou" match any member `display_name` of the
   sender's household, loaded at request time.
@@ -268,7 +269,8 @@ Step 3 does not wait for spec 2.
 
 1. The tester onboards after this spec, pending their confirmation. Spec 2 follows.
 2. The product name is "Family Finance" for now.
-3. No administrator role. Every member can link Telegram ids in Settings, as today.
+3. No administrator role. Every member links their own Telegram in Settings with a
+   one-time code (section 2).
 4. Domain model: one deployment serving several hostnames (section 4). A stack per
    household was rejected: it multiplies operations while the operator remains root
    on every stack.

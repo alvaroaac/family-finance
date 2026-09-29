@@ -63,6 +63,9 @@ begin
     raise exception 'member column-level grants are wrong';
   end if;
   if has_function_privilege('anon', 'create_telegram_link_code()', 'execute')
+    or has_function_privilege('anon', 'discard_telegram_link_code(text)', 'execute')
+    or has_function_privilege('authenticated', 'discard_telegram_link_code(text)', 'execute')
+    or not has_function_privilege('service_role', 'discard_telegram_link_code(text)', 'execute')
     or has_function_privilege('authenticated', 'redeem_telegram_link_code(text,bigint)', 'execute')
     or has_function_privilege('authenticated', 'resolve_telegram_member(bigint)', 'execute')
     or not has_function_privilege('service_role', 'resolve_telegram_member(bigint)', 'execute')
@@ -85,6 +88,12 @@ begin
     or exists (select 1 from redeem_telegram_link_code(first_code, 32001)) then
     raise exception 'second code did not replace first code';
   end if;
+  perform discard_telegram_link_code('  ' || lower(second_code) || '  ');
+  if exists (select 1 from telegram_link_codes where member_id = code_member)
+    or exists (select 1 from redeem_telegram_link_code(second_code, 32001)) then
+    raise exception 'discarded code was redeemable';
+  end if;
+  second_code := create_telegram_link_code();
   update household_members set telegram_user_id = 32002 where user_id = late;
   if exists (select 1 from redeem_telegram_link_code(second_code, 32002)) then
     raise exception 'bound Telegram id redeemed a code';

@@ -28,7 +28,6 @@ import {
   updateTransaction,
   updateInstallmentGroup,
   deleteTransaction,
-  findMemberByTelegramUserId,
   resolveTelegramMember,
   createTelegramLinkCode,
   redeemTelegramLinkCode,
@@ -248,10 +247,20 @@ function createBucketClient(result: {
   error?: { message: string; code?: string } | null;
 }) {
   const calls: Array<[string, unknown[]]> = [];
-  const resolved = { data: result.data ?? null, error: result.error ?? null };
+  const resolved: {
+    data: unknown;
+    error: { message: string; code?: string } | null;
+  } = { data: result.data ?? null, error: null };
   const builder: Record<string, unknown> = {
     then(resolve: (value: typeof resolved) => unknown) {
-      return Promise.resolve(resolved).then(resolve);
+      return Promise.resolve({
+        ...resolved,
+        error: calls.some(([method]) =>
+          ["insert", "update", "delete"].includes(method),
+        )
+          ? (result.error ?? null)
+          : null,
+      }).then(resolve);
     },
   };
   for (const method of [
@@ -297,16 +306,45 @@ describe("investment bucket repositories", () => {
 
   it("reports a visible name already used in the household in Portuguese", async () => {
     const { client } = createBucketClient({
-      data: [{ name: "Casa", slug: "casa" }],
+      data: [{ id: "bucket-1", name: "Casa", slug: "casa" }],
     });
     await expect(
       createInvestmentBucket(client, { householdId: HOUSEHOLD, name: "cAsA" }),
     ).rejects.toThrow("Já existe um objetivo com esse nome.");
   });
 
+  it("refuses to rename to another bucket's visible name even when its slug differs", async () => {
+    const { client, calls } = createBucketClient({
+      data: [
+        { id: "bucket-1", name: "Viagem", slug: "viagem" },
+        { id: "bucket-2", name: "Casa", slug: "legacy_goal" },
+      ],
+    });
+    await expect(
+      renameInvestmentBucket(client, {
+        householdId: HOUSEHOLD,
+        bucketId: "bucket-1",
+        name: "cAsA",
+      }),
+    ).rejects.toThrow("Já existe um objetivo com esse nome.");
+    expect(calls.some(([method]) => method === "update")).toBe(false);
+  });
+
+  it("allows changing only the case of a bucket's own name", async () => {
+    const { client, calls } = createBucketClient({
+      data: [{ id: "bucket-1", name: "Casa", slug: "casa" }],
+    });
+    await renameInvestmentBucket(client, {
+      householdId: HOUSEHOLD,
+      bucketId: "bucket-1",
+      name: "CASA",
+    });
+    expect(calls).toContainEqual(["update", [{ name: "CASA", slug: "casa" }]]);
+  });
+
   it("renames the name and slug, scoped to the household", async () => {
     const { client, calls } = createBucketClient({
-      data: [{ id: "bucket-1" }],
+      data: [{ id: "bucket-1", name: "Old", slug: "old" }],
     });
     await renameInvestmentBucket(client, {
       householdId: HOUSEHOLD,
@@ -1274,39 +1312,6 @@ describe("findCardBillSettlements", () => {
     await expect(
       findCardBillSettlements(client, HOUSEHOLD, "2026-07"),
     ).rejects.toThrow("findCardBillSettlements failed: boom");
-  });
-});
-
-describe("findMemberByTelegramUserId", () => {
-  it("maps an active member row to the bot identity shape", async () => {
-    const { client, calls } = createRecordingClient({
-      data: {
-        household_id: HOUSEHOLD,
-        user_id: USER,
-        display_name: "Karol",
-      },
-    });
-    const identity = await findMemberByTelegramUserId(client, 987654321);
-    expect(identity).toEqual({
-      householdId: HOUSEHOLD,
-      userId: USER,
-      displayName: "Karol",
-    });
-    expect(calls.table).toBe("household_members");
-    expect(calls.eq).toContainEqual(["telegram_user_id", 987654321]);
-    expect(calls.eq).toContainEqual(["is_active", true]);
-  });
-
-  it("returns null when no member is linked to the telegram id", async () => {
-    const { client } = createRecordingClient({ data: null });
-    await expect(findMemberByTelegramUserId(client, 42)).resolves.toBeNull();
-  });
-
-  it("throws on a database error", async () => {
-    const { client } = createRecordingClient({ error: { message: "boom" } });
-    await expect(findMemberByTelegramUserId(client, 42)).rejects.toThrow(
-      /findMemberByTelegramUserId failed: boom/,
-    );
   });
 });
 

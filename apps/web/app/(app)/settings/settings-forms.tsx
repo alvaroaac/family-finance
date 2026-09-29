@@ -150,7 +150,7 @@ export function MemberRow({
       if (result.ok && result.code) {
         setCode(result.code);
       } else {
-        setError(result.error ?? "Não foi possível gerar o código.");
+        setError(result.error ?? "Não deu pra gerar o código.");
       }
     });
   }
@@ -164,7 +164,7 @@ export function MemberRow({
         setCode(null);
         toast.success("Telegram desvinculado.");
       } else {
-        setError(result.error ?? "Não foi possível desvincular.");
+        setError(result.error ?? "Não deu pra desvincular.");
       }
     });
   }

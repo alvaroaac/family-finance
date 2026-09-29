@@ -201,6 +201,7 @@ const RPC_CASES = new Set([
   "resolve_telegram_member(bigint)",
   "create_telegram_link_code()",
   "redeem_telegram_link_code(text,bigint)",
+  "discard_telegram_link_code(text)",
   "unlink_telegram()",
   "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)",
   "update_installment_group_category(uuid,uuid,jsonb)",
@@ -1373,6 +1374,7 @@ function rpcArguments(signature) {
       p_code: "INVALID32",
       p_telegram_user_id: created.bTelegramId,
     },
+    "discard_telegram_link_code(text)": { p_code: "INVALID32" },
     "unlink_telegram()": {},
     "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)": {
       target_household_id: householdId,
@@ -1423,7 +1425,8 @@ async function checkDefinerFunctions(member, functions, tables) {
       signature === "is_household_member(uuid)"
         ? result.data === false
         : signature === "resolve_telegram_member(bigint)" ||
-            signature === "redeem_telegram_link_code(text,bigint)"
+            signature === "redeem_telegram_link_code(text,bigint)" ||
+            signature === "discard_telegram_link_code(text)"
           ? Boolean(result.error)
           : Boolean(result.error) || noBIdentifiers;
     record(
@@ -1579,6 +1582,7 @@ async function checkTelegramLinks(member, outsider) {
         "redeem_telegram_link_code",
         { p_code: "INVALID32", p_telegram_user_id: 1 },
       ],
+      ["discard_telegram_link_code", { p_code: "INVALID32" }],
       ["resolve_telegram_member", { p_telegram_user_id: 1 }],
     ]) {
       const result = await client.rpc(name, args);
@@ -1616,6 +1620,21 @@ async function checkTelegramLinks(member, outsider) {
   record(
     "rejected Telegram link code cannot be reused",
     !rejectedReplay.error && rejectedReplay.data?.length === 0,
+  );
+  const discarded = await member.rpc("create_telegram_link_code");
+  if (discarded.error) throw discarded.error;
+  const discardResult = await admin.rpc("discard_telegram_link_code", {
+    p_code: ` ${discarded.data.toLowerCase()} `,
+  });
+  const discardedReplay = await admin.rpc("redeem_telegram_link_code", {
+    p_code: discarded.data,
+    p_telegram_user_id: id,
+  });
+  record(
+    "discarded Telegram link code cannot be redeemed",
+    !discardResult.error &&
+      !discardedReplay.error &&
+      discardedReplay.data?.length === 0,
   );
   const fresh = await member.rpc("create_telegram_link_code");
   if (fresh.error) throw fresh.error;

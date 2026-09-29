@@ -327,8 +327,8 @@ describe("real bot webhook across households", () => {
       );
       expect(
         (await admin.from("telegram_link_codes").select("member_id")).data,
-      ).toHaveLength(1);
-      expect(await send(linkedId, `/vincular ${code}`)).toContain(
+      ).toHaveLength(0);
+      expect(await send(userId, `/vincular ${code}`)).toContain(
         "Não consegui vincular",
       );
       expect(

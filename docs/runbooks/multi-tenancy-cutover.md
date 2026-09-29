@@ -114,8 +114,28 @@ where exists (
 Expected: zero rows. For any row, ask the member whether the account is
 theirs.
 
-- The account is theirs (it also has a Google identity they use): delete the
-  email identity in Studio and sign out that user's sessions.
+- The account is theirs (it also has a Google identity they use): remove the
+  password and the email identity, then sign out that user's sessions in
+  Studio. The password hash lives on the user row, so deleting the identity
+  alone may leave password sign-in working.
+
+  ```sql
+  update auth.users set encrypted_password = null where id = '<user id>';
+  delete from auth.identities where user_id = '<user id>' and provider = 'email';
+  ```
+
+  Verification: a password sign-in for that address is refused, and Google
+  sign-in still works for the member.
+
+  ```bash
+  curl -s -X POST "https://<current supabase host>/auth/v1/token?grant_type=password" \
+    -H "apikey: <anon key>" -H "Content-Type: application/json" \
+    -d '{"email":"<member email>","password":"<any value>"}'
+  ```
+
+  Expected: `invalid_credentials`. This shows only that the tried value
+  fails; the cleared hash is what removes the old password.
+
 - The member disowns the account: it belongs to someone else. Deactivate the
   membership, then delete the auth user in Studio, which also ends its
   sessions.
@@ -254,7 +274,9 @@ confirms every signup by itself.
   ```
 
   Expected: an error, or a user object without `access_token` and with
-  `email_confirmed_at` empty. Delete the probe user in Studio. Then repeat
+  `email_confirmed_at` empty. Whatever the response, look for the probe
+  address in `auth.users` and delete it; a failed confirmation email can
+  return an error and still create the row. Then repeat
   the stray-users and password-identity queries of step 0.1; both must still
   be clean. Google sign-in on the existing site still works.
 
@@ -282,7 +304,7 @@ confirms every signup by itself.
     household; `resolve_telegram_member`; the three RPCs above require an
     authenticated member.
   - `0032`: only users with a confirmed email are provisioned; members can
-    update `display_name` only; Telegram is linked with a one-time code
+    update `display_name` only (rows of their own household); Telegram is linked with a one-time code
     redeemed by the bot; username matching is removed.
 - Verification: `./deploy/migrate.sh status` is clean through `0032`, and
 
@@ -403,7 +425,8 @@ a failed cutover. The owner accepted either outcome.
   - sign in on the neutral host with an existing account; same household;
   - a Google account that is not allowlisted lands on the access-denied
     screen on both hosts;
-  - a request with an unknown `Host` header redirects to the neutral host;
+  - a sign-in started on the project's `*.vercel.app` address, which is not
+    in `ALLOWED_WEB_HOSTS`, ends on the neutral host;
   - each sign-in above showed the new Supabase host in the Google consent
     URL.
 - Rollback: promote the previous Vercel deployment and restore the previous
@@ -480,7 +503,10 @@ repeat one Google sign-in and one bot message from a linked member.
   refuses to link in a group); the
   bot confirms, and the next bot message creates a draft in the tester's
   household only.
-- Rollback: delete the household row; membership, allowlist and data cascade.
+- Rollback: delete the household row; membership, allowlist and data cascade
+  (covered by `packages/db/test/delete-household-functional.sql`). The
+  members' auth users are outside the cascade; delete them in Studio after
+  the household row.
 
   ```sql
   delete from households where id = '<household id>';

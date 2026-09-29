@@ -264,6 +264,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -285,6 +286,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -311,6 +313,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -341,6 +344,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -376,6 +380,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       transcribe,
     });
@@ -401,6 +406,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -423,6 +429,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -450,6 +457,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -473,6 +481,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -534,6 +543,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -571,6 +581,7 @@ describe("handleWebhook: callback routing", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store: createInMemoryConversationStore(),
     });
     expect(result.status).toBe(401);
@@ -601,6 +612,7 @@ describe("integration: the Petz flow (spec §6)", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       ai: petsAi,
     };
@@ -735,6 +747,7 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
       telegram,
       resolveMember: resolveMemberFake,
       redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
     return { base, tables, sent, answered, stripped };

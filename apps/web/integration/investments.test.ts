@@ -278,6 +278,28 @@ describe("createBucketAction", () => {
     expect(bucketsOf(store, HOUSEHOLD)).toHaveLength(2);
   });
 
+  it("hides and logs an internal repository error", async () => {
+    mockedSupabase.client = {
+      from: () => {
+        throw new Error("internal database detail");
+      },
+    } as unknown as AppSupabaseClient;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await createBucketAction(form({ name: "Viagem" }))).toEqual({
+        ok: false,
+        message:
+          "Não deu pra salvar a caixinha agora. Tenta de novo em instantes.",
+      });
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("runBucketAction"),
+        expect.any(Error),
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("reuses a visible name after rename with its original slug", async () => {
     expect(
       (

@@ -7,21 +7,21 @@ Plan: [plan.md](plan.md). Spec 2 research:
 
 ## What shipped
 
-| Task | Result                                                                                                                                          |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Isolated e2e harness (`family-finance-e2e`, ports 5632x), fake Telegram, real bot and production web build                                      |
-| 2    | Migration `0029`: allowlist per household, one membership per user, `households.theme`, scoped provisioning                                     |
-| 3    | Web access decided by an active membership; `AUTHORIZED_EMAILS` removed                                                                         |
-| 4    | `scripts/create-household.mjs`                                                                                                                  |
-| 5    | Migration `0030`: free-form investment buckets per household                                                                                    |
-| 6    | Migration `0031`: bot acts as the resolved member (short-lived JWT), conversations keyed by chat, Telegram user and household                   |
-| 7    | Bot copy without personal names; "<name> comprou" routes to a member of the sender's household                                                  |
-| 8    | Per-household theme and household name in the shell; neutral login and metadata                                                                 |
-| 9    | Auth redirects stay on an allowlisted request host (`ALLOWED_WEB_HOSTS`)                                                                        |
-| 10   | `deploy/checks/rls-proof.mjs` proves isolation between two households from the catalog                                                          |
-| 11   | Multi-tenant web and bot e2e suites                                                                                                             |
-| 12   | Cutover runbook and documentation                                                                                                               |
-| —    | Migration `0032` (from review): membership only for confirmed emails, Telegram linking by one-time code, members update only their display name |
+| Task | Result                                                                                                                                                                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Isolated e2e harness (`family-finance-e2e`, ports 5632x), fake Telegram, real bot and production web build                                                                                |
+| 2    | Migration `0029`: allowlist per household, one membership per user, `households.theme`, scoped provisioning                                                                               |
+| 3    | Web access decided by an active membership; `AUTHORIZED_EMAILS` removed                                                                                                                   |
+| 4    | `scripts/create-household.mjs`                                                                                                                                                            |
+| 5    | Migration `0030`: free-form investment buckets per household                                                                                                                              |
+| 6    | Migration `0031`: bot acts as the resolved member (short-lived JWT), conversations keyed by chat, Telegram user and household                                                             |
+| 7    | Bot copy without personal names; "<name> comprou" routes to a member of the sender's household                                                                                            |
+| 8    | Per-household theme and household name in the shell; neutral login and metadata                                                                                                           |
+| 9    | Auth redirects stay on an allowlisted request host (`ALLOWED_WEB_HOSTS`)                                                                                                                  |
+| 10   | `deploy/checks/rls-proof.mjs` proves isolation between two households from the catalog                                                                                                    |
+| 11   | Multi-tenant web and bot e2e suites                                                                                                                                                       |
+| 12   | Cutover runbook and documentation                                                                                                                                                         |
+| —    | Migration `0032` (from review): membership only for confirmed emails, Telegram linking by one-time code, members can write only the `display_name` column, on rows of their own household |
 
 ## Decisions made during execution
 
@@ -133,6 +133,23 @@ GPT-6 Astra (Codex, adversarial, cold read): four findings.
 | A3  | A signup before `0032` could leave an active membership on an unconfirmed email  | Fixed in the runbook: audit in step 0.1 and a zero-count check after the migrations                                                                                           |
 | A4  | A rejected redemption consumes the link code                                     | Rejected: a leaked code must die. Whoever holds it could otherwise link as the member. The member generates a new one                                                         |
 
+Fable 5.1 (primary): code mergeable, runbook not ready. Findings:
+
+| Id    | Finding                                                                | Disposition                                                                                                                 |
+| ----- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| F1    | A link code pasted in a group was refused but stayed valid             | Fixed: the bot discards it (`discard_telegram_link_code`, service role only)                                                |
+| F2    | Bucket create pre-check duplicates the unique constraint               | Rejected: legacy slugs differ from their names, so the constraint misses them. Rename now applies the same check            |
+| F3    | `findMemberByTelegramUserId` had no caller                             | Removed                                                                                                                     |
+| F4    | Username parameters left in a bot test helper                          | Removed                                                                                                                     |
+| F5    | Profile and bucket actions showed raw error text; formal fallback copy | Fixed: logged, informal copy; known bucket messages pass through                                                            |
+| F6    | A member can rename another member of the same household               | Recorded in tech debt                                                                                                       |
+| R1    | Deleting the email identity leaves the password hash in place          | Fixed in the runbook: hash cleared, identity deleted by SQL, sign-in checked                                                |
+| R2    | Household deletion might stop on restrictive foreign keys              | Verified: the plain delete works on a household with data (`delete-household-functional.sql`). Auth users are deleted apart |
+| R3    | Unknown `Host` check cannot be performed on Vercel                     | Fixed in the runbook: uses the `*.vercel.app` address                                                                       |
+| R4    | Studio may not delete a single identity                                | Fixed in the runbook: SQL given                                                                                             |
+| R5    | Signup probe may leave a user even on error                            | Fixed in the runbook                                                                                                        |
+| D1–D4 | Design document and wording behind the code                            | Fixed                                                                                                                       |
+
 ## End-to-end evidence (local, 2026-09-29)
 
 Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:category-migration`.
@@ -143,12 +160,12 @@ Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:
 | config                                                                  | 19 passed          |
 | importers                                                               | 53 passed          |
 | categorization                                                          | 38 passed          |
-| db                                                                      | 111 passed         |
-| bot                                                                     | 1976 passed        |
-| web                                                                     | 518 passed         |
+| db                                                                      | 110 passed         |
+| bot                                                                     | 1977 passed        |
+| web                                                                     | 520 passed         |
 | `pnpm e2e:bot` (harness, create-household, rls-proof, bot multi-tenant) | 21 passed, 4 files |
 | `pnpm e2e:web` (Playwright: harness smoke, multi-tenant)                | 8 passed           |
-| `node deploy/checks/rls-proof.mjs` on the e2e stack                     | 397/397 PASS       |
+| `node deploy/checks/rls-proof.mjs` on the e2e stack                     | 402/402 PASS       |
 
 The multi-tenant suites use real GoTrue sessions, Postgres with RLS, the
 production Next.js build and the real bot webhook. Only Telegram is faked.

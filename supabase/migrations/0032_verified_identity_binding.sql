@@ -146,6 +146,22 @@ revoke all on function redeem_telegram_link_code(text, bigint)
   from public, anon, authenticated;
 grant execute on function redeem_telegram_link_code(text, bigint) to service_role;
 
+create or replace function discard_telegram_link_code(p_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  delete from telegram_link_codes lc
+  where lc.code_hash = encode(pg_catalog.sha256(
+    convert_to(upper(trim(p_code)), 'UTF8')), 'hex');
+end;
+$$;
+revoke all on function discard_telegram_link_code(text)
+  from public, anon, authenticated;
+grant execute on function discard_telegram_link_code(text) to service_role;
+
 create or replace function unlink_telegram()
 returns void
 language plpgsql

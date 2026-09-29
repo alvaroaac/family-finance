@@ -69,12 +69,10 @@ export async function updateMemberAction(
     revalidatePath("/settings");
     return { ok: true };
   } catch (error) {
+    console.error("updateMemberAction failed:", error);
     return {
       ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar o perfil.",
+      error: "Não deu pra salvar o perfil agora. Tenta de novo em instantes.",
     };
   }
 }
