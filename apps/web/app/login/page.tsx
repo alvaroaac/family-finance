@@ -40,7 +40,7 @@ type LoginSearchParams = {
 /**
  * Public login screen for the Casa workspace. Handles three states:
  * - already authorized -> bounce to the dashboard;
- * - access-denied (authenticated email not on the allowlist) via `?denied=1`;
+ * - access-denied (authenticated user without active membership) via `?denied=1`;
  * - default sign-in with Google.
  */
 export default async function LoginPage({
@@ -57,8 +57,7 @@ export default async function LoginPage({
   }
 
   const denied = params.denied === "1" || state.status === "forbidden";
-  const deniedEmail =
-    params.email ?? (state.status === "forbidden" ? state.email : undefined);
+  const deniedEmail = state.status === "forbidden" ? state.email : params.email;
   const oauthError = params.error === "oauth";
 
   return (
@@ -76,13 +75,12 @@ export default async function LoginPage({
             <div style={{ marginTop: 4 }}>
               {deniedEmail ? (
                 <>
-                  A conta <strong>{deniedEmail}</strong> não está autorizada nesta
-                  casa.
+                  A conta <strong>{deniedEmail}</strong> não pertence a uma casa ativa.
                 </>
               ) : (
-                <>Esta conta Google não está autorizada nesta casa.</>
+                <>Esta conta Google não pertence a uma casa ativa.</>
               )}{" "}
-              Fale com um membro da casa para liberar seu email.
+              Fale com quem administra a casa para solicitar acesso.
             </div>
           </div>
         ) : null}

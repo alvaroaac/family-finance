@@ -26,12 +26,10 @@ case "${1:-}" in
         DB_URL=*) echo "DATABASE_URL=${line#DB_URL=}" ;;
       esac
     done
-    echo 'AUTHORIZED_EMAILS=alvaro.a.a.a.c@gmail.com'
-    echo 'HOUSEHOLD_SLUG=casa'
     ;;
   bot|web)
     eval "$(bash "$0" env)"
-    export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY AUTHORIZED_EMAILS HOUSEHOLD_SLUG
+    export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY
     if [[ "$1" == bot ]]; then
       cd "$root"
       exec pnpm --filter @family-finance/e2e test:bot

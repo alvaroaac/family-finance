@@ -26,7 +26,7 @@ pnpm install
 
 Copy `.env.example` to `apps/web/.env.local` before running locally and fill in
 the values. `.env.example` documents every key (Supabase, Google login, the
-authorized-email allowlist, Telegram bot, and AI providers). No secrets are
+membership-based access, Telegram bot, and AI providers). No secrets are
 committed; the web build stays green with placeholder values.
 
 ### Environment variables
@@ -36,8 +36,6 @@ committed; the web build stays green with placeholder values.
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser/server Supabase clients.                                     |
 | `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`          | Server-only Supabase secrets (never exposed to the client).          |
 | `NEXT_PUBLIC_SITE_URL`                                      | Base URL used to build the Google OAuth redirect.                    |
-| `AUTHORIZED_EMAILS`                                         | Allowlist of Google emails that can reach the private `Casa` routes. |
-| `HOUSEHOLD_SLUG`                                            | Single MVP household slug (`casa`).                                  |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`             | Bot API access + fail-closed webhook verification.                   |
 | `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL`), `OPENAI_API_KEY`   | Optional AI categorization fallback + voice transcription.           |
 | `IMPORT_PREVIEW_SIGNING_SECRET`                             | Signs transient import previews before confirmation.                 |
@@ -85,7 +83,7 @@ never persisted). AI categorization fallback needs `ANTHROPIC_API_KEY`.
   production Supabase URL/keys and set `NEXT_PUBLIC_SITE_URL` to the deployed URL
   (and add it to Supabase Auth's redirect allowlist + the Google OAuth client).
 - The web build does not require secrets to compile, but the running app needs
-  real Supabase credentials and `AUTHORIZED_EMAILS` to authenticate members.
+  real Supabase credentials and active household memberships to authenticate members.
 - Point the Telegram webhook at the deployed host (see above). Configure the bot
   runtime (`apps/bot`) with the same Supabase + Telegram + AI variables.
 

@@ -21,7 +21,6 @@ function paidEnv(overrides: Partial<BotEnv> = {}): BotEnv {
   return {
     IMPORT_PAID_FALLBACK_ENABLED: "false",
     IMPORT_PAID_FALLBACK_MAX_ITEMS: 10,
-    HOUSEHOLD_SLUG: "casa",
     ...overrides,
   };
 }

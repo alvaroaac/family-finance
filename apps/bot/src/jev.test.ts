@@ -266,7 +266,6 @@ describe("Jev categorization", () => {
     const openai = vi.fn(() => ({ complete: vi.fn() }));
     createCategoryRuntime(
       {
-        HOUSEHOLD_SLUG: "casa",
         IMPORT_PAID_FALLBACK_ENABLED: "false",
         IMPORT_PAID_FALLBACK_MAX_ITEMS: 10,
         TYPESAFE_API_KEY: "jev-key",

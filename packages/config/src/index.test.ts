@@ -92,3 +92,19 @@ describe("getBotServerEnv", () => {
     expect(() => getServerEnv(env as NodeJS.ProcessEnv)).toThrow();
   });
 });
+
+describe("retired email gate", () => {
+  const baseEnv = {
+    NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:56321",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  it("parses web config without the retired email variable", () => {
+    expect(getServerEnv(baseEnv).NEXT_PUBLIC_SUPABASE_URL).toBe(baseEnv.NEXT_PUBLIC_SUPABASE_URL);
+  });
+
+  it("ignores the retired email variable when present", () => {
+    const parsed = getServerEnv({ ...baseEnv, AUTHORIZED_EMAILS: "someone@example.com" });
+    expect(parsed).not.toHaveProperty("AUTHORIZED_EMAILS");
+  });
+});

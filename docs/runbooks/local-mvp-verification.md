@@ -106,7 +106,7 @@ Required keys (see `.env.example` for the full annotated list):
 
 - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (server only)
-- `AUTHORIZED_EMAILS` — the allowlisted Google accounts (Alvaro + Karol)
+- Active `household_members` rows for the Google accounts used in verification
 - `NEXT_PUBLIC_SITE_URL` — e.g. `http://localhost:3000`
 
 Google OAuth is configured in the Supabase dashboard (Authentication >

@@ -1,10 +1,6 @@
-import { getAuthorizedEmails, isEmailAuthorized } from "@family-finance/config";
+import { findHouseholdIdForCurrentUser } from "@family-finance/db";
 
-/**
- * Minimal shape of an authenticated principal we need for access decisions.
- * Mirrors the relevant part of a Supabase `User` without importing the type, so
- * the core logic stays pure and trivially testable.
- */
+/** Relevant part of an authenticated Supabase user. */
 export type AuthPrincipal = {
   email?: string | null;
 };
@@ -14,76 +10,61 @@ export type AccessDecision =
   | { status: "forbidden"; email: string }
   | { status: "authorized"; email: string };
 
-/**
- * Pure access decision used by every protected route. This contains the entire
- * auth/allowlist policy and has no framework or I/O dependencies so it can be
- * unit-tested in isolation.
- *
- * - No user, or a user without a usable email -> `unauthenticated` (send to login).
- * - Authenticated email not on the allowlist -> `forbidden` (access denied).
- * - Authenticated email on the allowlist -> `authorized`.
- */
+/** Decide access from the session and its RLS-visible active membership. */
 export function evaluateAccess(
   principal: AuthPrincipal | null,
-  allowlist: readonly string[]
+  householdId: string | null,
 ): AccessDecision {
   const email = principal?.email?.trim() ?? "";
   if (email.length === 0) {
     return { status: "unauthenticated" };
   }
-  if (isEmailAuthorized(email, allowlist)) {
+  if (householdId !== null) {
     return { status: "authorized", email: email.toLowerCase() };
   }
   return { status: "forbidden", email };
 }
 
-/**
- * Server-only helpers. Imported lazily so the pure core above can be tested
- * without pulling in Next.js / Supabase server modules.
- */
-
 export type ServerAuthState =
   | { status: "unauthenticated" }
   | { status: "forbidden"; email: string }
-  | { status: "authorized"; email: string };
+  | { status: "authorized"; email: string; householdId: string };
 
-/**
- * Resolve the current request's auth state by reading the Supabase session and
- * applying {@link evaluateAccess} against the `AUTHORIZED_EMAILS` allowlist.
- */
+/** Resolve the current session and its active household under the user's RLS. */
 export async function getAuthState(): Promise<ServerAuthState> {
   const { createServerSupabaseClient } = await import("./supabase");
   const supabase = await createServerSupabaseClient();
 
-  let principal: AuthPrincipal | null = null;
   try {
-    const {
-      data: { user }
-    } = await supabase.auth.getUser();
-    principal = user ? { email: user.email } : null;
-  } catch {
-    // Missing/invalid session or unreachable auth -> treat as signed out.
-    principal = null;
-  }
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user?.email?.trim()) {
+      return { status: "unauthenticated" };
+    }
 
-  return evaluateAccess(principal, getAuthorizedEmails());
+    const householdId = await findHouseholdIdForCurrentUser(supabase);
+    const decision = evaluateAccess({ email: data.user.email }, householdId);
+    return decision.status === "authorized"
+      ? { ...decision, householdId: householdId! }
+      : decision;
+  } catch {
+    // Auth and membership query failures both fail closed as signed out.
+    return { status: "unauthenticated" };
+  }
 }
 
-/**
- * Guard for protected routes. Redirects unauthenticated users to `/login` and
- * unauthorized emails to the access-denied state. Returns the authorized email
- * when access is granted.
- */
-export async function requireAuthorizedUser(): Promise<{ email: string }> {
+/** Guard protected routes and return the authorized member's household. */
+export async function requireAuthorizedUser(): Promise<{
+  email: string;
+  householdId: string;
+}> {
   const { redirect } = await import("next/navigation");
   const state = await getAuthState();
 
-  if (state.status === "unauthenticated") {
-    redirect("/login");
+  if (state.status === "authorized") {
+    return { email: state.email, householdId: state.householdId };
   }
   if (state.status === "forbidden") {
-    redirect(`/login?denied=1&email=${encodeURIComponent(state.email)}`);
+    return redirect(`/login?denied=1&email=${encodeURIComponent(state.email)}`);
   }
-  // status === "authorized"
-  return { email: (state as Extract<ServerAuthState, { status: "authorized" }>).email };
+  return redirect("/login");
 }

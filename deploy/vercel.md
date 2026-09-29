@@ -12,8 +12,6 @@ NEVER a Vercel env.
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://supabase.alvaroekarol.com.br` | Caddy → Kong on the VPS |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon JWT from `deploy/supabase/.env` | anon, NEVER service role |
 | `NEXT_PUBLIC_SITE_URL` | the Vercel production URL | used for auth redirects |
-| `AUTHORIZED_EMAILS` | `alvaro.a.a.a.c@gmail.com,<karol-dotted-gmail>` | DOTTED Gmail forms — known gotcha: Google reports the dotted address, so the env must match it exactly |
-| `HOUSEHOLD_SLUG` | `casa` | matches seed |
 | `IMPORT_PREVIEW_SIGNING_SECRET` | independent random 32+ character secret | signs short-lived preview/confirmation claims; web-only |
 | `IMPORT_SUGGESTION_URL` | `https://bot.alvaroekarol.com.br` | HTTPS bot origin; redirects are refused |
 | `IMPORT_SUGGESTION_SHARED_SECRET` | same random 32+ character value as `deploy/bot/.env` | HMAC-authenticates web-to-bot suggestion requests |
@@ -36,9 +34,8 @@ The VPS GoTrue must mirror the working local `supabase/config.toml`
 - `SITE_URL` = the Vercel production URL (auth redirect allow-list).
 - Google external provider enabled, client id/secret via env.
 - `GOTRUE_EXTERNAL_GOOGLE_SKIP_NONCE_CHECK=true` (local parity).
-- Email signup enabled + autoconfirm — signups are gated by the
-  `allowed_emails` table (migration 0009) + the web `AUTHORIZED_EMAILS` check,
-  not by disabling signup.
+- Email signup enabled + autoconfirm. The `allowed_emails` table provisions
+  membership on signup; the web gate checks for an active membership.
 
 ## 4. Deploy
 
