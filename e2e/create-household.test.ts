@@ -160,6 +160,56 @@ describe("create-household provisioning", () => {
     expect(await rows("categories", id)).toEqual(categories);
   });
 
+  it("reruns with punctuation-distinct emails in reverse order", async () => {
+    const name = `Casa ${randomUUID()}`;
+    const suffix = randomUUID().slice(0, 8);
+    const dotted = `a.b-${suffix}@example.test`;
+    const plain = `ab-${suffix}@example.test`;
+    const created = run(["--name", name, "--email", dotted, "--email", plain]);
+    expect(created.status, created.stderr).toBe(0);
+    const repeated = run([
+      "--name",
+      name,
+      "--email",
+      plain.toUpperCase(),
+      "--email",
+      dotted,
+    ]);
+    expect(repeated.status, repeated.stderr).toBe(0);
+    expect(repeated.stdout).toBe(created.stdout);
+  });
+
+  it("rejects an invalid email before writing a household", async () => {
+    const name = `Casa ${randomUUID()}`;
+    const attempt = run(["--name", name, "--email", "foo"]);
+    expect(attempt.status).not.toBe(0);
+    expect(attempt.stderr).toMatch(/invalid email.*foo/i);
+    expect(await household(name)).toEqual([]);
+  });
+
+  it("accepts a domain-valid theme with optional fields omitted", async () => {
+    const name = `Casa ${randomUUID()}`;
+    const dir = mkdtempSync(path.join(tmpdir(), "household-theme-"));
+    try {
+      const themeFile = path.join(dir, "theme.json");
+      writeFileSync(themeFile, JSON.stringify({ base: "salvia" }));
+      const created = run([
+        "--name",
+        name,
+        "--email",
+        `member-${randomUUID()}@example.test`,
+        "--theme",
+        themeFile,
+      ]);
+      expect(created.status, created.stderr).toBe(0);
+      expect(await household(name)).toMatchObject([
+        { theme: { base: "salvia" } },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rolls back when an email is already allowlisted in another household", async () => {
     const firstName = `Casa ${randomUUID()}`;
     const secondName = `Casa ${randomUUID()}`;

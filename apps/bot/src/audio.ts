@@ -21,7 +21,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { telegramApiBaseUrl } from "./telegram.js";
 
 /**
  * Maximum accepted voice-note size in bytes. Voice notes are short expense
@@ -180,8 +179,10 @@ export async function transcribeVoiceMessage(
  * downloads the bytes from the file endpoint. Uses the global `fetch` (Node 22).
  * Constructed only when a real bot token is configured.
  */
-export function createHttpAudioDownloader(botToken: string): AudioDownloader {
-  const base = telegramApiBaseUrl();
+export function createHttpAudioDownloader(
+  botToken: string,
+  base: string,
+): AudioDownloader {
   const apiBase = `${base}/bot${botToken}`;
   const fileBase = `${base}/file/bot${botToken}`;
   return {

@@ -16,6 +16,37 @@ function run(args: string[]) {
 }
 
 describe("create-household CLI validation", () => {
+  it("rejects a malformed email before requiring a database", () => {
+    const result = run(["--name", "Casa", "--email", " foo "]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/invalid email.*foo/i);
+    expect(result.stderr).not.toContain("DATABASE_URL");
+  });
+
+  it("accepts every optional theme shape accepted by the domain", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "household-cli-theme-"));
+    try {
+      for (const [index, theme] of [
+        { base: "salvia" },
+        { base: "esmeralda", lockBase: true },
+        { base: "salvia", overrides: { "--ff-accent": "#abc" } },
+      ].entries()) {
+        const file = path.join(dir, `${index}.json`);
+        writeFileSync(file, JSON.stringify(theme));
+        const result = run([
+          "--name",
+          "Casa",
+          "--email",
+          "member@example.test",
+          "--theme",
+          file,
+        ]);
+        expect(result.stderr).toContain("DATABASE_URL");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("prints usage and exits 2 without a name or email", () => {
     for (const args of [
       [],

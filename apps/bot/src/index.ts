@@ -621,12 +621,9 @@ export async function handleWebhook(args: {
         return { status: 200, body: { ok: true } };
       }
 
-      // Same ownership rule as the typed path's belongsToSender: in a group
-      // chat the store is keyed by chat id, so without this check another
-      // member's tap on ✅ would confirm the creator's lançamento (or worse,
-      // a member of a DIFFERENT household would run the draft against their
-      // own catalog/household). Refuse the tap; keep the keyboard — the
-      // creator still needs it.
+      // Confirm that the stored draft belongs to this member. Conversation
+      // state is scoped by chat, Telegram user and household; the draft's
+      // creator must also match before a callback can confirm it.
       if (existing.draft.createdByUserId !== identity.userId) {
         await args.telegram.answerCallbackQuery(
           callbackQueryId,
@@ -852,11 +849,8 @@ export async function handleWebhook(args: {
       identity.householdId,
     );
 
-    // In a group chat the store is keyed by chat id, so a pending draft belongs
-    // to whoever started it. If a DIFFERENT member now writes, do NOT feed their
-    // message into the first member's draft — that would let B's "sim" confirm
-    // A's lançamento (saved with A as responsável) or misread B's expense as a
-    // correction to A's. Treat it as a fresh conversation for the new sender.
+    // Conversation state is scoped by chat, Telegram user and household.
+    // Check the draft creator too before using an existing conversation.
     const belongsToSender =
       existing !== undefined &&
       existing.draft.createdByUserId === identity.userId;
@@ -1047,14 +1041,20 @@ export async function startBot(): Promise<{
     redeemTelegramLinkCode(client, code, telegramUserId);
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
-    ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
+    ? createHttpTelegramClient(
+        env.TELEGRAM_BOT_TOKEN,
+        env.TELEGRAM_API_BASE_URL,
+      )
     : createNoopTelegramClient();
 
   // Spec §1: the webhook registration must deliver callback_query, or every
   // button tap silently vanishes. Warn loudly — the fix is a one-line curl
   // (see deploy/README.md).
   if (env.TELEGRAM_BOT_TOKEN) {
-    void fetchWebhookAllowedUpdates(env.TELEGRAM_BOT_TOKEN).then((allowed) => {
+    void fetchWebhookAllowedUpdates(
+      env.TELEGRAM_BOT_TOKEN,
+      env.TELEGRAM_API_BASE_URL,
+    ).then((allowed) => {
       if (webhookMissesCallbacks(allowed)) {
         console.warn(
           '[bot] webhook allowed_updates does not include "callback_query" — ' +
@@ -1102,6 +1102,7 @@ export async function startBot(): Promise<{
   ) {
     const downloader: AudioDownloader = createHttpAudioDownloader(
       env.TELEGRAM_BOT_TOKEN,
+      env.TELEGRAM_API_BASE_URL,
     );
     const provider: TranscriptionProvider = createOpenAiTranscriptionProvider({
       apiKey: transcription.apiKey,

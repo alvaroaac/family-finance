@@ -4,7 +4,7 @@ import { createTestUser } from "../../../e2e/lib/users";
 import { storageStateFor } from "../../../e2e/lib/session";
 
 test("a seeded household member reaches dashboard with an SSR session", async ({ browser, baseURL }) => {
-  const email = "alvaro.a.a.a.c@gmail.com";
+  const email = "seed-member@example.test";
   const password = "Test-password-123!";
   const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const { data: existing } = await admin.auth.admin.listUsers();

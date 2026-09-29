@@ -232,6 +232,28 @@ test("household branding and the public and denied screens", async ({
   }
 });
 
+test("signing out clears household branding", async ({ browser, baseURL }) => {
+  const origin = baseURL!;
+  const ana = await memberPage(browser, members.ana.email, origin);
+  try {
+    await ana.page.goto(`${origin}/dashboard`);
+    await expect(ana.page.locator("html")).toHaveAttribute(
+      "style",
+      /--ff-accent:/,
+    );
+    await expect(ana.page.locator("body")).toContainText("Casa Azul");
+    await ana.page.getByRole("button", { name: "sair" }).click();
+    await expect(ana.page).toHaveURL(/\/login/);
+    await expect(ana.page.locator("html")).not.toHaveAttribute(
+      "style",
+      /--ff-accent:/,
+    );
+    await expect(ana.page.locator("body")).not.toContainText("Casa Azul");
+  } finally {
+    await ana.context.close();
+  }
+});
+
 test("OAuth starts on the allowed request host and falls back for an unknown Host", async ({
   browser,
 }) => {

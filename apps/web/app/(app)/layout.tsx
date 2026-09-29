@@ -44,7 +44,7 @@ async function signOutAction(): Promise<void> {
 /**
  * Protected app shell. This layout guards the entire `(app)` route group
  * server-side: any unauthenticated visitor is redirected to `/login` and any
- * authenticated-but-not-allowlisted email is sent to the access-denied state
+ * authenticated user without an active membership reaches access denied
  * BEFORE any child page renders, so protected content never reaches the client.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {

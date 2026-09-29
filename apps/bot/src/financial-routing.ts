@@ -177,11 +177,13 @@ function normalize(value: string): string {
     .toLowerCase();
 }
 
+const MEMBER_PURCHASE_PREFIX = /^\s*([\p{L}]+(?:[ '-][\p{L}]+)*)\s+comprou\b/iu;
+
 export function memberPurchaseName(
   text: string,
   memberNames: readonly string[],
 ): string | undefined {
-  const match = /^\s*([\p{L}]+(?:[ '-][\p{L}]+)*)\s+comprou\b/iu.exec(text);
+  const match = MEMBER_PURCHASE_PREFIX.exec(text);
   if (match === null) return undefined;
   const speaker = normalize(match[1] ?? "").trim();
   if (!speaker) return undefined;
@@ -193,7 +195,7 @@ function stripMemberPurchasePrefix(
   memberNames: readonly string[],
 ): string {
   if (memberPurchaseName(text, memberNames) === undefined) return text;
-  const match = /^\s*[\p{L}]+(?:[ '-][\p{L}]+)*\s+comprou\b/iu.exec(text);
+  const match = MEMBER_PURCHASE_PREFIX.exec(text);
   if (match === null) return text;
   return text.slice(match[0].length);
 }

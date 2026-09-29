@@ -41,6 +41,32 @@ function parseEnvExample(filePath: string): Record<string, string> {
 describe("getBotServerEnv", () => {
   const templatePath = findRepoFile(path.join("deploy", "bot", ".env.example"));
 
+  it("restricts Telegram API overrides to loopback hosts", () => {
+    const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
+    env.NODE_ENV = "production";
+    env.TELEGRAM_API_BASE_URL = "https://evil.example";
+    expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
+    env.TELEGRAM_API_BASE_URL = "http://127.0.0.1:4010";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "http://127.0.0.1:4010",
+    );
+    env.TELEGRAM_API_BASE_URL = "http://localhost:4010";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "http://localhost:4010",
+    );
+    env.TELEGRAM_API_BASE_URL = "http://[::1]:4010";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "http://[::1]:4010",
+    );
+    delete env.TELEGRAM_API_BASE_URL;
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "https://api.telegram.org",
+    );
+    env.NODE_ENV = "test";
+    env.TELEGRAM_API_BASE_URL = "https://evil.example";
+    expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
+  });
+
   it("accepts exactly the deploy/bot/.env.example variable set (spec §3.5)", () => {
     const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
     // Guard against template drift: the web-only vars must NOT be needed.
@@ -49,7 +75,7 @@ describe("getBotServerEnv", () => {
     expect(env.AUTHORIZED_EMAILS).toBeUndefined();
 
     const parsed = getBotServerEnv(env);
-    expect(parsed.SUPABASE_URL).toBe("https://supabase.alvaroekarol.com.br");
+    expect(parsed.SUPABASE_URL).toBe(env.SUPABASE_URL);
     expect(parsed.SUPABASE_SERVICE_ROLE_KEY).toBeTruthy();
     expect(parsed.SUPABASE_ANON_KEY).toBeTruthy();
     expect(parsed.SUPABASE_JWT_SECRET).toBeTruthy();

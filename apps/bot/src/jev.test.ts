@@ -266,6 +266,7 @@ describe("Jev categorization", () => {
     const openai = vi.fn(() => ({ complete: vi.fn() }));
     createCategoryRuntime(
       {
+        TELEGRAM_API_BASE_URL: "https://api.telegram.org",
         IMPORT_PAID_FALLBACK_ENABLED: "false",
         IMPORT_PAID_FALLBACK_MAX_ITEMS: 10,
         TYPESAFE_API_KEY: "jev-key",

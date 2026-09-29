@@ -89,6 +89,7 @@ export type AppEnv = z.infer<typeof envSchema>;
 export const botEnvSchema = envSchema.extend({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
+  TELEGRAM_API_BASE_URL: z.string().url().default("https://api.telegram.org"),
 });
 
 export type BotEnv = z.infer<typeof botEnvSchema>;
@@ -99,6 +100,15 @@ export type BotEnv = z.infer<typeof botEnvSchema>;
  */
 export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
   const parsed = botEnvSchema.parse(env);
+  const telegramHost = new URL(parsed.TELEGRAM_API_BASE_URL).hostname;
+  if (
+    parsed.TELEGRAM_API_BASE_URL !== "https://api.telegram.org" &&
+    !["localhost", "127.0.0.1", "[::1]"].includes(telegramHost)
+  ) {
+    throw new Error(
+      "TELEGRAM_API_BASE_URL must be https://api.telegram.org or a loopback host",
+    );
+  }
   if (
     parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
     parsed.OPENAI_API_KEY === undefined

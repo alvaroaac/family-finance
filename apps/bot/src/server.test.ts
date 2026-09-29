@@ -19,6 +19,7 @@ type Handle = (
 
 function paidEnv(overrides: Partial<BotEnv> = {}): BotEnv {
   return {
+    TELEGRAM_API_BASE_URL: "https://api.telegram.org",
     IMPORT_PAID_FALLBACK_ENABLED: "false",
     IMPORT_PAID_FALLBACK_MAX_ITEMS: 10,
     ...overrides,

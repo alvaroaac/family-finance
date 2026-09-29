@@ -848,10 +848,8 @@ export async function listImportRowsByBatchId(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the single household the authenticated caller belongs to. RLS limits
- * `household_members` to the caller's own active memberships, so this returns
- * the first active membership's `household_id`. The MVP has exactly one
- * household ("Casa"); this avoids hardcoding the seed id in the app.
+ * Resolve the household from the authenticated caller's active membership.
+ * A user has at most one active membership; RLS limits this query to it.
  */
 export async function findHouseholdIdForCurrentUser(
   client: AppSupabaseClient,

@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { THEME_TOKENS, parseHouseholdTheme, themeStyle } from "./theme.js";
 
 const FALLBACK = { theme: { base: "esmeralda" }, valid: false };
 
 describe("parseHouseholdTheme", () => {
+  it("keeps the operator script token list equal to the domain list", () => {
+    const script = readFileSync(
+      path.resolve(__dirname, "../../../scripts/create-household.mjs"),
+      "utf8",
+    );
+    const list = script.match(/const tokens = new Set\((\[[\s\S]*?\])\);/);
+    expect(list).not.toBeNull();
+    const scriptTokens = [...list![1]!.matchAll(/"([^"]+)"/g)].map(
+      (match) => match[1]!,
+    );
+    expect(scriptTokens.sort()).toEqual([...THEME_TOKENS].sort());
+  });
   it("accepts the default document", () => {
     expect(parseHouseholdTheme({ base: "esmeralda" })).toEqual({
       theme: { base: "esmeralda" },

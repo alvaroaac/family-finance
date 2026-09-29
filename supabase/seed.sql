@@ -17,12 +17,12 @@ values ('00000000-0000-0000-0000-000000000001', 'Casa')
 on conflict (id) do nothing;
 
 -- The migration verifier also seeds an old 0021 schema while checking upgrade
--- compatibility. Migration 0009 already inserted this email in that schema.
+-- compatibility. Migration 0009 already inserted a historical email in that schema.
 do $$ begin
   if exists (select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'allowed_emails' and column_name = 'household_id') then
     insert into allowed_emails (email, household_id)
-    values ('alvaro.a.a.a.c@gmail.com', '00000000-0000-0000-0000-000000000001')
+    values ('seed-member@example.test', '00000000-0000-0000-0000-000000000001')
     on conflict (email) do nothing;
   end if;
 end $$;

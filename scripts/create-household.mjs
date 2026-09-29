@@ -17,6 +17,7 @@ const tokens = new Set([
   "--ff-border",
   "--ff-on-accent",
 ]);
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseArgs(args) {
   let name;
@@ -27,8 +28,11 @@ function parseArgs(args) {
     const value = args[index + 1];
     if (!value || value.startsWith("--")) throw new Error(usage);
     if (flag === "--name" && name === undefined) name = value.trim();
-    else if (flag === "--email") emails.push(value.trim().toLowerCase());
-    else if (flag === "--theme" && themePath === undefined) themePath = value;
+    else if (flag === "--email") {
+      const email = value.trim().toLowerCase();
+      if (!emailPattern.test(email)) throw new Error(`Invalid email: ${email}`);
+      emails.push(email);
+    } else if (flag === "--theme" && themePath === undefined) themePath = value;
     else throw new Error(usage);
   }
   if (!name || emails.length === 0 || emails.some((email) => !email))
@@ -42,19 +46,20 @@ function validateTheme(theme) {
     typeof theme !== "object" ||
     Array.isArray(theme) ||
     !["esmeralda", "salvia"].includes(theme.base) ||
-    typeof theme.lockBase !== "boolean" ||
-    !theme.overrides ||
-    typeof theme.overrides !== "object" ||
-    Array.isArray(theme.overrides) ||
+    (theme.lockBase !== undefined && typeof theme.lockBase !== "boolean") ||
+    (theme.overrides !== undefined &&
+      (typeof theme.overrides !== "object" ||
+        theme.overrides === null ||
+        Array.isArray(theme.overrides))) ||
     Object.keys(theme).some(
       (key) => !["base", "lockBase", "overrides"].includes(key),
     )
   ) {
     throw new Error(
-      "Invalid theme document: expected base, lockBase and overrides",
+      "Invalid theme document: expected base with optional lockBase and overrides",
     );
   }
-  for (const [token, value] of Object.entries(theme.overrides)) {
+  for (const [token, value] of Object.entries(theme.overrides ?? {})) {
     if (
       !tokens.has(token) ||
       typeof value !== "string" ||
@@ -96,10 +101,10 @@ async function provision(client, name, emails, theme, categories) {
     if (existing.rows.length === 1) {
       const id = existing.rows[0].id;
       const allowed = await client.query(
-        "select lower(email) as email from allowed_emails where household_id = $1 order by email",
+        "select lower(email) as email from allowed_emails where household_id = $1",
         [id],
       );
-      const current = allowed.rows.map((row) => row.email);
+      const current = allowed.rows.map((row) => row.email).sort();
       if (JSON.stringify(current) !== JSON.stringify(emails)) {
         throw new Error(
           `Household name conflict: ${name} already exists with a different email set`,

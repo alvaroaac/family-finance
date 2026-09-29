@@ -413,7 +413,7 @@ for scenario in empty single ambiguous; do
     docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -f - \
       < "$repo_root/supabase/seed.sql" >/dev/null
     state="$(docker exec "$container" psql -X -U postgres -d "$db" -Atc \
-      "select count(*) from allowed_emails where email='alvaro.a.a.a.c@gmail.com' and household_id='00000000-0000-0000-0000-000000000001'")"
+      "select count(*) from allowed_emails where email='seed-member@example.test' and household_id='00000000-0000-0000-0000-000000000001'")"
     [[ "$state" == 1 ]] || { echo "seed allowlist missing household id" >&2; exit 1; }
   else
     docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -f - \

@@ -58,7 +58,7 @@ export default async function SettingsPage() {
           <Card>
             <h2 className="ff-h2">Estilo da casa</h2>
             <p className="ff-sub">
-              Vale pros dois — o tema fica salvo pra próxima visita.
+              Vale só neste navegador — o tema fica salvo pra próxima visita.
             </p>
             <ThemePicker activeTheme={activeTheme} />
           </Card>

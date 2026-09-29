@@ -1,4 +1,5 @@
 import { findHouseholdIdForCurrentUser } from "@family-finance/db";
+import { cache } from "react";
 
 /** Relevant part of an authenticated Supabase user. */
 export type AuthPrincipal = {
@@ -31,7 +32,7 @@ export type ServerAuthState =
   | { status: "authorized"; email: string; householdId: string };
 
 /** Resolve the current session and its active household under the user's RLS. */
-export async function getAuthState(): Promise<ServerAuthState> {
+export const getAuthState = cache(async (): Promise<ServerAuthState> => {
   const { createServerSupabaseClient } = await import("./supabase");
   const supabase = await createServerSupabaseClient();
 
@@ -50,7 +51,7 @@ export async function getAuthState(): Promise<ServerAuthState> {
     // Auth and membership query failures both fail closed as signed out.
     return { status: "unauthenticated" };
   }
-}
+});
 
 /** Guard protected routes and return the authorized member's household. */
 export async function requireAuthorizedUser(): Promise<{
