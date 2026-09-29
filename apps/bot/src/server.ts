@@ -24,6 +24,7 @@ import { getBotServerEnv, type BotEnv } from "@family-finance/config";
 import type { AiCompletionClient } from "@family-finance/categorization";
 import {
   claimImportSuggestionNonce,
+  findHouseholdIdForCurrentUser,
   recordImportAiPaidResult,
   reserveImportAiPaidItems,
 } from "@family-finance/db";
@@ -32,6 +33,7 @@ import { startBot, type WebhookResult } from "./index.js";
 import {
   createImportSuggestionHandler,
   IMPORT_SUGGESTION_OUTPUT_SCHEMA,
+  importSuggestionRequestSchema,
 } from "./import-suggestions.js";
 import { createOpenAiCompletionClient } from "./providers.js";
 
@@ -86,6 +88,7 @@ export type ImportSuggestionRoute = {
   secret: string;
   handle: ImportSuggestionHandle;
   claimNonce: (nonce: string, expiresAt: Date) => Promise<boolean>;
+  resolveActorHouseholdId: (userId: string) => Promise<string | null>;
   now?: () => number;
 };
 
@@ -260,6 +263,34 @@ async function routeRequest(
       sendJson(response, 400, { ok: false, error: "invalid json" });
       return;
     }
+    const suggestionRequest = importSuggestionRequestSchema.safeParse(parsed);
+    if (!suggestionRequest.success) {
+      sendJson(response, 400, { ok: false, error: "invalid request" });
+      return;
+    }
+    if (suggestionRequest.data.version !== 2) {
+      sendJson(response, 403, { ok: false, error: "member scope required" });
+      return;
+    }
+    try {
+      const actorHouseholdId = await importSuggestions.resolveActorHouseholdId(
+        suggestionRequest.data.actorUserId,
+      );
+      if (actorHouseholdId !== suggestionRequest.data.scopeKey) {
+        sendJson(response, 403, {
+          ok: false,
+          error: "household access denied",
+        });
+        return;
+      }
+    } catch (error) {
+      console.error("[bot:server] import member lookup failed:", error);
+      sendJson(response, 503, {
+        ok: false,
+        error: "member lookup unavailable",
+      });
+      return;
+    }
     try {
       const result = await importSuggestions.handle(parsed);
       sendJson(response, result.status, result.body);
@@ -275,7 +306,7 @@ async function routeRequest(
 
 /** Production entry point: real bot wiring + listen on PORT. */
 async function main(): Promise<void> {
-  const { handle, client } = await startBot();
+  const { handle, client, memberClient } = await startBot();
   const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const paidFallbackClient = createPaidFallbackClient(env);
@@ -287,6 +318,8 @@ async function main(): Promise<void> {
           secret: env.IMPORT_SUGGESTION_SHARED_SECRET,
           claimNonce: (nonce: string, expiresAt: Date) =>
             claimImportSuggestionNonce(client, nonce, expiresAt),
+          resolveActorHouseholdId: (userId: string) =>
+            findHouseholdIdForCurrentUser(memberClient({ userId })),
           handle: createImportSuggestionHandler({
             jevPrimary: true,
             jevClient: jev,

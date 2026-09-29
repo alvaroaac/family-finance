@@ -20,8 +20,9 @@ case "${1:-}" in
   env)
     supabase status --workdir "$workdir" --output env | while IFS= read -r line; do
       case "$line" in
-        ANON_KEY=*) echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${line#ANON_KEY=}" ;;
+        ANON_KEY=*) echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${line#ANON_KEY=}"; echo "SUPABASE_ANON_KEY=${line#ANON_KEY=}" ;;
         SERVICE_ROLE_KEY=*) echo "SUPABASE_SERVICE_ROLE_KEY=${line#SERVICE_ROLE_KEY=}" ;;
+        JWT_SECRET=*) echo "SUPABASE_JWT_SECRET=${line#JWT_SECRET=}" ;;
         API_URL=*) echo "NEXT_PUBLIC_SUPABASE_URL=${line#API_URL=}"; echo "SUPABASE_URL=${line#API_URL=}" ;;
         DB_URL=*) echo "DATABASE_URL=${line#DB_URL=}" ;;
       esac
@@ -29,7 +30,7 @@ case "${1:-}" in
     ;;
   bot|web)
     eval "$(bash "$0" env)"
-    export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY
+    export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET
     if [[ "$1" == bot ]]; then
       cd "$root"
       exec pnpm --filter @family-finance/e2e test:bot

@@ -26,6 +26,7 @@ import {
 } from "@family-finance/config";
 import {
   createServiceRoleClient,
+  createMemberClient,
   createTransaction as dbCreateTransaction,
   createBotInteraction,
   createObligation as dbCreateObligation,
@@ -486,7 +487,7 @@ export async function handleWebhook(args: {
   rawBody: unknown;
   secretHeader: string | undefined;
   configuredSecret: string | undefined;
-  client: AppSupabaseClient;
+  memberClient: (identity: BotMemberIdentity) => AppSupabaseClient;
   telegram: TelegramClient;
   /** Map a Telegram sender (id + optional @username) to a linked member. */
   resolveMember: (sender: {
@@ -548,14 +549,42 @@ export async function handleWebhook(args: {
     // Serialized per chat: two concurrent deliveries (physical double-tap)
     // must not both load the same awaiting_confirmation state.
     return withChatQueue(chatId, async (): Promise<WebhookResult> => {
-      const existing = await args.store.load(chatId);
+      const existing = await args.store.load(
+        chatId,
+        callback.fromId,
+        identity.householdId,
+      );
       if (existing === undefined) {
+        if (
+          await args.store.hasOtherPrompt(chatId, callback.fromId, messageId)
+        ) {
+          await args.telegram.answerCallbackQuery(
+            callbackQueryId,
+            DRAFT_NOT_YOURS_TOAST,
+          );
+          return { status: 200, body: { ok: true } };
+        }
         // Draft expired past the 24h TTL (or never existed on this chat).
         await args.telegram.answerCallbackQuery(
           callbackQueryId,
           SESSION_EXPIRED_TOAST,
         );
         await strip(chatId, messageId);
+        return { status: 200, body: { ok: true } };
+      }
+      if (
+        existing.promptMessageId !== undefined &&
+        existing.promptMessageId !== messageId
+      ) {
+        const belongsToOther = await args.store.hasOtherPrompt(
+          chatId,
+          callback.fromId,
+          messageId,
+        );
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          belongsToOther ? DRAFT_NOT_YOURS_TOAST : SESSION_EXPIRED_TOAST,
+        );
         return { status: 200, body: { ok: true } };
       }
 
@@ -576,7 +605,7 @@ export async function handleWebhook(args: {
       let deps: ConversationDeps | undefined;
       const getDeps = async (): Promise<ConversationDeps> => {
         deps ??= await buildDeps(
-          args.client,
+          args.memberClient(identity),
           identity.householdId,
           args.ai,
           args.interpretText,
@@ -596,7 +625,12 @@ export async function handleWebhook(args: {
             } satisfies ConversationState)
           : existing;
       if (callbackState !== existing) {
-        await args.store.save(chatId, callbackState);
+        await args.store.save(
+          chatId,
+          callback.fromId,
+          identity.householdId,
+          callbackState,
+        );
       }
       const outcome = await applyCallback(callbackState, data, getDeps, {
         today: todayIso(),
@@ -608,7 +642,12 @@ export async function handleWebhook(args: {
       // so the state MUST already be saved — otherwise a re-tap on a
       // still-"awaiting_confirmation" state with an unstripped keyboard would
       // insert a second transaction.
-      await args.store.save(chatId, outcome.state);
+      await args.store.save(
+        chatId,
+        callback.fromId,
+        identity.householdId,
+        outcome.state,
+      );
 
       await args.telegram.answerCallbackQuery(callbackQueryId, outcome.toast);
       // The tapped message's buttons are spent either way (acted on or stale).
@@ -632,7 +671,12 @@ export async function handleWebhook(args: {
           outcome.state.promptMessageId = undefined;
         }
         try {
-          await args.store.save(chatId, outcome.state);
+          await args.store.save(
+            chatId,
+            callback.fromId,
+            identity.householdId,
+            outcome.state,
+          );
         } catch (error) {
           // Best-effort only: losing promptMessageId just means a future stale
           // tap won't get its keyboard stripped, which is already handled.
@@ -668,7 +712,7 @@ export async function handleWebhook(args: {
   }
 
   const deps = await buildDeps(
-    args.client,
+    args.memberClient(identity),
     identity.householdId,
     args.ai,
     args.interpretText,
@@ -713,7 +757,12 @@ export async function handleWebhook(args: {
       // Persist FIRST: startConversationFromAudio may already have inserted a
       // transaction (auto-confirm paths). If sendMessage below throws, the
       // state must already reflect that so a retry/re-send can't double-insert.
-      await args.store.save(voice.chatId, outcome.state);
+      await args.store.save(
+        voice.chatId,
+        voice.fromId,
+        identity.householdId,
+        outcome.state,
+      );
 
       const sentVoice = await args.telegram.sendMessage(
         voice.chatId,
@@ -729,7 +778,12 @@ export async function handleWebhook(args: {
         outcome.state.promptMessageId = undefined;
       }
       try {
-        await args.store.save(voice.chatId, outcome.state);
+        await args.store.save(
+          voice.chatId,
+          voice.fromId,
+          identity.householdId,
+          outcome.state,
+        );
       } catch (error) {
         console.warn("[bot] re-save after send failed:", error);
       }
@@ -746,7 +800,11 @@ export async function handleWebhook(args: {
   // flight at once must not both load the same awaiting_confirmation state
   // and both insert.
   return withChatQueue(message.chatId, async (): Promise<WebhookResult> => {
-    const existing = await args.store.load(message.chatId);
+    const existing = await args.store.load(
+      message.chatId,
+      message.fromId,
+      identity.householdId,
+    );
 
     // In a group chat the store is keyed by chat id, so a pending draft belongs
     // to whoever started it. If a DIFFERENT member now writes, do NOT feed their
@@ -800,7 +858,12 @@ export async function handleWebhook(args: {
             } satisfies ConversationState)
           : existing;
       if (messageState !== existing) {
-        await args.store.save(message.chatId, messageState);
+        await args.store.save(
+          message.chatId,
+          message.fromId,
+          identity.householdId,
+          messageState,
+        );
       }
       const outcome = await applyMessage(messageState, message.text, deps, {
         today: todayIso(),
@@ -813,7 +876,12 @@ export async function handleWebhook(args: {
     // Persist FIRST: applyMessage/startConversation may already have inserted a
     // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
     // the state must already be saved so a re-send/retry can't double-insert.
-    await args.store.save(message.chatId, nextState);
+    await args.store.save(
+      message.chatId,
+      message.fromId,
+      identity.householdId,
+      nextState,
+    );
 
     const shouldStripPreviousPrompt =
       existing !== undefined &&
@@ -855,7 +923,12 @@ export async function handleWebhook(args: {
       nextState.promptMessageId = undefined;
     }
     try {
-      await args.store.save(message.chatId, nextState);
+      await args.store.save(
+        message.chatId,
+        message.fromId,
+        identity.householdId,
+        nextState,
+      );
     } catch (error) {
       console.warn("[bot] re-save after send failed:", error);
     }
@@ -874,6 +947,9 @@ export async function startBot(): Promise<{
     secretHeader: string | undefined,
   ) => Promise<WebhookResult>;
   client: AppSupabaseClient;
+  memberClient: (
+    identity: Pick<BotMemberIdentity, "userId">,
+  ) => AppSupabaseClient;
 }> {
   // Bot-scoped env parse: the container carries only the spec §3.5 vars, so
   // web-only NEXT_PUBLIC_* settings must not be required.
@@ -884,19 +960,35 @@ export async function startBot(): Promise<{
   if (!env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is required to run the bot.");
   }
+  if (!env.SUPABASE_JWT_SECRET) {
+    throw new Error("SUPABASE_JWT_SECRET is required to run the bot.");
+  }
+  const jwtSecret = env.SUPABASE_JWT_SECRET;
+  const anonKey = env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!anonKey) {
+    throw new Error(
+      "SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY is required to run the bot.",
+    );
+  }
   const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL;
   if (!supabaseUrl) {
     throw new Error("SUPABASE_URL is required to run the bot.");
   }
-  // Service-role client: bot_conversations and the pre-session member lookup
-  // are unreachable through anon/RLS. Every repo call still passes an explicit
-  // household_id, so the bot never queries unscoped.
+  // Service role is confined to member resolution, conversation state, and
+  // the import nonce/quota RPCs. Business data uses memberClient under RLS.
   const client: AppSupabaseClient = createServiceRoleClient({
     supabaseUrl,
     serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
   });
 
   const store = createDbConversationStore(client);
+  const memberClient = (identity: Pick<BotMemberIdentity, "userId">) =>
+    createMemberClient({
+      supabaseUrl,
+      anonKey,
+      jwtSecret,
+      userId: identity.userId,
+    });
   const resolveMember = (sender: {
     telegramUserId: string;
     telegramUsername?: string;
@@ -972,12 +1064,13 @@ export async function startBot(): Promise<{
 
   return {
     client,
+    memberClient,
     handle: (rawBody, secretHeader) =>
       handleWebhook({
         rawBody,
         secretHeader,
         configuredSecret: env.TELEGRAM_WEBHOOK_SECRET,
-        client,
+        memberClient,
         telegram,
         resolveMember,
         store,

@@ -293,6 +293,25 @@ describe("createBotServer", () => {
     };
   }
 
+  function suggestionPayload() {
+    return {
+      version: 2,
+      requestId: randomUUID(),
+      actorUserId: "a9bcdb2e-ad9a-4659-9ae8-bf8487f4522a",
+      scopeKey: "10000000-0000-4000-8000-000000000001",
+      budgetKey: randomUUID(),
+      catalog: { categories: [], subcategories: [] },
+      items: [
+        {
+          key: "item-1",
+          description: "Mercado",
+          amountCents: 1000,
+          occurredOn: "2026-09-29",
+        },
+      ],
+    };
+  }
+
   it("accepts a fresh signed internal suggestion request", async () => {
     const handle = vi.fn<Handle>();
     const internal = vi.fn().mockResolvedValue({
@@ -305,9 +324,13 @@ describe("createBotServer", () => {
       secret,
       handle: internal,
       claimNonce: vi.fn().mockResolvedValue(true),
+      resolveActorHouseholdId: vi
+        .fn()
+        .mockResolvedValue("10000000-0000-4000-8000-000000000001"),
       now: () => now,
     });
-    const body = JSON.stringify({ version: 1 });
+    const payload = suggestionPayload();
+    const body = JSON.stringify(payload);
     const response = await fetch(
       `${base}/internal/v1/import-category-suggestions`,
       {
@@ -318,8 +341,101 @@ describe("createBotServer", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(internal).toHaveBeenCalledWith({ version: 1 });
+    expect(internal).toHaveBeenCalledWith(payload);
     expect(handle).not.toHaveBeenCalled();
+  });
+
+  it("rejects a signed suggestion request for another household before processing it", async () => {
+    const internal = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { ok: true } });
+    const resolveActorHouseholdId = vi
+      .fn()
+      .mockResolvedValue("20000000-0000-4000-8000-000000000002");
+    const secret = "c".repeat(32);
+    const now = 1_800_000_000_000;
+    const base = await startServer(vi.fn<Handle>(), {
+      secret,
+      handle: internal,
+      claimNonce: vi.fn().mockResolvedValue(true),
+      resolveActorHouseholdId,
+      now: () => now,
+    });
+    const payload = suggestionPayload();
+    const body = JSON.stringify(payload);
+    const response = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: signedHeaders(body, secret, Math.floor(now / 1000)),
+        body,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(internal).not.toHaveBeenCalled();
+    expect(resolveActorHouseholdId).toHaveBeenCalledWith(payload.actorUserId);
+  });
+
+  it("rejects a signed suggestion request from a user with no membership", async () => {
+    const internal = vi.fn();
+    const secret = "d".repeat(32);
+    const now = 1_800_000_000_000;
+    const base = await startServer(vi.fn<Handle>(), {
+      secret,
+      handle: internal,
+      claimNonce: vi.fn().mockResolvedValue(true),
+      resolveActorHouseholdId: vi.fn().mockResolvedValue(null),
+      now: () => now,
+    });
+    const body = JSON.stringify(suggestionPayload());
+    const response = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: signedHeaders(body, secret, Math.floor(now / 1000)),
+        body,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy signed suggestions without an actor identity", async () => {
+    const internal = vi.fn();
+    const resolveActorHouseholdId = vi.fn();
+    const secret = "e".repeat(32);
+    const now = 1_800_000_000_000;
+    const base = await startServer(vi.fn<Handle>(), {
+      secret,
+      handle: internal,
+      claimNonce: vi.fn().mockResolvedValue(true),
+      resolveActorHouseholdId,
+      now: () => now,
+    });
+    const {
+      budgetKey: _budgetKey,
+      actorUserId: _actorUserId,
+      ...current
+    } = suggestionPayload();
+    const body = JSON.stringify({
+      ...current,
+      version: 1,
+      fallback: { haiku: false, maxPaidItems: 0 },
+    });
+    const response = await fetch(
+      `${base}/internal/v1/import-category-suggestions`,
+      {
+        method: "POST",
+        headers: signedHeaders(body, secret, Math.floor(now / 1000)),
+        body,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(resolveActorHouseholdId).not.toHaveBeenCalled();
+    expect(internal).not.toHaveBeenCalled();
   });
 
   it("rejects invalid, stale, and replayed internal signatures", async () => {
@@ -338,9 +454,12 @@ describe("createBotServer", () => {
         claimed.add(nonce);
         return true;
       }),
+      resolveActorHouseholdId: vi
+        .fn()
+        .mockResolvedValue("10000000-0000-4000-8000-000000000001"),
       now: () => now,
     });
-    const body = JSON.stringify({ version: 1 });
+    const body = JSON.stringify(suggestionPayload());
     const current = Math.floor(now / 1000);
     const nonce = randomUUID();
     const headers = signedHeaders(body, secret, current, nonce);

@@ -2758,46 +2758,18 @@ export async function resolveTelegramMember(
   client: AppSupabaseClient,
   sender: { telegramUserId: number; telegramUsername?: string | null },
 ): Promise<BotMemberIdentity | null> {
-  const byId = await findMemberByTelegramUserId(client, sender.telegramUserId);
-  if (byId !== null) {
-    return byId;
-  }
-  const username = normalizeTelegramUsername(sender.telegramUsername ?? null);
-  if (username === null) {
-    return null;
-  }
-  const { data, error } = await client
-    .from("household_members")
-    .select("id, household_id, user_id, display_name")
-    .eq("telegram_username", username)
-    .eq("is_active", true)
-    .maybeSingle();
+  const { data, error } = await client.rpc("resolve_telegram_member", {
+    p_telegram_user_id: sender.telegramUserId,
+    p_telegram_username: normalizeTelegramUsername(
+      sender.telegramUsername ?? null,
+    ),
+  });
   if (error !== null) {
     throw new Error(`resolveTelegramMember failed: ${error.message}`);
   }
-  if (data === null) {
+  const row = data?.[0];
+  if (row === undefined) {
     return null;
-  }
-  const row = data as Pick<
-    HouseholdMemberRow,
-    "id" | "household_id" | "user_id" | "display_name"
-  >;
-  // Back-fill the stable numeric id AND clear the username in the same write.
-  // Telegram @usernames are releasable and re-claimable by strangers; once the
-  // numeric id is bound, leaving the username on the row would let whoever
-  // later grabs that handle resolve as this member. Clearing it makes the
-  // link id-only going forward. Best-effort: a failure must not block the
-  // lançamento (the id was still resolved for THIS message).
-  try {
-    await client
-      .from("household_members")
-      .update({
-        telegram_user_id: sender.telegramUserId,
-        telegram_username: null,
-      })
-      .eq("id", row.id);
-  } catch {
-    // ignored — resolution by username keeps working
   }
   return {
     householdId: row.household_id,
@@ -2814,11 +2786,13 @@ export async function resolveTelegramMember(
 export async function loadBotConversation(
   client: AppSupabaseClient,
   chatId: number,
-): Promise<{ state: unknown; updatedAt: string } | null> {
+  telegramUserId: number,
+): Promise<{ state: unknown; updatedAt: string; householdId: string } | null> {
   const { data, error } = await client
     .from("bot_conversations")
-    .select("state, updated_at")
+    .select("state, updated_at, household_id")
     .eq("chat_id", chatId)
+    .eq("telegram_user_id", telegramUserId)
     .maybeSingle();
   if (error !== null) {
     throw new Error(`loadBotConversation failed: ${error.message}`);
@@ -2826,18 +2800,29 @@ export async function loadBotConversation(
   if (data === null) {
     return null;
   }
-  const row = data as Pick<BotConversationRow, "state" | "updated_at">;
-  return { state: row.state, updatedAt: row.updated_at };
+  const row = data as Pick<
+    BotConversationRow,
+    "state" | "updated_at" | "household_id"
+  >;
+  return {
+    state: row.state,
+    updatedAt: row.updated_at,
+    householdId: row.household_id,
+  };
 }
 
 /** Upsert a chat's conversation state, refreshing `updated_at` to now. */
 export async function saveBotConversation(
   client: AppSupabaseClient,
   chatId: number,
+  telegramUserId: number,
+  householdId: string,
   state: unknown,
 ): Promise<void> {
   const { error } = await client.from("bot_conversations").upsert({
     chat_id: chatId,
+    telegram_user_id: telegramUserId,
+    household_id: householdId,
     state,
     updated_at: new Date().toISOString(),
   });
@@ -2850,11 +2835,13 @@ export async function saveBotConversation(
 export async function deleteBotConversation(
   client: AppSupabaseClient,
   chatId: number,
+  telegramUserId: number,
 ): Promise<void> {
   const { error } = await client
     .from("bot_conversations")
     .delete()
-    .eq("chat_id", chatId);
+    .eq("chat_id", chatId)
+    .eq("telegram_user_id", telegramUserId);
   if (error !== null) {
     throw new Error(`deleteBotConversation failed: ${error.message}`);
   }

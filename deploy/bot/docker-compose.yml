@@ -7,7 +7,8 @@
 #
 # The build context is the repo root (pnpm monorepo — the Dockerfile copies the
 # workspace manifests and packages/), so the full repo must be checked out on
-# the VPS. Env comes from `deploy/bot/.env` (copy .env.example, chmod 600).
+# the VPS. Env comes from `deploy/bot/.env` (copy .env.example, chmod 600),
+# including SUPABASE_ANON_KEY and SUPABASE_JWT_SECRET for member-scoped access.
 services:
   bot:
     build:

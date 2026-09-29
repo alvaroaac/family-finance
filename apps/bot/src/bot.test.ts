@@ -26,8 +26,9 @@ import {
 } from "@family-finance/categorization";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import { existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
-import { handleWebhook } from "./index.js";
+import { handleWebhook, startBot } from "./index.js";
 import type { MessageClassifier, TextInterpreter } from "./interpret.js";
 import {
   createInMemoryConversationStore,
@@ -978,7 +979,11 @@ function fakeQueryBuilder(rows: FakeRow[]) {
       return api;
     },
     upsert(payload: FakeRow) {
-      const index = rows.findIndex((r) => r.chat_id === payload.chat_id);
+      const index = rows.findIndex(
+        (r) =>
+          r.chat_id === payload.chat_id &&
+          r.telegram_user_id === payload.telegram_user_id,
+      );
       if (index >= 0) {
         rows[index] = { ...rows[index], ...payload };
         filtered = [rows[index] as FakeRow];
@@ -1148,13 +1153,127 @@ function textUpdate(
 
 const SECRET = "s3cr3t";
 
+it("keeps every bot repository call on the member path except the resolver", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const serverSource = readFileSync(
+    new URL("./server.ts", import.meta.url),
+    "utf8",
+  );
+  const dbImports =
+    source.match(
+      /import \{\s*(createServiceRoleClient,[\s\S]*?)\} from "@family-finance\/db";/,
+    )?.[1] ?? "";
+  const importedNames = dbImports
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const businessRepositories = [
+    "createTransaction as dbCreateTransaction",
+    "createBotInteraction",
+    "createObligation as dbCreateObligation",
+    "createInstallmentPurchase as dbCreateInstallmentPurchase",
+    "findCategoriesByHousehold",
+    "findSubcategoriesByCategory",
+    "findAccountsByHousehold",
+    "findLatestExpenses",
+    "listCreditCards",
+    "listHouseholdMembers",
+    "listActiveCategorizationMemory",
+    "listObligations",
+    "materializeObligationPayment as dbMaterializeObligationPayment",
+    "listAllCategories as dbListAllCategories",
+    "listAllSubcategories as dbListAllSubcategories",
+    "createCategory as dbCreateCategory",
+    "createSubcategory as dbCreateSubcategory",
+    "restoreCategory as dbRestoreCategory",
+    "restoreSubcategory as dbRestoreSubcategory",
+    "createCategorizationMemory",
+    "getCardPressureForCard",
+    "settleCardBill as dbSettleCardBill",
+  ];
+  expect(importedNames.sort()).toEqual(
+    [
+      ...businessRepositories,
+      "createServiceRoleClient",
+      "createMemberClient",
+      "resolveTelegramMember",
+      "type AppSupabaseClient",
+      "type BotMemberIdentity",
+    ].sort(),
+  );
+  const helperEnd = source.indexOf("export type WebhookResult");
+  for (const name of businessRepositories) {
+    const calledAs = name.split(" as ").at(-1)!;
+    const call = new RegExp(`\\b${calledAs}\\s*\\(`, "g");
+    for (const match of source.matchAll(call)) {
+      expect(match.index).toBeLessThan(helperEnd);
+    }
+  }
+  expect(source).toContain("memberClient,");
+  expect(source).toContain(
+    "memberClient: (identity: BotMemberIdentity) => AppSupabaseClient;",
+  );
+  expect(source).not.toContain("args.memberClient?.(identity) ?? args.client");
+  expect(source).toContain("resolveTelegramMember(client,");
+  const serverImports =
+    serverSource.match(
+      /import \{\s*(claimImportSuggestionNonce,[\s\S]*?)\} from "@family-finance\/db";/,
+    )?.[1] ?? "";
+  expect(
+    serverImports
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .sort(),
+  ).toEqual(
+    [
+      "claimImportSuggestionNonce",
+      "findHouseholdIdForCurrentUser",
+      "recordImportAiPaidResult",
+      "reserveImportAiPaidItems",
+    ].sort(),
+  );
+  expect(serverSource).toContain("claimImportSuggestionNonce(client,");
+  expect(serverSource).toContain("reserveImportAiPaidItems(client,");
+  expect(serverSource).toContain("recordImportAiPaidResult(client,");
+  expect(serverSource).toContain(
+    "findHouseholdIdForCurrentUser(memberClient({ userId }))",
+  );
+});
+
 // ---------------------------------------------------------------------------
 // handleWebhook — real Telegram identity + persistent conversations (Task 9).
 // ---------------------------------------------------------------------------
 
 describe("handleWebhook: telegram identity", () => {
+  it("uses the resolved member client for business reads and writes", async () => {
+    const { client: memberClient, tables } = fakeSupabase();
+    const { telegram } = fakeTelegram();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      memberClient: () => memberClient,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store: createInMemoryConversationStore(),
+    };
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "confirmar") });
+    expect(tables.transactions).toHaveLength(1);
+    expect(tables.transactions?.[0]).toMatchObject({
+      household_id: "house-1",
+      created_by_user_id: "user-alvaro",
+    });
+  });
+
   it("politely refuses an unmatched telegram user and writes NOTHING", async () => {
     const { client, tables } = fakeSupabase();
+    const before = Object.fromEntries(
+      Object.entries(tables).map(([name, rows]) => [name, rows.length]),
+    );
     const { telegram, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
 
@@ -1162,7 +1281,7 @@ describe("handleWebhook: telegram identity", () => {
       rawBody: textUpdate(999, "Uber 32 reais ontem"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1173,6 +1292,11 @@ describe("handleWebhook: telegram identity", () => {
     expect(sent[0]?.text).toMatch(/não conheço/i);
     // No transaction, no interaction row: there is no household to scope to.
     expect(tables.transactions).toHaveLength(0);
+    expect(
+      Object.fromEntries(
+        Object.entries(tables).map(([name, rows]) => [name, rows.length]),
+      ),
+    ).toEqual(before);
   });
 
   it("resolves the sender by @username when the numeric id is not linked yet", async () => {
@@ -1184,7 +1308,7 @@ describe("handleWebhook: telegram identity", () => {
       rawBody: textUpdate(999, "mercado 54,30", 555, "KarolZinha"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1205,7 +1329,7 @@ describe("handleWebhook: telegram identity", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1215,7 +1339,7 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "Uber 32 reais ontem"),
     });
-    const pending = await store.load("555");
+    const pending = await store.load("555", "777", "house-1");
     expect(pending?.status).toBe("awaiting_confirmation");
     expect(pending?.draft.createdByUserId).toBe("user-alvaro");
 
@@ -1232,7 +1356,7 @@ describe("handleWebhook: telegram identity", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1248,7 +1372,7 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "responsável KAROL"),
     });
-    let state = await store.load("555");
+    let state = await store.load("555", "777", "house-1");
     expect(state?.draft.responsibleUserId).toBe("user-karol");
 
     // Accent-insensitive: "Álvaro" matches display_name "Alvaro".
@@ -1256,7 +1380,7 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "responsável Álvaro"),
     });
-    state = await store.load("555");
+    state = await store.load("555", "777", "house-1");
     expect(state?.draft.responsibleUserId).toBe("user-alvaro");
 
     // Unknown name → back to the house (undefined).
@@ -1264,7 +1388,7 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "responsável Zeca"),
     });
-    state = await store.load("555");
+    state = await store.load("555", "777", "house-1");
     expect(state?.draft.responsibleUserId).toBeUndefined();
   });
 
@@ -1275,7 +1399,7 @@ describe("handleWebhook: telegram identity", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1286,16 +1410,19 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "Uber 32 reais ontem"),
     });
-    expect((await store.load("555"))?.draft.createdByUserId).toBe(
-      "user-alvaro",
-    );
+    expect(
+      (await store.load("555", "777", "house-1"))?.draft.createdByUserId,
+    ).toBe("user-alvaro");
 
     // Karol (888) says "confirmar" in the same chat — it must NOT save Alvaro's
     // draft. It starts Karol's OWN fresh conversation instead.
     await handleWebhook({ ...base, rawBody: textUpdate(888, "confirmar") });
     expect(tables.transactions).toHaveLength(0);
-    const afterKarol = await store.load("555");
+    const afterKarol = await store.load("555", "888", "house-1");
     expect(afterKarol?.draft.createdByUserId).toBe("user-karol");
+    expect(
+      (await store.load("555", "777", "house-1"))?.draft.createdByUserId,
+    ).toBe("user-alvaro");
   });
 
   it("two CONCURRENT 'sim' messages insert exactly one transaction (per-chat serialization)", async () => {
@@ -1305,7 +1432,7 @@ describe("handleWebhook: telegram identity", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1315,7 +1442,9 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "Uber 32 reais ontem"),
     });
-    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
 
     // Telegram delivers updates over parallel connections: a double "sim" can
     // be in flight at once. Without per-chat serialization both would load the
@@ -1328,7 +1457,7 @@ describe("handleWebhook: telegram identity", () => {
     expect(tables.transactions).toHaveLength(1);
     // The duplicate confirm must NOT clobber the saved state with a bogus
     // fresh draft ("sim" parsed as a new entry with no amount).
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
   });
 
   it("a duplicate typed 'sim' after save is a friendly no-op, not a new draft", async () => {
@@ -1338,7 +1467,7 @@ describe("handleWebhook: telegram identity", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -1353,7 +1482,7 @@ describe("handleWebhook: telegram identity", () => {
 
     await handleWebhook({ ...base, rawBody: textUpdate(777, "sim") });
     expect(tables.transactions).toHaveLength(1);
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
     expect(sent.at(-1)?.text).toBe("Já salvo ✅");
 
     // But confirm-word PREFIX with more content is a real new entry, not a
@@ -1362,7 +1491,34 @@ describe("handleWebhook: telegram identity", () => {
       ...base,
       rawBody: textUpdate(777, "ok, mercado 50 reais"),
     });
-    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+  });
+});
+
+describe("startBot configuration", () => {
+  it.each([
+    ["SUPABASE_JWT_SECRET", "SUPABASE_JWT_SECRET"],
+    ["SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY"],
+  ])("reports missing %s", async (missing, expected) => {
+    vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "test-secret");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-key");
+    vi.stubEnv("SUPABASE_URL", "http://127.0.0.1:56321");
+    vi.stubEnv(
+      "SUPABASE_JWT_SECRET",
+      missing === "SUPABASE_JWT_SECRET" ? "" : "jwt-secret",
+    );
+    vi.stubEnv(
+      "SUPABASE_ANON_KEY",
+      missing === "SUPABASE_ANON_KEY" ? "" : "anon-key",
+    );
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "");
+    try {
+      await expect(startBot()).rejects.toThrow(expected);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -1386,20 +1542,79 @@ function sampleState(): ConversationState {
 }
 
 describe("conversation stores", () => {
+  it.each(["memory", "database"])(
+    "%s store deletes a draft when its resolved household changes",
+    async (kind) => {
+      const { client, tables } = fakeSupabase();
+      const store =
+        kind === "memory"
+          ? createInMemoryConversationStore()
+          : createDbConversationStore(client);
+      await store.save("555", "777", "house-1", sampleState());
+      expect(await store.load("555", "777", "house-2")).toBeUndefined();
+      expect(await store.load("555", "777", "house-1")).toBeUndefined();
+      if (kind === "database") {
+        expect(tables.bot_conversations).toHaveLength(0);
+      }
+    },
+  );
+  it.each([
+    ["different households", "house-2"],
+    ["same household", "house-1"],
+  ])(
+    "keeps drafts separate for two members of %s in one chat",
+    async (_label, secondHousehold) => {
+      const store = createInMemoryConversationStore();
+      await store.save("555", "777", "house-1", sampleState());
+      await store.save("555", "888", secondHousehold, {
+        ...sampleState(),
+        draft: {
+          ...sampleState().draft,
+          createdByUserId: "user-two",
+          description: "Mercado",
+        },
+      });
+      expect(
+        (await store.load("555", "777", "house-1"))?.draft.description,
+      ).toBe("Uber");
+      expect(
+        (await store.load("555", "888", secondHousehold))?.draft.description,
+      ).toBe("Mercado");
+    },
+  );
+
+  it("keeps DB drafts separate by chat and Telegram user", async () => {
+    const { client, tables } = fakeSupabase();
+    const store = createDbConversationStore(client);
+    await store.save("555", "777", "house-1", sampleState());
+    await store.save("555", "888", "house-2", {
+      ...sampleState(),
+      draft: { ...sampleState().draft, createdByUserId: "user-two" },
+    });
+    expect(tables.bot_conversations).toHaveLength(2);
+    expect(
+      (await store.load("555", "777", "house-1"))?.draft.createdByUserId,
+    ).toBe("user-alvaro");
+    expect(
+      (await store.load("555", "888", "house-2"))?.draft.createdByUserId,
+    ).toBe("user-two");
+  });
   it("in-memory store round-trips state per chat", async () => {
     const store = createInMemoryConversationStore();
-    expect(await store.load("555")).toBeUndefined();
-    await store.save("555", sampleState());
-    expect((await store.load("555"))?.draft.description).toBe("Uber");
-    expect(await store.load("556")).toBeUndefined();
+    expect(await store.load("555", "777", "house-1")).toBeUndefined();
+    await store.save("555", "777", "house-1", sampleState());
+    expect((await store.load("555", "777", "house-1"))?.draft.description).toBe(
+      "Uber",
+    );
+    expect(await store.load("556", "777", "house-1")).toBeUndefined();
   });
 
   it("db store round-trips state through bot_conversations", async () => {
     const { client, tables } = fakeSupabase();
     const store = createDbConversationStore(client);
-    await store.save("555", sampleState());
+    await store.save("555", "777", "house-1", sampleState());
     expect(tables.bot_conversations).toHaveLength(1);
-    const loaded = await store.load("555");
+    const loaded = await store.load("555", "777", "house-1");
     expect(loaded?.status).toBe("awaiting_confirmation");
     expect(loaded?.draft.createdByUserId).toBe("user-alvaro");
   });
@@ -1408,11 +1623,17 @@ describe("conversation stores", () => {
     const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
     const { client, tables } = fakeSupabase({
       bot_conversations: [
-        { chat_id: 555, state: sampleState(), updated_at: staleAt },
+        {
+          chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
+          state: sampleState(),
+          updated_at: staleAt,
+        },
       ],
     });
     const store = createDbConversationStore(client);
-    expect(await store.load("555")).toBeUndefined();
+    expect(await store.load("555", "777", "house-1")).toBeUndefined();
     // Lazily deleted.
     expect(tables.bot_conversations).toHaveLength(0);
   });
@@ -1433,12 +1654,18 @@ describe("conversation stores", () => {
     };
     const { client, tables } = fakeSupabase({
       bot_conversations: [
-        { chat_id: 555, state: uncertainState, updated_at: staleAt },
+        {
+          chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
+          state: uncertainState,
+          updated_at: staleAt,
+        },
       ],
     });
     const store = createDbConversationStore(client);
 
-    const loaded = await store.load("555");
+    const loaded = await store.load("555", "777", "house-1");
 
     expect(loaded?.status).toBe("installment_outcome_uncertain");
     expect(loaded?.installmentDraft?.idempotencyKey).toBe(
@@ -1463,12 +1690,18 @@ describe("conversation stores", () => {
     };
     const { client, tables } = fakeSupabase({
       bot_conversations: [
-        { chat_id: 555, state: awaitingState, updated_at: staleAt },
+        {
+          chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
+          state: awaitingState,
+          updated_at: staleAt,
+        },
       ],
     });
     const store = createDbConversationStore(client);
 
-    const loaded = await store.load("555");
+    const loaded = await store.load("555", "777", "house-1");
 
     expect(loaded?.status).toBe("awaiting_installment_confirmation");
     expect(loaded?.installmentDraft?.idempotencyKey).toBe(
@@ -1483,6 +1716,8 @@ describe("conversation stores", () => {
       bot_conversations: [
         {
           chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
           state: {
             ...sampleState(),
             status: "installment_outcome_uncertain",
@@ -1494,7 +1729,7 @@ describe("conversation stores", () => {
     });
     const store = createDbConversationStore(client);
 
-    const loaded = await store.load("555");
+    const loaded = await store.load("555", "777", "house-1");
 
     expect(loaded?.status).toBe("installment_recovery_required");
     expect(
@@ -1508,13 +1743,15 @@ describe("conversation stores", () => {
       bot_conversations: [
         {
           chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
           state: { whatever: true },
           updated_at: new Date().toISOString(),
         },
       ],
     });
     const store = createDbConversationStore(client);
-    expect(await store.load("555")).toBeUndefined();
+    expect(await store.load("555", "777", "house-1")).toBeUndefined();
   });
 
   it("treats a persisted row with an unknown future status as absent", async () => {
@@ -1522,13 +1759,15 @@ describe("conversation stores", () => {
       bot_conversations: [
         {
           chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
           state: { ...sampleState(), status: "some_future_status" },
           updated_at: new Date().toISOString(),
         },
       ],
     });
     const store = createDbConversationStore(client);
-    expect(await store.load("555")).toBeUndefined();
+    expect(await store.load("555", "777", "house-1")).toBeUndefined();
   });
 
   it("converts a legacy pending installment into explicit no-write recovery", async () => {
@@ -1537,6 +1776,8 @@ describe("conversation stores", () => {
       bot_conversations: [
         {
           chat_id: 555,
+          telegram_user_id: 777,
+          household_id: "house-1",
           state: {
             ...sampleState(),
             status: "awaiting_installment_confirmation",
@@ -1547,7 +1788,7 @@ describe("conversation stores", () => {
       ],
     });
     const store = createDbConversationStore(client);
-    const loaded = await store.load("555");
+    const loaded = await store.load("555", "777", "house-1");
     expect(loaded?.status).toBe("installment_recovery_required");
     expect(
       (tables.bot_conversations?.[0]?.state as ConversationState).status,

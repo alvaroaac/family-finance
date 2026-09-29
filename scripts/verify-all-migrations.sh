@@ -461,4 +461,31 @@ after="$(docker exec "$container" pg_dump -U postgres -d "$buckets_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
 [[ "$before" == "$after" ]] || { echo "0030 replay changed the buckets database" >&2; exit 1; }
 
+# Exercise 0031 against an existing chat-only conversation, then replay it.
+bot_db="family_finance_bot_member_scope"
+docker exec "$container" createdb -U postgres "$bot_db"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "0031_" ]] || continue
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_db" -f - \
+    < "$migration" >/dev/null
+done
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -c \
+  "insert into bot_conversations(chat_id, state) values (9001, '{\"old\":true}');" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_db" -f - \
+  < "$repo_root/supabase/migrations/0031_bot_member_scope.sql" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -f - \
+  < "$repo_root/packages/db/test/bot-member-scope-functional.sql" >/dev/null
+before="$(docker exec "$container" pg_dump -U postgres -d "$bot_db" | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_db" -f - \
+  < "$repo_root/supabase/migrations/0031_bot_member_scope.sql" >/dev/null
+after="$(docker exec "$container" pg_dump -U postgres -d "$bot_db" | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+[[ "$before" == "$after" ]] || { echo "0031 replay changed the bot database" >&2; exit 1; }
+
 echo "all migrations apply cleanly twice"

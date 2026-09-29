@@ -51,6 +51,8 @@ describe("getBotServerEnv", () => {
     const parsed = getBotServerEnv(env);
     expect(parsed.SUPABASE_URL).toBe("https://supabase.alvaroekarol.com.br");
     expect(parsed.SUPABASE_SERVICE_ROLE_KEY).toBeTruthy();
+    expect(parsed.SUPABASE_ANON_KEY).toBeTruthy();
+    expect(parsed.SUPABASE_JWT_SECRET).toBeTruthy();
     expect(parsed.TELEGRAM_WEBHOOK_SECRET).toBeTruthy();
     expect(parsed.IMPORT_PAID_FALLBACK_ENABLED).toBe("false");
     expect(parsed.IMPORT_PAID_FALLBACK_MAX_ITEMS).toBe(10);
@@ -100,11 +102,16 @@ describe("retired email gate", () => {
   };
 
   it("parses web config without the retired email variable", () => {
-    expect(getServerEnv(baseEnv).NEXT_PUBLIC_SUPABASE_URL).toBe(baseEnv.NEXT_PUBLIC_SUPABASE_URL);
+    expect(getServerEnv(baseEnv).NEXT_PUBLIC_SUPABASE_URL).toBe(
+      baseEnv.NEXT_PUBLIC_SUPABASE_URL,
+    );
   });
 
   it("ignores the retired email variable when present", () => {
-    const parsed = getServerEnv({ ...baseEnv, AUTHORIZED_EMAILS: "someone@example.com" });
+    const parsed = getServerEnv({
+      ...baseEnv,
+      AUTHORIZED_EMAILS: "someone@example.com",
+    });
     expect(parsed).not.toHaveProperty("AUTHORIZED_EMAILS");
   });
 });

@@ -274,7 +274,7 @@ describe("handleWebhook: callback routing", () => {
       rawBody: textUpdate(777, "Uber 32 reais ontem"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -283,7 +283,7 @@ describe("handleWebhook: callback routing", () => {
     expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
       "cf",
     );
-    const state = await store.load("555");
+    const state = await store.load("555", "777", "house-1");
     expect(state?.promptMessageId).toBe(1001);
   });
 
@@ -294,7 +294,7 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -319,7 +319,7 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -348,7 +348,7 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -364,7 +364,9 @@ describe("handleWebhook: callback routing", () => {
     expect(
       sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
     ).toBe("cf");
-    expect((await store.load("555"))?.promptMessageId).toBe(1002);
+    expect((await store.load("555", "777", "house-1"))?.promptMessageId).toBe(
+      1002,
+    );
   });
 
   it("voice draft reply carries the confirmation keyboard and records promptMessageId", async () => {
@@ -380,7 +382,7 @@ describe("handleWebhook: callback routing", () => {
       rawBody: voiceUpdate(777, "voice-1"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -390,7 +392,7 @@ describe("handleWebhook: callback routing", () => {
     expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
       "cf",
     );
-    const state = await store.load("555");
+    const state = await store.load("555", "777", "house-1");
     expect(state?.draft.inputKind).toBe("audio");
     expect(state?.promptMessageId).toBe(1001);
   });
@@ -404,7 +406,7 @@ describe("handleWebhook: callback routing", () => {
       rawBody: callbackUpdate(777, "cf", 555, 77),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -425,7 +427,7 @@ describe("handleWebhook: callback routing", () => {
       rawBody: callbackUpdate(999, "cf"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -451,7 +453,7 @@ describe("handleWebhook: callback routing", () => {
       },
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -473,7 +475,7 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -533,7 +535,7 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -554,7 +556,7 @@ describe("handleWebhook: callback routing", () => {
 
     await handleWebhook({
       ...base,
-      client: throwingClient,
+      memberClient: () => throwingClient,
       rawBody: callbackUpdate(777, "cf", 555, 1001),
     });
 
@@ -569,7 +571,7 @@ describe("handleWebhook: callback routing", () => {
       rawBody: callbackUpdate(777, "cf"),
       secretHeader: "wrong",
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store: createInMemoryConversationStore(),
@@ -598,7 +600,7 @@ describe("integration: the Petz flow (spec §6)", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -731,7 +733,7 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
       store,
@@ -762,6 +764,39 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     expect(tables.transactions).toHaveLength(1);
   });
 
+  it("refuses a tap on another member's button even when the tapper has a draft", async () => {
+    const { base, tables, answered, stripped } = harness();
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(888, "Mercado 42 reais hoje"),
+    });
+    expect(
+      (await base.store.load("555", "777", "house-1"))?.promptMessageId,
+    ).toBe(1001);
+    expect(
+      (await base.store.load("555", "888", "house-1"))?.promptMessageId,
+    ).toBe(1002);
+
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(888, "cf", 555, 1001),
+    });
+
+    expect(answered.at(-1)?.text).toContain("outra pessoa");
+    expect(tables.transactions).toHaveLength(0);
+    expect((await base.store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+    expect((await base.store.load("555", "888", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+    expect(stripped).toHaveLength(0);
+  });
+
   it("another member's tap cannot cancel or re-categorize the creator's draft", async () => {
     const { base, tables } = harness();
     const store = base.store;
@@ -779,13 +814,17 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     });
 
     await handleWebhook({ ...base, rawBody: callbackUpdate(888, "cx") });
-    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
 
     await handleWebhook({
       ...base,
       rawBody: callbackUpdate(888, "ct:cat-food"),
     });
-    expect((await store.load("555"))?.draft.categoryId).not.toBe("cat-food");
+    expect(
+      (await store.load("555", "777", "house-1"))?.draft.categoryId,
+    ).not.toBe("cat-food");
     expect(tables.transactions).toHaveLength(0);
   });
 

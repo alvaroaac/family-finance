@@ -27,9 +27,25 @@ import type { ConversationState, ConversationStatus } from "./conversation.js";
 
 export type ConversationStore = {
   /** Load a chat's conversation state, or undefined when absent/stale/malformed. */
-  load(chatId: string): Promise<ConversationState | undefined>;
+  load(
+    chatId: string,
+    telegramUserId: string,
+    householdId: string,
+  ): Promise<ConversationState | undefined>;
   /** Persist a chat's conversation state (upsert). */
-  save(chatId: string, state: ConversationState): Promise<void>;
+  save(
+    chatId: string,
+    telegramUserId: string,
+    householdId: string,
+    state: ConversationState,
+  ): Promise<void>;
+  delete(chatId: string, telegramUserId: string): Promise<void>;
+  /** Whether another sender owns the draft attached to this Telegram message. */
+  hasOtherPrompt(
+    chatId: string,
+    telegramUserId: string,
+    messageId: number,
+  ): Promise<boolean>;
 };
 
 /** Conversations older than this are treated as abandoned (absent on load). */
@@ -94,13 +110,51 @@ function isDurableConversationState(state: ConversationState): boolean {
 
 /** In-memory store — unit tests and local dry runs (state dies with the process). */
 export function createInMemoryConversationStore(): ConversationStore {
-  const conversations = new Map<string, ConversationState>();
+  const conversations = new Map<
+    string,
+    { householdId: string; state: ConversationState }
+  >();
+  const key = (chatId: string, telegramUserId: string) =>
+    `${chatId}:${telegramUserId}`;
   return {
-    async load(chatId: string): Promise<ConversationState | undefined> {
-      return conversations.get(chatId);
+    async load(
+      chatId: string,
+      telegramUserId: string,
+      householdId: string,
+    ): Promise<ConversationState | undefined> {
+      const stored = conversations.get(key(chatId, telegramUserId));
+      if (stored !== undefined && stored.householdId !== householdId) {
+        conversations.delete(key(chatId, telegramUserId));
+        return undefined;
+      }
+      return stored?.state;
     },
-    async save(chatId: string, state: ConversationState): Promise<void> {
-      conversations.set(chatId, state);
+    async save(
+      chatId: string,
+      telegramUserId: string,
+      householdId: string,
+      state: ConversationState,
+    ): Promise<void> {
+      conversations.set(key(chatId, telegramUserId), { householdId, state });
+    },
+    async delete(chatId: string, telegramUserId: string): Promise<void> {
+      conversations.delete(key(chatId, telegramUserId));
+    },
+    async hasOtherPrompt(
+      chatId: string,
+      telegramUserId: string,
+      messageId: number,
+    ): Promise<boolean> {
+      for (const [storedKey, { state }] of conversations) {
+        if (
+          storedKey.startsWith(`${chatId}:`) &&
+          storedKey !== key(chatId, telegramUserId) &&
+          state.promptMessageId === messageId
+        ) {
+          return true;
+        }
+      }
+      return false;
     },
   };
 }
@@ -150,9 +204,25 @@ export function createDbConversationStore(
   client: AppSupabaseClient,
 ): ConversationStore {
   return {
-    async load(chatId: string): Promise<ConversationState | undefined> {
-      const row = await loadBotConversation(client, Number(chatId));
+    async load(
+      chatId: string,
+      telegramUserId: string,
+      householdId: string,
+    ): Promise<ConversationState | undefined> {
+      const row = await loadBotConversation(
+        client,
+        Number(chatId),
+        Number(telegramUserId),
+      );
       if (row === null) {
+        return undefined;
+      }
+      if (row.householdId !== householdId) {
+        await deleteBotConversation(
+          client,
+          Number(chatId),
+          Number(telegramUserId),
+        );
         return undefined;
       }
       if (!isConversationState(row.state)) {
@@ -167,7 +237,13 @@ export function createDbConversationStore(
           ...row.state,
           status: "installment_recovery_required",
         };
-        await saveBotConversation(client, Number(chatId), recoveryState);
+        await saveBotConversation(
+          client,
+          Number(chatId),
+          Number(telegramUserId),
+          row.householdId,
+          recoveryState,
+        );
         return recoveryState;
       }
       const ageMs = Date.now() - new Date(row.updatedAt).getTime();
@@ -179,13 +255,56 @@ export function createDbConversationStore(
         // post-write safety states and a keyed pre-write state remain available
         // until explicit reconciliation, so a committed RPC can always be
         // retried with the same identity after a later state-save failure.
-        await deleteBotConversation(client, Number(chatId));
+        await deleteBotConversation(
+          client,
+          Number(chatId),
+          Number(telegramUserId),
+        );
         return undefined;
       }
       return row.state;
     },
-    async save(chatId: string, state: ConversationState): Promise<void> {
-      await saveBotConversation(client, Number(chatId), state);
+    async save(
+      chatId: string,
+      telegramUserId: string,
+      householdId: string,
+      state: ConversationState,
+    ): Promise<void> {
+      await saveBotConversation(
+        client,
+        Number(chatId),
+        Number(telegramUserId),
+        householdId,
+        state,
+      );
+    },
+    async delete(chatId: string, telegramUserId: string): Promise<void> {
+      await deleteBotConversation(
+        client,
+        Number(chatId),
+        Number(telegramUserId),
+      );
+    },
+    async hasOtherPrompt(
+      chatId: string,
+      telegramUserId: string,
+      messageId: number,
+    ): Promise<boolean> {
+      const { data, error } = await client
+        .from("bot_conversations")
+        .select("telegram_user_id, state")
+        .eq("chat_id", Number(chatId));
+      if (error) {
+        throw new Error(`hasOtherPrompt failed: ${error.message}`);
+      }
+      return (data ?? []).some(
+        (row) =>
+          String(row.telegram_user_id) !== telegramUserId &&
+          typeof row.state === "object" &&
+          row.state !== null &&
+          (row.state as { promptMessageId?: unknown }).promptMessageId ===
+            messageId,
+      );
     },
   };
 }

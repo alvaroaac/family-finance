@@ -8,6 +8,8 @@
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createHmac } from "node:crypto";
+import type { AppSupabaseClient } from "./repositories.js";
 import type { Database } from "./types.js";
 
 export type DatabaseClientConfig = {
@@ -42,6 +44,70 @@ export function createServiceRoleClient(
   config: ServiceRoleClientConfig,
 ): SupabaseClient<Database> {
   return createClient<Database>(config.supabaseUrl, config.serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+export type MemberClientConfig = {
+  supabaseUrl: string;
+  anonKey: string;
+  jwtSecret: string;
+  userId: string;
+  ttlSeconds?: number;
+};
+
+function signMemberToken(
+  userId: string,
+  jwtSecret: string,
+  ttlSeconds: number,
+): string {
+  const header = Buffer.from(
+    JSON.stringify({ alg: "HS256", typ: "JWT" }),
+  ).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: userId,
+      role: "authenticated",
+      aud: "authenticated",
+      exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    }),
+  ).toString("base64url");
+  const signature = createHmac("sha256", jwtSecret)
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+/** Create a short-lived, RLS-scoped client for a resolved household member. */
+export function createMemberClient(
+  config: MemberClientConfig,
+): AppSupabaseClient {
+  const { supabaseUrl, anonKey, jwtSecret, userId, ttlSeconds = 300 } = config;
+  let token = signMemberToken(userId, jwtSecret, ttlSeconds);
+
+  return createClient<Database>(supabaseUrl, anonKey, {
+    accessToken: async () => token,
+    global: {
+      fetch: async (input, init) => {
+        const response = await fetch(input, init);
+        if (response.status !== 401) {
+          return response;
+        }
+        const errorBody = await response.clone().text();
+        if (
+          !/\b(?:jwt|token)\b.*\bexpired\b|\bexpired\b.*\b(?:jwt|token)\b/i.test(
+            errorBody,
+          )
+        ) {
+          return response;
+        }
+
+        token = signMemberToken(userId, jwtSecret, ttlSeconds);
+        const headers = new Headers(init?.headers);
+        headers.set("Authorization", `Bearer ${token}`);
+        return fetch(input, { ...init, headers });
+      },
+    },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

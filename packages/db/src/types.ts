@@ -340,19 +340,22 @@ export type BotInteractionRow = {
 };
 
 /**
- * Persisted bot conversation state, keyed by the Telegram chat id. NOT
- * household-scoped: rows exist before the sender is resolved to a member, and
- * the table has RLS enabled with zero policies, so only the bot's
- * service_role client (which bypasses RLS) can read or write it.
+ * Persisted bot conversation state, keyed by chat and Telegram sender. The
+ * table has RLS enabled with zero policies; only the bot's service-role client
+ * reads and writes it after sender resolution.
  */
 export type BotConversationRow = {
   chat_id: number;
+  telegram_user_id: number;
+  household_id: string;
   state: unknown;
   updated_at: string;
 };
 
 export type BotConversationInsert = {
   chat_id: number;
+  telegram_user_id: number;
+  household_id: string;
   state: unknown;
   updated_at?: string;
 };
@@ -747,6 +750,17 @@ export type Database = {
       is_household_member: {
         Args: { target_household_id: string };
         Returns: boolean;
+      };
+      resolve_telegram_member: {
+        Args: {
+          p_telegram_user_id: number;
+          p_telegram_username: string | null;
+        };
+        Returns: {
+          household_id: string;
+          user_id: string;
+          display_name: string | null;
+        }[];
       };
       // Atomic parcelado write (group + installments in one transaction).
       // See supabase/migrations/0002_create_installment_purchase.sql. Returns

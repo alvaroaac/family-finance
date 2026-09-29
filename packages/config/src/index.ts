@@ -35,7 +35,9 @@ export const envSchema = z.object({
   // Bot-side Supabase URL (the bot container carries no NEXT_PUBLIC_* build
   // context); consumers fall back to NEXT_PUBLIC_SUPABASE_URL when unset.
   SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_API_BASE_URL: z.string().url().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -79,8 +81,8 @@ export type AppEnv = z.infer<typeof envSchema>;
 /**
  * Bot-container environment (spec §3.5): the webhook server ships without any
  * web-only configuration, so the NEXT_PUBLIC_* pair is optional here.
- * `SUPABASE_URL` (or the NEXT_PUBLIC fallback) plus the
- * service-role key are enforced by `startBot` itself.
+ * `SUPABASE_URL` (or the NEXT_PUBLIC fallback), the service-role key,
+ * anon key and JWT secret are enforced by `startBot` itself.
  */
 export const botEnvSchema = envSchema.extend({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),

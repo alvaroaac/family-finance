@@ -203,7 +203,7 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
         rawBody,
         secretHeader,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram: tg.telegram,
         resolveMember: resolveMemberFake,
         store,
