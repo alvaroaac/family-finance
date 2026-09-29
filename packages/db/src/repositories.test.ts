@@ -30,6 +30,9 @@ import {
   deleteTransaction,
   findMemberByTelegramUserId,
   resolveTelegramMember,
+  createTelegramLinkCode,
+  redeemTelegramLinkCode,
+  unlinkTelegram,
   getMonthlySummary,
   loadBotConversation,
   saveBotConversation,
@@ -1694,7 +1697,7 @@ describe("restoreSubcategory", () => {
 });
 
 describe("resolveTelegramMember", () => {
-  it("calls the restricted resolver RPC with the normalized username", async () => {
+  it("calls the restricted resolver RPC by numeric id only", async () => {
     const rpc = vi.fn(async () => ({
       data: [
         {
@@ -1718,7 +1721,7 @@ describe("resolveTelegramMember", () => {
     expect(rpc).toHaveBeenCalledOnce();
     expect(rpc).toHaveBeenCalledWith("resolve_telegram_member", {
       p_telegram_user_id: 555,
-      p_telegram_username: "karol",
+      p_telegram_username: null,
     });
   });
 
@@ -1745,6 +1748,40 @@ describe("resolveTelegramMember", () => {
         telegramUserId: 999,
       }),
     ).rejects.toThrow("resolveTelegramMember failed: permission denied");
+  });
+});
+
+describe("verified Telegram linking RPCs", () => {
+  it("returns a generated code and redeems to the member identity", async () => {
+    const rpc = vi.fn(async (name: string) => ({
+      data:
+        name === "create_telegram_link_code"
+          ? "ABCD2345"
+          : [{ household_id: HOUSEHOLD, user_id: USER, display_name: "Karol" }],
+      error: null,
+    }));
+    const client = { rpc } as unknown as AppSupabaseClient;
+    expect(await createTelegramLinkCode(client)).toBe("ABCD2345");
+    expect(await redeemTelegramLinkCode(client, " abcd2345 ", 987)).toEqual({
+      householdId: HOUSEHOLD,
+      userId: USER,
+      displayName: "Karol",
+    });
+    expect(rpc).toHaveBeenCalledWith("redeem_telegram_link_code", {
+      p_code: " abcd2345 ",
+      p_telegram_user_id: 987,
+    });
+    await unlinkTelegram(client);
+    expect(rpc).toHaveBeenCalledWith("unlink_telegram");
+  });
+
+  it("returns null when no code can be redeemed", async () => {
+    const client = {
+      rpc: async () => ({ data: [], error: null }),
+    } as unknown as AppSupabaseClient;
+    await expect(
+      redeemTelegramLinkCode(client, "expired", 987),
+    ).resolves.toBeNull();
   });
 });
 

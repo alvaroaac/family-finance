@@ -26,7 +26,7 @@ additional_redirect_urls = ["http://127.0.0.1:3100"]
 
 [auth.email]
 enable_signup = true
-enable_confirmations = false
+enable_confirmations = true
 
 [realtime]
 enabled = false

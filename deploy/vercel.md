@@ -44,8 +44,8 @@ The VPS GoTrue must mirror the working local `supabase/config.toml`
   `https://<host>/auth/callback` for every web hostname.
 - Google external provider enabled, client id/secret via env.
 - `GOTRUE_EXTERNAL_GOOGLE_SKIP_NONCE_CHECK=true` (local parity).
-- Email signup enabled + autoconfirm. The `allowed_emails` table provisions
-  membership on signup; the web gate checks for an active membership.
+- Email signup enabled with autoconfirm disabled. Only confirmed identities
+  on `allowed_emails` receive membership; the web gate checks for an active membership.
 
 ## 4. Deploy
 

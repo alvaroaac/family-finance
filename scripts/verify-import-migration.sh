@@ -21,7 +21,7 @@ if [[ "$ready" != "true" ]]; then
 fi
 
 docker exec "$name" psql -v ON_ERROR_STOP=1 -U postgres -c \
-  "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+  "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 
 for file in supabase/migrations/*.sql; do
   docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - < "$file" >/dev/null

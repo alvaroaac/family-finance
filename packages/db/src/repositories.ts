@@ -2577,7 +2577,6 @@ export type HouseholdMemberProfile = {
   isActive: boolean;
   displayName: string | null;
   telegramUserId: number | null;
-  telegramUsername: string | null;
 };
 
 /** List a household's members (active first, then by creation time). */
@@ -2600,53 +2599,20 @@ export async function listHouseholdMembers(
     isActive: row.is_active,
     displayName: row.display_name,
     telegramUserId: row.telegram_user_id,
-    telegramUsername: row.telegram_username,
   }));
 }
 
-/**
- * Normalize a user-typed Telegram @username: strips the "@", trims and
- * lowercases (Telegram usernames are case-insensitive). Returns null for
- * blank input. Pure.
- */
-export function normalizeTelegramUsername(value: string | null): string | null {
-  const cleaned = (value ?? "").trim().replace(/^@/, "").toLowerCase();
-  return cleaned === "" ? null : cleaned;
-}
-
-/**
- * Update a member's profile fields (display name and/or Telegram user id).
- * A blank display name is stored as null; the Telegram id must be an integer
- * (or null to unlink). Absent keys are left untouched.
- */
+/** Update a member's display name. A blank name is stored as null. */
 export async function updateHouseholdMember(
   client: AppSupabaseClient,
   householdId: string,
   memberId: string,
-  changes: {
-    displayName?: string | null;
-    telegramUserId?: number | null;
-    telegramUsername?: string | null;
-  },
+  changes: { displayName?: string | null },
 ): Promise<void> {
   const update: Partial<HouseholdMemberRow> = {};
   if (changes.displayName !== undefined) {
     const name = changes.displayName?.trim() ?? "";
     update.display_name = name === "" ? null : name;
-  }
-  if (changes.telegramUserId !== undefined) {
-    if (
-      changes.telegramUserId !== null &&
-      !Number.isSafeInteger(changes.telegramUserId)
-    ) {
-      throw new Error("O ID do Telegram precisa ser um número inteiro.");
-    }
-    update.telegram_user_id = changes.telegramUserId;
-  }
-  if (changes.telegramUsername !== undefined) {
-    update.telegram_username = normalizeTelegramUsername(
-      changes.telegramUsername,
-    );
   }
   if (Object.keys(update).length === 0) {
     return;
@@ -2746,6 +2712,45 @@ export type BotMemberIdentity = {
   displayName: string | null;
 };
 
+export async function createTelegramLinkCode(
+  client: AppSupabaseClient,
+): Promise<string> {
+  const { data, error } = await client.rpc("create_telegram_link_code");
+  if (error !== null) {
+    throw new Error(`createTelegramLinkCode failed: ${error.message}`);
+  }
+  return data;
+}
+
+export async function unlinkTelegram(client: AppSupabaseClient): Promise<void> {
+  const { error } = await client.rpc("unlink_telegram");
+  if (error !== null) {
+    throw new Error(`unlinkTelegram failed: ${error.message}`);
+  }
+}
+
+export async function redeemTelegramLinkCode(
+  client: AppSupabaseClient,
+  code: string,
+  telegramUserId: number,
+): Promise<BotMemberIdentity | null> {
+  const { data, error } = await client.rpc("redeem_telegram_link_code", {
+    p_code: code,
+    p_telegram_user_id: telegramUserId,
+  });
+  if (error !== null) {
+    throw new Error(`redeemTelegramLinkCode failed: ${error.message}`);
+  }
+  const row = data?.[0];
+  return row === undefined
+    ? null
+    : {
+        householdId: row.household_id,
+        userId: row.user_id,
+        displayName: row.display_name,
+      };
+}
+
 /**
  * Resolve a Telegram user id to an active household member. Returns null when
  * no active member is linked to that Telegram id — the bot then politely
@@ -2778,22 +2783,14 @@ export async function findMemberByTelegramUserId(
   };
 }
 
-/**
- * Resolve a Telegram sender to an active member: by the stable numeric id
- * first, then by @username (Telegram sends both in every update; usernames
- * are optional and changeable, ids are forever). On a username match the
- * numeric id is back-filled so future updates take the stable path even if
- * the username later changes. Service-role client only.
- */
+/** Resolve a Telegram sender by the linked numeric id. Service-role only. */
 export async function resolveTelegramMember(
   client: AppSupabaseClient,
   sender: { telegramUserId: number; telegramUsername?: string | null },
 ): Promise<BotMemberIdentity | null> {
   const { data, error } = await client.rpc("resolve_telegram_member", {
     p_telegram_user_id: sender.telegramUserId,
-    p_telegram_username: normalizeTelegramUsername(
-      sender.telegramUsername ?? null,
-    ),
+    p_telegram_username: null,
   });
   if (error !== null) {
     throw new Error(`resolveTelegramMember failed: ${error.message}`);

@@ -1,15 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { startBot } from "./lib/bot-process.js";
 import { startFakeTelegram, type SentMessage } from "./lib/fake-telegram.js";
 import {
   adminClient,
+  members,
   provisionMultiTenantFixtures,
+  testPassword,
 } from "./lib/multi-tenant-fixtures.js";
 
 const secret = "e2e-webhook-secret";
 const refusal =
-  "Oi! Eu ainda não conheço você por aqui — peça para quem administra a sua casa vincular seu Telegram nas Configurações.";
+  "Oi! Eu ainda não conheço você por aqui. Abra Configurações no Family Finance, toque em Vincular Telegram e me envie o código que aparecer.";
 const forbidden = /Alvaro|Álvaro|Karol|alvaroekarol/i;
 
 async function rows(householdId: string) {
@@ -247,6 +250,111 @@ describe("real bot webhook across households", () => {
       expect(await writeCounts()).toEqual(prior);
       for (const reply of fake.sent.filter((sent) => sent.text))
         expect(reply.text).not.toMatch(forbidden);
+    } finally {
+      await bot.stop();
+      await fake.stop();
+    }
+  }, 180_000);
+
+  it("links only the code owner and rejects expired, missing, and already-bound codes", async () => {
+    const { ids, azul, verde } = await provisionMultiTenantFixtures();
+    await ensureAccount(azul);
+    await ensureAccount(verde);
+    const admin = adminClient();
+    const linkedId = Math.floor(Math.random() * 1_000_000_000) + 4_000_000_000;
+    const outsiderId = linkedId + 1;
+    const userId = linkedId + 2;
+    const reset = await admin
+      .from("household_members")
+      .update({ telegram_user_id: null, telegram_username: null })
+      .eq("user_id", ids.ana);
+    if (reset.error) throw reset.error;
+    const bindB = await admin
+      .from("household_members")
+      .update({ telegram_user_id: linkedId })
+      .eq("user_id", ids.carla);
+    if (bindB.error) throw bindB.error;
+    async function codeFor(email: string) {
+      const client = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!,
+      );
+      const signed = await client.auth.signInWithPassword({
+        email,
+        password: testPassword,
+      });
+      if (signed.error) throw signed.error;
+      const result = await client.rpc("create_telegram_link_code");
+      if (result.error) throw result.error;
+      return result.data as string;
+    }
+    const fake = await startFakeTelegram();
+    const bot = await startBot({
+      TELEGRAM_API_BASE_URL: fake.baseUrl,
+      TELEGRAM_BOT_TOKEN: "test-token",
+      TELEGRAM_WEBHOOK_SECRET: secret,
+      SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY!,
+      SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET!,
+    });
+    let updateId = 1000;
+    async function send(from: number, text: string) {
+      const response = await fetch(`${bot.url}/webhook`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": secret,
+        },
+        body: JSON.stringify({
+          update_id: updateId++,
+          message: { chat: { id: from }, from: { id: from }, text },
+        }),
+      });
+      expect(response.status).toBe(200);
+      return fake.sent.at(-1)?.text;
+    }
+    try {
+      const code = await codeFor(members.ana.email);
+      expect(await send(linkedId, `/vincular ${code}`)).toContain(
+        "Não consegui vincular",
+      );
+      expect(await send(userId, `/vincular ${code}`)).toContain("Pronto, Ana!");
+      expect(await send(userId, "mercado 50")).not.toBe(refusal);
+      expect(await send(outsiderId, `/vincular ${code}`)).toContain(
+        "Não consegui vincular",
+      );
+      expect(await send(outsiderId, "mercado 50")).toBe(refusal);
+      expect(await send(outsiderId, "/vincular")).toContain(
+        "Não consegui vincular",
+      );
+
+      const codeB = await codeFor(members.carla.email);
+      expect(await send(userId, `/start ${codeB}`)).toContain(
+        "Não consegui vincular",
+      );
+      const { data: links } = await admin
+        .from("household_members")
+        .select("user_id,telegram_user_id")
+        .in("user_id", [ids.ana, ids.carla]);
+      expect(
+        links?.find((row) => row.user_id === ids.ana)?.telegram_user_id,
+      ).toBe(userId);
+      expect(
+        links?.find((row) => row.user_id === ids.carla)?.telegram_user_id,
+      ).toBe(linkedId);
+
+      const expiredCode = await codeFor(members.ana.email);
+      const expiredHash = createHash("sha256")
+        .update(expiredCode)
+        .digest("hex");
+      const expiration = await admin
+        .from("telegram_link_codes")
+        .update({ expires_at: "2000-01-01T00:00:00Z" })
+        .eq("code_hash", expiredHash);
+      if (expiration.error) throw expiration.error;
+      expect(await send(outsiderId, `/vincular ${expiredCode}`)).toContain(
+        "Não consegui vincular",
+      );
+      expect(await send(outsiderId, "mercado 70")).toBe(refusal);
     } finally {
       await bot.stop();
       await fake.stop();

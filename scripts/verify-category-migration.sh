@@ -32,7 +32,7 @@ if [[ "$ready" != "true" ]]; then
   exit 1
 fi
 sql() { docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres "$@"; }
-sql -c "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+sql -c "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 # Fresh database: no seed household exists when the migration runs.
 for file in supabase/migrations/*.sql; do sql -f - < "$file" >/dev/null; done
 # Simulate previously deployed category kinds, including an archived salary

@@ -70,6 +70,12 @@ export type HouseholdMemberRow = {
   updated_at: string;
 };
 
+export type TelegramLinkCodeRow = {
+  member_id: string;
+  code_hash: string;
+  expires_at: string;
+};
+
 export type AccountRow = {
   id: string;
   household_id: string;
@@ -710,6 +716,7 @@ export type Database = {
         HouseholdMemberRow,
         Partial<HouseholdMemberRow>
       >;
+      telegram_link_codes: TableDef<TelegramLinkCodeRow, TelegramLinkCodeRow>;
       accounts: TableDef<AccountRow, Partial<AccountRow>>;
       investment_buckets: TableDef<
         InvestmentBucketRow,
@@ -744,6 +751,22 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      create_telegram_link_code: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
+      unlink_telegram: {
+        Args: Record<string, never>;
+        Returns: undefined;
+      };
+      redeem_telegram_link_code: {
+        Args: { p_code: string; p_telegram_user_id: number };
+        Returns: {
+          household_id: string;
+          user_id: string;
+          display_name: string | null;
+        }[];
+      };
       is_household_member: {
         Args: { target_household_id: string };
         Returns: boolean;

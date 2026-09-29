@@ -101,6 +101,16 @@ test("two households create and see only their own records; a second member shar
   const bruno = await memberPage(browser, members.bruno.email, origin);
   const suffix = randomUUID().slice(0, 8);
   try {
+    await bruno.page.goto(`${origin}/settings`);
+    await expect(
+      bruno.page.getByRole("button", { name: "Vincular Telegram" }),
+    ).toHaveCount(1);
+    await expect(bruno.page.locator('input[name="telegram"]')).toHaveCount(0);
+    await bruno.page.getByRole("button", { name: "Vincular Telegram" }).click();
+    await expect(bruno.page.locator("code")).toContainText(
+      /\/vincular [A-HJ-NP-Z2-9]{8}/,
+    );
+
     const blue = await createFromPages(ana.page, origin, `Azul ${suffix}`);
     const green = await createFromPages(carla.page, origin, `Verde ${suffix}`);
     for (const [page, own, other] of [

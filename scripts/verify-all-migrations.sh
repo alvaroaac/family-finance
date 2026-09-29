@@ -39,7 +39,7 @@ if [[ "$ready" != "true" ]]; then
 fi
 
 docker exec "$container" psql -v ON_ERROR_STOP=1 -U postgres -c \
-  "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+  "create schema auth; create role anon nologin; create role authenticated nologin; create role service_role nologin; create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz); create function auth.uid() returns uuid language sql stable as 'select null::uuid'; create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 
 for pass in 1 2; do
   for migration in "$repo_root"/supabase/migrations/*.sql; do
@@ -279,7 +279,7 @@ fresh_db="family_finance_fresh"
 docker exec "$container" createdb -U postgres "$fresh_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$fresh_db" -c \
   "create schema auth;
-   create table auth.users(id uuid primary key, email text);
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 MIGRATION_DB_NAME="$fresh_db" "$repo_root/deploy/migrate.sh" initialize >/dev/null
@@ -303,7 +303,7 @@ upgrade_db="family_finance_upgrade"
 docker exec "$container" createdb -U postgres "$upgrade_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$upgrade_db" -c \
   "create schema auth;
-   create table auth.users(id uuid primary key, email text);
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
@@ -341,7 +341,7 @@ decoy_db="family_finance_enum_decoy"
 docker exec "$container" createdb -U postgres "$decoy_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$decoy_db" -c \
   "create schema auth;
-   create table auth.users(id uuid primary key, email text);
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';
    create schema decoy;
@@ -371,7 +371,7 @@ provision_template="family_finance_provision_template"
 docker exec "$container" createdb -U postgres "$provision_template"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$provision_template" -c \
   "create schema auth;
-   create table auth.users(id uuid primary key, email text);
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
@@ -433,7 +433,7 @@ buckets_db="family_finance_free_form_buckets"
 docker exec "$container" createdb -U postgres "$buckets_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db" -c \
   "create schema auth;
-   create table auth.users(id uuid primary key, email text);
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
@@ -466,7 +466,7 @@ bot_db="family_finance_bot_member_scope"
 docker exec "$container" createdb -U postgres "$bot_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -c \
   "create schema auth;
-   create table auth.users(id uuid primary key, email text);
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
@@ -487,5 +487,35 @@ docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_d
 after="$(docker exec "$container" pg_dump -U postgres -d "$bot_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
 [[ "$before" == "$after" ]] || { echo "0031 replay changed the bot database" >&2; exit 1; }
+
+# Exercise 0032 against confirmed and unconfirmed identities, then replay it.
+identity_db="family_finance_verified_identity"
+docker exec "$container" createdb -U postgres "$identity_db"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "0032_" ]] || continue
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$identity_db" -f - \
+    < "$migration" >/dev/null
+done
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -c \
+  "create schema if not exists extensions; alter extension pgcrypto set schema extensions;" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$identity_db" -f - \
+  < "$repo_root/supabase/migrations/0032_verified_identity_binding.sql" >/dev/null
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -c \
+  "create or replace function auth.uid() returns uuid language sql stable
+   as \$\$select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid\$\$;" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -f - \
+  < "$repo_root/packages/db/test/verified-identity-binding-functional.sql" >/dev/null
+before="$(docker exec "$container" pg_dump -U postgres -d "$identity_db" | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$identity_db" -f - \
+  < "$repo_root/supabase/migrations/0032_verified_identity_binding.sql" >/dev/null
+after="$(docker exec "$container" pg_dump -U postgres -d "$identity_db" | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+[[ "$before" == "$after" ]] || { echo "0032 replay changed the identity database" >&2; exit 1; }
 
 echo "all migrations apply cleanly twice"

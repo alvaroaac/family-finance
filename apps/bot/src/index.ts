@@ -36,6 +36,7 @@ import {
   findAccountsByHousehold,
   findLatestExpenses,
   resolveTelegramMember,
+  redeemTelegramLinkCode,
   listCreditCards,
   listHouseholdMembers,
   listActiveCategorizationMemory,
@@ -122,7 +123,30 @@ const CLASSIFIER_PRIMARY_TIMEOUT_MS = 4_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
-  "Oi! Eu ainda não conheço você por aqui — peça para quem administra a sua casa vincular seu Telegram nas Configurações.";
+  "Oi! Eu ainda não conheço você por aqui. Abra Configurações no Family Finance, toque em Vincular Telegram e me envie o código que aparecer.";
+const LINK_FAILURE_REPLY =
+  "Não consegui vincular. O código é inválido, expirou ou este Telegram já está vinculado a outra pessoa. Gere um código novo em Configurações.";
+
+/**
+ * The code carried by "/vincular CODE" or Telegram's deep-link "/start CODE"
+ * ("" for a bare "/vincular"), or null when the text is not a link command.
+ * A bare "/start" is not a link command: it is what Telegram sends when a
+ * chat is opened.
+ */
+export function parseLinkCommand(text: string): string | null {
+  const match = /^\/(vincular|start)(?:@\w+)?(?:\s+(.*))?$/i.exec(text.trim());
+  if (match === null) {
+    return null;
+  }
+  const code = match[2]?.trim() ?? "";
+  return code === "" && match[1]!.toLowerCase() === "start" ? null : code;
+}
+
+function linkSuccessReply(member: BotMemberIdentity): string {
+  const greeting =
+    member.displayName === null ? "Pronto!" : `Pronto, ${member.displayName}!`;
+  return `${greeting} Seu Telegram está vinculado. Pode mandar seus lançamentos por aqui.`;
+}
 
 function todayIso(): string {
   return currentHouseholdDate();
@@ -499,6 +523,10 @@ export async function handleWebhook(args: {
     telegramUserId: string;
     telegramUsername?: string;
   }) => Promise<BotMemberIdentity | null>;
+  redeemLinkCode?: (
+    code: string,
+    telegramUserId: number,
+  ) => Promise<BotMemberIdentity | null>;
   /** Per-chat conversation persistence (DB-backed in production). */
   store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
@@ -698,6 +726,19 @@ export async function handleWebhook(args: {
   if (incoming === null) {
     // Nothing actionable (unsupported update) — acknowledge so Telegram does
     // not retry.
+    return { status: 200, body: { ok: true } };
+  }
+
+  const linkCode = message === null ? null : parseLinkCommand(message.text);
+  if (message !== null && linkCode !== null) {
+    const linked =
+      linkCode !== "" && args.redeemLinkCode
+        ? await args.redeemLinkCode(linkCode, Number(message.fromId))
+        : null;
+    await args.telegram.sendMessage(
+      message.chatId,
+      linked === null ? LINK_FAILURE_REPLY : linkSuccessReply(linked),
+    );
     return { status: 200, body: { ok: true } };
   }
 
@@ -1002,6 +1043,8 @@ export async function startBot(): Promise<{
       telegramUserId: Number(sender.telegramUserId),
       telegramUsername: sender.telegramUsername ?? null,
     });
+  const redeemLinkCode = (code: string, telegramUserId: number) =>
+    redeemTelegramLinkCode(client, code, telegramUserId);
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
     ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
@@ -1078,6 +1121,7 @@ export async function startBot(): Promise<{
         memberClient,
         telegram,
         resolveMember,
+        redeemLinkCode,
         store,
         ai,
         interpretText,

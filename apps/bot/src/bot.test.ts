@@ -28,7 +28,7 @@ import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import { existsSync } from "node:fs";
 import { readFileSync } from "node:fs";
 
-import { handleWebhook, startBot } from "./index.js";
+import { handleWebhook, parseLinkCommand, startBot } from "./index.js";
 import type { MessageClassifier, TextInterpreter } from "./interpret.js";
 import {
   createInMemoryConversationStore,
@@ -1120,21 +1120,13 @@ const IDENTITIES: Record<string, BotMemberIdentity> = {
     displayName: "Alvaro",
   },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
-  "@karolzinha": {
-    householdId: "house-1",
-    userId: "user-karol",
-    displayName: "Karol",
-  },
 };
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
   telegramUsername?: string;
 }): Promise<BotMemberIdentity | null> =>
-  IDENTITIES[sender.telegramUserId] ??
-  (sender.telegramUsername !== undefined
-    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
-    : null);
+  IDENTITIES[sender.telegramUserId] ?? null;
 
 function textUpdate(
   fromId: number,
@@ -1154,6 +1146,76 @@ function textUpdate(
 }
 
 const SECRET = "s3cr3t";
+
+describe("Telegram link commands", () => {
+  it.each(["/vincular abcd1234", "/START abcd1234", "/vincular"])(
+    "redeems %s before member resolution or interpretation",
+    async (command) => {
+      const { telegram, sent } = fakeTelegram();
+      const resolveMember = vi.fn(resolveMemberFake);
+      const interpretText = vi.fn();
+      const redeemLinkCode = vi.fn().mockResolvedValue({
+        householdId: "house-1",
+        userId: "user-alvaro",
+        displayName: "Alvaro",
+      });
+      await handleWebhook({
+        rawBody: textUpdate(999, command),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        memberClient: () => fakeSupabase({}).client,
+        telegram,
+        resolveMember,
+        redeemLinkCode,
+        store: createInMemoryConversationStore(),
+        interpretText,
+      });
+      expect(resolveMember).not.toHaveBeenCalled();
+      expect(interpretText).not.toHaveBeenCalled();
+      if (command === "/vincular") {
+        expect(redeemLinkCode).not.toHaveBeenCalled();
+        expect(sent.at(-1)?.text).toContain("Não consegui vincular");
+      } else {
+        expect(redeemLinkCode).toHaveBeenCalledWith("abcd1234", 999);
+        expect(sent.at(-1)?.text).toContain("Pronto, Alvaro!");
+      }
+    },
+  );
+
+  it.each([
+    ["/vincular ABCD2345", "ABCD2345"],
+    ["/vincular@family_bot ABCD2345", "ABCD2345"],
+    ["/start ABCD2345", "ABCD2345"],
+    ["/vincular", ""],
+    ["/start", null],
+    ["mercado 50", null],
+    ["/vincularx ABCD2345", null],
+  ])("parses %s as link code %s", (text, code) => {
+    expect(parseLinkCommand(text)).toBe(code);
+  });
+
+  it("rejects an invalid code and keeps the next message unlinked", async () => {
+    const { telegram, sent } = fakeTelegram();
+    const { client } = fakeSupabase();
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      memberClient: () => client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn().mockResolvedValue(null),
+      store: createInMemoryConversationStore(),
+    };
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(999, "/vincular INVALID"),
+    });
+    await handleWebhook({ ...base, rawBody: textUpdate(999, "mercado 50") });
+    expect(sent[0]?.text).toContain("Não consegui vincular");
+    expect(sent[1]?.text).toContain("Eu ainda não conheço você");
+    expect(base.redeemLinkCode).toHaveBeenCalledTimes(1);
+  });
+});
 
 it("keeps every bot repository call on the member path except the resolver", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
@@ -1199,6 +1261,7 @@ it("keeps every bot repository call on the member path except the resolver", () 
       "createServiceRoleClient",
       "createMemberClient",
       "resolveTelegramMember",
+      "redeemTelegramLinkCode",
       "type AppSupabaseClient",
       "type BotMemberIdentity",
     ].sort(),
@@ -1374,7 +1437,7 @@ describe("handleWebhook: telegram identity", () => {
     expect(result.status).toBe(200);
     expect(sent).toHaveLength(1);
     expect(sent[0]?.text).toBe(
-      "Oi! Eu ainda não conheço você por aqui — peça para quem administra a sua casa vincular seu Telegram nas Configurações.",
+      "Oi! Eu ainda não conheço você por aqui. Abra Configurações no Family Finance, toque em Vincular Telegram e me envie o código que aparecer.",
     );
     // No transaction, no interaction row: there is no household to scope to.
     expect(tables.transactions).toHaveLength(0);
@@ -1385,7 +1448,7 @@ describe("handleWebhook: telegram identity", () => {
     ).toEqual(before);
   });
 
-  it("resolves the sender by @username when the numeric id is not linked yet", async () => {
+  it("does not resolve a sender by @username", async () => {
     const { client, tables } = fakeSupabase();
     const { telegram, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
@@ -1402,8 +1465,7 @@ describe("handleWebhook: telegram identity", () => {
 
     expect(result.status).toBe(200);
     expect(sent).toHaveLength(1);
-    // Known member via username → the normal confirmation flow, not a refusal.
-    expect(sent[0]?.text).not.toMatch(/não conheço/i);
+    expect(sent[0]?.text).toMatch(/não conheço/i);
     expect(tables.transactions).toHaveLength(0);
     expect(tables.bot_interactions).toHaveLength(0);
   });

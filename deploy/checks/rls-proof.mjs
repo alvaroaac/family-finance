@@ -199,6 +199,9 @@ const RPC_CASES = new Set([
   "record_import_ai_paid_result(uuid,uuid,text,text,text,integer,integer)",
   "reserve_import_ai_paid_items(uuid,uuid,uuid,integer,integer,uuid)",
   "resolve_telegram_member(bigint,text)",
+  "create_telegram_link_code()",
+  "redeem_telegram_link_code(text,bigint)",
+  "unlink_telegram()",
   "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)",
   "update_installment_group_category(uuid,uuid,jsonb)",
 ]);
@@ -721,8 +724,8 @@ async function recover(marker) {
     );
     const householdId = household.rows[0]?.id ?? null;
     const users = await database.query(
-      "select id, raw_user_meta_data ->> 'rls_proof_role' as role from auth.users where raw_user_meta_data ->> 'rls_proof_marker' = $1",
-      [marker],
+      "select id, raw_user_meta_data ->> 'rls_proof_role' as role from auth.users where raw_user_meta_data ->> 'rls_proof_marker' = $1 or email = $2",
+      [marker, `${marker}-signup@example.test`],
     );
     const userIds = users.rows.map((row) => row.id);
     const aUser = users.rows.find((row) => row.role === "memberA");
@@ -1366,6 +1369,12 @@ function rpcArguments(signature) {
       p_telegram_user_id: created.bTelegramId,
       p_telegram_username: null,
     },
+    "create_telegram_link_code()": {},
+    "redeem_telegram_link_code(text,bigint)": {
+      p_code: "INVALID32",
+      p_telegram_user_id: created.bTelegramId,
+    },
+    "unlink_telegram()": {},
     "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)": {
       target_household_id: householdId,
       target_credit_card_id: b.credit_cards.id,
@@ -1414,7 +1423,8 @@ async function checkDefinerFunctions(member, functions, tables) {
     const safeResult =
       signature === "is_household_member(uuid)"
         ? result.data === false
-        : signature === "resolve_telegram_member(bigint,text)"
+        : signature === "resolve_telegram_member(bigint,text)" ||
+            signature === "redeem_telegram_link_code(text,bigint)"
           ? Boolean(result.error)
           : Boolean(result.error) || noBIdentifiers;
     record(
@@ -1474,6 +1484,208 @@ async function checkProvisionTriggers() {
   );
 }
 
+async function checkPublicSignup() {
+  const email = `${MARKER}-signup@example.test`;
+  await fixture(
+    "allowed_emails",
+    {
+      email,
+      household_id: created.householdBId,
+    },
+    "email",
+  );
+  const signup = await anonClient().auth.signUp({
+    email,
+    password: `Proof-${randomUUID()}!`,
+  });
+  const users = await database.query(
+    "select id from auth.users where email = $1",
+    [email],
+  );
+  const userId = users.rows[0]?.id;
+  if (userId) created.extraUserIds.push(userId);
+  const membership = userId ? await membershipRows(userId) : [];
+  record(
+    "public email signup does not yield a session or a membership",
+    (Boolean(signup.error) || signup.data.session === null) &&
+      membership.length === 0,
+    signup.error?.message,
+  );
+}
+
+async function checkMemberColumnGrants(member) {
+  const own = await admin
+    .from("household_members")
+    .select("*")
+    .eq("user_id", created.memberUserId)
+    .single();
+  if (own.error) throw own.error;
+  const other = created.bRows.household_members;
+  for (const row of [own.data, other]) {
+    for (const column of [
+      "telegram_user_id",
+      "telegram_username",
+      "is_active",
+      "role",
+      "user_id",
+      "household_id",
+    ]) {
+      const result = await member
+        .from("household_members")
+        .update({ [column]: row[column] })
+        .eq("id", row.id)
+        .select("id");
+      record(
+        `member cannot update ${column} on ${row.id === own.data.id ? "own" : "other"} row`,
+        result.error?.code === "42501",
+        result.error?.message ?? "update unexpectedly succeeded",
+      );
+    }
+  }
+  const ownName = await member
+    .from("household_members")
+    .update({ display_name: `${MARKER} display` })
+    .eq("id", own.data.id)
+    .select("display_name");
+  record(
+    "member can update display_name in own household",
+    !ownName.error && ownName.data?.[0]?.display_name === `${MARKER} display`,
+  );
+  const otherName = await member
+    .from("household_members")
+    .update({ display_name: `${MARKER} other` })
+    .eq("id", other.id)
+    .select("id");
+  record(
+    "member cannot update display_name in another household",
+    !otherName.error && otherName.data?.length === 0,
+  );
+}
+
+async function checkTelegramLinks(member, outsider) {
+  const anon = anonClient();
+  const noCode = await anon.rpc("create_telegram_link_code");
+  record(
+    "anon cannot create Telegram link code",
+    noCode.error?.code === "42501",
+  );
+  const outsiderCode = await outsider.rpc("create_telegram_link_code");
+  record(
+    "outsider cannot create Telegram link code",
+    outsiderCode.error?.code === "42501",
+  );
+  for (const client of [anon, member]) {
+    for (const [name, args] of [
+      [
+        "redeem_telegram_link_code",
+        { p_code: "INVALID32", p_telegram_user_id: 1 },
+      ],
+      [
+        "resolve_telegram_member",
+        { p_telegram_user_id: 1, p_telegram_username: null },
+      ],
+    ]) {
+      const result = await client.rpc(name, args);
+      record(
+        `${client === anon ? "anon" : "member"} cannot execute ${name}`,
+        result.error?.code === "42501",
+      );
+    }
+  }
+  const first = await member.rpc("create_telegram_link_code");
+  if (first.error) throw first.error;
+  const second = await member.rpc("create_telegram_link_code");
+  if (second.error) throw second.error;
+  const id = created.bTelegramId + 10;
+  const old = await admin.rpc("redeem_telegram_link_code", {
+    p_code: first.data,
+    p_telegram_user_id: id,
+  });
+  record(
+    "creating a second code invalidates the first",
+    !old.error && old.data?.length === 0,
+  );
+  const claimed = await admin.rpc("redeem_telegram_link_code", {
+    p_code: second.data,
+    p_telegram_user_id: created.bTelegramId,
+  });
+  record(
+    "already linked Telegram id cannot be claimed",
+    !claimed.error && claimed.data?.length === 0,
+  );
+  const valid = await admin.rpc("redeem_telegram_link_code", {
+    p_code: second.data,
+    p_telegram_user_id: id,
+  });
+  record(
+    "valid code binds its creating member",
+    !valid.error && valid.data?.[0]?.user_id === created.memberUserId,
+  );
+  const replay = await admin.rpc("redeem_telegram_link_code", {
+    p_code: second.data,
+    p_telegram_user_id: id + 1,
+  });
+  record(
+    "Telegram link code cannot be redeemed twice",
+    !replay.error && replay.data?.length === 0,
+  );
+  const expiring = await member.rpc("create_telegram_link_code");
+  if (expiring.error) throw expiring.error;
+  const expiredHash = createHash("sha256").update(expiring.data).digest("hex");
+  await admin
+    .from("telegram_link_codes")
+    .update({ expires_at: "2000-01-01T00:00:00Z" })
+    .eq("code_hash", expiredHash);
+  const expired = await admin.rpc("redeem_telegram_link_code", {
+    p_code: expiring.data,
+    p_telegram_user_id: id + 1,
+  });
+  record(
+    "expired Telegram link code binds nothing",
+    !expired.error && expired.data?.length === 0,
+  );
+  const unlinked = await member.rpc("unlink_telegram");
+  const aLink = await admin
+    .from("household_members")
+    .select("telegram_user_id")
+    .eq("user_id", created.memberUserId)
+    .single();
+  const bLink = await admin
+    .from("household_members")
+    .select("telegram_user_id")
+    .eq("user_id", created.memberBUserId)
+    .single();
+  record(
+    "unlink_telegram clears only caller's row",
+    !unlinked.error &&
+      aLink.data?.telegram_user_id === null &&
+      bLink.data?.telegram_user_id === created.bTelegramId,
+  );
+  for (const client of [anon, member]) {
+    const read = await client.from("telegram_link_codes").select("*");
+    const write = await client.from("telegram_link_codes").insert({
+      member_id: created.bRows.household_members.id,
+      code_hash: `${MARKER}-forged`,
+      expires_at: "2030-01-01T00:00:00Z",
+    });
+    const update = await client
+      .from("telegram_link_codes")
+      .update({ expires_at: "2030-01-01T00:00:00Z" })
+      .eq("member_id", created.bRows.household_members.id);
+    const deletion = await client
+      .from("telegram_link_codes")
+      .delete()
+      .eq("member_id", created.bRows.household_members.id);
+    record(
+      `${client === anon ? "anon" : "member"} cannot read or write telegram_link_codes`,
+      (read.error?.code === "42501" || read.data?.length === 0) &&
+        write.error?.code === "42501" &&
+        update.error?.code === "42501" &&
+        deletion.error?.code === "42501",
+    );
+  }
+}
+
 async function checkTelegramResolution() {
   const found = await admin.rpc("resolve_telegram_member", {
     p_telegram_user_id: created.bTelegramId,
@@ -1523,6 +1735,20 @@ async function checkTelegramResolution() {
       fallback.data.length === 0 &&
       String(rows[0]?.telegram_user_id) === String(created.bTelegramId),
     fallback.error?.message,
+  );
+  const unlinkedName = `unlinked_${randomUUID().replaceAll("-", "")}`;
+  const named = await admin
+    .from("household_members")
+    .update({ telegram_username: unlinkedName })
+    .eq("user_id", created.memberUserId);
+  if (named.error) throw named.error;
+  const ignored = await admin.rpc("resolve_telegram_member", {
+    p_telegram_user_id: inactiveId + 2,
+    p_telegram_username: unlinkedName,
+  });
+  record(
+    "username alone cannot resolve an unlinked member",
+    !ignored.error && ignored.data?.length === 0,
   );
 }
 
@@ -2135,6 +2361,7 @@ async function main() {
     await checkHouseholdVisibility(member);
     await checkInactiveHouseholdVisibility(inactive);
     await checkNoPolicyTables(member, outsider);
+    await checkMemberColumnGrants(member);
     await checkCompositeForeignKeys(member);
     await checkDefinerFunctions(
       member,
@@ -2142,7 +2369,9 @@ async function main() {
       discovered.tables,
     );
     await checkTelegramResolution();
+    await checkTelegramLinks(member, outsider);
     await checkProvisionTriggers();
+    await checkPublicSignup();
     await checkMergeCategoryRollback(member, householdId);
     await checkConfirmImportRollback(member, householdId);
     await checkInstallmentRollback(member, householdId);

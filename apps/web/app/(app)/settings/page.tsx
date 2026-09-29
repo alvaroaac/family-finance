@@ -70,7 +70,7 @@ export default async function SettingsPage() {
         <Card>
           <h2 className="ff-h2">Quem mora aqui</h2>
           <p className="ff-sub">
-            Nome de exibição e o Telegram de cada um pro bot saber quem lançou.
+            Nome de exibição e vínculo com o Telegram de cada um.
           </p>
           <div className="ff-rows" style={{ marginTop: 20 }}>
             {members.length === 0 ? (
