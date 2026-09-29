@@ -259,7 +259,9 @@ describe("conversation: save-time validation errors", () => {
 
     expect(createTransaction).not.toHaveBeenCalled();
     expect(confirmed.reply).not.toMatch(/at least 1 character/i);
-    expect(confirmed.reply).toMatch(/identificar/i);
+    expect(confirmed.reply).toBe(
+      "Não consegui te identificar. Peça para quem administra a sua casa conferir seu Telegram nas Configurações.",
+    );
   });
 });
 
@@ -1246,6 +1248,88 @@ it("keeps every bot repository call on the member path except the resolver", () 
 // ---------------------------------------------------------------------------
 
 describe("handleWebhook: telegram identity", () => {
+  it("loads only active, nonempty member names through the member client for each request", async () => {
+    const { client } = fakeSupabase({
+      credit_cards: [
+        {
+          id: "card-1",
+          household_id: "house-1",
+          name: "Nubank",
+          is_active: true,
+          closing_day: 10,
+        },
+      ],
+      household_members: [
+        {
+          id: "member-a",
+          household_id: "house-1",
+          user_id: "user-alvaro",
+          display_name: "Ana",
+          is_active: true,
+          created_at: "2026-01-01",
+        },
+        {
+          id: "member-empty",
+          household_id: "house-1",
+          user_id: "user-empty",
+          display_name: "  ",
+          is_active: true,
+          created_at: "2026-01-02",
+        },
+        {
+          id: "member-sender",
+          household_id: "house-1",
+          user_id: "user-karol",
+          display_name: "Beatriz",
+          is_active: true,
+          created_at: "2026-01-02",
+        },
+        {
+          id: "member-b",
+          household_id: "house-2",
+          user_id: "user-b",
+          display_name: "Bruno",
+          is_active: true,
+          created_at: "2026-01-03",
+        },
+      ],
+    });
+    const { telegram } = fakeTelegram();
+    const classifyMessage = vi.fn<MessageClassifier>(async () => null);
+    const store = createInMemoryConversationStore();
+    await handleWebhook({
+      rawBody: textUpdate(888, "Ana comprou um celular 2400 em 12x no Nubank"),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      memberClient: () => client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage,
+    });
+    expect(classifyMessage.mock.calls[0]?.[1].memberNames).toEqual([
+      "Ana",
+      "Beatriz",
+    ]);
+    const draft = (await store.load("555", "888", "house-1"))?.installmentDraft;
+    expect(draft?.description).toBe("Celular");
+    expect(draft?.responsibleUserId).toBe("user-alvaro");
+
+    await handleWebhook({
+      rawBody: textUpdate(888, "Ana comprou pão por 20", 556),
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      memberClient: () => client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage,
+    });
+    const plainDraft = (await store.load("556", "888", "house-1"))?.draft;
+    expect(plainDraft?.description).toBe("Pão");
+    expect(plainDraft?.responsibleUserId).toBe("user-alvaro");
+  });
+
   it("uses the resolved member client for business reads and writes", async () => {
     const { client: memberClient, tables } = fakeSupabase();
     const { telegram } = fakeTelegram();
@@ -1289,7 +1373,9 @@ describe("handleWebhook: telegram identity", () => {
 
     expect(result.status).toBe(200);
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.text).toMatch(/não conheço/i);
+    expect(sent[0]?.text).toBe(
+      "Oi! Eu ainda não conheço você por aqui — peça para quem administra a sua casa vincular seu Telegram nas Configurações.",
+    );
     // No transaction, no interaction row: there is no household to scope to.
     expect(tables.transactions).toHaveLength(0);
     expect(

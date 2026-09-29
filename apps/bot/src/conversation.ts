@@ -42,6 +42,7 @@ import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
 import {
   applyDeterministicPrecedence,
   detectFinancialRoute,
+  memberPurchaseName,
   isCompleteAuthoritativeInstrumentMetadataTail,
   registeredNormalFaturaTargetMatch,
   splitAuthoritativeInstrumentNameAndMetadata,
@@ -372,6 +373,8 @@ export type ConversationDeps = {
    * result (or plain intent) falls back to the deterministic parser path.
    */
   classifyMessage?: MessageClassifier;
+  /** Display names of active members in this request's household. */
+  memberNames?: readonly string[];
   /** Active obligations for mark-paid keyword matching. */
   listActiveObligations?: () => Promise<
     Array<{ id: string; description: string; amountCents: number }>
@@ -1890,6 +1893,7 @@ async function startInstallmentIntent(
       : undefined);
 
   const resolvedCardId = resolveInstallmentCardId(purchase, cards);
+  const namedPurchaser = memberPurchaseName(input.text, deps.memberNames ?? []);
   const installmentDraft: InstallmentDraftInProgress = {
     idempotencyKey: randomUUID(),
     description: stripEdgePunctuation(purchase.description),
@@ -1900,7 +1904,10 @@ async function startInstallmentIntent(
     cardClosingDay: cards.find((card) => card.id === resolvedCardId)
       ?.closingDay,
     createdByUserId: input.fromUserId,
-    responsibleUserId: input.fromUserId || undefined,
+    responsibleUserId:
+      namedPurchaser !== undefined
+        ? deps.resolveResponsibleUserId(namedPurchaser)
+        : input.fromUserId || undefined,
   };
   installmentDraft.description = stripSelectedInstrumentFromDescription(
     installmentDraft.description,
@@ -2557,6 +2564,7 @@ export async function startConversation(
     today: options.today,
   });
   const deterministic = detectFinancialRoute(input.text, {
+    memberNames: deps.memberNames,
     knownCards: deps.listActiveCards?.() ?? [],
     knownAccounts: deps.listActiveAccounts?.() ?? [],
     merchantAliases: deps.merchantAliases,
@@ -2758,6 +2766,7 @@ export async function startConversation(
         ),
         catalog: deps.catalog,
         merchantAliases: deps.merchantAliases,
+        memberNames: deps.memberNames,
       })
       .catch(() => null);
     const resolvedFinancingInstallmentPayment =
@@ -2879,12 +2888,17 @@ export async function startConversation(
   let interpreted: InterpretedExpense | null = classifiedExpense;
   if (interpreted === null && deps.interpretText !== undefined) {
     interpreted = await deps
-      .interpretText(input.text, { today: options.today })
+      .interpretText(input.text, {
+        today: options.today,
+        memberNames: deps.memberNames,
+      })
       .catch(() => null);
   }
 
+  const namedPurchaser = memberPurchaseName(input.text, deps.memberNames ?? []);
   const description = stripEdgePunctuation(
-    interpreted?.description ??
+    (namedPurchaser !== undefined ? deterministic.description : undefined) ??
+      interpreted?.description ??
       ((deterministic.route === "single_credit" ||
         deterministic.route === "plain_account") &&
       (deterministic.explicitCardInstrumentLanguage ||
@@ -2938,6 +2952,9 @@ export async function startConversation(
     draft.responsibleUserId = deps.resolveResponsibleUserId(
       interpreted.responsibleHint,
     );
+  }
+  if (namedPurchaser !== undefined) {
+    draft.responsibleUserId = deps.resolveResponsibleUserId(namedPurchaser);
   }
 
   // Resolve a named instrument before applying any household default. Bare
@@ -3463,12 +3480,17 @@ function describeValidationError(error: ValidationError | undefined): string {
     case "description":
       return "descrição vazia";
     case "createdByUserId":
-      return "não consegui te identificar (fala com o Álvaro)";
+      return "Não consegui te identificar. Peça para quem administra a sua casa conferir seu Telegram nas Configurações.";
     case "householdId":
       return "casa não encontrada";
     default:
       return `campo inválido (${error.field})`;
   }
+}
+
+function validationFailureReply(error: ValidationError | undefined): string {
+  if (error?.field === "createdByUserId") return describeValidationError(error);
+  return `Não consegui salvar: ${describeValidationError(error)}.`;
 }
 
 /** Map an in-progress draft to a domain transaction draft and persist it. */
@@ -3542,7 +3564,7 @@ async function persist(
     };
     return {
       state: next,
-      reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
+      reply: validationFailureReply(built.errors[0]),
     };
   }
 
@@ -3694,7 +3716,10 @@ async function applyObligationMessage(
       const first = built.errors[0];
       return {
         state,
-        reply: `Não consegui salvar: ${first?.message ?? "dados inválidos"}.`,
+        reply:
+          first?.field === "createdByUserId"
+            ? validationFailureReply(first)
+            : `Não consegui salvar: ${first?.message ?? "dados inválidos"}.`,
       };
     }
     await deps.createObligation(built.value);
@@ -3853,7 +3878,7 @@ async function confirmInstallment(
   if (!built.ok) {
     return {
       state,
-      reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
+      reply: validationFailureReply(built.errors[0]),
     };
   }
 
@@ -4083,7 +4108,7 @@ async function confirmCardBill(
   if (!built.ok) {
     return {
       state,
-      reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
+      reply: validationFailureReply(built.errors[0]),
     };
   }
 

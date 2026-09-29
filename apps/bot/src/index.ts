@@ -122,7 +122,7 @@ const CLASSIFIER_PRIMARY_TIMEOUT_MS = 4_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
-  "Oi! Eu ainda não conheço você por aqui — peça pro Alvaro vincular seu Telegram nas Configurações.";
+  "Oi! Eu ainda não conheço você por aqui — peça para quem administra a sua casa vincular seu Telegram nas Configurações.";
 
 function todayIso(): string {
   return currentHouseholdDate();
@@ -227,6 +227,10 @@ async function buildDeps(
   const checking = accounts.find((a) => a.kind === "checking") ?? accounts[0];
   const cards = await listCreditCards(client, householdId);
   const members = await listHouseholdMembers(client, householdId);
+  const memberNames = members
+    .filter((member) => member.isActive)
+    .map((member) => member.displayName?.trim() ?? "")
+    .filter((name) => name.length > 0);
   const memoryStore = memoryStoreFor(client);
 
   return {
@@ -239,7 +243,7 @@ async function buildDeps(
     defaultAccountId: checking?.id,
     resolveCardId: () => cards[0]?.id,
     resolveAccountId: () => checking?.id,
-    // Map a spoken name ("responsável Karol") to an active member by
+    // Map a spoken name ("responsável Ana") to an active member by
     // display_name, case- and accent-insensitively. No match — or an ambiguous
     // one — keeps the responsibility with the house (undefined).
     resolveResponsibleUserId: (name: string) => {
@@ -420,11 +424,12 @@ async function buildDeps(
     },
     listActiveMembers: () =>
       members
-        .filter((m) => m.isActive && m.displayName !== null)
+        .filter((m) => m.isActive && m.displayName?.trim())
         .map((m) => ({
           userId: m.userId,
           displayName: m.displayName as string,
         })),
+    memberNames,
     // Card installments (PR-2): cards are already loaded above for the
     // resolveCardId hint; expose them + closingDay for the installment flow.
     listActiveCards: () =>

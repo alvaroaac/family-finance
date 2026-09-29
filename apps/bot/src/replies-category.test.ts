@@ -7,6 +7,7 @@ import {
   categoryReusedMessage,
   chooseCategoryMessage,
   chooseResponsibleMessage,
+  notUnderstoodMessage,
   invalidCategoryNameMessage,
   SESSION_EXPIRED_TOAST,
   ALREADY_SAVED_TOAST,
@@ -22,6 +23,9 @@ const BASE_VIEW = {
 };
 
 describe("confirmationMessage with an AI category proposal", () => {
+  it("uses a neutral example in the correction help", () => {
+    expect(notUnderstoodMessage()).toContain('"responsável Bruno"');
+  });
   it("shows the proposed name marked as nova — sugerida", () => {
     const text = confirmationMessage({
       ...BASE_VIEW,
@@ -38,6 +42,7 @@ describe("confirmationMessage with an AI category proposal", () => {
   it("keeps today's plain category label when there is no proposal", () => {
     const text = confirmationMessage(BASE_VIEW);
     expect(text).toContain("Categoria: Sem categoria (a definir)");
+    expect(text).toContain('"responsável Ana"');
   });
 });
 
