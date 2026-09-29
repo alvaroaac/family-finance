@@ -16,13 +16,20 @@
  *         valid — proves all-or-nothing);
  *       - create_installment_purchase with an invalid parcel → error, no
  *         orphan installment_groups row left behind.
+ *   (e) every catalog-discovered household table and public SECURITY DEFINER
+ *       function has an isolation case against a separate throwaway household;
+ *       unknown tables or functions fail closed by name;
+ *   (f) inactive members, unprotected tables, household theme, and composite
+ *       foreign keys do not expose or change the other household's data.
  *
  * Config via env (all required):
  *   SUPABASE_URL          e.g. http://localhost:54321 or the VPS HTTPS URL
  *   SUPABASE_ANON_KEY     anon JWT (what browsers use)
- *   SERVICE_ROLE_KEY      service-role JWT — used ONLY for setup/teardown
- *                         (create/delete the two test users + fixtures)
+ *   SERVICE_ROLE_KEY      service-role JWT — used for test setup, direct
+ *                         fixture inspection, and teardown
+ *   DATABASE_URL          Postgres connection for catalog discovery
  *   MEMBER_EMAIL / MEMBER_PASSWORD       test member credentials
+ *   MEMBER_B_EMAIL / MEMBER_B_PASSWORD   second-household member credentials
  *   OUTSIDER_EMAIL / OUTSIDER_PASSWORD   test outsider credentials
  *
  * Use throwaway emails that are NOT in `allowed_emails` — the script inserts
@@ -32,7 +39,9 @@
  * out of packages/db):
  *
  *   SUPABASE_URL=... SUPABASE_ANON_KEY=... SERVICE_ROLE_KEY=... \
+ *   DATABASE_URL=... \
  *   MEMBER_EMAIL=rls-proof.member@example.com MEMBER_PASSWORD=... \
+ *   MEMBER_B_EMAIL=rls-proof.member-b@example.com MEMBER_B_PASSWORD=... \
  *   OUTSIDER_EMAIL=rls-proof.outsider@example.com OUTSIDER_PASSWORD=... \
  *   node deploy/checks/rls-proof.mjs
  *
@@ -40,13 +49,15 @@
  */
 
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 
-// This file lives outside the pnpm workspaces, so resolve supabase-js through
-// packages/db (which declares it as a dependency).
+// This file lives outside the pnpm workspaces. Resolve supabase-js through
+// packages/db and the root pg development dependency through Node resolution.
 const require = createRequire(
   new URL("../../packages/db/package.json", import.meta.url),
 );
 const { createClient } = require("@supabase/supabase-js");
+const { Client } = require("pg");
 
 // ---------------------------------------------------------------------------
 // Config
@@ -64,13 +75,16 @@ function requiredEnv(name) {
 const SUPABASE_URL = requiredEnv("SUPABASE_URL");
 const SUPABASE_ANON_KEY = requiredEnv("SUPABASE_ANON_KEY");
 const SERVICE_ROLE_KEY = requiredEnv("SERVICE_ROLE_KEY");
+const DATABASE_URL = requiredEnv("DATABASE_URL");
 const MEMBER_EMAIL = requiredEnv("MEMBER_EMAIL");
 const MEMBER_PASSWORD = requiredEnv("MEMBER_PASSWORD");
+const MEMBER_B_EMAIL = requiredEnv("MEMBER_B_EMAIL");
+const MEMBER_B_PASSWORD = requiredEnv("MEMBER_B_PASSWORD");
 const OUTSIDER_EMAIL = requiredEnv("OUTSIDER_EMAIL");
 const OUTSIDER_PASSWORD = requiredEnv("OUTSIDER_PASSWORD");
 
 // Unique marker so fixtures never collide with real data and teardown is safe.
-const MARKER = `rls-proof-${Date.now()}`;
+const MARKER = `rls-proof-${randomUUID()}`;
 
 // ---------------------------------------------------------------------------
 // Check harness
@@ -104,13 +118,106 @@ function anonClient() {
 
 const created = {
   memberUserId: null,
+  memberBUserId: null,
+  inactiveUserId: null,
   outsiderUserId: null,
+  householdBId: null,
+  householdAId: null,
+  fixtureRows: [],
+  bRows: {},
   accountId: null,
   creditCardId: null,
   categoryId: null,
   transactionId: null,
   membershipInserted: false,
 };
+
+const database = new Client({ connectionString: DATABASE_URL });
+
+const TABLE_FIXTURES = {
+  household_members: true,
+  accounts: true,
+  investment_buckets: true,
+  credit_cards: true,
+  categories: true,
+  subcategories: true,
+  installment_groups: true,
+  installments: true,
+  transactions: true,
+  import_batches: true,
+  import_rows: true,
+  categorization_memory: true,
+  bot_interactions: true,
+  obligations: true,
+  source_category_mappings: true,
+  import_item_claims: true,
+  import_ai_usage: true,
+  import_ai_daily_usage: true,
+  import_transaction_replacements: true,
+  allowed_emails: true,
+  bot_conversations: true,
+};
+
+const RPC_CASES = new Set([
+  "claim_import_suggestion_nonce(text,timestamp with time zone)",
+  "confirm_import(jsonb,jsonb)",
+  "confirm_import_v2(jsonb,jsonb)",
+  "confirm_import_with_replacements(jsonb,jsonb)",
+  "create_installment_purchase(jsonb,jsonb)",
+  "is_household_member(uuid)",
+  "materialize_obligation_payment(uuid,text,date)",
+  "materialize_obligation_payment(uuid,text,date,bigint)",
+  "materialize_obligation_payment(uuid,text,date,bigint,uuid)",
+  "merge_category(uuid,uuid,uuid)",
+  "provision_household_member()",
+  "provision_on_allowlist()",
+  "record_import_ai_paid_result(uuid,uuid,text,text,text,integer,integer)",
+  "reserve_import_ai_paid_items(uuid,uuid,uuid,integer,integer,uuid)",
+  "resolve_telegram_member(bigint,text)",
+  "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)",
+  "update_installment_group_category(uuid,uuid,jsonb)",
+]);
+
+async function catalog() {
+  const tables = await database.query(`
+    select c.relname as name
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a on a.attrelid = c.oid and a.attname = 'household_id'
+      and not a.attisdropped
+    where n.nspname = 'public' and c.relkind in ('r', 'p')
+    order by c.relname
+  `);
+  const functions = await database.query(`
+    select p.proname as name,
+      p.proname || '(' || coalesce((
+        select string_agg(format_type(p.proargtypes[i], null), ',' order by i)
+        from generate_series(0, p.pronargs - 1) as i
+      ), '') || ')' as signature
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.prosecdef
+    order by signature
+  `);
+  return {
+    tables: tables.rows.map((row) => row.name),
+    functions: functions.rows,
+  };
+}
+
+async function fixture(table, values, key = "id") {
+  const { data, error } = await admin
+    .from(table)
+    .insert(values)
+    .select("*")
+    .single();
+  if (error) throw new Error(`${table} fixture failed: ${error.message}`);
+  const keys = Array.isArray(key) ? key : [key];
+  created.fixtureRows.push({
+    table,
+    keys: Object.fromEntries(keys.map((name) => [name, data[name]])),
+  });
+  created.bRows[table] = data;
+  return data;
+}
 
 async function createUser(email, password) {
   const { data, error } = await admin.auth.admin.createUser({
@@ -123,14 +230,16 @@ async function createUser(email, password) {
 }
 
 async function setup() {
-  // Single-household MVP: the seeded "Casa" household is the target.
+  // Use an existing household as A; the proof creates B independently.
   const { data: household, error: hhError } = await admin
     .from("households")
     .select("id")
+    .order("id")
     .limit(1)
     .single();
   if (hhError) throw new Error(`household lookup failed: ${hhError.message}`);
   const householdId = household.id;
+  created.householdAId = householdId;
 
   created.memberUserId = await createUser(MEMBER_EMAIL, MEMBER_PASSWORD);
   created.outsiderUserId = await createUser(OUTSIDER_EMAIL, OUTSIDER_PASSWORD);
@@ -206,21 +315,270 @@ async function setup() {
   return householdId;
 }
 
+async function setupHouseholdB() {
+  const household = await fixture("households", {
+    name: `${MARKER} household B`,
+    theme: { base: "salvia", overrides: { "--ff-accent": "#123456" } },
+  });
+  const householdId = household.id;
+  created.householdBId = householdId;
+  created.memberBUserId = await createUser(MEMBER_B_EMAIL, MEMBER_B_PASSWORD);
+  created.inactiveUserId = await createUser(
+    `${MARKER}@example.test`,
+    MEMBER_B_PASSWORD,
+  );
+  const member = await fixture("household_members", {
+    household_id: householdId,
+    user_id: created.memberBUserId,
+    role: "member",
+    is_active: true,
+    telegram_user_id: Number(`9${Date.now()}`),
+  });
+  created.bTelegramId = member.telegram_user_id;
+  await fixture("household_members", {
+    household_id: householdId,
+    user_id: created.inactiveUserId,
+    role: "member",
+    is_active: false,
+  });
+  const account = await fixture("accounts", {
+    household_id: householdId,
+    kind: "checking",
+    name: `${MARKER} B account`,
+  });
+  await fixture("investment_buckets", {
+    household_id: householdId,
+    slug: `proof_${randomUUID().replaceAll("-", "")}`,
+    name: `${MARKER} B bucket`,
+  });
+  const card = await fixture("credit_cards", {
+    household_id: householdId,
+    name: `${MARKER} B card`,
+    closing_day: 5,
+    due_day: 12,
+  });
+  const category = await fixture("categories", {
+    household_id: householdId,
+    name: `${MARKER} B category`,
+    kind: "expense",
+  });
+  const subcategory = await fixture("subcategories", {
+    household_id: householdId,
+    category_id: category.id,
+    name: `${MARKER} B subcategory`,
+  });
+  const batch = await fixture("import_batches", {
+    household_id: householdId,
+    source: "nubank_csv",
+    status: "confirmed",
+    total_rows: 1,
+    imported_rows: 1,
+    duplicate_rows: 0,
+    error_rows: 0,
+    notes: MARKER,
+    created_by_user_id: created.memberBUserId,
+  });
+  const group = await fixture("installment_groups", {
+    household_id: householdId,
+    credit_card_id: card.id,
+    description: `${MARKER} B group`,
+    total_amount_cents: 100,
+    installment_count: 1,
+    purchased_on: "2026-01-01",
+    category_id: category.id,
+    subcategory_id: subcategory.id,
+    responsibility_scope: "household",
+    created_by_user_id: created.memberBUserId,
+  });
+  await fixture("installments", {
+    household_id: householdId,
+    installment_group_id: group.id,
+    credit_card_id: card.id,
+    number: 1,
+    installment_count: 1,
+    amount_cents: 100,
+    due_month: "2026-02",
+    description: `${MARKER} B installment`,
+    category_id: category.id,
+    subcategory_id: subcategory.id,
+    responsibility_scope: "household",
+    created_by_user_id: created.memberBUserId,
+  });
+  const transaction = await fixture("transactions", {
+    household_id: householdId,
+    kind: "expense",
+    amount_cents: 100,
+    occurred_on: "2026-01-01",
+    description: `${MARKER} B transaction`,
+    category_id: category.id,
+    subcategory_id: subcategory.id,
+    account_id: account.id,
+    created_by_user_id: created.memberBUserId,
+  });
+  await fixture("import_rows", {
+    household_id: householdId,
+    import_batch_id: batch.id,
+    source_line: 1,
+    occurred_on: "2026-01-01",
+    amount_cents: 100,
+    description: `${MARKER} B import row`,
+    transaction_id: transaction.id,
+  });
+  await fixture("import_item_claims", {
+    household_id: householdId,
+    source: "nubank_csv",
+    fingerprint_version: 1,
+    base_fingerprint: "a".repeat(64),
+    occurrence_no: 1,
+    artifact_kind: "transaction",
+    import_batch_id: batch.id,
+    transaction_id: transaction.id,
+  });
+  await fixture(
+    "import_transaction_replacements",
+    {
+      original_transaction_id: randomUUID(),
+      household_id: householdId,
+      import_batch_id: batch.id,
+      installment_group_id: group.id,
+      original_record: { description: MARKER },
+      replaced_by: created.memberBUserId,
+    },
+    "original_transaction_id",
+  );
+  await fixture("categorization_memory", {
+    household_id: householdId,
+    pattern: `${MARKER} B pattern`,
+    category_id: category.id,
+    confidence: 1,
+    explanation: MARKER,
+    row_kind: "expense",
+  });
+  await fixture("bot_interactions", {
+    household_id: householdId,
+    channel: "telegram",
+    input_kind: "text",
+    message_text: MARKER,
+    user_id: created.memberBUserId,
+    transaction_id: transaction.id,
+  });
+  await fixture("obligations", {
+    household_id: householdId,
+    description: `${MARKER} B obligation`,
+    amount_cents: 100,
+    start_month: "2026-01",
+    term_months: 2,
+    due_day: 5,
+    account_id: account.id,
+    created_by_user_id: created.memberBUserId,
+  });
+  await fixture("source_category_mappings", {
+    household_id: householdId,
+    source: "nubank_csv",
+    normalized_label: `${MARKER} B label`,
+    row_kind: "expense",
+    category_id: category.id,
+    created_by_user_id: created.memberBUserId,
+  });
+  await fixture("import_ai_usage", {
+    household_id: householdId,
+    budget_key: randomUUID(),
+    request_key: randomUUID(),
+    paid_items_reserved: 1,
+    created_by_user_id: created.memberBUserId,
+  });
+  await fixture(
+    "import_ai_daily_usage",
+    {
+      household_id: householdId,
+      usage_date: "2026-01-01",
+      paid_items_reserved: 1,
+    },
+    ["household_id", "usage_date"],
+  );
+  await fixture(
+    "allowed_emails",
+    {
+      household_id: householdId,
+      email: `${MARKER}-allowed@example.test`,
+    },
+    "email",
+  );
+  await fixture(
+    "bot_conversations",
+    {
+      household_id: householdId,
+      chat_id: Number(`8${Date.now()}`),
+      telegram_user_id: created.bTelegramId,
+      state: { marker: MARKER },
+    },
+    ["chat_id", "telegram_user_id"],
+  );
+  await fixture(
+    "import_suggestion_nonces",
+    {
+      nonce: `${MARKER}-nonce`,
+      expires_at: "2030-01-01T00:00:00Z",
+    },
+    "nonce",
+  );
+  return householdId;
+}
+
 async function teardown() {
-  // Order matters: transactions reference users (on delete restrict).
+  // Reverse fixture order removes only rows inserted by this run.
+  for (const { table, keys } of created.fixtureRows.reverse()) {
+    let query = admin.from(table).delete();
+    for (const [key, value] of Object.entries(keys))
+      query = query.eq(key, value);
+    const { error } = await query;
+    if (error) record(`cleanup ${table}`, false, error.message);
+  }
+  created.fixtureRows = [];
+
+  // A's legacy RPC checks can generate several tagged rows. Their users and
+  // instrument IDs are unique to this run, so these predicates cannot touch
+  // an existing household row.
   const steps = [
     () =>
       created.transactionId &&
       admin.from("transactions").delete().eq("id", created.transactionId),
-    () => admin.from("transactions").delete().like("description", `${MARKER}%`),
-    () => admin.from("import_rows").delete().like("description", `${MARKER}%`),
-    () => admin.from("import_batches").delete().like("notes", `${MARKER}%`),
-    () => admin.from("installments").delete().like("description", `${MARKER}%`),
+    () =>
+      created.memberUserId &&
+      admin
+        .from("transactions")
+        .delete()
+        .eq("created_by_user_id", created.memberUserId),
+    () =>
+      created.memberUserId &&
+      admin
+        .from("import_rows")
+        .delete()
+        .like("description", `${MARKER}%`)
+        .eq("household_id", created.householdAId),
+    () =>
+      created.memberUserId &&
+      admin
+        .from("import_batches")
+        .delete()
+        .eq("created_by_user_id", created.memberUserId),
+    () =>
+      created.memberUserId &&
+      admin
+        .from("installments")
+        .delete()
+        .eq("created_by_user_id", created.memberUserId),
     () =>
       admin
         .from("installment_groups")
         .delete()
-        .like("description", `${MARKER}%`),
+        .eq("created_by_user_id", created.memberUserId),
+    () =>
+      created.memberUserId &&
+      admin
+        .from("obligations")
+        .delete()
+        .eq("created_by_user_id", created.memberUserId),
     () =>
       created.categoryId &&
       admin.from("categories").delete().eq("id", created.categoryId),
@@ -241,12 +599,17 @@ async function teardown() {
     const op = step();
     if (!op) continue;
     const { error } = await op;
-    if (error) console.error(`teardown warning: ${error.message}`);
+    if (error) record("cleanup A fixture", false, error.message);
   }
-  for (const userId of [created.memberUserId, created.outsiderUserId]) {
+  for (const userId of [
+    created.memberUserId,
+    created.memberBUserId,
+    created.inactiveUserId,
+    created.outsiderUserId,
+  ]) {
     if (!userId) continue;
     const { error } = await admin.auth.admin.deleteUser(userId);
-    if (error) console.error(`teardown warning (deleteUser): ${error.message}`);
+    if (error) record("cleanup auth user", false, error.message);
   }
 }
 
@@ -307,6 +670,427 @@ async function checkOutsiderInsert(outsider, householdId) {
       .from("transactions")
       .delete()
       .like("description", `${MARKER} outsider%`);
+  }
+}
+
+async function checkCatalogCoverage({ tables, functions }) {
+  let complete = true;
+  for (const table of tables) {
+    const hasFixture = Boolean(TABLE_FIXTURES[table] && created.bRows[table]);
+    record(
+      `fixture coverage ${table}`,
+      hasFixture,
+      TABLE_FIXTURES[table] ? "fixture present" : `missing fixture: ${table}`,
+    );
+    complete &&= hasFixture;
+  }
+  for (const { name, signature } of functions) {
+    const hasCase = RPC_CASES.has(signature);
+    record(
+      `RPC case coverage ${signature}`,
+      hasCase,
+      hasCase ? "case present" : `missing case: ${name}`,
+    );
+    complete &&= hasCase;
+  }
+  return complete;
+}
+
+async function snapshotB(tables) {
+  const rows = {};
+  for (const table of tables) {
+    const result = await database.query(
+      `select coalesce(jsonb_agg(to_jsonb(t) order by to_jsonb(t)::text), '[]'::jsonb)::text as value
+       from public."${table}" t where household_id = $1`,
+      [created.householdBId],
+    );
+    rows[table] = result.rows[0].value;
+  }
+  const household = await database.query(
+    "select to_jsonb(h)::text as value from public.households h where id = $1",
+    [created.householdBId],
+  );
+  rows.households = household.rows[0]?.value;
+  const nonce = await database.query(
+    "select to_jsonb(n)::text as value from public.import_suggestion_nonces n where nonce = $1",
+    [`${MARKER}-nonce`],
+  );
+  rows.import_suggestion_nonces = nonce.rows[0]?.value;
+  return rows;
+}
+
+function deniedWrite(result) {
+  return (
+    Boolean(result.error) &&
+    /row-level security|permission denied|42501/i.test(result.error.message)
+  );
+}
+
+async function checkCrossHouseholdTables(member, inactive, tables) {
+  const before = await snapshotB(tables);
+  for (const table of tables) {
+    for (const [label, client] of [
+      ["member A", member],
+      ["inactive member", inactive],
+    ]) {
+      const read = await client
+        .from(table)
+        .select("*")
+        .eq("household_id", created.householdBId);
+      record(
+        `${label} SELECT B ${table} zero rows`,
+        !read.error && read.data?.length === 0,
+        read.error?.message ?? `${read.data?.length ?? 0} row(s)`,
+      );
+      const insert = await client
+        .from(table)
+        .insert({ household_id: created.householdBId });
+      record(
+        `${label} INSERT B ${table} denied`,
+        deniedWrite(insert),
+        insert.error?.message ?? "insert unexpectedly succeeded",
+      );
+      const update = await client
+        .from(table)
+        .update({ household_id: created.householdBId })
+        .eq("household_id", created.householdBId)
+        .select("*");
+      record(
+        `${label} UPDATE B ${table} zero rows`,
+        deniedWrite(update) || (!update.error && update.data?.length === 0),
+        update.error?.message ?? `${update.data?.length ?? 0} row(s)`,
+      );
+      const deletion = await client
+        .from(table)
+        .delete()
+        .eq("household_id", created.householdBId)
+        .select("*");
+      record(
+        `${label} DELETE B ${table} zero rows`,
+        deniedWrite(deletion) ||
+          (!deletion.error && deletion.data?.length === 0),
+        deletion.error?.message ?? `${deletion.data?.length ?? 0} row(s)`,
+      );
+    }
+    const after = await snapshotB([table]);
+    record(`B ${table} unchanged`, after[table] === before[table]);
+  }
+}
+
+async function checkMemberBReads(memberB, tables) {
+  for (const table of tables) {
+    if (["allowed_emails", "bot_conversations"].includes(table)) continue;
+    const result = await memberB
+      .from(table)
+      .select("*")
+      .eq("household_id", created.householdBId);
+    record(
+      `active member B SELECT ${table} sees B fixture`,
+      !result.error && result.data?.length > 0,
+      result.error?.message ?? `${result.data?.length ?? 0} row(s)`,
+    );
+  }
+  const household = await memberB
+    .from("households")
+    .select("id,theme")
+    .eq("id", created.householdBId)
+    .single();
+  record(
+    "active member B sees own theme",
+    !household.error &&
+      household.data?.theme?.overrides?.["--ff-accent"] === "#123456",
+    household.error?.message ?? "theme read",
+  );
+}
+
+async function checkHouseholdVisibility(member) {
+  const households = await member.from("households").select("id,theme");
+  record(
+    "households theme B invisible to A",
+    !households.error &&
+      households.data?.length === 1 &&
+      households.data[0].id === created.householdAId,
+    households.error?.message ?? `${households.data?.length ?? 0} row(s)`,
+  );
+  const members = await member
+    .from("household_members")
+    .select("household_id,user_id");
+  record(
+    "household_members only A household visible",
+    !members.error &&
+      members.data?.some((row) => row.user_id === created.memberUserId) &&
+      members.data.every((row) => row.household_id === created.householdAId),
+    members.error?.message ?? `${members.data?.length ?? 0} row(s)`,
+  );
+  const update = await member
+    .from("households")
+    .update({ theme: { base: "esmeralda" } })
+    .eq("id", created.householdBId)
+    .select("id");
+  record(
+    "households theme B cannot be updated by A",
+    deniedWrite(update) || (!update.error && update.data?.length === 0),
+    update.error?.message ?? `${update.data?.length ?? 0} row(s)`,
+  );
+}
+
+async function checkInactiveHouseholdVisibility(inactive) {
+  const households = await inactive.from("households").select("id,theme");
+  record(
+    "inactive member cannot read households theme B",
+    !households.error && households.data?.length === 0,
+    households.error?.message ?? `${households.data?.length ?? 0} row(s)`,
+  );
+  const update = await inactive
+    .from("households")
+    .update({ theme: { base: "esmeralda" } })
+    .eq("id", created.householdBId)
+    .select("id");
+  record(
+    "inactive member cannot update households theme B",
+    deniedWrite(update) || (!update.error && update.data?.length === 0),
+    update.error?.message ?? `${update.data?.length ?? 0} row(s)`,
+  );
+}
+
+async function checkNoPolicyTables(member, outsider) {
+  for (const table of [
+    "bot_conversations",
+    "allowed_emails",
+    "import_suggestion_nonces",
+  ]) {
+    for (const [label, client] of [
+      ["A", member],
+      ["outsider", outsider],
+    ]) {
+      const read = await client.from(table).select("*");
+      record(
+        `no-policy ${table} ${label} reads zero`,
+        deniedWrite(read) || (!read.error && read.data?.length === 0),
+        read.error?.message ?? `${read.data?.length ?? 0} row(s)`,
+      );
+      const payload =
+        table === "import_suggestion_nonces"
+          ? {
+              nonce: `${MARKER}-${label}-attempt`,
+              expires_at: "2030-01-01T00:00:00Z",
+            }
+          : table === "allowed_emails"
+            ? {
+                household_id: created.householdBId,
+                email: `${MARKER}-${label}-attempt@example.test`,
+              }
+            : {
+                household_id: created.householdBId,
+                chat_id: Number(`7${Date.now()}`),
+                telegram_user_id: created.bTelegramId,
+                state: {},
+              };
+      const write = await client.from(table).insert(payload);
+      record(
+        `no-policy ${table} ${label} cannot write`,
+        deniedWrite(write),
+        write.error?.message ?? "insert unexpectedly succeeded",
+      );
+      const key =
+        table === "import_suggestion_nonces"
+          ? "nonce"
+          : table === "allowed_emails"
+            ? "email"
+            : "chat_id";
+      const value =
+        table === "import_suggestion_nonces"
+          ? `${MARKER}-nonce`
+          : table === "allowed_emails"
+            ? created.bRows.allowed_emails.email
+            : created.bRows.bot_conversations.chat_id;
+      const update = await client
+        .from(table)
+        .update(payload)
+        .eq(key, value)
+        .select("*");
+      record(
+        `no-policy ${table} ${label} cannot update`,
+        deniedWrite(update) || (!update.error && update.data?.length === 0),
+        update.error?.message ?? `${update.data?.length ?? 0} row(s)`,
+      );
+      const deletion = await client
+        .from(table)
+        .delete()
+        .eq(key, value)
+        .select("*");
+      record(
+        `no-policy ${table} ${label} cannot delete`,
+        deniedWrite(deletion) ||
+          (!deletion.error && deletion.data?.length === 0),
+        deletion.error?.message ?? `${deletion.data?.length ?? 0} row(s)`,
+      );
+      if (!write.error) {
+        await admin.from(table).delete().eq(key, payload[key]);
+      }
+    }
+  }
+}
+
+async function checkCompositeForeignKeys(member) {
+  const b = created.bRows;
+  const base = {
+    household_id: created.householdAId,
+    kind: "expense",
+    amount_cents: 100,
+    occurred_on: "2026-01-01",
+    description: `${MARKER} composite FK attempt`,
+    created_by_user_id: created.memberUserId,
+  };
+  const cases = {
+    category: { account_id: created.accountId, category_id: b.categories.id },
+    account: { account_id: b.accounts.id },
+    card: { credit_card_id: b.credit_cards.id },
+    subcategory: {
+      account_id: created.accountId,
+      category_id: created.categoryId,
+      subcategory_id: b.subcategories.id,
+    },
+  };
+  for (const [name, refs] of Object.entries(cases)) {
+    const result = await member
+      .from("transactions")
+      .insert({ ...base, ...refs });
+    record(
+      `composite FK ${name} rejects B reference`,
+      Boolean(result.error) && /foreign key|23503/i.test(result.error.message),
+      result.error?.message ?? "insert unexpectedly succeeded",
+    );
+  }
+}
+
+function rpcArguments(signature) {
+  const b = created.bRows;
+  const householdId = created.householdBId;
+  const importBatch = {
+    household_id: householdId,
+    source: "nubank_csv",
+    status: "confirmed",
+    total_rows: 0,
+    imported_rows: 0,
+    duplicate_rows: 0,
+    error_rows: 0,
+    notes: MARKER,
+    created_by_user_id: created.memberUserId,
+  };
+  const payment = {
+    target_obligation_id: b.obligations.id,
+    target_month: "2026-02",
+    paid_on: null,
+  };
+  const cases = {
+    "claim_import_suggestion_nonce(text,timestamp with time zone)": {
+      target_nonce: `${MARKER}-nonce`,
+      target_expires_at: "2030-01-01T00:00:00Z",
+    },
+    "confirm_import(jsonb,jsonb)": {
+      batch_payload: importBatch,
+      rows_payload: [],
+    },
+    "confirm_import_v2(jsonb,jsonb)": {
+      batch_payload: importBatch,
+      items_payload: [],
+    },
+    "confirm_import_with_replacements(jsonb,jsonb)": {
+      batch_payload: importBatch,
+      items_payload: [],
+    },
+    "create_installment_purchase(jsonb,jsonb)": {
+      group_payload: {
+        household_id: householdId,
+        credit_card_id: b.credit_cards.id,
+        description: MARKER,
+        total_amount_cents: 100,
+        installment_count: 1,
+        purchased_on: "2026-01-01",
+        created_by_user_id: created.memberUserId,
+      },
+      installments_payload: [],
+    },
+    "is_household_member(uuid)": { target_household_id: householdId },
+    "materialize_obligation_payment(uuid,text,date)": payment,
+    "materialize_obligation_payment(uuid,text,date,bigint)": {
+      ...payment,
+      target_amount_cents: 100,
+    },
+    "materialize_obligation_payment(uuid,text,date,bigint,uuid)": {
+      ...payment,
+      target_amount_cents: 100,
+      target_account_id: b.accounts.id,
+    },
+    "merge_category(uuid,uuid,uuid)": {
+      target_household_id: householdId,
+      source_category_id: b.categories.id,
+      target_category_id: b.categories.id,
+    },
+    "provision_household_member()": {},
+    "provision_on_allowlist()": {},
+    "record_import_ai_paid_result(uuid,uuid,text,text,text,integer,integer)": {
+      target_household_id: householdId,
+      target_attempt_key: b.import_ai_usage.request_key,
+      target_provider: "openai",
+      target_model: "proof",
+      target_outcome: "success",
+      target_resolved_items: 1,
+      target_latency_ms: 1,
+    },
+    "reserve_import_ai_paid_items(uuid,uuid,uuid,integer,integer,uuid)": {
+      target_household_id: householdId,
+      target_budget_key: randomUUID(),
+      target_attempt_key: randomUUID(),
+      requested_items: 1,
+      preview_max_items: 1,
+      target_created_by_user_id: created.memberUserId,
+    },
+    "resolve_telegram_member(bigint,text)": {
+      p_telegram_user_id: created.bTelegramId,
+      p_telegram_username: null,
+    },
+    "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)": {
+      target_household_id: householdId,
+      target_credit_card_id: b.credit_cards.id,
+      target_account_id: b.accounts.id,
+      target_bill_month: "2026-03",
+      target_amount_cents: 100,
+      target_paid_on: "2026-03-01",
+      target_created_by_user_id: created.memberUserId,
+    },
+    "update_installment_group_category(uuid,uuid,jsonb)": {
+      target_household_id: householdId,
+      target_group_id: b.installment_groups.id,
+      category_patch: {
+        category_id: b.categories.id,
+        subcategory_id: b.subcategories.id,
+      },
+    },
+  };
+  return cases[signature];
+}
+
+async function checkDefinerFunctions(member, functions, tables) {
+  for (const { name, signature } of functions) {
+    if (!RPC_CASES.has(signature)) continue;
+    const before = await snapshotB(tables);
+    const result = await member.rpc(name, rpcArguments(signature));
+    const after = await snapshotB(tables);
+    const unchanged = JSON.stringify(after) === JSON.stringify(before);
+    const safeResult =
+      signature === "is_household_member(uuid)"
+        ? result.data === false
+        : signature === "resolve_telegram_member(bigint,text)"
+          ? result.data === null ||
+            (Array.isArray(result.data) && result.data.length === 0)
+          : Boolean(result.error) || unchanged;
+    record(
+      `SECURITY DEFINER ${signature} cannot affect B`,
+      unchanged && safeResult,
+      result.error?.message ?? (unchanged ? "B unchanged" : "B changed"),
+    );
   }
 }
 
@@ -402,14 +1186,20 @@ async function checkConfirmImportRollback(member, householdId) {
 
   const [{ data: batches }, { data: txs }, { data: importRows }] =
     await Promise.all([
-      admin.from("import_batches").select("id").like("notes", `${MARKER}%`),
+      admin
+        .from("import_batches")
+        .select("id")
+        .eq("household_id", householdId)
+        .like("notes", `${MARKER}%`),
       admin
         .from("transactions")
         .select("id")
+        .eq("household_id", householdId)
         .like("description", `${MARKER} import%`),
       admin
         .from("import_rows")
         .select("id")
+        .eq("household_id", householdId)
         .like("description", `${MARKER} import%`),
     ]);
   record(
@@ -477,8 +1267,13 @@ async function checkInstallmentRollback(member, householdId) {
     admin
       .from("installment_groups")
       .select("id")
+      .eq("household_id", householdId)
       .like("description", `${MARKER}%`),
-    admin.from("installments").select("id").like("description", `${MARKER}%`),
+    admin
+      .from("installments")
+      .select("id")
+      .eq("household_id", householdId)
+      .like("description", `${MARKER}%`),
   ]);
   record(
     "(d3) create_installment_purchase rollback: no orphan installment_groups",
@@ -649,12 +1444,9 @@ async function checkObligationMaterialization(member, householdId) {
 }
 
 /**
- * (g) Card-bill settlement RPC: a member settles a card's bill for a month
- * (idempotent repeat is a no-op), the bot's null-uid service-role path can
- * settle too, an outsider is rejected as not-found, the narrowed instrument
- * CHECK enforces the new matrix (transfer+bill_month needs BOTH instruments;
- * everything else still needs exactly one), and the re-gated
- * create_installment_purchase now accepts the bot's null-uid call.
+ * (g) Card-bill settlement RPC: member success and idempotency, null-uid
+ * service-role denial under migration 0031, outsider denial, and instrument
+ * constraints.
  */
 async function checkCardBillSettlement(member, householdId) {
   // (g1) member settles the bill for the fixture card+account.
@@ -701,7 +1493,7 @@ async function checkCardBillSettlement(member, householdId) {
       : `already_paid=${repeat.data?.already_paid}`,
   );
 
-  // (g3) service-role (auth.uid() null — the bot path) settles another month.
+  // (g3) migration 0031 requires a member even for service-role callers.
   const svc = await admin.rpc("settle_card_bill", {
     target_household_id: householdId,
     target_credit_card_id: created.creditCardId,
@@ -712,8 +1504,8 @@ async function checkCardBillSettlement(member, householdId) {
     target_created_by_user_id: created.memberUserId,
   });
   record(
-    "(g3) service-role null-uid path settles (bot)",
-    !svc.error && svc.data && svc.data.already_paid === false,
+    "(g3) service-role null-uid settlement denied",
+    Boolean(svc.error),
     svc.error ? svc.error.message : "",
   );
 
@@ -803,8 +1595,7 @@ async function checkCardBillSettlement(member, householdId) {
     await admin.from("transactions").delete().eq("id", plainTransfer.id);
   }
 
-  // (g6) service-role null-uid create_installment_purchase now passes the
-  // re-gated body.
+  // (g6) The installment RPC has the same authenticated-member gate.
   const groupPayload = {
     household_id: householdId,
     credit_card_id: created.creditCardId,
@@ -839,8 +1630,8 @@ async function checkCardBillSettlement(member, householdId) {
     installments_payload: installmentsPayload,
   });
   record(
-    "(g6) service-role null-uid create_installment_purchase passes the re-gated body",
-    !g6.error,
+    "(g6) service-role null-uid installment creation denied",
+    Boolean(g6.error),
     g6.error ? g6.error.message : "",
   );
   if (g6.data?.group?.id) {
@@ -866,22 +1657,48 @@ async function checkCardBillSettlement(member, householdId) {
 
 async function main() {
   console.log(`RLS proof against ${SUPABASE_URL} (marker: ${MARKER})`);
-  let householdId;
+  let interrupted = false;
+  process.once("SIGINT", () => {
+    interrupted = true;
+    record("SIGINT interrupted proof", false, "cleanup follows in finally");
+  });
   try {
-    householdId = await setup();
-  } catch (error) {
-    console.error(`Setup failed: ${error.message}`);
-    await teardown();
-    process.exit(2);
-  }
-
-  try {
+    await database.connect();
+    const householdId = await setup();
+    await setupHouseholdB();
+    const matchingDatabase = await database.query(
+      "select id from public.households where id = $1",
+      [created.householdBId],
+    );
+    if (matchingDatabase.rowCount !== 1) {
+      throw new Error(
+        "DATABASE_URL and SUPABASE_URL point to different databases",
+      );
+    }
+    const discovered = await catalog();
+    const complete = await checkCatalogCoverage(discovered);
+    if (!complete)
+      throw new Error("catalog has a table or function without a proof case");
+    if (interrupted) throw new Error("interrupted by SIGINT");
     const member = await signIn(MEMBER_EMAIL, MEMBER_PASSWORD);
+    const memberB = await signIn(MEMBER_B_EMAIL, MEMBER_B_PASSWORD);
     const outsider = await signIn(OUTSIDER_EMAIL, OUTSIDER_PASSWORD);
+    const inactive = await signIn(`${MARKER}@example.test`, MEMBER_B_PASSWORD);
 
     await checkMemberReads(member);
     await checkOutsiderReads(outsider);
     await checkOutsiderInsert(outsider, householdId);
+    await checkMemberBReads(memberB, discovered.tables);
+    await checkCrossHouseholdTables(member, inactive, discovered.tables);
+    await checkHouseholdVisibility(member);
+    await checkInactiveHouseholdVisibility(inactive);
+    await checkNoPolicyTables(member, outsider);
+    await checkCompositeForeignKeys(member);
+    await checkDefinerFunctions(
+      member,
+      discovered.functions,
+      discovered.tables,
+    );
     await checkMergeCategoryRollback(member, householdId);
     await checkConfirmImportRollback(member, householdId);
     await checkInstallmentRollback(member, householdId);
@@ -890,19 +1707,22 @@ async function main() {
     await checkCardBillSettlement(member, householdId);
 
     await member.auth.signOut();
+    await memberB.auth.signOut();
     await outsider.auth.signOut();
+    await inactive.auth.signOut();
   } catch (error) {
     console.error(`Unexpected failure while running checks: ${error.message}`);
     record("harness completed all checks", false, error.message);
   } finally {
     await teardown();
+    if (database._connected) await database.end();
   }
 
   const failed = results.filter((result) => !result.ok);
   console.log(
     `\n${results.length - failed.length}/${results.length} checks passed`,
   );
-  process.exit(failed.length === 0 ? 0 : 1);
+  process.exitCode = failed.length === 0 ? 0 : 1;
 }
 
 main();

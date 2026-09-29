@@ -123,16 +123,21 @@ repo root, after `pnpm install`; see the header of `checks/rls-proof.mjs` for
 details):
 
 ```bash
-SUPABASE_URL=https://supabase.alvaroekarol.com.br \
+SUPABASE_URL=https://<supabase host> \
 SUPABASE_ANON_KEY=<anon key> \
 SERVICE_ROLE_KEY=<service role key> \
+DATABASE_URL=<postgres connection URL> \
 MEMBER_EMAIL=rls-proof.member@example.com MEMBER_PASSWORD=<random> \
+MEMBER_B_EMAIL=rls-proof.member-b@example.com MEMBER_B_PASSWORD=<random> \
 OUTSIDER_EMAIL=rls-proof.outsider@example.com OUTSIDER_PASSWORD=<random> \
 node deploy/checks/rls-proof.mjs
 ```
 
-It creates two throwaway users + fixtures, proves member visibility, outsider
-isolation, insert rejection, atomic rollback of the RPCs, that **`anon` cannot
+It creates fixtures in the existing household and a new throwaway household,
+plus throwaway member, inactive member, and outsider users. It discovers every household table and public
+`SECURITY DEFINER` function from Postgres, proves cross-household reads and
+writes are isolated, and removes the fixtures on exit. It also proves atomic
+rollback of the RPCs, that **`anon` cannot
 EXECUTE any SECURITY DEFINER RPC** (regression gate for the 0012 grant hole),
 and that `materialize_obligation_payment` is idempotent + rejects
 out-of-window months, then cleans up after itself. **Exit code must be 0 and
