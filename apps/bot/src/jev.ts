@@ -206,12 +206,12 @@ export function createJevCategorizer(
         .catch(() => null);
       if (result?.decision === "abstain") return null;
       if (!result || result.needsFallback) {
-        const suggestion = await fallback
-          ?.categorize(context, catalog)
-          .catch(() => null);
-        if (suggestion) return suggestion;
+        return (
+          (await fallback?.categorize(context, catalog).catch(() => null)) ??
+          null
+        );
       }
-      const top = result?.candidates[0];
+      const top = result.candidates[0];
       if (!top) return null;
       const category = catalog.categories.find((c) => c.id === top.categoryId);
       const sub = catalog.subcategories.find(
@@ -221,9 +221,7 @@ export function createJevCategorizer(
       const suggestion: AiCategorySuggestion = {
         categoryName: category.name,
         subcategoryName: sub?.name ?? null,
-        confidence: result?.needsFallback
-          ? Math.min(top.confidence, 0.84)
-          : top.confidence,
+        confidence: top.confidence,
         explanation: top.explanation,
       };
       return suggestion;

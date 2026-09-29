@@ -156,6 +156,7 @@ describe("Jev categorization", () => {
     null,
     { ...matched, needsFallback: true },
     { ...matched, decision: "propose_new" as const, needsFallback: true },
+    { ...matched, decision: "choose" as const, needsFallback: true },
   ])("uses GPT for a failure or uncertain decision", async (result) => {
     const fallback = {
       categorize: vi.fn(async () => ({
@@ -189,12 +190,51 @@ describe("Jev categorization", () => {
     ).toBeNull();
     expect(fallback.categorize).not.toHaveBeenCalled();
   });
-  it("keeps uncertain Jev suggestions review-required if GPT fails", async () => {
-    const result = await createJevCategorizer(
-      { classify: async () => ({ ...matched, needsFallback: true }) },
-      { categorize: async () => null },
-    ).categorize(context, catalog);
-    expect(result?.confidence).toBeLessThan(0.85);
+  it.each(
+    (["single", "choose", "propose_new"] as const).flatMap((decision) =>
+      (["missing", "empty", "failed"] as const).map((failure) => ({
+        decision,
+        failure,
+      })),
+    ),
+  )(
+    "keeps $decision manual when GPT is $failure",
+    async ({ decision, failure }) => {
+      const fallback =
+        failure === "missing"
+          ? undefined
+          : {
+              categorize: vi.fn(async () => {
+                if (failure === "failed") throw new Error("GPT unavailable");
+                return null;
+              }),
+            };
+      const result = await createJevCategorizer(
+        {
+          classify: async () => ({
+            ...matched,
+            decision,
+            needsFallback: true,
+          }),
+        },
+        fallback,
+      ).categorize(context, catalog);
+      expect(result).toBeNull();
+      if (fallback) expect(fallback.categorize).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("keeps an unknown category manual when GPT is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify(mockResponse("single", "unknown", 0.1))),
+        ),
+    );
+    const jev = createJevClient({ apiKey: "test", logCall: vi.fn() });
+    const result = await createJevCategorizer(jev).categorize(context, catalog);
+    expect(result).toBeNull();
   });
   it("does not call either provider when household memory is confirmed", async () => {
     const jev = { classify: vi.fn() };
