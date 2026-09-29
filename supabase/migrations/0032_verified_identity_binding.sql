@@ -132,6 +132,7 @@ begin
     select 1 from household_members hm
     where hm.telegram_user_id = p_telegram_user_id and hm.id <> candidate
   ) then
+    delete from telegram_link_codes lc where lc.member_id = candidate;
     return;
   end if;
   update household_members hm
@@ -168,10 +169,8 @@ $$;
 revoke all on function unlink_telegram() from public, anon, service_role;
 grant execute on function unlink_telegram() to authenticated;
 
-create or replace function resolve_telegram_member(
-  p_telegram_user_id bigint,
-  p_telegram_username text
-)
+drop function if exists resolve_telegram_member(bigint, text);
+create or replace function resolve_telegram_member(p_telegram_user_id bigint)
 returns table (household_id uuid, user_id uuid, display_name text)
 language plpgsql
 security definer
@@ -183,6 +182,6 @@ begin
   where hm.telegram_user_id = p_telegram_user_id and hm.is_active;
 end;
 $$;
-revoke all on function resolve_telegram_member(bigint, text)
+revoke all on function resolve_telegram_member(bigint)
   from public, anon, authenticated;
-grant execute on function resolve_telegram_member(bigint, text) to service_role;
+grant execute on function resolve_telegram_member(bigint) to service_role;

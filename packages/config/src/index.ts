@@ -41,7 +41,6 @@ export const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
-  TELEGRAM_API_BASE_URL: z.string().url().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
   // AI providers (all optional so builds compile without secrets):
   // - ANTHROPIC_API_KEY powers the default LLM text-interpretation provider
@@ -100,15 +99,16 @@ export type BotEnv = z.infer<typeof botEnvSchema>;
  */
 export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
   const parsed = botEnvSchema.parse(env);
-  const telegramHost = new URL(parsed.TELEGRAM_API_BASE_URL).hostname;
+  const telegramUrl = new URL(parsed.TELEGRAM_API_BASE_URL);
   if (
-    parsed.TELEGRAM_API_BASE_URL !== "https://api.telegram.org" &&
-    !["localhost", "127.0.0.1", "[::1]"].includes(telegramHost)
+    telegramUrl.origin !== "https://api.telegram.org" &&
+    !["localhost", "127.0.0.1", "[::1]"].includes(telegramUrl.hostname)
   ) {
     throw new Error(
       "TELEGRAM_API_BASE_URL must be https://api.telegram.org or a loopback host",
     );
   }
+  parsed.TELEGRAM_API_BASE_URL = telegramUrl.origin;
   if (
     parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
     parsed.OPENAI_API_KEY === undefined

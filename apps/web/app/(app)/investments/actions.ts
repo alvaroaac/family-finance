@@ -89,7 +89,7 @@ export async function createBucketAction(
   );
 }
 
-/** Rename a caixinha; its slug stays. */
+/** Rename a caixinha and its derived slug. */
 export async function renameBucketAction(
   formData: FormData,
 ): Promise<BucketActionResult> {
@@ -132,11 +132,14 @@ export async function updateBucketBalanceAction(
   const bucketId = requireField(formData, "bucketId");
   const balanceCents = parseReaisToCents(requireField(formData, "balance"));
   if (balanceCents === null) {
-    throw new Error(
-      "Informe um saldo válido (não negativo), como 1.234,56.",
-    );
+    throw new Error("Informe um saldo válido (não negativo), como 1.234,56.");
   }
-  await updateInvestmentBucketBalance(client, householdId, bucketId, balanceCents);
+  await updateInvestmentBucketBalance(
+    client,
+    householdId,
+    bucketId,
+    balanceCents,
+  );
   revalidatePath("/investments");
   revalidatePath("/dashboard");
 }

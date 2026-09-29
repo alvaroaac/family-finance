@@ -1461,16 +1461,22 @@ function requireBucketName(name: string): string {
   return trimmed;
 }
 
-/**
- * Create an investment bucket named after a household goal. The slug comes
- * from the name and is unique per household (`unique (household_id, slug)`);
- * RLS scopes the insert.
- */
+/** Create a named goal with a household-unique name and slug. */
 export async function createInvestmentBucket(
   client: AppSupabaseClient,
   input: { householdId: string; name: string },
 ): Promise<InvestmentBucketRow> {
   const name = requireBucketName(input.name);
+  const existing = await listInvestmentBuckets(client, input.householdId);
+  if (
+    existing.some(
+      (bucket) =>
+        bucket.name.toLocaleLowerCase("pt-BR") ===
+        name.toLocaleLowerCase("pt-BR"),
+    )
+  ) {
+    throw new Error(BUCKET_SLUG_TAKEN);
+  }
   const { data, error } = await client
     .from("investment_buckets")
     .insert(investmentBucketInsert({ householdId: input.householdId, name }))
@@ -1486,7 +1492,7 @@ export async function createInvestmentBucket(
   return data as InvestmentBucketRow;
 }
 
-/** Rename an investment bucket; its slug stays. RLS scopes the update. */
+/** Rename a bucket and its derived slug; RLS scopes the update. */
 export async function renameInvestmentBucket(
   client: AppSupabaseClient,
   input: { householdId: string; bucketId: string; name: string },
@@ -1494,11 +1500,15 @@ export async function renameInvestmentBucket(
   const name = requireBucketName(input.name);
   const { error } = await client
     .from("investment_buckets")
-    .update({ name })
+    .update({ name, slug: slugifyBucketName(name) })
     .eq("household_id", input.householdId)
     .eq("id", input.bucketId);
   if (error !== null) {
-    throw new Error(`renameInvestmentBucket failed: ${error.message}`);
+    throw new Error(
+      error.code === UNIQUE_VIOLATION
+        ? BUCKET_SLUG_TAKEN
+        : `renameInvestmentBucket failed: ${error.message}`,
+    );
   }
 }
 
@@ -2784,11 +2794,10 @@ export async function findMemberByTelegramUserId(
 /** Resolve a Telegram sender by the linked numeric id. Service-role only. */
 export async function resolveTelegramMember(
   client: AppSupabaseClient,
-  sender: { telegramUserId: number; telegramUsername?: string | null },
+  sender: { telegramUserId: number },
 ): Promise<BotMemberIdentity | null> {
   const { data, error } = await client.rpc("resolve_telegram_member", {
     p_telegram_user_id: sender.telegramUserId,
-    p_telegram_username: null,
   });
   if (error !== null) {
     throw new Error(`resolveTelegramMember failed: ${error.message}`);

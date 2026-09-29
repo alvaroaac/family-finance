@@ -1124,7 +1124,6 @@ const IDENTITIES: Record<string, BotMemberIdentity> = {
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
-  telegramUsername?: string;
 }): Promise<BotMemberIdentity | null> =>
   IDENTITIES[sender.telegramUserId] ?? null;
 
@@ -1138,7 +1137,7 @@ function textUpdate(
     update_id: 1,
     message: {
       message_id: 1,
-      chat: { id: chatId },
+      chat: { id: chatId, type: "private" },
       from: { id: fromId, username: fromUsername },
       text,
     },
@@ -1179,6 +1178,34 @@ describe("Telegram link commands", () => {
         expect(redeemLinkCode).toHaveBeenCalledWith("abcd1234", 999);
         expect(sent.at(-1)?.text).toContain("Pronto, Alvaro!");
       }
+    },
+  );
+
+  it.each(["group", "supergroup"])(
+    "keeps a link code out of redemption in a %s chat",
+    async (chatType) => {
+      const { telegram, sent } = fakeTelegram();
+      const redeemLinkCode = vi.fn();
+      const resolveMember = vi.fn(resolveMemberFake);
+      const rawBody = textUpdate(999, "/vincular ABCD2345") as {
+        message: { chat: { type?: string } };
+      };
+      rawBody.message.chat.type = chatType;
+      await handleWebhook({
+        rawBody,
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        memberClient: () => fakeSupabase({}).client,
+        telegram,
+        resolveMember,
+        redeemLinkCode,
+        store: createInMemoryConversationStore(),
+      });
+      expect(redeemLinkCode).not.toHaveBeenCalled();
+      expect(resolveMember).not.toHaveBeenCalled();
+      expect(sent.at(-1)?.text).toBe(
+        "Por segurança, a vinculação só funciona no chat privado comigo. Gere um código novo em Configurações e me envie por lá.",
+      );
     },
   );
 
@@ -1367,6 +1394,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1385,6 +1413,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1402,6 +1431,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => memberClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store: createInMemoryConversationStore(),
     };
     await handleWebhook({
@@ -1431,6 +1461,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     });
 
@@ -1460,6 +1491,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     });
 
@@ -1480,6 +1512,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -1507,6 +1540,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -1550,6 +1584,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -1583,6 +1618,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -1618,6 +1654,7 @@ describe("handleWebhook: telegram identity", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 

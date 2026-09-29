@@ -170,11 +170,11 @@ describe("two-household RLS proof", () => {
         "member cannot update telegram_user_id on own row",
         "member can update display_name in own household",
         "valid code binds its creating member",
+        "rejected Telegram link code cannot be reused",
         "expired Telegram link code binds nothing",
-        "username alone cannot resolve an unlinked member",
         "service role resolves B Telegram id",
         "service role cannot resolve inactive Telegram member",
-        "username fallback does not rebind",
+        "service role cannot resolve an unknown Telegram id",
       ]) {
         expect(result.stdout).toContain(`[PASS] ${check}`);
       }

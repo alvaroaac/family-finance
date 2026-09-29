@@ -91,12 +91,10 @@ export async function createTelegramLinkCodeAction(): Promise<
     );
     return { ok: true, code };
   } catch (error) {
+    console.error("createTelegramLinkCodeAction failed:", error);
     return {
       ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Não foi possível gerar o código.",
+      error: "Não deu pra gerar o código agora. Tenta de novo em instantes.",
     };
   }
 }
@@ -110,12 +108,10 @@ export async function unlinkTelegramAction(): Promise<SettingsActionResult> {
     revalidatePath("/settings");
     return { ok: true };
   } catch (error) {
+    console.error("unlinkTelegramAction failed:", error);
     return {
       ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Não foi possível desvincular.",
+      error: "Não deu pra desvincular agora. Tenta de novo em instantes.",
     };
   }
 }

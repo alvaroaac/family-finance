@@ -67,6 +67,19 @@ describe("getBotServerEnv", () => {
     expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
   });
 
+  it("normalizes the official API origin and rejects lookalike hosts", () => {
+    const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
+    env.TELEGRAM_API_BASE_URL = "https://api.telegram.org/";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "https://api.telegram.org",
+    );
+    for (const nodeEnv of ["production", "test", "development"]) {
+      env.NODE_ENV = nodeEnv;
+      env.TELEGRAM_API_BASE_URL = "https://api.telegram.org.evil.example";
+      expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
+    }
+  });
+
   it("accepts exactly the deploy/bot/.env.example variable set (spec §3.5)", () => {
     const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
     // Guard against template drift: the web-only vars must NOT be needed.

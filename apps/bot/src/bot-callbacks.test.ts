@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import { handleWebhook } from "./index.js";
 import { createInMemoryConversationStore } from "./store.js";
@@ -162,34 +162,20 @@ const IDENTITIES: Record<string, BotMemberIdentity> = {
     displayName: "Alvaro",
   },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
-  "@karolzinha": {
-    householdId: "house-1",
-    userId: "user-karol",
-    displayName: "Karol",
-  },
 };
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
-  telegramUsername?: string;
 }): Promise<BotMemberIdentity | null> =>
-  IDENTITIES[sender.telegramUserId] ??
-  (sender.telegramUsername !== undefined
-    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
-    : null);
+  IDENTITIES[sender.telegramUserId] ?? null;
 
-function textUpdate(
-  fromId: number,
-  text: string,
-  chatId = 555,
-  fromUsername?: string,
-): unknown {
+function textUpdate(fromId: number, text: string, chatId = 555): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
-      chat: { id: chatId },
-      from: { id: fromId, username: fromUsername },
+      chat: { id: chatId, type: "private" },
+      from: { id: fromId },
       text,
     },
   };
@@ -200,7 +186,7 @@ function voiceUpdate(fromId: number, fileId: string, chatId = 555): unknown {
     update_id: 3,
     message: {
       message_id: 3,
-      chat: { id: chatId },
+      chat: { id: chatId, type: "private" },
       from: { id: fromId },
       voice: { file_id: fileId, mime_type: "audio/ogg" },
     },
@@ -277,6 +263,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     });
 
@@ -297,6 +284,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -322,6 +310,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -351,6 +340,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -385,6 +375,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       transcribe,
     });
@@ -409,6 +400,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     });
 
@@ -430,6 +422,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     });
 
@@ -456,6 +449,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     });
 
@@ -478,6 +472,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -538,6 +533,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
 
@@ -574,6 +570,7 @@ describe("handleWebhook: callback routing", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store: createInMemoryConversationStore(),
     });
     expect(result.status).toBe(401);
@@ -603,6 +600,7 @@ describe("integration: the Petz flow (spec §6)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       ai: petsAi,
     };
@@ -736,6 +734,7 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
     };
     return { base, tables, sent, answered, stripped };

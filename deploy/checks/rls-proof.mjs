@@ -198,7 +198,7 @@ const RPC_CASES = new Set([
   "merge_category(uuid,uuid,uuid)",
   "record_import_ai_paid_result(uuid,uuid,text,text,text,integer,integer)",
   "reserve_import_ai_paid_items(uuid,uuid,uuid,integer,integer,uuid)",
-  "resolve_telegram_member(bigint,text)",
+  "resolve_telegram_member(bigint)",
   "create_telegram_link_code()",
   "redeem_telegram_link_code(text,bigint)",
   "unlink_telegram()",
@@ -1365,9 +1365,8 @@ function rpcArguments(signature) {
       preview_max_items: 1,
       target_created_by_user_id: created.memberUserId,
     },
-    "resolve_telegram_member(bigint,text)": {
+    "resolve_telegram_member(bigint)": {
       p_telegram_user_id: created.bTelegramId,
-      p_telegram_username: null,
     },
     "create_telegram_link_code()": {},
     "redeem_telegram_link_code(text,bigint)": {
@@ -1423,7 +1422,7 @@ async function checkDefinerFunctions(member, functions, tables) {
     const safeResult =
       signature === "is_household_member(uuid)"
         ? result.data === false
-        : signature === "resolve_telegram_member(bigint,text)" ||
+        : signature === "resolve_telegram_member(bigint)" ||
             signature === "redeem_telegram_link_code(text,bigint)"
           ? Boolean(result.error)
           : Boolean(result.error) || noBIdentifiers;
@@ -1580,10 +1579,7 @@ async function checkTelegramLinks(member, outsider) {
         "redeem_telegram_link_code",
         { p_code: "INVALID32", p_telegram_user_id: 1 },
       ],
-      [
-        "resolve_telegram_member",
-        { p_telegram_user_id: 1, p_telegram_username: null },
-      ],
+      ["resolve_telegram_member", { p_telegram_user_id: 1 }],
     ]) {
       const result = await client.rpc(name, args);
       record(
@@ -1613,8 +1609,18 @@ async function checkTelegramLinks(member, outsider) {
     "already linked Telegram id cannot be claimed",
     !claimed.error && claimed.data?.length === 0,
   );
-  const valid = await admin.rpc("redeem_telegram_link_code", {
+  const rejectedReplay = await admin.rpc("redeem_telegram_link_code", {
     p_code: second.data,
+    p_telegram_user_id: id,
+  });
+  record(
+    "rejected Telegram link code cannot be reused",
+    !rejectedReplay.error && rejectedReplay.data?.length === 0,
+  );
+  const fresh = await member.rpc("create_telegram_link_code");
+  if (fresh.error) throw fresh.error;
+  const valid = await admin.rpc("redeem_telegram_link_code", {
+    p_code: fresh.data,
     p_telegram_user_id: id,
   });
   record(
@@ -1622,7 +1628,7 @@ async function checkTelegramLinks(member, outsider) {
     !valid.error && valid.data?.[0]?.user_id === created.memberUserId,
   );
   const replay = await admin.rpc("redeem_telegram_link_code", {
-    p_code: second.data,
+    p_code: fresh.data,
     p_telegram_user_id: id + 1,
   });
   record(
@@ -1689,7 +1695,6 @@ async function checkTelegramLinks(member, outsider) {
 async function checkTelegramResolution() {
   const found = await admin.rpc("resolve_telegram_member", {
     p_telegram_user_id: created.bTelegramId,
-    p_telegram_username: null,
   });
   record(
     "service role resolves B Telegram id to B membership",
@@ -1707,48 +1712,19 @@ async function checkTelegramResolution() {
   if (inactive.error) throw new Error(inactive.error.message);
   const missing = await admin.rpc("resolve_telegram_member", {
     p_telegram_user_id: inactiveId,
-    p_telegram_username: null,
   });
   record(
     "service role cannot resolve inactive Telegram member",
     !missing.error && Array.isArray(missing.data) && missing.data.length === 0,
     missing.error?.message,
   );
-  const username = `proof_${randomUUID().replaceAll("-", "")}`;
-  const linked = await admin
-    .from("household_members")
-    .update({ telegram_username: username })
-    .eq("user_id", created.memberBUserId);
-  if (linked.error) throw new Error(linked.error.message);
-  const fallback = await admin.rpc("resolve_telegram_member", {
+  const unknown = await admin.rpc("resolve_telegram_member", {
     p_telegram_user_id: inactiveId + 1,
-    p_telegram_username: username,
-  });
-  const { rows } = await database.query(
-    "select telegram_user_id from public.household_members where user_id = $1",
-    [created.memberBUserId],
-  );
-  record(
-    "username fallback does not rebind numeric Telegram member",
-    !fallback.error &&
-      Array.isArray(fallback.data) &&
-      fallback.data.length === 0 &&
-      String(rows[0]?.telegram_user_id) === String(created.bTelegramId),
-    fallback.error?.message,
-  );
-  const unlinkedName = `unlinked_${randomUUID().replaceAll("-", "")}`;
-  const named = await admin
-    .from("household_members")
-    .update({ telegram_username: unlinkedName })
-    .eq("user_id", created.memberUserId);
-  if (named.error) throw named.error;
-  const ignored = await admin.rpc("resolve_telegram_member", {
-    p_telegram_user_id: inactiveId + 2,
-    p_telegram_username: unlinkedName,
   });
   record(
-    "username alone cannot resolve an unlinked member",
-    !ignored.error && ignored.data?.length === 0,
+    "service role cannot resolve an unknown Telegram id",
+    !unknown.error && Array.isArray(unknown.data) && unknown.data.length === 0,
+    unknown.error?.message,
   );
 }
 

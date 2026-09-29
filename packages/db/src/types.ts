@@ -772,10 +772,7 @@ export type Database = {
         Returns: boolean;
       };
       resolve_telegram_member: {
-        Args: {
-          p_telegram_user_id: number;
-          p_telegram_username: string | null;
-        };
+        Args: { p_telegram_user_id: number };
         Returns: {
           household_id: string;
           user_id: string;

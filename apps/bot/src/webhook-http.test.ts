@@ -4,7 +4,7 @@
  * handleWebhook + in-memory Supabase/Telegram fakes. Drives the wire format
  * Telegram actually POSTs.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -206,6 +206,7 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
         memberClient: () => client,
         telegram: tg.telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
       }),
     );

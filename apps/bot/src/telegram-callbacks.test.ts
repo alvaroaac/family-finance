@@ -28,7 +28,6 @@ describe("parseTelegramCallback", () => {
       updateId: 10,
       callbackQueryId: "cbq-1",
       fromId: "777",
-      fromUsername: "alvaro",
       chatId: "555",
       messageId: 42,
       data: "cf",

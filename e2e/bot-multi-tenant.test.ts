@@ -107,7 +107,11 @@ describe("real bot webhook across households", () => {
         },
         body: JSON.stringify({
           update_id: updateId++,
-          message: { chat: { id: chat }, from: { id: from }, text },
+          message: {
+            chat: { id: chat, type: "private" },
+            from: { id: from },
+            text,
+          },
         }),
       });
       expect(response.status).toBe(200);
@@ -297,7 +301,7 @@ describe("real bot webhook across households", () => {
       SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET!,
     });
     let updateId = 1000;
-    async function send(from: number, text: string) {
+    async function send(from: number, text: string, chatType = "private") {
       const response = await fetch(`${bot.url}/webhook`, {
         method: "POST",
         headers: {
@@ -306,7 +310,11 @@ describe("real bot webhook across households", () => {
         },
         body: JSON.stringify({
           update_id: updateId++,
-          message: { chat: { id: from }, from: { id: from }, text },
+          message: {
+            chat: { id: from, type: chatType },
+            from: { id: from },
+            text,
+          },
         }),
       });
       expect(response.status).toBe(200);
@@ -314,12 +322,24 @@ describe("real bot webhook across households", () => {
     }
     try {
       const code = await codeFor(members.ana.email);
+      expect(await send(outsiderId, `/vincular ${code}`, "group")).toContain(
+        "só funciona no chat privado",
+      );
+      expect(
+        (await admin.from("telegram_link_codes").select("member_id")).data,
+      ).toHaveLength(1);
       expect(await send(linkedId, `/vincular ${code}`)).toContain(
         "Não consegui vincular",
       );
-      expect(await send(userId, `/vincular ${code}`)).toContain("Pronto, Ana!");
+      expect(
+        (await admin.from("telegram_link_codes").select("member_id")).data,
+      ).toHaveLength(0);
+      const freshCode = await codeFor(members.ana.email);
+      expect(await send(userId, `/vincular ${freshCode}`)).toContain(
+        "Pronto, Ana!",
+      );
       expect(await send(userId, "mercado 50")).not.toBe(refusal);
-      expect(await send(outsiderId, `/vincular ${code}`)).toContain(
+      expect(await send(outsiderId, `/vincular ${freshCode}`)).toContain(
         "Não consegui vincular",
       );
       expect(await send(outsiderId, "mercado 50")).toBe(refusal);

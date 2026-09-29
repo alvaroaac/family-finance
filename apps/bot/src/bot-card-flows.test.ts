@@ -443,34 +443,20 @@ const IDENTITIES: Record<string, BotMemberIdentity> = {
     displayName: "Alvaro",
   },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
-  "@karolzinha": {
-    householdId: "house-1",
-    userId: "user-karol",
-    displayName: "Karol",
-  },
 };
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
-  telegramUsername?: string;
 }): Promise<BotMemberIdentity | null> =>
-  IDENTITIES[sender.telegramUserId] ??
-  (sender.telegramUsername !== undefined
-    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
-    : null);
+  IDENTITIES[sender.telegramUserId] ?? null;
 
-function textUpdate(
-  fromId: number,
-  text: string,
-  chatId = 555,
-  fromUsername?: string,
-): unknown {
+function textUpdate(fromId: number, text: string, chatId = 555): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
-      chat: { id: chatId },
-      from: { id: fromId, username: fromUsername },
+      chat: { id: chatId, type: "private" },
+      from: { id: fromId },
       text,
     },
   };
@@ -560,6 +546,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage: classifierReturning(null),
     });
@@ -622,6 +609,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage: classifierReturning(classified),
       });
@@ -690,6 +678,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -705,6 +694,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -751,6 +741,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
           store,
           classifyMessage,
         });
@@ -789,6 +780,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -835,6 +827,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
           store,
           classifyMessage,
         });
@@ -893,6 +886,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
           store,
           classifyMessage: classifierReturning(classified),
         });
@@ -922,6 +916,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
           store,
           classifyMessage: classifierReturning(null),
         });
@@ -966,6 +961,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
           store,
           classifyMessage: classifierReturning(null),
         });
@@ -1018,6 +1014,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
           store,
           classifyMessage,
         });
@@ -1044,6 +1041,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
       });
 
@@ -1054,6 +1052,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
       });
 
@@ -1087,6 +1086,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1103,6 +1103,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1174,6 +1175,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1190,6 +1192,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1260,6 +1263,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1276,6 +1280,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1349,6 +1354,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1359,6 +1365,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1374,6 +1381,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1384,6 +1392,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1433,6 +1442,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1444,6 +1454,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1463,6 +1474,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1511,6 +1523,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1612,6 +1625,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => lossyClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1622,6 +1636,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => lossyClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1645,6 +1660,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => lossyClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1689,6 +1705,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => lossyClient,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1741,6 +1758,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => guardedClient,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1798,6 +1816,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         memberClient: () => guardedClient,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1809,6 +1828,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => guardedClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1866,6 +1886,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1878,6 +1899,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1894,6 +1916,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
       store,
       classifyMessage,
     });

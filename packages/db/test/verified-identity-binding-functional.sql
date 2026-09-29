@@ -64,8 +64,13 @@ begin
   end if;
   if has_function_privilege('anon', 'create_telegram_link_code()', 'execute')
     or has_function_privilege('authenticated', 'redeem_telegram_link_code(text,bigint)', 'execute')
+    or has_function_privilege('authenticated', 'resolve_telegram_member(bigint)', 'execute')
+    or not has_function_privilege('service_role', 'resolve_telegram_member(bigint)', 'execute')
     or has_table_privilege('authenticated', 'telegram_link_codes', 'select') then
     raise exception 'Telegram link privilege boundary is wrong';
+  end if;
+  if to_regprocedure('public.resolve_telegram_member(bigint,text)') is not null then
+    raise exception 'obsolete two-argument Telegram resolver still exists';
   end if;
   perform set_config('request.jwt.claim.sub', confirmed::text, true);
   first_code := create_telegram_link_code();
@@ -81,13 +86,27 @@ begin
     raise exception 'second code did not replace first code';
   end if;
   update household_members set telegram_user_id = 32002 where user_id = late;
-  if exists (select 1 from redeem_telegram_link_code(second_code, 32002))
-    or (select count(*) from telegram_link_codes) <> 1 then
-    raise exception 'bound Telegram id consumed a code';
+  if exists (select 1 from redeem_telegram_link_code(second_code, 32002)) then
+    raise exception 'bound Telegram id redeemed a code';
   end if;
+  if exists (select 1 from telegram_link_codes where member_id = code_member) then
+    raise exception 'bound Telegram id did not consume rejected code';
+  end if;
+  second_code := create_telegram_link_code();
+  update household_members set is_active = false where user_id = confirmed;
+  if exists (select 1 from redeem_telegram_link_code(second_code, 32003)) then
+    raise exception 'inactive member redeemed a code';
+  end if;
+  if exists (select 1 from telegram_link_codes where member_id = code_member) then
+    raise exception 'inactive member did not consume rejected code';
+  end if;
+  update household_members set is_active = true where user_id = confirmed;
+  second_code := create_telegram_link_code();
   if (select count(*) from redeem_telegram_link_code(second_code, 32003)) <> 1
     or exists (select 1 from redeem_telegram_link_code(second_code, 32003))
-    or (select telegram_user_id from household_members where user_id = confirmed) <> 32003 then
+    or (select telegram_user_id from household_members where user_id = confirmed) <> 32003
+    or not exists (select 1 from resolve_telegram_member(32003))
+    or exists (select 1 from resolve_telegram_member(32004)) then
     raise exception 'valid code did not bind exactly once';
   end if;
   first_code := create_telegram_link_code();

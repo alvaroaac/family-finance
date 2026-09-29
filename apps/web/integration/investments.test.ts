@@ -195,7 +195,12 @@ describe("updateInvestmentBucketBalance round-trip", () => {
   });
 
   it("persists the new balance and lists it back", async () => {
-    await updateInvestmentBucketBalance(client, HOUSEHOLD, "bucket-filhos", 123456);
+    await updateInvestmentBucketBalance(
+      client,
+      HOUSEHOLD,
+      "bucket-filhos",
+      123456,
+    );
     const buckets = await listInvestmentBuckets(client, HOUSEHOLD);
     expect(buckets.find((b) => b.id === "bucket-filhos")?.balance_cents).toBe(
       123456,
@@ -244,7 +249,10 @@ describe("createBucketAction", () => {
     expect(result.ok).toBe(true);
     await createBucketAction(form({ name: "Independência Financeira" }));
 
-    const created = bucketsOf(store, HOUSEHOLD).map((row) => [row.slug, row.name]);
+    const created = bucketsOf(store, HOUSEHOLD).map((row) => [
+      row.slug,
+      row.name,
+    ]);
     expect(created).toContainEqual(["viagem_2027", "Viagem 2027"]);
     expect(created).toContainEqual([
       "independencia_financeira",
@@ -270,6 +278,24 @@ describe("createBucketAction", () => {
     expect(bucketsOf(store, HOUSEHOLD)).toHaveLength(2);
   });
 
+  it("reuses a visible name after rename with its original slug", async () => {
+    expect(
+      (
+        await renameBucketAction(
+          form({ bucketId: "bucket-filhos", name: "Viagem" }),
+        )
+      ).ok,
+    ).toBe(true);
+    expect((await createBucketAction(form({ name: "Filhos" }))).ok).toBe(true);
+    const rows = bucketsOf(store, HOUSEHOLD);
+    expect(rows.find((row) => row.name === "Viagem")?.slug).toBe("viagem");
+    expect(rows.find((row) => row.name === "Filhos")?.slug).toBe("filhos");
+    expect(await createBucketAction(form({ name: "fIlHoS" }))).toEqual({
+      ok: false,
+      message: "Já existe um objetivo com esse nome.",
+    });
+  });
+
   it("rejects a name that slugifies to an empty string", async () => {
     expect(await createBucketAction(form({ name: " !!! " }))).toEqual({
       ok: false,
@@ -281,7 +307,9 @@ describe("createBucketAction", () => {
   it("allows a slug another household already uses", async () => {
     const result = await createBucketAction(form({ name: "Casa" }));
     expect(result.ok).toBe(true);
-    expect(bucketsOf(store, HOUSEHOLD).map((row) => row.slug)).toContain("casa");
+    expect(bucketsOf(store, HOUSEHOLD).map((row) => row.slug)).toContain(
+      "casa",
+    );
     expect(bucketsOf(store, OTHER_HOUSEHOLD).map((row) => row.slug)).toEqual([
       "casa",
     ]);
@@ -296,7 +324,7 @@ describe("renameBucketAction", () => {
     store = installStore();
   });
 
-  it("changes the name and keeps the slug", async () => {
+  it("changes the name and regenerates the slug", async () => {
     const result = await renameBucketAction(
       form({ bucketId: "bucket-filhos", name: "Educação das crianças" }),
     );
@@ -305,7 +333,7 @@ describe("renameBucketAction", () => {
       .table("investment_buckets")
       .find((r) => r.id === "bucket-filhos");
     expect(row?.name).toBe("Educação das crianças");
-    expect(row?.slug).toBe("filhos");
+    expect(row?.slug).toBe("educacao_das_criancas");
   });
 
   it("never renames another household's bucket", async () => {
@@ -313,8 +341,9 @@ describe("renameBucketAction", () => {
       form({ bucketId: "bucket-outra-casa", name: "Invadido" }),
     );
     expect(
-      store.table("investment_buckets").find((r) => r.id === "bucket-outra-casa")
-        ?.name,
+      store
+        .table("investment_buckets")
+        .find((r) => r.id === "bucket-outra-casa")?.name,
     ).toBe("Casa (outra família)");
   });
 });
@@ -328,19 +357,21 @@ describe("deleteBucketAction", () => {
   });
 
   it("refuses to delete a bucket with a non-zero balance", async () => {
-    expect(await deleteBucketAction(form({ bucketId: "bucket-reserva" }))).toEqual(
-      {
-        ok: false,
-        message: "Só é possível excluir um objetivo com saldo zerado.",
-      },
-    );
+    expect(
+      await deleteBucketAction(form({ bucketId: "bucket-reserva" })),
+    ).toEqual({
+      ok: false,
+      message: "Só é possível excluir um objetivo com saldo zerado.",
+    });
     expect(
       store.table("investment_buckets").some((r) => r.id === "bucket-reserva"),
     ).toBe(true);
   });
 
   it("removes a bucket with a zero balance", async () => {
-    const result = await deleteBucketAction(form({ bucketId: "bucket-filhos" }));
+    const result = await deleteBucketAction(
+      form({ bucketId: "bucket-filhos" }),
+    );
     expect(result.ok).toBe(true);
     expect(
       store.table("investment_buckets").some((r) => r.id === "bucket-filhos"),
@@ -362,7 +393,13 @@ describe("a household with no buckets", () => {
     vi.clearAllMocks();
     installStore(
       seed([
-        bucketRow("bucket-outra", OTHER_HOUSEHOLD, "casa", "Outra família", 777),
+        bucketRow(
+          "bucket-outra",
+          OTHER_HOUSEHOLD,
+          "casa",
+          "Outra família",
+          777,
+        ),
       ]),
     );
   });

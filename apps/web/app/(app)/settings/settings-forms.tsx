@@ -227,6 +227,7 @@ export function MemberRow({
               <div>
                 <span>Envie esta mensagem pro bot em até 10 minutos:</span>{" "}
                 <code style={{ userSelect: "all" }}>/vincular {code}</code>
+                <div>Depois que o bot confirmar, recarregue esta página.</div>
               </div>
             )
           ) : null}

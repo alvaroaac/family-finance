@@ -126,6 +126,8 @@ const UNKNOWN_USER_REPLY =
   "Oi! Eu ainda não conheço você por aqui. Abra Configurações no Family Finance, toque em Vincular Telegram e me envie o código que aparecer.";
 const LINK_FAILURE_REPLY =
   "Não consegui vincular. O código é inválido, expirou ou este Telegram já está vinculado a outra pessoa. Gere um código novo em Configurações.";
+const LINK_PRIVATE_ONLY_REPLY =
+  "Por segurança, a vinculação só funciona no chat privado comigo. Gere um código novo em Configurações e me envie por lá.";
 
 /**
  * The code carried by "/vincular CODE" or Telegram's deep-link "/start CODE"
@@ -518,12 +520,11 @@ export async function handleWebhook(args: {
   configuredSecret: string | undefined;
   memberClient: (identity: BotMemberIdentity) => AppSupabaseClient;
   telegram: TelegramClient;
-  /** Map a Telegram sender (id + optional @username) to a linked member. */
+  /** Map a Telegram sender's numeric id to a linked member. */
   resolveMember: (sender: {
     telegramUserId: string;
-    telegramUsername?: string;
   }) => Promise<BotMemberIdentity | null>;
-  redeemLinkCode?: (
+  redeemLinkCode: (
     code: string,
     telegramUserId: number,
   ) => Promise<BotMemberIdentity | null>;
@@ -567,7 +568,6 @@ export async function handleWebhook(args: {
 
     const identity = await args.resolveMember({
       telegramUserId: callback.fromId,
-      telegramUsername: callback.fromUsername,
     });
     if (identity === null) {
       console.warn(
@@ -728,8 +728,12 @@ export async function handleWebhook(args: {
 
   const linkCode = message === null ? null : parseLinkCommand(message.text);
   if (message !== null && linkCode !== null) {
+    if (message.chatType !== "private") {
+      await args.telegram.sendMessage(message.chatId, LINK_PRIVATE_ONLY_REPLY);
+      return { status: 200, body: { ok: true } };
+    }
     const linked =
-      linkCode !== "" && args.redeemLinkCode
+      linkCode !== ""
         ? await args.redeemLinkCode(linkCode, Number(message.fromId))
         : null;
     await args.telegram.sendMessage(
@@ -744,7 +748,6 @@ export async function handleWebhook(args: {
   // to scope a bot_interactions row to), so we only log to the console.
   const identity = await args.resolveMember({
     telegramUserId: incoming.fromId,
-    telegramUsername: incoming.fromUsername,
   });
   if (identity === null) {
     console.warn(
@@ -1029,13 +1032,9 @@ export async function startBot(): Promise<{
       jwtSecret,
       userId: identity.userId,
     });
-  const resolveMember = (sender: {
-    telegramUserId: string;
-    telegramUsername?: string;
-  }) =>
+  const resolveMember = (sender: { telegramUserId: string }) =>
     resolveTelegramMember(client, {
       telegramUserId: Number(sender.telegramUserId),
-      telegramUsername: sender.telegramUsername ?? null,
     });
   const redeemLinkCode = (code: string, telegramUserId: number) =>
     redeemTelegramLinkCode(client, code, telegramUserId);

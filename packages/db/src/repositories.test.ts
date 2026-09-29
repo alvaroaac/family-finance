@@ -262,6 +262,7 @@ function createBucketClient(result: {
     "eq",
     "single",
     "maybeSingle",
+    "order",
   ]) {
     builder[method] = (...args: unknown[]) => {
       calls.push([method, args]);
@@ -294,20 +295,16 @@ describe("investment bucket repositories", () => {
     ).rejects.toThrow("Informe um nome para o objetivo.");
   });
 
-  it("reports a slug already used in the household in Portuguese", async () => {
+  it("reports a visible name already used in the household in Portuguese", async () => {
     const { client } = createBucketClient({
-      error: {
-        code: "23505",
-        message:
-          'duplicate key value violates unique constraint "investment_buckets_household_id_slug_key"',
-      },
+      data: [{ name: "Casa", slug: "casa" }],
     });
     await expect(
-      createInvestmentBucket(client, { householdId: HOUSEHOLD, name: "Casa" }),
+      createInvestmentBucket(client, { householdId: HOUSEHOLD, name: "cAsA" }),
     ).rejects.toThrow("Já existe um objetivo com esse nome.");
   });
 
-  it("renames by updating only the name, scoped to the household", async () => {
+  it("renames the name and slug, scoped to the household", async () => {
     const { client, calls } = createBucketClient({
       data: [{ id: "bucket-1" }],
     });
@@ -316,9 +313,25 @@ describe("investment bucket repositories", () => {
       bucketId: "bucket-1",
       name: " Viagem ",
     });
-    expect(calls).toContainEqual(["update", [{ name: "Viagem" }]]);
+    expect(calls).toContainEqual([
+      "update",
+      [{ name: "Viagem", slug: "viagem" }],
+    ]);
     expect(calls).toContainEqual(["eq", ["household_id", HOUSEHOLD]]);
     expect(calls).toContainEqual(["eq", ["id", "bucket-1"]]);
+  });
+
+  it("reports a rename onto a taken slug in Portuguese", async () => {
+    const { client } = createBucketClient({
+      error: { message: "duplicate key", code: "23505" },
+    });
+    await expect(
+      renameInvestmentBucket(client, {
+        householdId: HOUSEHOLD,
+        bucketId: "bucket-1",
+        name: "Casa",
+      }),
+    ).rejects.toThrow("Já existe um objetivo com esse nome.");
   });
 
   it("deletes only a zero-balance bucket of the household", async () => {
@@ -1711,7 +1724,6 @@ describe("resolveTelegramMember", () => {
     const client = { rpc } as unknown as AppSupabaseClient;
     const identity = await resolveTelegramMember(client, {
       telegramUserId: 555,
-      telegramUsername: "@Karol",
     });
     expect(identity).toEqual({
       householdId: HOUSEHOLD,
@@ -1721,7 +1733,6 @@ describe("resolveTelegramMember", () => {
     expect(rpc).toHaveBeenCalledOnce();
     expect(rpc).toHaveBeenCalledWith("resolve_telegram_member", {
       p_telegram_user_id: 555,
-      p_telegram_username: null,
     });
   });
 
