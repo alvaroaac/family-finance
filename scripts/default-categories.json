@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Alimentação",
+    "kind": "expense",
+    "subcategories": ["Mercado", "Restaurante"]
+  },
+  { "name": "Moradia", "kind": "expense", "subcategories": [] },
+  { "name": "Transporte", "kind": "expense", "subcategories": [] },
+  { "name": "Saúde", "kind": "expense", "subcategories": [] },
+  { "name": "Lazer", "kind": "expense", "subcategories": [] },
+  { "name": "Educação", "kind": "expense", "subcategories": [] },
+  { "name": "Receitas", "kind": "income", "subcategories": [] },
+  { "name": "Salário", "kind": "income", "subcategories": [] },
+  { "name": "Freelas", "kind": "income", "subcategories": [] },
+  { "name": "Investimentos", "kind": "income", "subcategories": [] },
+  { "name": "Outros", "kind": "expense", "subcategories": [] }
+]
