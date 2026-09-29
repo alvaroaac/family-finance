@@ -391,7 +391,9 @@ wrong if a second household ever exists.
 **Revisit trigger:** Multi-household support — join `households` on the slug (needs a
 slug column on households) or drop the `household_slug` column.
 
-**Status:** open (flagged MINOR by the v1.0 final whole-branch review)
+**Status:** resolved by migration `0029_multi_household_provisioning.sql` —
+`allowed_emails.household_slug` was replaced by a required `household_id`, and
+both provisioning triggers use that household.
 
 ## 2026-07-02: Resumo lacks a spending-by-category chart
 

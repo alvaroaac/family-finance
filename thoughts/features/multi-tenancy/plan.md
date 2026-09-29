@@ -133,7 +133,7 @@ Tasks run sequentially in one worktree because most of them touch
 - Backfill: when more than one household exists and any `allowed_emails` row has no household, the migration raises an exception and changes nothing.
 - A user signing up with an email allowlisted for household B becomes a member of B and of no other household.
 - Allowlisting an email whose user already exists makes that user a member of the allowlisted household.
-- A user who is already a member of a household is not added to a second one when their email is allowlisted elsewhere; the insert is skipped and a `WARNING` is raised.
+- Allowlisting an email whose user is already a member of another household fails with an exception; the allowlist row is not created and the membership is unchanged.
 - Inserting an `allowed_emails` row with a null or unknown `household_id` fails.
 - Email matching stays case-insensitive.
 - The migration applied twice produces no error and no change.

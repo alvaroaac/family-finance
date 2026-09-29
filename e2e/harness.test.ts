@@ -57,7 +57,10 @@ describe("isolated end-to-end harness", () => {
     const fake = await startFakeTelegram();
     const admin = createClient(api, serviceKey);
     const email = `bot-${randomUUID()}@example.test`;
-    const { error: allowError } = await admin.from("allowed_emails").insert({ email });
+    const { error: allowError } = await admin.from("allowed_emails").insert({
+      email,
+      household_id: "00000000-0000-0000-0000-000000000001",
+    });
     expect(allowError).toBeNull();
     const { userId } = await createTestUser(email, "Test-password-123!");
     const telegramId = Math.floor(Math.random() * 1_000_000_000) + 1_000_000_000;

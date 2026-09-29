@@ -366,4 +366,66 @@ decoy_ledger="$(docker exec "$container" psql -X -U postgres -d "$decoy_db" -Atc
   exit 1
 }
 
+# Exercise 0029 against the three possible pre-upgrade household counts.
+provision_template="family_finance_provision_template"
+docker exec "$container" createdb -U postgres "$provision_template"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$provision_template" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "0029_" ]] || continue
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$provision_template" -f - \
+    < "$migration" >/dev/null
+done
+for scenario in empty single ambiguous; do
+  db="family_finance_provision_$scenario"
+  docker exec "$container" createdb -U postgres -T "$provision_template" "$db"
+  if [[ "$scenario" != empty ]]; then
+    docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c \
+      "insert into households(id,name) values ('00000000-0000-0000-0000-000000000001','A');
+       insert into allowed_emails(email) values ('second@example.test');" >/dev/null
+  fi
+  if [[ "$scenario" == ambiguous ]]; then
+    docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c \
+      "insert into households(id,name) values ('00000000-0000-0000-0000-000000000002','B');" >/dev/null
+    if output="$(docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$db" -f - \
+      < "$repo_root/supabase/migrations/0029_multi_household_provisioning.sql" 2>&1)"; then
+      echo "ambiguous allowlist backfill unexpectedly succeeded" >&2; exit 1
+    fi
+    [[ "$output" == *"ambiguous"* ]] || { echo "$output" >&2; exit 1; }
+    state="$(docker exec "$container" psql -X -U postgres -d "$db" -Atc \
+      "select count(*) || '|' ||
+        (select count(*) from information_schema.columns where table_name='allowed_emails' and column_name='household_slug') || '|' ||
+        (select count(*) from information_schema.columns where table_name='allowed_emails' and column_name='household_id') || '|' ||
+        (select count(*) from information_schema.columns where table_name='households' and column_name='theme')
+       from allowed_emails")"
+    [[ "$state" == "2|1|0|0" ]] || { echo "ambiguous migration changed data or schema: $state" >&2; exit 1; }
+    continue
+  fi
+  output="$(docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$db" -f - \
+    < "$repo_root/supabase/migrations/0029_multi_household_provisioning.sql" 2>&1)"
+  if [[ "$scenario" == empty ]]; then
+    [[ "$output" == *"NOTICE:  allowed_emails: deleted 1 unassigned row(s)"* ]] || {
+      echo "empty-household deletion did not name the count: $output" >&2; exit 1;
+    }
+    docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -f - \
+      < "$repo_root/supabase/seed.sql" >/dev/null
+    state="$(docker exec "$container" psql -X -U postgres -d "$db" -Atc \
+      "select count(*) from allowed_emails where email='alvaro.a.a.a.c@gmail.com' and household_id='00000000-0000-0000-0000-000000000001'")"
+    [[ "$state" == 1 ]] || { echo "seed allowlist missing household id" >&2; exit 1; }
+  else
+    docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -f - \
+      < "$repo_root/packages/db/test/multi-household-provisioning-functional.sql" >/dev/null
+  fi
+  before="$(docker exec "$container" pg_dump -U postgres -d "$db" | \
+    sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$db" -f - \
+    < "$repo_root/supabase/migrations/0029_multi_household_provisioning.sql" >/dev/null
+  after="$(docker exec "$container" pg_dump -U postgres -d "$db" | \
+    sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+  [[ "$before" == "$after" ]] || { echo "0029 replay changed $scenario database" >&2; exit 1; }
+done
+
 echo "all migrations apply cleanly twice"

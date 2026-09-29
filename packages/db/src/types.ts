@@ -50,8 +50,18 @@ export type ObligationStatus = "active" | "ended" | "canceled";
 export type HouseholdRow = {
   id: string;
   name: string;
+  theme: {
+    base: string;
+    overrides?: Record<string, string>;
+    lockBase?: boolean;
+  };
   created_at: string;
   updated_at: string;
+};
+
+export type AllowedEmailRow = {
+  email: string;
+  household_id: string;
 };
 
 export type HouseholdMemberRow = {
@@ -698,6 +708,7 @@ export type Database = {
   public: {
     Tables: {
       households: TableDef<HouseholdRow, Partial<HouseholdRow>>;
+      allowed_emails: TableDef<AllowedEmailRow, AllowedEmailRow>;
       household_members: TableDef<
         HouseholdMemberRow,
         Partial<HouseholdMemberRow>
