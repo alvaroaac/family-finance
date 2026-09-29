@@ -1,0 +1,286 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap');
+    .esmeralda {
+      --ff-bg: #16352b; --ff-surface: #1e4133; --ff-surface-soft: #1a3a2e;
+      --ff-tint: rgba(212,175,106,0.14); --ff-ink: #f2ede0; --ff-ink-soft: rgba(242,237,224,0.66);
+      --ff-accent: #d4af6a; --ff-accent-hover: #e4c488; --ff-border: rgba(212,175,106,0.24);
+      --ff-on-accent: #16352b; --ff-positive: #93c7a1; --ff-positive-wash: rgba(147,199,161,0.13);
+      --ff-negative: #e08b63; --ff-negative-wash: rgba(224,139,99,0.13);
+      --ff-warn: #e0b662; --ff-warn-wash: rgba(224,182,98,0.15);
+    }
+    .salvia {
+      --ff-bg: #e8ede3; --ff-surface: #f7f9f3; --ff-surface-soft: #eff3ea;
+      --ff-tint: rgba(168,133,60,0.12); --ff-ink: #2e3a2a; --ff-ink-soft: #5f6b58;
+      --ff-accent: #a8853c; --ff-accent-hover: #c2a258; --ff-border: #cbd6c0;
+      --ff-on-accent: #ffffff; --ff-positive: #3e7d52; --ff-positive-wash: rgba(62,125,82,0.12);
+      --ff-negative: #b4552f; --ff-negative-wash: rgba(180,85,47,0.10);
+      --ff-warn: #9a7526; --ff-warn-wash: rgba(154,117,38,0.13);
+    }
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #d4af6a; text-decoration: none; } a:hover { color: #e4c488; }
+    .serif { font-family: "Playfair Display", Georgia, serif; font-weight: 600; }
+    .num { font-variant-numeric: tabular-nums; }
+    .kicker { font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--ff-accent); }
+    .h1 { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 36px; color: var(--ff-ink); margin: 10px 0 4px; }
+    .lead { font-family: Inter, sans-serif; font-weight: 300; font-size: 15px; color: var(--ff-ink-soft); margin: 0; }
+    .card { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 14px; padding: 24px; }
+    .h2 { font-family: "Playfair Display", Georgia, serif; font-weight: 600; font-size: 22px; color: var(--ff-ink); margin: 0; }
+    .note { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); }
+    .name { font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; color: var(--ff-ink); }
+    .sub { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); margin-top: 2px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; white-space: nowrap; }
+    .badge-warn { background: var(--ff-warn-wash); color: var(--ff-warn); border: 1px solid var(--ff-warn-wash); }
+    .badge-neg { background: var(--ff-negative-wash); color: var(--ff-negative); border: 1px solid var(--ff-negative-wash); }
+    .badge-pos { background: var(--ff-positive-wash); color: var(--ff-positive); border: 1px solid var(--ff-positive-wash); }
+    .badge-acc { background: var(--ff-tint); color: var(--ff-accent); border: 1px solid var(--ff-border); }
+    .badge-neu { background: transparent; color: var(--ff-ink-soft); border: 1px solid var(--ff-border); }
+    .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--ff-accent); color: var(--ff-on-accent); border: none; border-radius: 12px; padding: 11px 20px; font-family: Inter, sans-serif; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(20,14,8,0.14); cursor: pointer; white-space: nowrap; }
+    .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 12px; padding: 10px 20px; font-family: Inter, sans-serif; font-weight: 500; font-size: 14px; cursor: pointer; white-space: nowrap; }
+    .btn-ghost-sm { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--ff-ink); border: 1px solid var(--ff-border); border-radius: 9px; padding: 6px 11px; font-family: Inter, sans-serif; font-weight: 500; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .btn-link { background: transparent; color: var(--ff-accent); border: none; padding: 0; font-family: Inter, sans-serif; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .iconbtn { width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; color: var(--ff-ink-soft); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex-shrink: 0; }
+    .input { width: 100%; box-sizing: border-box; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 10px; padding: 11px 13px; color: var(--ff-ink); font-family: Inter, sans-serif; font-weight: 400; font-size: 14px; outline: none; }
+    .input-sm { width: 100%; box-sizing: border-box; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); border-radius: 9px; padding: 6px 9px; color: var(--ff-ink); font-family: Inter, sans-serif; font-weight: 400; font-size: 13px; outline: none; }
+    .placeholder { color: var(--ff-ink-soft); opacity: 0.7; }
+    .select { position: relative; display: block; width: 100%; }
+    .select .input { padding-right: 30px; cursor: pointer; }
+    .select .input-sm { padding-right: 24px; cursor: pointer; font-size: 12px; }
+    .caret { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); color: var(--ff-accent); font-size: 11px; pointer-events: none; }
+    .select .caret-sm { right: 9px; font-size: 10px; }
+    .sel-warn { border-color: var(--ff-warn) !important; color: var(--ff-warn) !important; font-style: italic; }
+    .check { width: 17px; height: 17px; flex-shrink: 0; border-radius: 5px; border: 1px solid var(--ff-border); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+    .check-on { background: var(--ff-accent); border-color: var(--ff-accent); color: var(--ff-on-accent); font-family: Inter, sans-serif; font-weight: 600; font-size: 11px; line-height: 1; }
+    .check-mixed { border-color: var(--ff-accent); color: var(--ff-accent); }
+    .check-off-dis { opacity: 0.4; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--ff-border); background: transparent; color: var(--ff-ink-soft); font-family: Inter, sans-serif; font-weight: 500; font-size: 12px; white-space: nowrap; cursor: pointer; }
+    .chip-on { background: var(--ff-accent); border-color: var(--ff-accent); color: var(--ff-on-accent); font-weight: 600; }
+    .chip-warn { border-color: var(--ff-warn); color: var(--ff-warn); }
+    .chip-count { font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0.85; }
+    .table { background: var(--ff-surface); border: 1px solid var(--ff-border); border-radius: 16px; overflow: hidden; }
+    .thead { display: grid; gap: 12px; padding: 12px 20px; background: var(--ff-surface-soft); font-family: Inter, sans-serif; font-weight: 600; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ff-ink-soft); }
+    .row { display: grid; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--ff-border); font-family: Inter, sans-serif; font-weight: 400; font-size: 13px; color: var(--ff-ink); align-items: center; }
+    .row-sel { background: var(--ff-tint); }
+    .row-off { opacity: 0.55; }
+    .scrollbox { position: relative; max-height: 560px; overflow-y: auto; }
+    .scrollbox-fade { position: sticky; bottom: 0; height: 28px; background: linear-gradient(to bottom, rgba(0,0,0,0), var(--ff-surface)); pointer-events: none; }
+    .tfoot { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--ff-border); background: var(--ff-surface-soft); }
+    .foot-note { font-family: Inter, sans-serif; font-weight: 400; font-size: 12px; color: var(--ff-ink-soft); }
+    .toolbar { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--ff-border); background: var(--ff-surface); position: sticky; top: 0; z-index: 2; }
+    .search { position: relative; flex: 1; min-width: 0; }
+    .search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--ff-ink-soft); }
+    .search .input { padding: 9px 12px 9px 34px; font-size: 13px; border-radius: 10px; }
+    .alert { border-radius: 14px; padding: 14px 16px; font-family: Inter, sans-serif; font-weight: 400; font-size: 13px; line-height: 1.5; color: var(--ff-ink); }
+    .alert-neg { background: var(--ff-negative-wash); border: 1px solid var(--ff-negative); }
+    .alert-warn { background: var(--ff-warn-wash); border: 1px solid var(--ff-warn); }
+    .alert-pos { background: var(--ff-positive-wash); border: 1px solid var(--ff-positive); }
+    .steps { display: flex; align-items: center; margin-top: 30px; max-width: 640px; }
+    .steps-line { flex: 1; height: 1px; background: var(--ff-border); margin: 0 14px; }
+    .steps-line-done { background: var(--ff-accent); }
+    .step { display: flex; align-items: center; gap: 10px; }
+    .dot { width: 32px; height: 32px; box-sizing: border-box; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: Inter, sans-serif; font-weight: 600; font-size: 14px; border: 1px solid var(--ff-border); color: var(--ff-ink-soft); }
+    .dot-done { background: var(--ff-accent); color: var(--ff-on-accent); border: none; }
+    .dot-cur { background: var(--ff-tint); border: 2px solid var(--ff-accent); color: var(--ff-accent); }
+    .step-label { font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; color: var(--ff-ink-soft); white-space: nowrap; }
+    .amount { font-family: Inter, sans-serif; font-weight: 500; font-size: 13px; color: var(--ff-ink); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .amount-neg { color: var(--ff-negative); }
+    .toggle { width: 30px; height: 18px; border-radius: 999px; background: var(--ff-accent); position: relative; flex-shrink: 0; }
+    .toggle::after { content: ""; position: absolute; top: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--ff-on-accent); }
+    .toggle-off { background: var(--ff-surface-soft); border: 1px solid var(--ff-border); box-sizing: border-box; }
+    .toggle-off::after { top: 1px; left: 1px; right: auto; background: var(--ff-ink-soft); }
+    .kbd { display: inline-block; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--ff-border); font-family: Inter, sans-serif; font-size: 10px; font-weight: 600; color: var(--ff-ink-soft); }
+    .track { height: 6px; border-radius: 999px; background: var(--ff-surface-soft); border: 1px solid var(--ff-border); overflow: hidden; }
+    .fill { height: 100%; border-radius: 999px; background: var(--ff-accent); }
+  </style>
+</helmet>
+<div class="{{themeClass}}" style="width: 1092px; min-height: 0; box-sizing: border-box; background: var(--ff-bg); padding: 48px 56px; color: var(--ff-ink);">
+<div style="max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+  <header>
+    <div class="kicker">Nossa casa · Importação</div>
+    <h1 class="h1">Dá uma olhada antes de gravar</h1>
+    <p class="lead">Nada entra sem a sua revisão — desmarca o que não for da casa.</p>
+  </header>
+  <div class="steps">
+    <div class="step"><span class="dot dot-done">✓</span><span class="step-label">Enviar arquivo</span></div>
+    <div class="steps-line steps-line-done"></div>
+    <div class="step"><span class="dot dot-cur">2</span><span class="step-label" style="color: var(--ff-ink);">Revisar</span></div>
+    <div class="steps-line"></div>
+    <div class="step"><span class="dot">3</span><span class="step-label">Confirmar</span></div>
+  </div>
+  <section class="card" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 24px;">
+    <div>
+      <h2 class="h2" style="font-size: 20px;">Fatura Nubank · setembro 2026</h2>
+      <div class="sub" style="margin-top: 4px;">148 lançamentos · 31 estabelecimentos · R$ 6.204,10 · 6 duplicatas já desmarcadas</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span class="badge badge-pos"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Rascunho salvo às 14:32</span>
+      <button class="btn-ghost-sm" type="button">Continuar depois</button>
+      <button class="btn-ghost-sm" type="button">Sugerir com Codex</button>
+    </div>
+  </section>
+  <!-- Queue: left = merchants pending, right = current merchant -->
+  <div style="display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start;">
+    <section class="card" style="padding: 0; overflow: hidden;">
+      <div style="padding: 16px 18px 12px; border-bottom: 1px solid var(--ff-border); display: flex; flex-direction: column; gap: 10px;">
+        <div class="h2" style="font-size: 16px;">Fila de categorização</div>
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <span class="note num">5 de 19 estabelecimentos</span>
+          <span class="note num">R$ 1.482,10 pendentes</span>
+        </div>
+        <div class="track"><div class="fill" style="width: 26%;"></div></div>
+        <div class="search" style="margin-top: 2px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input class="input" type="text" value="" placeholder="Buscar na fila…">
+        </div>
+      </div>
+      <div class="scrollbox" style="max-height: 420px;">
+        <div style="padding: 12px 18px; display: flex; align-items: center; gap: 10px; background: var(--ff-tint); border-left: 3px solid var(--ff-accent);">
+          <span style="flex: 1; min-width: 0;"><div class="name">IFOOD *IFD</div><div class="sub">7 lançamentos · R$ 312,40</div></span>
+          <span class="badge badge-warn" style="font-size: 10px; padding: 2px 8px;">agora</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">UBER *TRIP</div><div class="sub">5 lançamentos · R$ 148,90</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">MERCADOLIVRE*MERC</div><div class="sub">3 lançamentos · R$ 402,00</div></span>
+          <span class="badge badge-acc" style="font-size: 10px; padding: 2px 8px;">Codex</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">99APP *99</div><div class="sub">4 lançamentos · R$ 92,30</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">RAPPI*RAPPI BRASIL</div><div class="sub">2 lançamentos · R$ 71,80</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">SPOTIFY</div><div class="sub">1 lançamento · R$ 21,90</div></span>
+          <span class="badge badge-acc" style="font-size: 10px; padding: 2px 8px;">Codex</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">PET CENTER MARGIN</div><div class="sub">1 lançamento · R$ 88,00</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">LOJAS RENNER</div><div class="sub">1 lançamento · R$ 159,90</div></span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); opacity: 0.55; display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">PAG*SUPERMERCADO</div><div class="sub">Mercado · Semanal</div></span>
+          <span class="badge badge-pos" style="font-size: 10px; padding: 2px 8px;">feito</span>
+        </div>
+        <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); opacity: 0.55; display: flex; align-items: center; gap: 10px;">
+          <span style="flex: 1; min-width: 0;"><div class="name">POSTO SHELL VILA</div><div class="sub">Transporte · Combustível</div></span>
+          <span class="badge badge-pos" style="font-size: 10px; padding: 2px 8px;">feito</span>
+        </div>
+        <div class="scrollbox-fade"></div>
+      </div>
+      <div style="padding: 12px 18px; border-top: 1px solid var(--ff-border); display: flex; justify-content: space-between; align-items: center;">
+        <span class="note">Pular só adia. Volta no fim.</span>
+        <span class="kbd">J</span>
+      </div>
+    </section>
+
+    <section class="card" style="display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+        <span>
+          <div class="kicker" style="margin-bottom: 6px;">Estabelecimento 5 de 19</div>
+          <div class="serif" style="font-size: 26px; font-weight: 600; line-height: 1.15;">IFOOD *IFD</div>
+          <div class="note num" style="margin-top: 4px;">7 lançamentos · R$ 312,40 · 03/08 a 29/08</div>
+        </span>
+        <span class="badge badge-neu">sem histórico na casa</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="note" style="font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; font-size: 11px;">Categoria pra todos os 7</div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <button class="chip chip-on" type="button">Alimentação · Delivery <span class="chip-count" style="opacity: 0.7;">Codex</span></button>
+          <button class="chip" type="button">Alimentação · Restaurante</button>
+          <button class="chip" type="button">Mercado</button>
+          <button class="chip" type="button">Lazer</button>
+          <button class="chip" type="button">Casa</button>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 4px;">
+          <span class="select" style="flex: 1;"><input class="input" type="text" value="Alimentação" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+          <span class="select" style="flex: 1;"><input class="input" type="text" value="Delivery" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); margin-top: 2px;"><span class="toggle"></span>Lembrar pra próxima fatura desse estabelecimento</label>
+      </div>
+
+      <div style="border: 1px solid var(--ff-border); border-radius: 12px; overflow: hidden;">
+        <div class="thead" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 8px 14px;">
+          <span><span class="check check-on">✓</span></span><span>Dia</span><span>Descrição</span><span style="text-align: right;">Valor</span>
+        </div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px; border-top: none;"><span class="check check-on">✓</span><span class="num note">03/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 48,90</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">09/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 36,50</span></div>
+        <div class="row row-off" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check"></span><span class="num note">09/08</span><span style="display: flex; gap: 8px; align-items: center;"><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="badge badge-neg" style="font-size: 10px; padding: 2px 8px;">duplicata</span></span><span class="amount">R$ 36,50</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">14/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 62,00</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">18/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 41,30</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">22/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 55,70</span></div>
+        <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px; padding: 9px 14px;"><span class="check check-on">✓</span><span class="num note">29/08</span><span class="name" style="font-weight: 400;">IFOOD *IFD</span><span class="amount">R$ 68,00</span></div>
+      </div>
+      <div class="note">Desmarca uma linha pra ela não seguir o grupo.</div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 4px;">
+        <button class="btn-ghost" type="button">Pular <span class="kbd" style="margin-left: 6px;">J</span></button>
+        <span style="display: flex; gap: 10px; align-items: center;">
+          <button class="btn-ghost" type="button">‹ Anterior</button>
+          <button class="btn-primary" type="button">Aplicar e próximo → <span class="kbd" style="margin-left: 6px; border-color: rgba(0,0,0,0.25); color: inherit;">↵</span></button>
+        </span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Compact full list below the queue -->
+  <section class="table">
+    <div class="toolbar" style="border-radius: 16px 16px 0 0;">
+      <span class="h2" style="font-size: 15px;">Todos os lançamentos</span>
+      <span class="note num">148</span>
+      <span style="flex: 1;"></span>
+      <div class="search" style="width: 260px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <input class="input" type="text" value="" placeholder="Buscar por nome…">
+      </div>
+      <button class="chip" type="button">01 – 31 ago</button>
+      <button class="chip chip-warn" type="button">Sem categoria <span class="chip-count">23</span></button>
+    </div>
+    <div class="thead" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;">
+      <span><span class="check check-mixed">–</span></span><span>Dia</span><span>Descrição</span><span style="text-align: right;">Valor</span><span>Categoria</span><span>Subcategoria</span><span></span>
+    </div>
+    <div class="scrollbox" style="max-height: 300px;">
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px; border-top: none;"><span class="check check-on">✓</span><span class="num note">01/08</span><span><input class="input-sm" type="text" value="PAG*SUPERMERCADO" readonly></span><span class="amount">R$ 312,40</span><span class="select"><input class="input-sm" type="text" value="Mercado" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Semanal" readonly><span class="caret caret-sm">▼</span></span><span></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">02/08</span><span><input class="input-sm" type="text" value="UBER *TRIP" readonly></span><span class="amount">R$ 24,90</span><span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><button class="btn-link" type="button" style="font-size: 11px;">ir na fila ›</button></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px; background: var(--ff-tint);"><span class="check check-on">✓</span><span class="num note">03/08</span><span><input class="input-sm" type="text" value="IFOOD *IFD" readonly></span><span class="amount">R$ 48,90</span><span class="select"><input class="input-sm" type="text" value="Alimentação" readonly style="opacity: 0.7;"><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Delivery" readonly style="opacity: 0.7;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><span class="badge badge-acc" style="font-size: 10px; padding: 2px 8px;">na fila agora</span></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">04/08</span><span><input class="input-sm" type="text" value="POSTO SHELL VILA" readonly></span><span class="amount">R$ 200,00</span><span class="select"><input class="input-sm" type="text" value="Transporte" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Combustível" readonly><span class="caret caret-sm">▼</span></span><span></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">05/08</span><span><input class="input-sm" type="text" value="99APP *99" readonly></span><span class="amount">R$ 18,70</span><span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><button class="btn-link" type="button" style="font-size: 11px;">ir na fila ›</button></span></div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">07/08</span><span><input class="input-sm" type="text" value="DROGASIL 1201" readonly></span><span class="amount">R$ 44,20</span><span class="select"><input class="input-sm" type="text" value="Saúde" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Farmácia" readonly><span class="caret caret-sm">▼</span></span><span></span></div>
+      <div class="scrollbox-fade"></div>
+    </div>
+    <div class="tfoot" style="border-radius: 0 0 16px 16px;">
+      <span style="display: flex; align-items: center; gap: 14px;">
+        <span class="foot-note num">142 de 148 marcados · R$ 6.089,20</span>
+        <a href="#" style="font-family: Inter, sans-serif; font-weight: 600; font-size: 12px; color: var(--ff-warn);">14 na fila antes de gravar ›</a>
+      </span>
+      <span style="display: flex; gap: 10px; align-items: center;">
+        <span class="select" style="width: 200px;"><input class="input" type="text" value="Cartão Nubank ····4321" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+        <button class="btn-ghost" type="button">‹ Voltar</button>
+        <button class="btn-primary" type="button">Gravar 142 lançamentos</button>
+      </span>
+    </div>
+  </section>
+</div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["esmeralda","salvia"],"default":"esmeralda","section":"Tema"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.theme ?? 'esmeralda' };
+  }
+}
+</script>
+</body>
+</html>

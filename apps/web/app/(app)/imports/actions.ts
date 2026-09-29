@@ -203,6 +203,8 @@ export type PreviewState = {
   requestKey: string;
   previewToken: string;
   fileFingerprint: string;
+  /** Who is reviewing; scopes the browser-side draft to this account. */
+  draftOwner: { userId: string; householdId: string };
   normalizedFingerprint: string;
   parserVersion: string;
   snapshot: ImportPreviewSnapshot;
@@ -680,6 +682,7 @@ export async function previewImport(
       parserVersion,
       snapshot,
       preview,
+      draftOwner: { userId, householdId },
       categorizationPlan,
       priorDispositions,
       accounts: accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind })),

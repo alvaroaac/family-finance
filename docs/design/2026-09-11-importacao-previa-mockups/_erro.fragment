@@ -1,0 +1,31 @@
+<div class="{{themeClass}}" style="width: 1092px; min-height: 520px; box-sizing: border-box; background: var(--ff-bg); padding: 48px 56px; color: var(--ff-ink);">
+<div style="max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+  <div>
+    <div class="kicker" style="margin-bottom: 10px;">Nossa casa · Importação</div>
+    <div class="h1">Dá uma olhada antes de gravar</div>
+    <div class="lead">Nada entra sem a sua revisão — desmarca o que não for da casa.</div>
+  </div>
+
+  <!-- Error lives INSIDE the preview section, styled like every other alert, never above the header -->
+  <div class="alert alert-neg" style="display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px;">
+    <span style="width: 34px; height: 34px; border-radius: 50%; background: var(--ff-negative); color: #fff; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-family: Inter, sans-serif; font-weight: 600; font-size: 16px;">!</span>
+    <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+      <span class="name" style="font-size: 15px;">Não consegui comparar com o que já está no banco</span>
+      <span style="color: var(--ff-ink-soft);">Essa fatura tem 148 lançamentos e a consulta ficou longa demais pra passar de uma vez. A lista continua aqui pra você revisar; a gravação só é liberada quando a comparação funcionar.</span>
+      <span style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+        <button class="btn-primary" type="button" style="padding: 8px 16px; font-size: 13px;">Tentar novamente</button>
+        <button class="btn-link" type="button" style="font-size: 12px; color: var(--ff-ink-soft);">Detalhe técnico</button>
+      </span>
+      <span class="note" style="font-family: 'SF Mono', Menlo, monospace; font-size: 11px; opacity: 0.7; margin-top: 4px;">findImportItemClaims: URI too long (148 fingerprints em um só GET)</span>
+    </span>
+  </div>
+
+  <section class="table" style="opacity: 0.6;">
+    <div class="thead" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;">
+      <span><span class="check check-mixed">–</span></span><span>Dia</span><span>Descrição</span><span style="text-align: right;">Valor</span><span>Categoria</span><span>Subcategoria</span><span></span>
+    </div>
+    <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px; border-top: none;"><span class="check check-on">✓</span><span class="num note">01/08</span><span><input class="input-sm" type="text" value="PAG*SUPERMERCADO" readonly></span><span class="amount">R$ 312,40</span><span class="select"><input class="input-sm" type="text" value="Mercado" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="Semanal" readonly><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><span class="badge badge-neu" style="font-size: 10px; padding: 2px 8px;">sem comparar</span></span></div>
+    <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 100px 150px 150px 120px;"><span class="check check-on">✓</span><span class="num note">02/08</span><span><input class="input-sm" type="text" value="UBER *TRIP" readonly></span><span class="amount">R$ 24,90</span><span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span><span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span><span style="text-align: right;"><span class="badge badge-neu" style="font-size: 10px; padding: 2px 8px;">sem comparar</span></span></div>
+  </section>
+</div>
+</div>

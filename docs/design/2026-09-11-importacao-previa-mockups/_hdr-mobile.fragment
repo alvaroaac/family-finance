@@ -1,0 +1,19 @@
+  <header>
+    <div class="kicker" style="font-size: 10px;">Nossa casa · Importação</div>
+    <h1 class="h1" style="font-size: 28px; margin: 8px 0 4px;">Dá uma olhada antes de gravar</h1>
+    <p class="lead" style="font-size: 14px;">Nada entra sem a sua revisão.</p>
+  </header>
+  <div class="steps" style="margin-top: 18px;">
+    <div class="step"><span class="dot dot-done" style="width: 26px; height: 26px; font-size: 12px;">✓</span></div>
+    <div class="steps-line steps-line-done" style="margin: 0 8px;"></div>
+    <div class="step"><span class="dot dot-cur" style="width: 26px; height: 26px; font-size: 12px;">2</span><span class="step-label" style="color: var(--ff-ink); font-size: 12px;">Revisar</span></div>
+    <div class="steps-line" style="margin: 0 8px;"></div>
+    <div class="step"><span class="dot" style="width: 26px; height: 26px; font-size: 12px;">3</span></div>
+  </div>
+  <section class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+      <div class="name">Fatura Nubank · set/2026</div>
+      <span class="badge badge-pos" style="padding: 4px 9px;">salvo 14:32</span>
+    </div>
+    <div class="sub">148 lançamentos · 31 estabelecimentos · R$ 6.204,10</div>
+  </section>

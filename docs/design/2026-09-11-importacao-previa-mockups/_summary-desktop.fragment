@@ -1,0 +1,11 @@
+  <section class="card" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 24px;">
+    <div>
+      <h2 class="h2" style="font-size: 20px;">Fatura Nubank · setembro 2026</h2>
+      <div class="sub" style="margin-top: 4px;">148 lançamentos · 31 estabelecimentos · R$ 6.204,10 · 6 duplicatas já desmarcadas</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span class="badge badge-pos"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Rascunho salvo às 14:32</span>
+      <button class="btn-ghost-sm" type="button">Continuar depois</button>
+      <button class="btn-ghost-sm" type="button">Sugerir com Codex</button>
+    </div>
+  </section>

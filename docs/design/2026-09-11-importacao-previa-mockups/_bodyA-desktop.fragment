@@ -1,0 +1,201 @@
+<div class="{{themeClass}}" style="width: 1092px; min-height: 0; box-sizing: border-box; background: var(--ff-bg); padding: 48px 56px; color: var(--ff-ink);">
+<div style="max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+HDR
+SUMMARY
+  <section class="table">
+    <div class="toolbar">
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <input class="input" type="text" value="" placeholder="Buscar estabelecimento ou descrição…">
+      </div>
+      <button class="chip" type="button"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="3"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>01 – 31 ago</button>
+      <span style="width: 1px; height: 22px; background: var(--ff-border);"></span>
+      <button class="chip chip-on" type="button">Sem categoria <span class="chip-count">14</span></button>
+      <button class="chip" type="button">Todos <span class="chip-count">31</span></button>
+      <button class="chip" type="button">Duplicatas <span class="chip-count">6</span></button>
+      <button class="chip" type="button">Parcelas <span class="chip-count">9</span></button>
+      <span style="flex: 1;"></span>
+      <button class="btn-ghost-sm" type="button"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"></path><path d="M4 9h11a5 5 0 0 1 0 10h-3"></path></svg>Desfazer</button>
+    </div>
+    <div class="thead" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+      <span><span class="check check-mixed">–</span></span>
+      <span>Estabelecimento</span>
+      <span style="text-align: right;">Total</span>
+      <span>Categoria (vale pro grupo)</span>
+      <span>Subcategoria</span>
+      <span>Lembrar</span>
+      <span></span>
+    </div>
+    <div class="scrollbox">
+
+      <!-- Group: IFOOD, expanded, no category -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px; background: var(--ff-tint); border-top: none;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">IFOOD *IFD</div>
+          <div class="sub">7 lançamentos · 03 a 29 ago · <span class="badge badge-warn" style="padding: 2px 8px; font-size: 10px;">sem categoria</span></div>
+        </span>
+        <span class="amount">R$ 312,40</span>
+        <span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap; opacity: 0.45;"><span class="toggle toggle-off"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+      </div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 110px 320px 36px; padding: 9px 20px 9px 32px; background: var(--ff-surface-soft);">
+        <span class="check check-on" style="width: 15px; height: 15px; font-size: 10px;">✓</span>
+        <span class="num note">03/08</span>
+        <span class="note" style="color: var(--ff-ink);">IFOOD *IFD SAO PAULO BR</span>
+        <span class="amount" style="font-weight: 400;">R$ 48,90</span>
+        <span class="note" style="font-style: italic;">segue o grupo · <a href="#">mudar só esta</a></span>
+        <span></span>
+      </div>
+      <div class="row" style="grid-template-columns: 40px 56px minmax(0, 1fr) 110px 320px 36px; padding: 9px 20px 9px 32px; background: var(--ff-surface-soft);">
+        <span class="check check-on" style="width: 15px; height: 15px; font-size: 10px;">✓</span>
+        <span class="num note">09/08</span>
+        <span class="note" style="color: var(--ff-ink);">IFOOD *IFD SAO PAULO BR</span>
+        <span class="amount" style="font-weight: 400;">R$ 36,50</span>
+        <span class="note" style="font-style: italic;">segue o grupo · <a href="#">mudar só esta</a></span>
+        <span></span>
+      </div>
+      <div class="row row-off" style="grid-template-columns: 40px 56px minmax(0, 1fr) 110px 320px 36px; padding: 9px 20px 9px 32px; background: var(--ff-surface-soft);">
+        <span class="check" style="width: 15px; height: 15px;"></span>
+        <span class="num note">09/08</span>
+        <span class="note" style="color: var(--ff-ink);">IFOOD *IFD SAO PAULO BR</span>
+        <span class="amount" style="font-weight: 400;">R$ 36,50</span>
+        <span><span class="badge badge-neg" style="padding: 2px 8px; font-size: 10px;">duplicata provável</span></span>
+        <span></span>
+      </div>
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr); padding: 8px 20px 10px 32px; background: var(--ff-surface-soft);">
+        <span></span>
+        <span class="note"><a href="#">ver as outras 4 →</a></span>
+      </div>
+
+      <!-- Group: UBER, collapsed, no category -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">UBER *TRIP</div>
+          <div class="sub">5 lançamentos · 02 a 27 ago · <span class="badge badge-warn" style="padding: 2px 8px; font-size: 10px;">sem categoria</span></div>
+        </span>
+        <span class="amount">R$ 148,90</span>
+        <span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap; opacity: 0.45;"><span class="toggle toggle-off"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+
+      <!-- Group: MERCADOLIVRE, collapsed, suggestion -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">MERCADOLIVRE*MERC</div>
+          <div class="sub">3 lançamentos · 11 a 22 ago · <button class="btn-link" type="button" style="font-size: 11px;">usar Casa · Codex</button></div>
+        </span>
+        <span class="amount">R$ 402,00</span>
+        <span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap; opacity: 0.45;"><span class="toggle toggle-off"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+
+      <!-- Group: 99 -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">99APP *99</div>
+          <div class="sub">4 lançamentos · 05 a 30 ago · <span class="badge badge-warn" style="padding: 2px 8px; font-size: 10px;">sem categoria</span></div>
+        </span>
+        <span class="amount">R$ 92,30</span>
+        <span class="select"><input class="input-sm sel-warn" type="text" value="escolher…" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap; opacity: 0.45;"><span class="toggle toggle-off"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+
+      <!-- Group: PAG*SUPERMERCADO — categorized, learned -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">PAG*SUPERMERCADO</div>
+          <div class="sub">4 lançamentos · 01 a 28 ago · <span class="badge badge-neu" style="padding: 2px 8px; font-size: 10px;">antes: Mercado</span></div>
+        </span>
+        <span class="amount">R$ 1.126,30</span>
+        <span class="select"><input class="input-sm" type="text" value="Mercado" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="Semanal" readonly><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap;"><span class="toggle"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+
+      <!-- Single row: NETFLIX -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">NETFLIX.COM</div>
+          <div class="sub">1 lançamento · 15 ago</div>
+        </span>
+        <span class="amount">R$ 55,90</span>
+        <span class="select"><input class="input-sm" type="text" value="Assinaturas" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap;"><span class="toggle"></span></label>
+        <span></span>
+      </div>
+
+      <!-- Group: DROGASIL -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">DROGASIL 1201</div>
+          <div class="sub">2 lançamentos · 07 e 19 ago</div>
+        </span>
+        <span class="amount">R$ 89,70</span>
+        <span class="select"><input class="input-sm" type="text" value="Saúde" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="Farmácia" readonly><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap;"><span class="toggle"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+
+      <!-- Group: POSTO -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">POSTO SHELL VILA</div>
+          <div class="sub">3 lançamentos · 04 a 25 ago</div>
+        </span>
+        <span class="amount">R$ 620,00</span>
+        <span class="select"><input class="input-sm" type="text" value="Transporte" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="Combustível" readonly><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap;"><span class="toggle"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+
+      <!-- Group: AMAZON -->
+      <div class="row" style="grid-template-columns: 40px minmax(0, 1fr) 110px 170px 150px 96px 36px;">
+        <span class="check check-on">✓</span>
+        <span style="min-width: 0;">
+          <div class="name">AMAZON.COM.BR</div>
+          <div class="sub">2 lançamentos · 12 e 20 ago · <span class="badge badge-acc" style="padding: 2px 8px; font-size: 10px;">2/6</span></div>
+        </span>
+        <span class="amount">R$ 238,00</span>
+        <span class="select"><input class="input-sm" type="text" value="Casa" readonly><span class="caret caret-sm">▼</span></span>
+        <span class="select"><input class="input-sm" type="text" value="(nenhuma)" readonly style="opacity: 0.5;"><span class="caret caret-sm">▼</span></span>
+        <label style="display: flex; align-items: center; gap: 6px; font-family: Inter, sans-serif; font-size: 12px; color: var(--ff-ink-soft); white-space: nowrap;"><span class="toggle"></span></label>
+        <span class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></span>
+      </div>
+      <div class="scrollbox-fade"></div>
+    </div>
+
+    <div class="tfoot">
+      <span style="display: flex; align-items: center; gap: 14px;">
+        <span class="foot-note num">142 de 148 marcados · R$ 6.089,20</span>
+        <a href="#" style="font-family: Inter, sans-serif; font-weight: 600; font-size: 12px; color: var(--ff-warn);">3 pendências antes de gravar ›</a>
+      </span>
+      <span style="display: flex; gap: 10px; align-items: center;">
+        <span class="select" style="width: 200px;"><input class="input" type="text" value="Cartão Nubank ····4321" readonly style="padding: 9px 30px 9px 13px; font-size: 13px;"><span class="caret">▼</span></span>
+        <button class="btn-ghost" type="button">‹ Voltar</button>
+        <button class="btn-primary" type="button">Gravar 142 lançamentos</button>
+      </span>
+    </div>
+  </section>
+
+</div>
+</div>

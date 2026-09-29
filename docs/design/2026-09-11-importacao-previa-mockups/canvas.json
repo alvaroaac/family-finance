@@ -1,0 +1,116 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "A · Agrupar por estabelecimento · desktop",
+      "x": 0,
+      "y": 0,
+      "w": 1092,
+      "h": 1220
+    },
+    {
+      "file": "MobileA.dc.html",
+      "title": "A · Agrupar · mobile",
+      "x": 1200,
+      "y": 0,
+      "w": 390,
+      "h": 1150
+    },
+    {
+      "file": "DesktopB.dc.html",
+      "title": "B · Marcar + barra de ação · desktop",
+      "x": 0,
+      "y": 1360,
+      "w": 1092,
+      "h": 1170
+    },
+    {
+      "file": "MobileB.dc.html",
+      "title": "B · Marcar · mobile",
+      "x": 1200,
+      "y": 1360,
+      "w": 390,
+      "h": 1210
+    },
+    {
+      "file": "DesktopC.dc.html",
+      "title": "C · Fila de categorização · desktop",
+      "x": 0,
+      "y": 2700,
+      "w": 1092,
+      "h": 1650
+    },
+    {
+      "file": "MobileC.dc.html",
+      "title": "C · Fila · mobile",
+      "x": 1200,
+      "y": 2700,
+      "w": 390,
+      "h": 1290
+    },
+    {
+      "file": "GravarBloqueado.dc.html",
+      "title": "Comum · Gravar bloqueado · desktop",
+      "x": 0,
+      "y": 4480,
+      "w": 1092,
+      "h": 640
+    },
+    {
+      "file": "GravarBloqueadoMobile.dc.html",
+      "title": "Comum · Gravar bloqueado · mobile",
+      "x": 1200,
+      "y": 4480,
+      "w": 390,
+      "h": 760
+    },
+    {
+      "file": "ErroComparacoes.dc.html",
+      "title": "Comum · Erro de comparação",
+      "x": 0,
+      "y": 5360,
+      "w": 1092,
+      "h": 600
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 1700,
+      "y": 0,
+      "w": 300,
+      "text": "BRIEF · Prévia da importação\n\nProblemas: mesma compra repetida N vezes categorizada uma a uma; lista gigante, botão lá embaixo; Gravar desabilitado sem dizer por quê; erro cru em cima do cabeçalho.\n\nMelhorias comuns às 3 alternativas:\n• Lista em caixa de altura finita (560 desktop / 540 mobile), toolbar fixa no topo, sombra no fim.\n• Busca por nome + chip de período + chips de status (sem categoria / duplicatas / parcelas).\n• Rascunho salvo automaticamente (“salvo às 14:32” + “Continuar depois”); ao voltar, restaura.\n• Gravar sempre clicável: se falta algo, abre a lista de pendências com atalho pra cada uma.\n• “Ensinar” = categoria lembrada pro estabelecimento na próxima fatura.\n\nTema: tweak esmeralda/sálvia em cada prancheta."
+    },
+    {
+      "id": "nota-a",
+      "x": 1700,
+      "y": 640,
+      "w": 300,
+      "text": "A · AGRUPAR POR ESTABELECIMENTO\n\nA linha vira o estabelecimento; a categoria escolhida vale pro grupo. Expande pra ver ocorrências e desmarcar exceções. Coluna \"Lembrar\" (toggle no cabeçalho do grupo; no mobile, linha abaixo do select) grava a regra pra próxima fatura — liga sozinho ao escolher categoria.\n\n+ Zero clique extra: 7 iFoods = 1 escolha.\n+ Total por estabelecimento ajuda a decidir.\n− Compra única vira grupo de 1; tabela muda de forma em relação à atual.\n\nRecomendada quando o padrão é fatura de cartão com muita repetição (o caso relatado)."
+    },
+    {
+      "id": "nota-b",
+      "x": 1700,
+      "y": 1360,
+      "w": 300,
+      "text": "B · MARCAR + BARRA DE AÇÃO\n\nMantém a tabela plana atual. Marca linhas (à mão ou pelo menu “Marcar…”: sem categoria / mesmo nome / duplicatas / todas), e uma barra flutuante aplica categoria, tira da importação, desfaz.\n\n+ Padrão conhecido (Gmail), flexível pra qualquer critério.\n+ Menor mudança no código: substitui o card “Ações em lote”.\n− Dois passos (marcar, aplicar). Menu “Marcar…” precisa ser descoberto.\n\nChip “×7” na descrição marca as iguais num clique."
+    },
+    {
+      "id": "nota-c",
+      "x": 1700,
+      "y": 2700,
+      "w": 300,
+      "text": "C · FILA DE CATEGORIZAÇÃO\n\nFoco em um estabelecimento por vez: sugestão do Codex já selecionada, Enter aplica e avança, J pula. Progresso visível. Tabela completa fica compacta abaixo (desktop) ou atrás de um botão (mobile).\n\n+ Mais rápido quando há muitos pendentes; ótimo no celular.\n+ Zero rolagem pra achar o que falta.\n− Esconde a visão geral; quem quer editar uma linha específica precisa da tabela.\n\nPode combinar com A ou B como “modo foco”."
+    },
+    {
+      "id": "nota-comum",
+      "x": 1700,
+      "y": 4480,
+      "w": 300,
+      "text": "COMUM · GRAVAR BLOQUEADO E ERRO\n\nGravar nunca fica cinza. Clique com pendência abre o diálogo (desktop) / sheet (mobile) listando cada motivo com botão pra resolver. Mesmo diálogo no link “3 pendências ›” do rodapé.\n\nErro da comparação: causa real é findImportItemClaims fazendo .in(\"base_fingerprint\", [148 hashes]) num GET do PostgREST → URL estoura (“URI too long”). Correção: quebrar em lotes de ~50 fingerprints (ou RPC/POST). Na tela, o erro vira alerta dentro da seção, com “Tentar novamente” e o detalhe técnico escondido — nunca um <div> cru acima do cabeçalho."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

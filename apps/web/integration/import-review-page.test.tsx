@@ -79,6 +79,12 @@ function button(text: string): HTMLButtonElement {
 async function click(text: string) {
   await act(async () => button(text).click());
 }
+/** Gravar, accepting the soft "sem categoria" question when it comes up. */
+async function gravar() {
+  await click("Gravar");
+  if (openDialogText().includes("Gravar sem categoria?"))
+    await click("Gravar mesmo assim");
+}
 async function selectCard(value = CARD) {
   const select = container.querySelector<HTMLSelectElement>(
     'select[aria-label="Cartão de destino"]',
@@ -103,8 +109,22 @@ async function preview() {
   });
   expect(actions.preview).toHaveBeenCalledOnce();
 }
+function mockNativeDialog() {
+  // jsdom has no <dialog> implementation; mirror open/close on the attribute.
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute("open");
+    this.dispatchEvent(new Event("close"));
+  };
+}
+function openDialogText(): string {
+  return container.querySelector("dialog[open]")?.textContent ?? "";
+}
 beforeEach(() => {
   vi.clearAllMocks();
+  mockNativeDialog();
   actions.preview.mockResolvedValue(reviewPreview());
   actions.resolve.mockResolvedValue(resolved());
   actions.confirm.mockResolvedValue({
@@ -160,18 +180,18 @@ describe("import comparison decisions", () => {
       );
     }
     await click("Substituir por parcelamento");
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).not.toHaveBeenCalled();
     await click("Substituir por parcelamento");
     expect(confirm).toHaveBeenCalledTimes(2);
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm.mock.calls[0]![0].groups[0]).toMatchObject({
       replaceTransaction: { id: "flat", updatedAt: "2026-08-16T12:00:00Z" },
       purchasedOn: "2026-08-16",
     });
     actions.confirm.mockClear();
     await selectCard("other-card");
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain("Substituição selecionada");
   });
@@ -180,16 +200,16 @@ describe("import comparison decisions", () => {
     actions.resolve.mockReturnValue(pending.promise);
     await preview();
     await selectCard();
-    expect(button("Gravar").disabled).toBe(true);
-    await click("Gravar");
-    expect(actions.confirm).not.toHaveBeenCalled();
-    await act(async () => pending.resolve(resolved()));
     expect(button("Gravar").disabled).toBe(false);
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).not.toHaveBeenCalled();
-    expect(container.textContent).toContain(
-      "escolha manter ou importar mesmo assim",
-    );
+    expect(openDialogText()).toContain("Comparação com o banco ainda rodando");
+    await click("Fechar");
+    await act(async () => pending.resolve(resolved()));
+    await gravar();
+    expect(actions.confirm).not.toHaveBeenCalled();
+    expect(openDialogText()).toContain("Parcelamentos sem decisão");
+    expect(openDialogText()).not.toContain("ainda rodando");
   });
   it.each([false, true])(
     "keeps confirmation blocked after lookup failure (rejection=%s) and supports retry",
@@ -202,17 +222,24 @@ describe("import comparison decisions", () => {
         });
       await preview();
       await selectCard();
-      expect(button("Gravar").disabled).toBe(true);
-      expect(container.querySelector('[role="alert"]')).not.toBeNull();
-      await click("Tentar comparações novamente");
-      expect(button("Gravar").disabled).toBe(false);
+      const alert = container.querySelector(".ff-alert--negative");
+      expect(alert).not.toBeNull();
+      expect(alert!.getAttribute("role")).toBe("alert");
+      expect(alert!.textContent).toContain("Não consegui comparar");
+      await gravar();
+      expect(actions.confirm).not.toHaveBeenCalled();
+      expect(openDialogText()).toContain("Comparação com o banco falhou");
+      await click("Tentar de novo");
+      expect(container.querySelector("dialog[open]")).toBeNull();
+      expect(container.querySelector(".ff-alert--negative")).toBeNull();
+      expect(actions.resolve).toHaveBeenCalledTimes(2);
     },
   );
   it("links the explicitly kept purchase while submitting another selected item", async () => {
     await preview();
     await selectCard();
     await click("Manter o existente");
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).toHaveBeenCalledWith(
       expect.objectContaining({
         groups: [
@@ -230,7 +257,7 @@ describe("import comparison decisions", () => {
     await preview();
     await selectCard();
     await click("Importar mesmo assim");
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).toHaveBeenCalledWith(
       expect.objectContaining({
         groups: [
@@ -249,7 +276,7 @@ describe("import comparison decisions", () => {
       await preview();
       await selectCard();
       await click("Importar mesmo assim");
-      await click("Gravar");
+      await gravar();
       expect(actions.confirm).not.toHaveBeenCalled();
     },
   );
@@ -263,11 +290,14 @@ describe("import comparison decisions", () => {
     await selectCard();
     await selectCard("other-card");
     await act(async () => stale.resolve(resolved([], 0)));
-    expect(button("Gravar").disabled).toBe(true);
+    await gravar();
+    expect(actions.confirm).not.toHaveBeenCalled();
+    expect(openDialogText()).toContain("Comparação com o banco ainda rodando");
+    await click("Fechar");
     await act(async () => current.resolve(resolved()));
     await click("Manter o existente");
     await selectCard();
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).not.toHaveBeenCalled();
   });
   it("replaces bounded candidate pages without discarding the user's decision", async () => {
@@ -306,7 +336,7 @@ describe("import comparison decisions", () => {
     expect(container.querySelector(".ff-group__name")?.textContent).toBe(
       "Teclado 0",
     );
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).toHaveBeenCalledWith(
       expect.objectContaining({
         groups: [
@@ -326,11 +356,11 @@ describe("import comparison decisions", () => {
     vi.spyOn(window, "prompt").mockReturnValue("São compras diferentes");
     await preview();
     await selectCard();
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).not.toHaveBeenCalled();
     expect(container.textContent).toContain("mesma descrição");
     await click("Importar mesmo assim");
-    await click("Gravar");
+    await gravar();
     expect(actions.confirm).toHaveBeenCalledWith(
       expect.objectContaining({
         groups: [

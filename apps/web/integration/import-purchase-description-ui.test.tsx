@@ -36,8 +36,22 @@ const match = {
 };
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
+function mockNativeDialog() {
+  // jsdom has no <dialog> implementation; mirror open/close on the attribute.
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute("open");
+    this.dispatchEvent(new Event("close"));
+  };
+}
+function openDialogText(): string {
+  return container.querySelector("dialog[open]")?.textContent ?? "";
+}
 beforeEach(() => {
   vi.clearAllMocks();
+  mockNativeDialog();
   mocks.preview.mockResolvedValue({
     ok: true,
     requestKey: "preview",
@@ -119,14 +133,16 @@ it("shows pending comparison, not new, when the comparison request fails", async
   mocks.resolve.mockResolvedValue({ ok: false, message: "URI too long" });
   await openPreview();
   const badge = container.querySelector(".ff-group__head .ff-badge");
-  const summary = container.querySelector(".ff-table__foot-note strong");
   expect(badge).not.toBeNull();
-  expect(summary).not.toBeNull();
-  for (const label of [badge, summary]) {
-    expect(label!.textContent).toContain("comparação pendente");
-    expect(label!.textContent).not.toMatch(/\bnovos?\b/);
-  }
-  expect(button("Gravar importação").disabled).toBe(true);
+  expect(badge!.textContent).toContain("comparação pendente");
+  const alert = container.querySelector(".ff-alert--negative");
+  expect(alert!.textContent).toContain("Não consegui comparar");
+  expect(alert!.textContent).toContain("URI too long");
+  expect(button("Gravar importação").disabled).toBe(false);
+  await act(async () => button("Gravar importação").click());
+  expect(mocks.confirm).not.toHaveBeenCalled();
+  expect(openDialogText()).toContain("Ainda não dá pra gravar");
+  expect(openDialogText()).toContain("Comparação com o banco falhou");
 });
 
 it.each([1, 30])(
@@ -188,8 +204,9 @@ it.each([1, 30])(
     expect(
       container.querySelectorAll(".ff-import-updated").length,
     ).toBeGreaterThan(0);
+    // One highlighted merchant group per changed row (rows have distinct keys).
     expect(container.querySelectorAll(".ff-import-updated").length).toBe(
-      Math.min(count, 24) * 2,
+      Math.min(count, 24),
     );
     const rowSelects = [
       ...container.querySelectorAll<HTMLSelectElement>("select"),
@@ -198,10 +215,10 @@ it.each([1, 30])(
         !select.getAttribute("aria-label")?.includes("ação em lote") &&
         select.value === "market",
     );
-    expect(rowSelects.length).toBe(count * 2);
+    expect(rowSelects.length).toBe(count);
     await act(async () => button("Aplicar às linhas marcadas").click());
     expect(document.body.textContent).toContain("Nenhum lançamento alterado");
-    await act(async () => button("Desfazer última ação").click());
+    await act(async () => button("Desfazer").click());
     expect(rowSelects.every((select) => select.value === "")).toBe(true);
     expect(document.body.textContent).toContain("Última ação em lote desfeita");
     await select("Categoria para ação em lote", "other");
