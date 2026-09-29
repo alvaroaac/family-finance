@@ -5,9 +5,11 @@ Moves production from one household to several households on one deployment
 
 Nothing in this runbook was executed by the implementation session. Production
 was not touched. Every step lists its action, its verification and its rollback.
-Run the steps in order. The order matters in three places, each explained where
+Run the steps in order. The order matters in four places, each explained where
 it applies:
 
+- email autoconfirm is switched off **before** the migrations, so nobody can
+  obtain a confirmed account for an allowlisted address in between (step 2.0);
 - the database is migrated from the branch **before** the pull request is
   merged (step 2);
 - Google learns the new callback **before** the auth server starts sending it
@@ -76,7 +78,41 @@ select display_name from household_members
 where telegram_user_id is null and telegram_username is not null;
 ```
 
-Members with a numeric `telegram_user_id` keep working without action.
+Members with a numeric `telegram_user_id` keep working without action. Until
+this cutover a numeric id could be filled in by the member or back-filled from
+a typed username, so it is not proof of ownership. List the bindings and
+confirm each one with the member (the member sends any message to
+`@userinfobot` in Telegram to read their own id):
+
+```sql
+select display_name, telegram_user_id from household_members
+where telegram_user_id is not null;
+```
+
+For any id the member does not recognise, clear it after step 2 and let the
+member link again with a code:
+
+```sql
+update household_members
+set telegram_user_id = null, telegram_username = null
+where id = '<member id>';
+```
+
+Members whose account can sign in with a password. Membership should rest on
+a Google identity; a password identity on a member account means someone
+signed up by email for that address:
+
+```sql
+select u.email, u.email_confirmed_at, u.raw_app_meta_data->'providers' as providers
+from auth.users u
+join household_members m on m.user_id = u.id
+where exists (
+  select 1 from auth.identities i where i.user_id = u.id and i.provider = 'email'
+);
+```
+
+Expected: zero rows. For any row, ask the member whether they created it. If
+not, delete the email identity in Studio and sign out that user's sessions.
 
 Pending bot drafts are deleted by `0031` (the conversation table is re-keyed).
 Finish or cancel any draft in Telegram before the window.
@@ -113,13 +149,15 @@ The new web build does not run on the old schema (it selects
 the Vercel project deploys `main` automatically, merging before step 2 takes
 the existing household's site down until step 5 is finished.
 
-- Action: keep the pull request open until step 5. In Vercel, add the two
-  additive variables now, for Production: `ALLOWED_WEB_HOSTS` =
-  `<existing host>,family-finance.ondemandly.dev` and `NEXT_PUBLIC_SITE_URL` =
-  `https://family-finance.ondemandly.dev`. The current build ignores both.
-- Verification: the variables are listed in the project settings; the
+- Action: keep the pull request open until step 5. In Vercel, add one
+  variable now, for Production: `ALLOWED_WEB_HOSTS` =
+  `<existing host>,family-finance.ondemandly.dev`. The current build ignores
+  it. Do **not** change `NEXT_PUBLIC_SITE_URL` yet: the current build uses it
+  for the sign-in redirect, and the neutral host is not served before step 5.
+  Confirm it is set to the existing host.
+- Verification: the variable is listed in the project settings; the
   production site still works.
-- Rollback: remove the two variables.
+- Rollback: remove the variable.
 
 The reverse combination is safe: the current web build keeps working on the
 migrated schema between step 2 and step 5, with one exception. Its Telegram
@@ -165,6 +203,32 @@ window as migration `0031`. The old bot build cannot use the re-keyed
 `settle_card_bill` and `materialize_obligation_payment` as service role, which
 `0031` now rejects (they require an authenticated member). Between the
 migration and the redeploy the bot fails closed; keep that gap short.
+
+### 2.0 Switch off email autoconfirm
+
+Done first, on the current hostname. With autoconfirm, anyone can sign up
+with a password for an allowlisted address and receive a confirmed account,
+which the provisioning trigger turns into a membership. Migration `0032`
+provisions confirmed users only; that protects nothing while the auth server
+confirms every signup by itself.
+
+- Action: in the Supabase stack `.env` set `ENABLE_EMAIL_AUTOCONFIRM=false`,
+  then `docker compose up -d auth`. The email provider stays enabled, because
+  the isolation proof of step 6 signs in with passwords.
+- Verification: public signup yields no session and no confirmed user:
+
+  ```bash
+  curl -s -X POST https://<current supabase host>/auth/v1/signup \
+    -H "apikey: <anon key>" -H "Content-Type: application/json" \
+    -d '{"email":"signup-probe@example.com","password":"<throwaway>"}'
+  ```
+
+  Expected: an error, or a user object without `access_token` and with
+  `email_confirmed_at` empty. Delete the probe user in Studio. Then repeat
+  the stray-users and password-identity queries of step 0.1; both must still
+  be clean. Google sign-in on the existing site still works.
+
+- Rollback: restore the previous value and restart the auth service.
 
 ### 2.1 Stop the bot
 
@@ -260,54 +324,47 @@ The old hostname stays routed until step 5 is verified.
      - `API_EXTERNAL_URL` and `SUPABASE_PUBLIC_URL` become
        `https://supabase.family-finance.ondemandly.dev`;
      - `GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI` becomes
-       `https://supabase.family-finance.ondemandly.dev/auth/v1/callback`;
+       `https://supabase.family-finance.ondemandly.dev/auth/v1/callback`.
+       Confirm that the `auth` service in the compose file reads this
+       variable; the production compose file is not in the repository. If it
+       hardcodes or derives the value, change it there;
      - `SITE_URL` becomes `https://family-finance.ondemandly.dev`;
      - `ADDITIONAL_REDIRECT_URLS` lists the callback of every web hostname,
        for example
        `https://<existing host>/auth/callback,https://family-finance.ondemandly.dev/auth/callback`;
-     - `ENABLE_EMAIL_AUTOCONFIRM=false`. The email provider stays enabled,
-       because the isolation proof of step 6 signs in with passwords.
+     - `ENABLE_EMAIL_AUTOCONFIRM` stays `false` (step 2.0).
   4. `docker compose up -d` for the auth and Kong services.
 - Verification:
   - `curl https://supabase.family-finance.ondemandly.dev/auth/v1/health`
     answers 200, and the old hostname still answers;
   - a fresh Google sign-in on the existing site succeeds, and the Google
     consent URL carries `redirect_uri` with the **new** Supabase host;
-  - public signup yields no session:
-
-    ```bash
-    curl -s -X POST https://supabase.family-finance.ondemandly.dev/auth/v1/signup \
-      -H "apikey: <anon key>" -H "Content-Type: application/json" \
-      -d '{"email":"signup-probe@example.com","password":"<throwaway>"}'
-    ```
-
-    Expected: an error, or a user object without `access_token`. If a user
-    was created, delete it in Studio.
+  - the signup probe of step 2.0, sent to the new hostname, still yields no
+    session.
 
 - Rollback: restore the previous `.env` values and restart. The old route and
   the old Google redirect URI were never removed.
 
-Why autoconfirm matters: with autoconfirm, anyone could sign up with a
-password for an allowlisted address and be provisioned into that household.
-Migration `0032` provisions confirmed users only, and without autoconfirm a
-self-signup stays unconfirmed. Google sign-ins and users created by the
-operator are confirmed.
-
-Existing sessions end when the web app starts using the new Supabase URL,
-because the auth cookie name derives from the Supabase hostname. Members sign
-in again once. The owner accepted this.
+Existing sessions may end when the web app starts using the new Supabase
+URL. Members sign in again if asked. Sessions that survive are not a sign of
+a failed cutover. The owner accepted either outcome.
 
 ## 5. Vercel and merge
 
 - Action:
   - add the domain `family-finance.ondemandly.dev` to the same project;
   - env `NEXT_PUBLIC_SUPABASE_URL` = `https://supabase.family-finance.ondemandly.dev`;
-  - confirm `ALLOWED_WEB_HOSTS` and `NEXT_PUBLIC_SITE_URL` from step 0.4;
+  - confirm `ALLOWED_WEB_HOSTS` from step 0.4, and set
+    `NEXT_PUBLIC_SITE_URL` = `https://family-finance.ondemandly.dev`;
   - remove `AUTHORIZED_EMAILS` and `HOUSEHOLD_SLUG`;
   - merge the pull request and deploy `main` (automatic, or by hand if
     automatic deployment is off);
-  - update the VPS checkout to the merged `main`.
+  - update the VPS checkout to the merged `main`;
+  - bot: if `SUPABASE_URL` in `deploy/bot/.env` is the old public hostname,
+    set it to `https://supabase.family-finance.ondemandly.dev` and restart
+    the bot.
 - Verification:
+  - a linked member sends the bot a message and gets a normal reply;
   - sign in on the existing host with both existing accounts; each lands on
     `/dashboard` and sees the existing data;
   - sign in on the neutral host with an existing account; same household;
@@ -317,13 +374,14 @@ in again once. The owner accepted this.
   - each sign-in above showed the new Supabase host in the Google consent
     URL.
 - Rollback: promote the previous Vercel deployment and restore the previous
-  env values, including `NEXT_PUBLIC_SUPABASE_URL`. The previous build works
-  on the migrated schema (see 0.4), so the database does not need a rollback
-  for this step.
+  env values, including `NEXT_PUBLIC_SUPABASE_URL` and
+  `NEXT_PUBLIC_SITE_URL`. The previous build works on the migrated schema
+  (see 0.4), so the database does not need a rollback for this step. Restore
+  the bot's previous `SUPABASE_URL` if it was changed.
 
 Only after every verification above passed: remove the old Supabase route
 from the reverse proxy and the old redirect URI from the Google client. Then
-repeat one Google sign-in.
+repeat one Google sign-in and one bot message from a linked member.
 
 ## 6. rls-proof against production
 
@@ -408,3 +466,16 @@ Send before the first login:
   access it; encryption is planned (spec 2);
 - how to ask for export or deletion, and that deletion removes the household
   and everything in it.
+
+## 9. Removing a member later
+
+Membership belongs to the account, not to the email address. Removing an
+address from `allowed_emails` only stops future provisioning, and a member who
+changes their email keeps their membership. To revoke access:
+
+```sql
+update household_members set is_active = false where id = '<member id>';
+delete from allowed_emails where lower(email) = '<member email>';
+```
+
+The web app and the bot both refuse an inactive member on the next request.
