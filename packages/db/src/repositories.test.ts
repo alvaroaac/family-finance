@@ -1437,12 +1437,12 @@ describe("createCategory", () => {
       },
     } as unknown as AppSupabaseClient;
 
-    const row = await createCategory(client, "house-1", "Pets");
+    const row = await createCategory(client, "house-1", "Pets", "income");
 
     expect(captured).toEqual({
       household_id: "house-1",
       name: "Pets",
-      kind: "expense",
+      kind: "income",
       is_active: true,
     });
     expect(row.id).toBe("cat-new");

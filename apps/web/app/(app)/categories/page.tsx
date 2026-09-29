@@ -10,6 +10,7 @@ import {
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
+  Badge,
   Card,
   Field,
   Input,
@@ -17,6 +18,7 @@ import {
   Select,
   SubmitButton,
 } from "../../../components/ui";
+import { CategoryCreationPanel } from "./category-creation-panel";
 import {
   archiveCategoryAction,
   restoreCategoryAction,
@@ -47,7 +49,8 @@ type CategoriesData = {
  */
 async function loadData(): Promise<CategoriesData> {
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
@@ -87,6 +90,11 @@ function dotColor(index: number): string {
   return DOT_COLORS[index % DOT_COLORS.length] as string;
 }
 
+/** Older catalog rows predate `kind`; treat them as expenses during rollout. */
+function effectiveCategoryKind(category: CategoryRow): CategoryRow["kind"] {
+  return category.kind === "income" ? "income" : "expense";
+}
+
 /** "hortifrúti · padaria · 3 subcategorias" — per the Categorias mockup rows. */
 function subsSummary(subs: SubcategoryRow[]): string | null {
   if (subs.length === 0) {
@@ -105,7 +113,7 @@ export default async function CategoriesPage() {
   const activeCategories = categories.filter((c) => c.is_active);
   const archivedCategories = categories.filter((c) => !c.is_active);
   const subsByCategory = new Map<string, SubcategoryRow[]>();
-  for (const sub of subcategories) {
+  for (const sub of subcategories.filter((item) => item.is_active)) {
     const list = subsByCategory.get(sub.category_id) ?? [];
     list.push(sub);
     subsByCategory.set(sub.category_id, list);
@@ -122,14 +130,28 @@ export default async function CategoriesPage() {
       />
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--warn" style={{ marginTop: 20 }}>
+        <div
+          role="alert"
+          className="ff-alert ff-alert--warn"
+          style={{ marginTop: 20 }}
+        >
           Não foi possível carregar os dados do banco agora. Conecte o Supabase
           para gerenciar categorias. ({loadError})
         </div>
       ) : null}
 
+      {!loadError ? (
+        <CategoryCreationPanel
+          categories={activeCategories.map((category) => ({
+            id: category.id,
+            name: category.name,
+            kind: effectiveCategoryKind(category),
+          }))}
+        />
+      ) : null}
+
       {/* Active categories list with archive */}
-      <div className="ff-rows" style={{ marginTop: 26 }}>
+      <div className="ff-rows ff-category-list">
         {activeCategories.length === 0 ? (
           <p className="ff-muted">Nenhuma categoria ativa.</p>
         ) : (
@@ -137,14 +159,35 @@ export default async function CategoriesPage() {
             const summary = subsSummary(subsByCategory.get(c.id) ?? []);
             return (
               <div key={c.id} className="ff-catrow">
-                <span className="ff-dot" style={{ background: dotColor(index) }} />
+                <span
+                  className="ff-dot"
+                  style={{ background: dotColor(index) }}
+                />
                 <div className="ff-catrow__main">
-                  <div className="ff-catrow__name">{c.name}</div>
-                  {summary ? <div className="ff-catrow__subs">{summary}</div> : null}
+                  <div className="ff-catrow__titleline">
+                    <div className="ff-catrow__name">{c.name}</div>
+                    <Badge
+                      tone={
+                        effectiveCategoryKind(c) === "income"
+                          ? "positive"
+                          : "neutral"
+                      }
+                    >
+                      {effectiveCategoryKind(c) === "income"
+                        ? "Entrada"
+                        : "Despesa"}
+                    </Badge>
+                  </div>
+                  {summary ? (
+                    <div className="ff-catrow__subs">{summary}</div>
+                  ) : null}
                 </div>
                 <form action={archiveCategoryAction}>
                   <input type="hidden" name="categoryId" value={c.id} />
-                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Arquivando…">
+                  <SubmitButton
+                    className="ff-btn--ghost-sm"
+                    pendingLabel="Arquivando…"
+                  >
                     Arquivar
                   </SubmitButton>
                 </form>
@@ -222,7 +265,10 @@ export default async function CategoriesPage() {
                   </div>
                   <form action={restoreCategoryAction}>
                     <input type="hidden" name="categoryId" value={c.id} />
-                    <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Restaurando…">
+                    <SubmitButton
+                      className="ff-btn--ghost-sm"
+                      pendingLabel="Restaurando…"
+                    >
                       Restaurar
                     </SubmitButton>
                   </form>
@@ -313,8 +359,9 @@ export default async function CategoriesPage() {
                   >
                     <div className="ff-txrow__main">
                       <div className="ff-txrow__desc">
-                        descrição contém <code className="ff-code">{m.pattern}</code>{" "}
-                        → <strong>{target}</strong>
+                        descrição contém{" "}
+                        <code className="ff-code">{m.pattern}</code> →{" "}
+                        <strong>{target}</strong>
                       </div>
                       <div className="ff-txrow__meta">
                         confiança {Math.round(m.confidence * 100)}%
@@ -324,14 +371,20 @@ export default async function CategoriesPage() {
                     {m.is_active ? (
                       <form action={disableMemoryAction}>
                         <input type="hidden" name="memoryId" value={m.id} />
-                        <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Desativando…">
+                        <SubmitButton
+                          className="ff-btn--ghost-sm"
+                          pendingLabel="Desativando…"
+                        >
                           Desativar
                         </SubmitButton>
                       </form>
                     ) : (
                       <form action={enableMemoryAction}>
                         <input type="hidden" name="memoryId" value={m.id} />
-                        <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Ativando…">
+                        <SubmitButton
+                          className="ff-btn--ghost-sm"
+                          pendingLabel="Ativando…"
+                        >
                           Ativar
                         </SubmitButton>
                       </form>
