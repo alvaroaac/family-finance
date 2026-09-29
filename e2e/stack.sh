@@ -37,6 +37,8 @@ case "${1:-}" in
     else
       cd "$root"
       export E2E_HARNESS=1
+      export NEXT_PUBLIC_SITE_URL=http://localhost:3100
+      export ALLOWED_WEB_HOSTS=localhost:3100,127.0.0.1:3100
       pnpm --filter @family-finance/web build
       exec pnpm --filter @family-finance/web exec playwright test --config playwright.config.ts e2e/harness-smoke.spec.ts
     fi

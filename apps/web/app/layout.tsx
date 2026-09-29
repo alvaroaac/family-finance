@@ -26,8 +26,16 @@ const inter = Inter({
 });
 
 export const metadata = {
+  metadataBase: process.env.NEXT_PUBLIC_SITE_URL
+    ? new URL(process.env.NEXT_PUBLIC_SITE_URL)
+    : undefined,
   title: "Family Finance — Casa",
   description: "Workspace financeiro privado para a sua casa.",
+  openGraph: {
+    url: process.env.NEXT_PUBLIC_SITE_URL,
+    title: "Family Finance — Casa",
+    description: "Workspace financeiro privado para a sua casa.",
+  },
 };
 
 /**

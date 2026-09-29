@@ -80,10 +80,18 @@ vi.mock("../lib/supabase", () => ({
   },
 }));
 
+vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://family-finance.example.dev");
 const { default: RootLayout, metadata } = await import("../app/layout");
 const { default: AppLayout } = await import("../app/(app)/layout");
 const { default: LoginPage } = await import("../app/login/page");
 const { default: SettingsPage } = await import("../app/(app)/settings/page");
+
+it("uses the canonical site URL for metadata and Open Graph", () => {
+  expect(metadata.metadataBase?.origin).toBe(
+    "https://family-finance.example.dev",
+  );
+  expect(metadata.openGraph.url).toBe("https://family-finance.example.dev");
+});
 
 async function renderRoot(children: ReactNode = null): Promise<HTMLElement> {
   const html = renderToStaticMarkup(

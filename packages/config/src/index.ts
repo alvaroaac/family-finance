@@ -32,6 +32,8 @@ export type {
 export const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
+  ALLOWED_WEB_HOSTS: optionalNonEmptyString,
   // Bot-side Supabase URL (the bot container carries no NEXT_PUBLIC_* build
   // context); consumers fall back to NEXT_PUBLIC_SUPABASE_URL when unset.
   SUPABASE_URL: z.string().url().optional(),

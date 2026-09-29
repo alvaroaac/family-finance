@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 
 import { getAuthState } from "../../lib/auth";
+import { resolveSiteOrigin } from "../../lib/site-origin";
 
 export const metadata = {
   title: "Entrar — Casa",
@@ -15,13 +17,18 @@ async function signInWithGoogle(): Promise<void> {
   "use server";
   const { createServerSupabaseClient } = await import("../../lib/supabase");
   const supabase = await createServerSupabaseClient();
+  const requestHeaders = await headers();
+  const origin = resolveSiteOrigin({
+    host: requestHeaders.get("host"),
+    forwardedProto: requestHeaders.get("x-forwarded-proto"),
+  });
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
       // Supabase redirects back here with a `?code=`; the callback route
       // exchanges it for a session before forwarding to the dashboard.
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/auth/callback`,
+      redirectTo: `${origin}/auth/callback`,
     },
   });
 

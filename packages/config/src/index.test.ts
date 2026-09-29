@@ -115,3 +115,18 @@ describe("retired email gate", () => {
     expect(parsed).not.toHaveProperty("AUTHORIZED_EMAILS");
   });
 });
+
+describe("web host configuration", () => {
+  it("accepts an optional comma-separated host list", () => {
+    const env = {
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:56321",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_SITE_URL: "https://family-finance.example.dev",
+      ALLOWED_WEB_HOSTS: "casa.example.com,localhost:3100",
+    };
+    expect(getServerEnv(env)).toMatchObject(env);
+    expect(
+      getServerEnv({ ...env, ALLOWED_WEB_HOSTS: "" }).ALLOWED_WEB_HOSTS,
+    ).toBeUndefined();
+  });
+});
