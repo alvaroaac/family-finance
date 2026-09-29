@@ -391,7 +391,7 @@ wrong if a second household ever exists.
 **Revisit trigger:** Multi-household support — join `households` on the slug (needs a
 slug column on households) or drop the `household_slug` column.
 
-**Status:** resolved by migration `0029_multi_household_provisioning.sql` —
+**Status:** resolved (2026-09-29) by migration `0029_multi_household_provisioning.sql` —
 `allowed_emails.household_slug` was replaced by a required `household_id`, and
 both provisioning triggers use that household.
 
@@ -445,7 +445,7 @@ are now enforced for every write path, including service-role RPCs.
 **Impact:** The redesign spec offered two ways to read the 12-month horizon:
 option A (the change-only list that shipped) and option B, a grid of obligation
 rows × month columns. A picked A and B went to "Out of scope". The list answers
-"what changes next month?" well but cannot answer "which months does *this one*
+"what changes next month?" well but cannot answer "which months does _this one_
 obligation still hit?" without opening each month's `<details>` — B was the view
 that made a single template's future scannable.
 
@@ -602,6 +602,7 @@ behaviour, or the next a11y pass — port `payment-dialog.tsx` onto
 
 **Impact:** Three small drifts found in review of the redesign CSS, none
 user-visible on their own but each a wrong precedent to copy:
+
 - `.ff-dialog__close:focus-visible` (line ~451) indicates focus with
   `color` / `background` / `border-color` and `outline: none` — no ring. The
   convention elsewhere (e.g. `.ff-seg__item:focus-visible`) is a two-step
@@ -740,5 +741,75 @@ the phrasings tried so far.
 **Revisit trigger:** Third time a real user phrasing misses. Then break the
 sentence into tokens and match each component (verb / count / noun) with its
 own small regex independent of position, instead of one ordered pattern.
+
+**Status:** open
+
+## 2026-09-29: Tenant data is readable by the operator (no encryption at rest)
+
+**Area:** database, backups, bot AI providers
+
+**Impact:** Multi-tenancy isolates households from each other, not from the
+VPS/database owner. Amounts, descriptions and bot messages are plaintext in
+Postgres and in the nightly dumps, and message text/audio goes to third-party
+AI providers under the operator's keys.
+
+**Current workaround:** Disclosure to the tester before first login
+(`docs/runbooks/multi-tenancy-cutover.md`, step 8).
+
+**Revisit trigger:** Before a second external household, or before charging.
+Plan in `thoughts/features/multi-tenancy/spec-2-privacy-research.md`.
+
+**Status:** open
+
+## 2026-09-29: Root layout resolves auth state on every request
+
+**Area:** `apps/web/app/layout.tsx`
+
+**Impact:** The root layout calls `getAuthState()` to load the household theme,
+adding an auth round trip to every render, including `/login`.
+
+**Current workaround:** Acceptable at current traffic.
+
+**Revisit trigger:** Measurable latency on first paint — share the result with
+the `(app)` layout through one cached call.
+
+**Status:** open
+
+## 2026-09-29: Some pt-BR copy assumes a two-person household
+
+**Area:** `apps/web` and `apps/bot` copy (for example "Vale pros dois")
+
+**Impact:** Reads wrong for a household of one or three.
+
+**Current workaround:** None; wording only.
+
+**Revisit trigger:** First household that is not two people.
+
+**Status:** open
+
+## 2026-09-29: mvp-flow browser spec is outside the e2e harness
+
+**Area:** `apps/web/e2e/mvp-flow.spec.ts`, `e2e/stack.sh`
+
+**Impact:** `pnpm e2e:web` runs the harness smoke and multi-tenant specs only.
+The MVP flow spec still needs a manual Google session, so it is not run.
+
+**Current workaround:** The offline integration test covers the same story.
+
+**Revisit trigger:** Next change to the import or dashboard flow — move the
+spec onto the harness session helper.
+
+**Status:** open
+
+## 2026-09-29: Deploy templates still carry the first household's bot hostname
+
+**Area:** `deploy/bot/docker-compose.override.yml`, `deploy/caddy/Caddyfile`, `deploy/bot/.env.example`, `deploy/README.md`
+
+**Impact:** The bot hostname is on the first household's domain. No member sees
+it (only Telegram and the web server call it), but it is not neutral.
+
+**Current workaround:** Left unchanged so the cutover does not move the webhook.
+
+**Revisit trigger:** Moving the bot host, or onboarding beyond the beta tester.
 
 **Status:** open

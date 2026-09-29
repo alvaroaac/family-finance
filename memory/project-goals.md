@@ -2,7 +2,7 @@
 
 ## MVP Goal
 
-Build a private family finance MVP for Alvaro and Karol that makes it fast to register daily expenses, import historical data, improve categorization through real usage, and see a simple monthly household summary.
+Build a private family finance MVP that makes it fast to register daily expenses, import historical data, improve categorization through real usage, and see a simple monthly household summary.
 
 ## Primary User Experience
 
@@ -16,8 +16,8 @@ Build a private family finance MVP for Alvaro and Karol that makes it fast to re
 - Web app responsive on desktop and mobile.
 - Supabase Auth with Google login and an email allowlist.
 - Supabase Postgres with RLS.
-- Single household workspace: Casa.
-- Users: Alvaro and Karol.
+- Household workspaces isolated by RLS. Since 2026-09-29 one deployment serves
+  several households, created by the operator (no sign-up or admin UI).
 - Expenses and basic income.
 - Checking account, investment account, investment buckets, and simple credit cards.
 - Card purchases à vista or parcelado with generated installments.
@@ -30,7 +30,7 @@ Build a private family finance MVP for Alvaro and Karol that makes it fast to re
 
 - WhatsApp.
 - Native mobile app.
-- Multiple households.
+- Self-service household creation.
 - Public signup.
 - Advanced permissions.
 - Detailed investment portfolio tracking.
@@ -46,4 +46,3 @@ Build a private family finance MVP for Alvaro and Karol that makes it fast to re
 - A corrected category improves future suggestions.
 - A parcelado credit card purchase affects future monthly totals correctly.
 - The dashboard gives a useful month summary without manual spreadsheet work.
-

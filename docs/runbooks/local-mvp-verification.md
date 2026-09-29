@@ -108,10 +108,12 @@ Required keys (see `.env.example` for the full annotated list):
 - `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (server only)
 - Active `household_members` rows for the Google accounts used in verification
 - `NEXT_PUBLIC_SITE_URL` — e.g. `http://localhost:3000`
+- `ALLOWED_WEB_HOSTS` — e.g. `localhost:3000`
 
 Google OAuth is configured in the Supabase dashboard (Authentication >
-Providers > Google). Add the two allowlisted emails as members of the `Casa`
-household in `household_members` (mapping their `auth.users.id`).
+Providers > Google). Allowlist the Google accounts for a household with
+`scripts/create-household.mjs` (or insert into `allowed_emails` with the
+household's id); the membership row is provisioned on first sign-in.
 
 ---
 

@@ -34,7 +34,7 @@ Key points (see `.env.example` in this directory for the full list):
 - `JWT_SECRET` is generated once; `ANON_KEY` / `SERVICE_ROLE_KEY` are minted
   from it (use the tool at
   https://supabase.com/docs/guides/self-hosting/docker#generate-api-keys).
-- `API_EXTERNAL_URL` / `SUPABASE_PUBLIC_URL` = `https://supabase.alvaroekarol.com.br`
+- `API_EXTERNAL_URL` / `SUPABASE_PUBLIC_URL` = `https://supabase.family-finance.ondemandly.dev`
   (Caddy fronts Kong, see `deploy/caddy/Caddyfile`).
 - GoTrue Google OAuth mirrors the working local `supabase/config.toml`:
   external Google enabled, `skip_nonce_check = true`, client id/secret via env.
@@ -66,7 +66,7 @@ documented in the root [`deploy/README.md`](../README.md).
 
 - Postgres data lives in the compose `db` volume (`./volumes/db/data` in the
   official stack). Treat that path as the single source of truth — losing it
-  loses the household's data.
+  loses every household's data.
 - Nightly logical backup via cron (runs `pg_dump` inside the db container and
   keeps 14 days):
 

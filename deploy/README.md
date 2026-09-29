@@ -1,7 +1,10 @@
 # Deploy runbook — family-finance v1.0
 
+> Moving an existing single-household production to several households is a
+> separate procedure: [`docs/runbooks/multi-tenancy-cutover.md`](../docs/runbooks/multi-tenancy-cutover.md).
+
 Topology (spec §4): **web → Vercel**, **Supabase → self-host Docker on the
-VPS** behind Caddy at `supabase.alvaroekarol.com.br`, **bot → VPS container**
+VPS** behind Caddy at `supabase.family-finance.ondemandly.dev`, **bot → VPS container**
 behind the same Caddy at `bot.alvaroekarol.com.br`.
 
 Artifacts in this tree:
@@ -24,7 +27,7 @@ Follow [`supabase/README.md`](./supabase/README.md): clone the official
 [`supabase/.env.example`](./supabase/.env.example) (fresh secrets, public URLs,
 Google OAuth), `docker compose up -d`. Bring Caddy up with
 [`caddy/Caddyfile`](./caddy/Caddyfile) and confirm
-`https://supabase.alvaroekarol.com.br/auth/v1/health` answers.
+`https://supabase.family-finance.ondemandly.dev/auth/v1/health` answers.
 
 ## 2. Migrations
 
@@ -102,19 +105,29 @@ two- and three-argument payment calls via the current authorized implementation.
 must be applied and `status` must be clean BEFORE a new bot or web deploy
 starts.**
 
-## 3. Seed household members + allowlist
+## 3. Households, members + allowlist
 
-Membership is provisioned automatically on first login by migration 0009's
-trigger, driven by the `allowed_emails` table. Álvaro's email is seeded by the
-migration; **Karol's dotted-form Gmail must be added now** (it was not known at
-migration time):
+Membership is provisioned automatically on first login, driven by the
+`allowed_emails` table. Since migration `0029` every allowlist row names its
+household (`household_id`, required) and a user belongs to one household.
+
+Create a household with its allowlisted members (and optional theme):
+
+```bash
+DATABASE_URL=<postgres url> node scripts/create-household.mjs \
+  --name "<household name>" --email <google email> [--email <second email>] \
+  [--theme <path to theme json>]
+```
+
+To add a member to an existing household:
 
 ```sql
-insert into allowed_emails (email) values ('<karol-dotted-gmail>@gmail.com')
-on conflict (email) do nothing;
+insert into allowed_emails (email, household_id)
+values ('<google email>', '<household id>');
 ```
 
 Run via `docker exec -i supabase-db psql -U postgres -d postgres` on the VPS.
+There is no `AUTHORIZED_EMAILS` env any more; access is the membership row.
 
 ## 4. Verification gate — RLS proof (must pass 100%)
 
@@ -230,10 +243,10 @@ the bot. Set project root `apps/web`, then deploy only after the bot is healthy.
 ## 7. Google OAuth prod redirect
 
 In the Google Cloud console (same OAuth client as local), register
-`https://supabase.alvaroekarol.com.br/auth/v1/callback` as an authorized
-redirect URI and the Vercel URL as a JavaScript origin (details in
-`vercel.md`). Then log in on the Vercel app with both Google accounts and
-confirm each lands on the dashboard with a `household_members` row.
+`https://supabase.family-finance.ondemandly.dev/auth/v1/callback` as an authorized
+redirect URI and every web hostname as a JavaScript origin (details in
+`vercel.md`). Then log in with one Google account per household and confirm
+each lands on its own dashboard with a `household_members` row.
 
 ## 8. Register the Telegram webhook
 

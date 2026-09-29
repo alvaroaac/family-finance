@@ -1,6 +1,7 @@
 # Family Finance
 
-Private family finance MVP for Alvaro and Karol.
+Private household finance app. One deployment serves several households; each
+household's data is isolated by Postgres RLS.
 
 ## Structure
 
@@ -31,15 +32,16 @@ committed; the web build stays green with placeholder values.
 
 ### Environment variables
 
-| Variable                                                    | Purpose                                                              |
-| ----------------------------------------------------------- | -------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser/server Supabase clients.                                     |
-| `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`          | Server-only Supabase secrets (never exposed to the client).          |
-| `NEXT_PUBLIC_SITE_URL`                                      | Base URL used to build the Google OAuth redirect.                    |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`             | Bot API access + fail-closed webhook verification.                   |
-| `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL`), `OPENAI_API_KEY`   | Optional AI categorization fallback + voice transcription.           |
-| `IMPORT_PREVIEW_SIGNING_SECRET`                             | Signs transient import previews before confirmation.                 |
-| `IMPORT_SUGGESTION_URL`, `IMPORT_SUGGESTION_SHARED_SECRET`  | Authenticated web-to-bot import category suggestions.                |
+| Variable                                                    | Purpose                                                           |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser/server Supabase clients.                                  |
+| `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`          | Server-only Supabase secrets (never exposed to the client).       |
+| `NEXT_PUBLIC_SITE_URL`                                      | Canonical web origin: metadata and fallback for auth redirects.   |
+| `ALLOWED_WEB_HOSTS`                                         | Web hostnames allowed to keep auth redirects on the request host. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`             | Bot API access + fail-closed webhook verification.                |
+| `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL`), `OPENAI_API_KEY`   | Optional AI categorization fallback + voice transcription.        |
+| `IMPORT_PREVIEW_SIGNING_SECRET`                             | Signs transient import previews before confirmation.              |
+| `IMPORT_SUGGESTION_URL`, `IMPORT_SUGGESTION_SHARED_SECRET`  | Authenticated web-to-bot import category suggestions.             |
 
 ### Supabase setup
 
@@ -52,9 +54,10 @@ supabase db reset                    # apply supabase/migrations/* then seed.sql
 ```
 
 `supabase/migrations/0001_initial_schema.sql` enables RLS on every table and
-`supabase/seed.sql` seeds the single `Casa` household (no real financial data).
-Configure Google in the Supabase dashboard (Authentication > Providers > Google)
-and add the allowlisted emails as `household_members`. Migration details and the
+`supabase/seed.sql` seeds one `Casa` household (no real financial data).
+Configure Google in the Supabase dashboard (Authentication > Providers > Google).
+Create further households and their allowlisted members with
+`DATABASE_URL=... node scripts/create-household.mjs --name <name> --email <email>`. Migration details and the
 local CLI blocker are in
 [`docs/decisions/0002-rls-and-household-isolation.md`](docs/decisions/0002-rls-and-household-isolation.md).
 
@@ -80,12 +83,25 @@ never persisted). AI categorization fallback needs `ANTHROPIC_API_KEY`.
 - Deploy `apps/web` as the Vercel project (root `apps/web`); Turborepo builds the
   shared packages it depends on.
 - Set every variable from the table above in Vercel project settings. Use the
-  production Supabase URL/keys and set `NEXT_PUBLIC_SITE_URL` to the deployed URL
-  (and add it to Supabase Auth's redirect allowlist + the Google OAuth client).
+  production Supabase URL/keys, set `NEXT_PUBLIC_SITE_URL` to the canonical URL
+  and `ALLOWED_WEB_HOSTS` to every hostname (and add each to Supabase Auth's
+  redirect allowlist + the Google OAuth client).
 - The web build does not require secrets to compile, but the running app needs
   real Supabase credentials and active household memberships to authenticate members.
 - Point the Telegram webhook at the deployed host (see above). Configure the bot
   runtime (`apps/bot`) with the same Supabase + Telegram + AI variables.
+
+### Multi-tenant end-to-end harness
+
+An isolated Supabase stack (ports 5632x) plus the real bot and a production web
+build prove isolation between two households:
+
+```sh
+pnpm e2e:up && pnpm e2e:bot && pnpm e2e:web; pnpm e2e:down
+```
+
+The production cutover is in
+[`docs/runbooks/multi-tenancy-cutover.md`](docs/runbooks/multi-tenancy-cutover.md).
 
 ### Verifying the whole MVP locally
 
