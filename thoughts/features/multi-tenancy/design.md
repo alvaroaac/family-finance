@@ -104,9 +104,12 @@ existing trigger.
 
 ### Identity resolution
 
-- Resolution stays as it is today: `telegram_user_id`, then `telegram_username` with
-  back-fill. Both columns are already unique across all households, so one Telegram
-  account maps to at most one member.
+- Resolution is by `telegram_user_id` only. The column is unique across all
+  households, so one Telegram account maps to at most one member.
+- Amended after the pull request review (migration `0032`): a member links
+  Telegram with a one-time code generated in Settings and sent to the bot as
+  `/vincular CODE`. Matching by `telegram_username` was removed, because a member
+  could type another person's identity and take over their bot access.
 - Resolution moves behind a narrow `SECURITY DEFINER` function that returns only
   `household_id`, `user_id` and `display_name` for the given Telegram identity. It is
   the only cross-household read the bot can perform.

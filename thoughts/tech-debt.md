@@ -761,32 +761,6 @@ Plan in `thoughts/features/multi-tenancy/spec-2-privacy-research.md`.
 
 **Status:** open
 
-## 2026-09-29: Root layout resolves auth state on every request
-
-**Area:** `apps/web/app/layout.tsx`
-
-**Impact:** The root layout calls `getAuthState()` to load the household theme,
-adding an auth round trip to every render, including `/login`.
-
-**Current workaround:** Acceptable at current traffic.
-
-**Revisit trigger:** Measurable latency on first paint — share the result with
-the `(app)` layout through one cached call.
-
-**Status:** open
-
-## 2026-09-29: Some pt-BR copy assumes a two-person household
-
-**Area:** `apps/web` and `apps/bot` copy (for example "Vale pros dois")
-
-**Impact:** Reads wrong for a household of one or three.
-
-**Current workaround:** None; wording only.
-
-**Revisit trigger:** First household that is not two people.
-
-**Status:** open
-
 ## 2026-09-29: mvp-flow browser spec is outside the e2e harness
 
 **Area:** `apps/web/e2e/mvp-flow.spec.ts`, `e2e/stack.sh`
@@ -811,5 +785,34 @@ it (only Telegram and the web server call it), but it is not neutral.
 **Current workaround:** Left unchanged so the cutover does not move the webhook.
 
 **Revisit trigger:** Moving the bot host, or onboarding beyond the beta tester.
+
+**Status:** open
+
+## 2026-09-29: `confirm_import_v2` keeps a service-role branch
+
+**Area:** `supabase/migrations` (`confirm_import_v2`)
+
+**Impact:** The function still accepts a service-role caller without a member
+identity. Nothing calls it that way since the bot acts as the resolved member,
+so the branch is an unused path around the membership check.
+
+**Current workaround:** `service_role` is held only by the bot and operator
+scripts; members cannot reach the branch.
+
+**Revisit trigger:** Next change to `confirm_import_v2` — drop the branch in
+the same migration.
+
+**Status:** open
+
+## 2026-09-29: `household_members.telegram_username` is unused
+
+**Area:** `supabase/migrations/0032_verified_identity_binding.sql`, `packages/db`
+
+**Impact:** Linking is by one-time code and resolution by numeric id. The
+column stays in the schema and types with no reader.
+
+**Current workaround:** None needed; the column is always null for new links.
+
+**Revisit trigger:** Next migration touching `household_members`.
 
 **Status:** open
