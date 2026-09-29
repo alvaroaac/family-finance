@@ -37,6 +37,7 @@ export const envSchema = z.object({
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  TELEGRAM_API_BASE_URL: z.string().url().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
   // AI providers (all optional so builds compile without secrets):
   // - ANTHROPIC_API_KEY powers the default LLM text-interpretation provider

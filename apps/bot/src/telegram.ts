@@ -239,12 +239,17 @@ export type TelegramClient = {
   editMessageReplyMarkup(chatId: string, messageId: number): Promise<void>;
 };
 
+/** Telegram API origin; overridable so end-to-end tests can point the bot at a fake. */
+export function telegramApiBaseUrl(): string {
+  return process.env.TELEGRAM_API_BASE_URL ?? "https://api.telegram.org";
+}
+
 /**
  * Real Bot API client. Constructed only when a token is configured; never used
  * by unit tests (which pass a mock). Uses the global `fetch` (Node 22).
  */
 export function createHttpTelegramClient(botToken: string): TelegramClient {
-  const base = `https://api.telegram.org/bot${botToken}`;
+  const base = `${telegramApiBaseUrl()}/bot${botToken}`;
 
   async function call(
     method: string,
@@ -340,7 +345,7 @@ export async function fetchWebhookAllowedUpdates(
 ): Promise<string[] | undefined> {
   try {
     const response = await fetch(
-      `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
+      `${telegramApiBaseUrl()}/bot${botToken}/getWebhookInfo`,
     );
     if (!response.ok) {
       return undefined;
