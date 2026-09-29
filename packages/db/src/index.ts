@@ -288,6 +288,7 @@ export {
   listHouseholdMembers,
   updateHouseholdMember,
   updateInvestmentBucketBalance,
+  BUCKET_USER_ERRORS,
   findLastBotInteraction,
   // Bot identity + persistent conversations (v1.0 Task 8).
   resolveTelegramMember,

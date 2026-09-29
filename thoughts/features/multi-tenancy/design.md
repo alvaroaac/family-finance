@@ -119,7 +119,8 @@ existing trigger.
 - After resolution the bot creates a database client that acts as the resolved user,
   using a short-lived token signed with the project's JWT secret. All business reads
   and writes go through that client, so RLS applies.
-- The service-role client remains only for: identity resolution, the import
+- The service-role client remains only for: identity resolution, redeeming and
+  discarding Telegram link codes, the import
   suggestion nonce and AI usage functions, and the conversation store.
 - RPCs that currently accept a null `auth.uid()` for the service-role bot are
   tightened to require a member once the bot no longer calls them that way.

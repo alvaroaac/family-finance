@@ -7,6 +7,7 @@ import {
   renameInvestmentBucket,
   updateInvestmentBucketBalance,
   deleteInvestmentBucket,
+  BUCKET_USER_ERRORS,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -53,12 +54,6 @@ export type BucketActionResult = {
   message: string;
 };
 
-const USER_FACING_BUCKET_ERRORS = new Set([
-  "Informe um nome para o objetivo.",
-  "Já existe um objetivo com esse nome.",
-  "Só é possível excluir um objetivo com saldo zerado.",
-]);
-
 /** Run a bucket change, revalidate on success, and report the outcome. */
 async function runBucketAction(
   change: () => Promise<unknown>,
@@ -71,7 +66,7 @@ async function runBucketAction(
     return {
       ok: false,
       message:
-        error instanceof Error && USER_FACING_BUCKET_ERRORS.has(error.message)
+        error instanceof Error && BUCKET_USER_ERRORS.includes(error.message)
           ? error.message
           : "Não deu pra salvar a caixinha agora. Tenta de novo em instantes.",
     };

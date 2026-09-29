@@ -1449,6 +1449,13 @@ const BUCKET_SLUG_TAKEN = "Já existe um objetivo com esse nome.";
 const BUCKET_BALANCE_NOT_ZERO =
   "Só é possível excluir um objetivo com saldo zerado.";
 
+/** Bucket errors written for the household; callers may show them as they are. */
+export const BUCKET_USER_ERRORS: readonly string[] = [
+  BUCKET_NAME_REQUIRED,
+  BUCKET_SLUG_TAKEN,
+  BUCKET_BALANCE_NOT_ZERO,
+];
+
 /** Postgres `unique_violation`, surfaced by PostgREST as the error code. */
 const UNIQUE_VIOLATION = "23505";
 

@@ -12,6 +12,9 @@ declare
   a_card uuid := 'a0000000-0000-0000-0000-000000000004';
   a_group uuid := 'a0000000-0000-0000-0000-000000000005';
   a_obligation uuid := 'a0000000-0000-0000-0000-000000000006';
+  a_batch uuid := 'a0000000-0000-0000-0000-000000000007';
+  a_imported uuid := 'a0000000-0000-0000-0000-000000000008';
+  a_replaced uuid := 'a0000000-0000-0000-0000-000000000009';
 begin
   insert into households (id, name) values (a, 'To delete'), (b, 'To keep');
   insert into allowed_emails (email, household_id) values
@@ -54,6 +57,45 @@ begin
             a_account, a_obligation, '2026-09-01', a_user);
   insert into investment_buckets (household_id, slug, name, balance_cents)
     values (a, 'goal_a', 'Goal A', 100), (b, 'goal_b', 'Goal B', 200);
+  -- Import records reference batches, transactions and installment groups
+  -- with "on delete restrict", which is the case a cascade can trip on.
+  insert into import_batches (id, household_id, source, created_by_user_id)
+    values (a_batch, a, 'nubank_csv', a_user);
+  insert into transactions
+    (id, household_id, kind, amount_cents, occurred_on, description,
+     account_id, created_by_user_id)
+    values (a_imported, a, 'expense', 600, '2026-09-04', 'Imported purchase',
+            a_account, a_user);
+  insert into import_rows (household_id, import_batch_id, transaction_id)
+    values (a, a_batch, a_imported);
+  insert into import_item_claims
+    (household_id, source, fingerprint_version, base_fingerprint,
+     occurrence_no, artifact_kind, import_batch_id, transaction_id)
+    values (a, 'nubank_csv', 1, repeat('a', 64), 1, 'transaction',
+            a_batch, a_imported);
+  insert into import_transaction_replacements
+    (original_transaction_id, household_id, import_batch_id,
+     installment_group_id, original_record, replaced_by)
+    values (a_replaced, a, a_batch, a_group, '{}'::jsonb, a_user);
+end $$;
+
+create temporary table counts_before on commit drop as
+  select c.table_name::text, 0::bigint as kept_rows
+  from information_schema.columns c
+  join information_schema.tables t using (table_schema, table_name)
+  where c.table_schema = 'public' and c.column_name = 'household_id'
+    and t.table_type = 'BASE TABLE';
+
+do $$
+declare
+  scoped record;
+begin
+  for scoped in select table_name from counts_before loop
+    execute format(
+      'update counts_before set kept_rows = (select count(*) from %I where household_id = $1) where table_name = $2',
+      scoped.table_name)
+      using 'b0000000-0000-0000-0000-000000000001'::uuid, scoped.table_name;
+  end loop;
 end $$;
 
 \set household_id 'a0000000-0000-0000-0000-000000000001'
@@ -61,28 +103,28 @@ delete from households where id = :'household_id';
 
 do $$
 declare
-  table_name text;
+  scoped record;
   count_a bigint;
   count_b bigint;
-  expected_b bigint;
 begin
-  for table_name in select unnest(array[
-    'households', 'allowed_emails', 'household_members', 'accounts',
-    'credit_cards', 'transactions', 'installment_groups', 'installments',
-    'obligations', 'investment_buckets'
-  ]) loop
-    execute format('select count(*) from %I where %I = $1', table_name,
-      case when table_name = 'households' then 'id' else 'household_id' end)
+  if exists (select 1 from households
+             where id = 'a0000000-0000-0000-0000-000000000001') then
+    raise exception 'household A was not deleted';
+  end if;
+  if not exists (select 1 from households
+                 where id = 'b0000000-0000-0000-0000-000000000001') then
+    raise exception 'household B was deleted';
+  end if;
+  for scoped in select table_name, kept_rows from counts_before loop
+    execute format('select count(*) from %I where household_id = $1',
+      scoped.table_name)
       into count_a using 'a0000000-0000-0000-0000-000000000001'::uuid;
-    execute format('select count(*) from %I where %I = $1', table_name,
-      case when table_name = 'households' then 'id' else 'household_id' end)
+    execute format('select count(*) from %I where household_id = $1',
+      scoped.table_name)
       into count_b using 'b0000000-0000-0000-0000-000000000001'::uuid;
-    expected_b := case when table_name in
-      ('credit_cards', 'installment_groups', 'installments', 'obligations')
-      then 0 else 1 end;
-    if count_a <> 0 or count_b <> expected_b then
-      raise exception '% deletion/isolation failed: A %, B %',
-        table_name, count_a, count_b;
+    if count_a <> 0 or count_b <> scoped.kept_rows then
+      raise exception '% deletion/isolation failed: A %, B % (expected %)',
+        scoped.table_name, count_a, count_b, scoped.kept_rows;
     end if;
   end loop;
 end $$;

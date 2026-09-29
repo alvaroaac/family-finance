@@ -150,6 +150,32 @@ Fable 5.1 (primary): code mergeable, runbook not ready. Findings:
 | R5    | Signup probe may leave a user even on error                            | Fixed in the runbook                                                                                                        |
 | D1–D4 | Design document and wording behind the code                            | Fixed                                                                                                                       |
 
+### Pull request review, round 4
+
+GPT-6 Astra (Codex, adversarial, cold read): no code finding in any of the
+eight categories. One runbook finding.
+
+| Id  | Finding                                                                     | Disposition                                                                              |
+| --- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| A1  | Password audit missed a password added to an account with no email identity | Fixed in the runbook: the audit reads `auth.users.encrypted_password` and the identities |
+
+Fable 5.1 (primary): code mergeable, runbook ready with conditions. No major
+finding.
+
+| Id  | Finding                                                                  | Disposition                                                                                          |
+| --- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| C1  | Bucket messages shown to the user were duplicated in the web action      | Fixed: `BUCKET_USER_ERRORS` exported by the db package                                               |
+| C2  | Settings actions caught the sign-in redirect and reported a save failure | Fixed: the session check runs before the `try`; tested for the three actions                         |
+| C3  | Household deletion test skipped the import tables                        | Fixed: import records seeded, and every table with `household_id` is checked. The plain delete works |
+| R1  | Clearing the password with `null` depends on the auth server version     | Fixed in the runbook: read what a Google-only account holds and write the same value                 |
+| R2  | Step 0.1 was titled read-only but writes before the backup               | Fixed in the runbook: retitled, logical dump before the first write                                  |
+| R3  | Ending sessions in Studio was not verified                               | Fixed in the runbook: SQL given, with the note that issued access tokens last until they expire      |
+| R4  | The refused password sign-in may answer `invalid_grant`                  | Fixed in the runbook: both codes accepted                                                            |
+| R5  | The `*.vercel.app` check did not state the expected result               | Fixed in the runbook                                                                                 |
+| D1  | Design document omitted link code redemption from the service-role list  | Fixed                                                                                                |
+
+Both reviewers report no open code finding. The review loop is closed.
+
 ## End-to-end evidence (local, 2026-09-29)
 
 Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:category-migration`.
@@ -162,7 +188,7 @@ Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:
 | categorization                                                          | 38 passed          |
 | db                                                                      | 110 passed         |
 | bot                                                                     | 1977 passed        |
-| web                                                                     | 520 passed         |
+| web                                                                     | 523 passed         |
 | `pnpm e2e:bot` (harness, create-household, rls-proof, bot multi-tenant) | 21 passed, 4 files |
 | `pnpm e2e:web` (Playwright: harness smoke, multi-tenant)                | 8 passed           |
 | `node deploy/checks/rls-proof.mjs` on the e2e stack                     | 402/402 PASS       |

@@ -27,9 +27,16 @@ Hostnames used below:
 
 ## 0. Before the window
 
-### 0.1 Prechecks (read-only, production database)
+### 0.1 Prechecks and remediation (production database)
 
 Run with `docker exec -i supabase-db psql -U postgres -d postgres` on the VPS.
+The queries are read-only. The remediations they lead to write to the
+database and come before the backup of step 1, so take a logical dump before
+the first write:
+
+```bash
+docker exec supabase-db pg_dump -U postgres -d postgres | gzip > /var/backups/family-finance/pre-remediation-$(date +%F-%H%M).sql.gz
+```
 
 Case-variant duplicate allowlist emails make migration `0029` fail on the
 `lower(email)` unique index:
@@ -99,33 +106,53 @@ where id = '<member id>';
 ```
 
 Members whose account can sign in with a password. Membership should rest on
-a Google identity; a password identity on a member account means someone
-signed up by email for that address:
+a Google identity; a password or an email identity on a member account means
+someone signed up by email for that address, or added a password later:
 
 ```sql
 select u.email, u.email_confirmed_at, u.raw_app_meta_data->'providers' as providers
 from auth.users u
 join household_members m on m.user_id = u.id
-where exists (
-  select 1 from auth.identities i where i.user_id = u.id and i.provider = 'email'
-);
+where coalesce(u.encrypted_password, '') <> ''
+  or exists (
+    select 1 from auth.identities i where i.user_id = u.id and i.provider = 'email'
+  );
 ```
 
 Expected: zero rows. For any row, ask the member whether the account is
 theirs.
 
 - The account is theirs (it also has a Google identity they use): remove the
-  password and the email identity, then sign out that user's sessions in
-  Studio. The password hash lives on the user row, so deleting the identity
-  alone may leave password sign-in working.
+  password, the email identity and the open sessions. The password hash lives
+  on the user row, so deleting the identity alone may leave password sign-in
+  working.
+
+  How an account without a password is stored depends on the auth server
+  version. Read what a Google-only account holds:
 
   ```sql
-  update auth.users set encrypted_password = null where id = '<user id>';
-  delete from auth.identities where user_id = '<user id>' and provider = 'email';
+  select encrypted_password is null as is_null, encrypted_password = '' as is_empty
+  from auth.users u
+  where not exists (
+    select 1 from auth.identities i where i.user_id = u.id and i.provider = 'email'
+  )
+  limit 5;
   ```
 
-  Verification: a password sign-in for that address is refused, and Google
-  sign-in still works for the member.
+  Write the same value (`null` or `''`) to the member's row:
+
+  ```sql
+  update auth.users set encrypted_password = <null or ''> where id = '<user id>';
+  delete from auth.identities where user_id = '<user id>' and provider = 'email';
+  delete from auth.sessions where user_id = '<user id>';
+  ```
+
+  Deleting the sessions ends refresh. An access token that was already
+  issued stays valid until it expires (one hour by default).
+
+  Verification: the password audit query above no longer returns the account,
+  a password sign-in for that address is refused, and Google sign-in still
+  works for the member.
 
   ```bash
   curl -s -X POST "https://<current supabase host>/auth/v1/token?grant_type=password" \
@@ -133,8 +160,10 @@ theirs.
     -d '{"email":"<member email>","password":"<any value>"}'
   ```
 
-  Expected: `invalid_credentials`. This shows only that the tried value
-  fails; the cleared hash is what removes the old password.
+  Expected: an error with code `invalid_credentials` or `invalid_grant`
+  ("Invalid login credentials"), depending on the auth server version, and no
+  `access_token`. This shows only that the tried value fails; the cleared
+  hash is what removes the old password.
 
 - The member disowns the account: it belongs to someone else. Deactivate the
   membership, then delete the auth user in Studio, which also ends its
@@ -426,7 +455,9 @@ a failed cutover. The owner accepted either outcome.
   - a Google account that is not allowlisted lands on the access-denied
     screen on both hosts;
   - a sign-in started on the project's `*.vercel.app` address, which is not
-    in `ALLOWED_WEB_HOSTS`, ends on the neutral host;
+    in `ALLOWED_WEB_HOSTS`, ends on the login page of the neutral host with a
+    sign-in error and no session. The browser never returns to the
+    `*.vercel.app` address;
   - each sign-in above showed the new Supabase host in the Google consent
     URL.
 - Rollback: promote the previous Vercel deployment and restore the previous
@@ -503,8 +534,9 @@ repeat one Google sign-in and one bot message from a linked member.
   refuses to link in a group); the
   bot confirms, and the next bot message creates a draft in the tester's
   household only.
-- Rollback: delete the household row; membership, allowlist and data cascade
-  (covered by `packages/db/test/delete-household-functional.sql`). The
+- Rollback: delete the household row; membership, allowlist and data,
+  including import records, cascade (covered by
+  `packages/db/test/delete-household-functional.sql`). The
   members' auth users are outside the cascade; delete them in Studio after
   the household row.
 

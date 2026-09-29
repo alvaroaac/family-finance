@@ -49,8 +49,8 @@ export async function setThemeAction(theme: ThemeId): Promise<void> {
 export async function updateMemberAction(
   formData: FormData,
 ): Promise<SettingsActionResult> {
+  await requireAuthorizedUser();
   try {
-    await requireAuthorizedUser();
     const { createServerSupabaseClient } =
       await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
@@ -80,8 +80,8 @@ export async function updateMemberAction(
 export async function createTelegramLinkCodeAction(): Promise<
   SettingsActionResult & { code?: string }
 > {
+  await requireAuthorizedUser();
   try {
-    await requireAuthorizedUser();
     const { createServerSupabaseClient } =
       await import("../../../lib/supabase");
     const code = await createTelegramLinkCode(
@@ -98,8 +98,8 @@ export async function createTelegramLinkCodeAction(): Promise<
 }
 
 export async function unlinkTelegramAction(): Promise<SettingsActionResult> {
+  await requireAuthorizedUser();
   try {
-    await requireAuthorizedUser();
     const { createServerSupabaseClient } =
       await import("../../../lib/supabase");
     await unlinkTelegram(await createServerSupabaseClient());

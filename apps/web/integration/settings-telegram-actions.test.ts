@@ -21,11 +21,24 @@ vi.mock("@family-finance/db", () => ({
   updateHouseholdMember: mocks.updateMember,
 }));
 
+import { requireAuthorizedUser } from "../lib/auth.js";
 import {
   createTelegramLinkCodeAction,
   unlinkTelegramAction,
   updateMemberAction,
 } from "../app/(app)/settings/actions.js";
+
+describe("settings actions without a session", () => {
+  it.each([
+    ["updateMemberAction", () => updateMemberAction(new FormData())],
+    ["createTelegramLinkCodeAction", () => createTelegramLinkCodeAction()],
+    ["unlinkTelegramAction", () => unlinkTelegramAction()],
+  ])("%s lets the sign-in redirect through", async (_name, run) => {
+    const redirect = new Error("NEXT_REDIRECT");
+    vi.mocked(requireAuthorizedUser).mockRejectedValueOnce(redirect);
+    await expect(run()).rejects.toBe(redirect);
+  });
+});
 
 describe("member settings action failures", () => {
   it("hides and logs a database error while saving a profile", async () => {
