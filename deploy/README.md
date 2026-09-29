@@ -143,6 +143,18 @@ and that `materialize_obligation_payment` is idempotent + rejects
 out-of-window months, then cleans up after itself. **Exit code must be 0 and
 every check PASS before continuing.**
 
+The first output line includes a unique run marker. If the process is killed
+before teardown, recover only that run's fixtures with the same Supabase and
+database connection settings:
+
+```bash
+SUPABASE_URL=... SERVICE_ROLE_KEY=... DATABASE_URL=... \
+node deploy/checks/rls-proof.mjs --cleanup rls-proof-<uuid>
+```
+
+Recovery prints the rows and users it removed. Normal SIGINT and SIGTERM
+interruptions run teardown automatically.
+
 ## 5. Bot container up (before the v2 web deploy)
 
 On the VPS, with the repo checked out and `deploy/bot/.env` filled from

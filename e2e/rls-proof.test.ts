@@ -32,12 +32,77 @@ function proofEnv() {
 }
 
 function runProof() {
+  const env = proofEnv();
   return spawnSync("node", ["deploy/checks/rls-proof.mjs"], {
     cwd: root,
     encoding: "utf8",
     timeout: 180_000,
-    env: proofEnv(),
+    env,
   });
+}
+
+function markerFrom(output: string) {
+  const marker = output
+    .split("\n", 1)[0]
+    .match(/marker: (rls-proof-[0-9a-f-]{36})/)?.[1];
+  expect(marker, output).toBeDefined();
+  return marker!;
+}
+
+async function expectNoFixtures(db: any, marker: string, emails: string[]) {
+  const { rows: tables } = await db.query(`
+    select c.relname as name from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind in ('r', 'p')
+  `);
+  for (const { name } of tables) {
+    const quoted = name.replaceAll('"', '""');
+    const result = await db.query(
+      `select count(*)::integer as count from public."${quoted}" t where to_jsonb(t)::text like $1`,
+      [`%${marker}%`],
+    );
+    expect(result.rows[0].count, `marker remains in ${name}`).toBe(0);
+  }
+  const users = await db.query(
+    "select email from auth.users where email = any($1::text[]) or raw_user_meta_data ->> 'rls_proof_marker' = $2",
+    [emails, marker],
+  );
+  expect(users.rows).toEqual([]);
+}
+
+async function interruptProof(
+  signal: "SIGINT" | "SIGTERM" | "SIGKILL",
+  env: NodeJS.ProcessEnv,
+) {
+  return new Promise<{ code: number | null; output: string }>(
+    (resolve, reject) => {
+      const child = spawn("node", ["deploy/checks/rls-proof.mjs"], {
+        cwd: root,
+        env,
+      });
+      let output = "";
+      let signaled = false;
+      const timeout = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error(`proof did not exit after ${signal}: ${output}`));
+      }, 180_000);
+      child.stdout.on("data", (chunk) => {
+        output += chunk.toString();
+        if (!signaled && output.includes("fixture coverage")) {
+          signaled = true;
+          child.kill(signal);
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        clearTimeout(timeout);
+        resolve({ code, output });
+      });
+    },
+  );
 }
 
 async function withDatabase<T>(callback: (db: any) => Promise<T>): Promise<T> {
@@ -78,7 +143,13 @@ describe("two-household RLS proof", () => {
   it("prints PASS for every isolation check and leaves all table counts unchanged", async () => {
     await withDatabase(async (db) => {
       const before = await rowCounts(db);
-      const result = runProof();
+      const env = proofEnv();
+      const result = spawnSync("node", ["deploy/checks/rls-proof.mjs"], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 180_000,
+        env,
+      });
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stdout).not.toContain("[FAIL]");
       for (const check of [
@@ -91,10 +162,22 @@ describe("two-household RLS proof", () => {
         "no-policy bot_conversations",
         "no-policy allowed_emails",
         "no-policy import_suggestion_nonces",
+        "PostgREST rejects auth schema",
+        "PostgREST rejects family_finance_migrations schema",
+        "trigger provision_household_member",
+        "trigger provision_on_allowlist",
+        "service role resolves B Telegram id",
+        "service role cannot resolve inactive Telegram member",
+        "username fallback does not rebind",
       ]) {
         expect(result.stdout).toContain(`[PASS] ${check}`);
       }
       expect(await rowCounts(db)).toEqual(before);
+      await expectNoFixtures(db, markerFrom(result.stdout), [
+        env.MEMBER_EMAIL!,
+        env.MEMBER_B_EMAIL!,
+        env.OUTSIDER_EMAIL!,
+      ]);
     });
   }, 240_000);
 
@@ -110,6 +193,7 @@ describe("two-household RLS proof", () => {
         expect(result.status).not.toBe(0);
         expect(result.stdout + result.stderr).toContain(name);
         expect(await rowCounts(db)).toEqual(before);
+        await expectNoFixtures(db, markerFrom(result.stdout), []);
       } finally {
         await db.query(`drop table public."${name}"`);
       }
@@ -128,8 +212,44 @@ describe("two-household RLS proof", () => {
         expect(result.status).not.toBe(0);
         expect(result.stdout + result.stderr).toContain(name);
         expect(await rowCounts(db)).toEqual(before);
+        await expectNoFixtures(db, markerFrom(result.stdout), []);
       } finally {
         await db.query(`drop function public."${name}"(uuid)`);
+      }
+    });
+  }, 240_000);
+
+  it("fails by name for a household FK with another column name", async () => {
+    await withDatabase(async (db) => {
+      const name = `rls_proof_fk_${randomUUID().replaceAll("-", "")}`;
+      await db.query(`create table public."${name}" (
+        id uuid primary key, owner_household uuid references public.households(id))`);
+      try {
+        const result = runProof();
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).toContain(`${name}.owner_household`);
+        await expectNoFixtures(db, markerFrom(result.stdout), []);
+      } finally {
+        await db.query(`drop table public."${name}"`);
+      }
+    });
+  }, 240_000);
+
+  it("fails by name for unhandled public views and materialized views", async () => {
+    await withDatabase(async (db) => {
+      for (const kind of ["view", "materialized view"]) {
+        const name = `rls_proof_view_${randomUUID().replaceAll("-", "")}`;
+        await db.query(
+          `create ${kind} public."${name}" as select id from public.households`,
+        );
+        try {
+          const result = runProof();
+          expect(result.status).not.toBe(0);
+          expect(result.stdout).toContain(`view coverage public.${name}`);
+          await expectNoFixtures(db, markerFrom(result.stdout), []);
+        } finally {
+          await db.query(`drop ${kind} public."${name}"`);
+        }
       }
     });
   }, 240_000);
@@ -137,38 +257,60 @@ describe("two-household RLS proof", () => {
   it("cleans up its fixtures when interrupted", async () => {
     await withDatabase(async (db) => {
       const before = await rowCounts(db);
-      const result = await new Promise<{ code: number | null; output: string }>(
-        (resolve, reject) => {
-          const child = spawn("node", ["deploy/checks/rls-proof.mjs"], {
-            cwd: root,
-            env: proofEnv(),
-          });
-          let output = "";
-          let signaled = false;
-          const timeout = setTimeout(() => {
-            child.kill("SIGKILL");
-            reject(new Error(`proof did not exit after SIGINT: ${output}`));
-          }, 180_000);
-          child.stdout.on("data", (chunk) => {
-            output += chunk.toString();
-            if (!signaled && output.includes("fixture coverage")) {
-              signaled = true;
-              child.kill("SIGINT");
-            }
-          });
-          child.stderr.on("data", (chunk) => {
-            output += chunk.toString();
-          });
-          child.on("error", reject);
-          child.on("close", (code) => {
-            clearTimeout(timeout);
-            resolve({ code, output });
-          });
-        },
-      );
+      const env = proofEnv();
+      const result = await interruptProof("SIGINT", env);
       expect(result.code).not.toBe(0);
       expect(result.output).toContain("SIGINT interrupted proof");
       expect(await rowCounts(db)).toEqual(before);
+      await expectNoFixtures(db, markerFrom(result.output), [
+        env.MEMBER_EMAIL!,
+        env.MEMBER_B_EMAIL!,
+        env.OUTSIDER_EMAIL!,
+      ]);
+    });
+  }, 240_000);
+
+  it("cleans up its fixtures on SIGTERM", async () => {
+    await withDatabase(async (db) => {
+      const before = await rowCounts(db);
+      const env = proofEnv();
+      const result = await interruptProof("SIGTERM", env);
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain("SIGTERM interrupted proof");
+      expect(await rowCounts(db)).toEqual(before);
+      await expectNoFixtures(db, markerFrom(result.output), [
+        env.MEMBER_EMAIL!,
+        env.MEMBER_B_EMAIL!,
+        env.OUTSIDER_EMAIL!,
+      ]);
+    });
+  }, 240_000);
+
+  it("recovers fixtures left by SIGKILL using the printed marker", async () => {
+    await withDatabase(async (db) => {
+      const before = await rowCounts(db);
+      const env = proofEnv();
+      const killed = await interruptProof("SIGKILL", env);
+      expect(killed.code).not.toBe(0);
+      const marker = markerFrom(killed.output);
+      const cleanup = spawnSync(
+        "node",
+        ["deploy/checks/rls-proof.mjs", "--cleanup", marker],
+        {
+          cwd: root,
+          encoding: "utf8",
+          timeout: 180_000,
+          env,
+        },
+      );
+      expect(cleanup.status, cleanup.stdout + cleanup.stderr).toBe(0);
+      expect(cleanup.stdout).toContain(`Cleanup ${marker}:`);
+      expect(await rowCounts(db)).toEqual(before);
+      await expectNoFixtures(db, marker, [
+        env.MEMBER_EMAIL!,
+        env.MEMBER_B_EMAIL!,
+        env.OUTSIDER_EMAIL!,
+      ]);
     });
   }, 240_000);
 });
