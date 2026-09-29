@@ -14,10 +14,6 @@
 
 export type AccountKind = "checking" | "investment";
 export type TransactionKind = "expense" | "income" | "transfer";
-export type InvestmentBucketSlug =
-  | "filhos"
-  | "casa"
-  | "independencia_financeira";
 export type ImportSource =
   | "minhas_financas_csv"
   | "nubank_csv"
@@ -89,7 +85,8 @@ export type AccountRow = {
 export type InvestmentBucketRow = {
   id: string;
   household_id: string;
-  slug: InvestmentBucketSlug;
+  /** Derived from the name on creation; unique within the household. */
+  slug: string;
   name: string;
   balance_cents: number;
   created_at: string;
@@ -876,7 +873,6 @@ export type Database = {
     Enums: {
       account_kind: AccountKind;
       transaction_kind: TransactionKind;
-      investment_bucket_slug: InvestmentBucketSlug;
       import_source: ImportSource;
       import_batch_status: ImportBatchStatus;
       responsibility_scope: ResponsibilityScope;

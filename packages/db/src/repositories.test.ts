@@ -10,6 +10,9 @@ import {
   summarizeMonth,
   accountInsert,
   investmentBucketInsert,
+  createInvestmentBucket,
+  renameInvestmentBucket,
+  deleteInvestmentBucket,
   creditCardInsert,
   installmentGroupInsertFromPlan,
   installmentInsertsFromPlan,
@@ -219,18 +222,98 @@ describe("accountInsert", () => {
 });
 
 describe("investmentBucketInsert", () => {
-  it("builds a caixinha insert payload keyed by slug", () => {
+  it("derives the slug from the trimmed name", () => {
     expect(
       investmentBucketInsert({
         householdId: HOUSEHOLD,
-        slug: "independencia_financeira",
-        name: "Aposentadoria",
+        name: "  Independência Financeira ",
       }),
     ).toEqual({
       household_id: HOUSEHOLD,
       slug: "independencia_financeira",
-      name: "Aposentadoria",
+      name: "Independência Financeira",
     });
+  });
+});
+
+/**
+ * Chainable stand-in for the PostgREST builder used by the bucket
+ * repositories: records every call and resolves every query to `result`.
+ */
+function createBucketClient(result: {
+  data?: unknown;
+  error?: { message: string; code?: string } | null;
+}) {
+  const calls: Array<[string, unknown[]]> = [];
+  const resolved = { data: result.data ?? null, error: result.error ?? null };
+  const builder: Record<string, unknown> = {
+    then(resolve: (value: typeof resolved) => unknown) {
+      return Promise.resolve(resolved).then(resolve);
+    },
+  };
+  for (const method of ["insert", "update", "delete", "select", "eq", "single", "maybeSingle"]) {
+    builder[method] = (...args: unknown[]) => {
+      calls.push([method, args]);
+      return builder;
+    };
+  }
+  const client = {
+    from(table: string) {
+      calls.push(["from", [table]]);
+      return builder;
+    },
+  } as unknown as AppSupabaseClient;
+  return { client, calls };
+}
+
+describe("investment bucket repositories", () => {
+  it("rejects a name without letters or digits before touching the database", async () => {
+    await expect(
+      createInvestmentBucket(explodingClient, { householdId: HOUSEHOLD, name: " !!! " }),
+    ).rejects.toThrow("Informe um nome para o objetivo.");
+    await expect(
+      renameInvestmentBucket(explodingClient, {
+        householdId: HOUSEHOLD,
+        bucketId: "bucket-1",
+        name: "   ",
+      }),
+    ).rejects.toThrow("Informe um nome para o objetivo.");
+  });
+
+  it("reports a slug already used in the household in Portuguese", async () => {
+    const { client } = createBucketClient({
+      error: {
+        code: "23505",
+        message:
+          'duplicate key value violates unique constraint "investment_buckets_household_id_slug_key"',
+      },
+    });
+    await expect(
+      createInvestmentBucket(client, { householdId: HOUSEHOLD, name: "Casa" }),
+    ).rejects.toThrow("Já existe um objetivo com esse nome.");
+  });
+
+  it("renames by updating only the name, scoped to the household", async () => {
+    const { client, calls } = createBucketClient({ data: [{ id: "bucket-1" }] });
+    await renameInvestmentBucket(client, {
+      householdId: HOUSEHOLD,
+      bucketId: "bucket-1",
+      name: " Viagem ",
+    });
+    expect(calls).toContainEqual(["update", [{ name: "Viagem" }]]);
+    expect(calls).toContainEqual(["eq", ["household_id", HOUSEHOLD]]);
+    expect(calls).toContainEqual(["eq", ["id", "bucket-1"]]);
+  });
+
+  it("deletes only a zero-balance bucket of the household", async () => {
+    const { client, calls } = createBucketClient({ data: [{ id: "bucket-1" }] });
+    await deleteInvestmentBucket(client, {
+      householdId: HOUSEHOLD,
+      bucketId: "bucket-1",
+    });
+    expect(calls).toContainEqual(["delete", []]);
+    expect(calls).toContainEqual(["eq", ["household_id", HOUSEHOLD]]);
+    expect(calls).toContainEqual(["eq", ["balance_cents", 0]]);
   });
 });
 

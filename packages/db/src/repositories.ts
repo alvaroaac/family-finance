@@ -21,7 +21,7 @@ import {
   type TransactionDraft,
   type TransactionKind,
   type AccountKind,
-  type InvestmentBucketSlug,
+  slugifyBucketName,
   type InstallmentPlan,
   type ObligationDraft,
   type ProjectableObligation,
@@ -1188,16 +1188,19 @@ export function accountInsert(input: {
   };
 }
 
-/** Pure: build a household-scoped investment bucket (caixinha) insert payload. */
+/**
+ * Pure: build a household-scoped investment bucket (caixinha) insert payload.
+ * The slug is derived from the trimmed name.
+ */
 export function investmentBucketInsert(input: {
   householdId: string;
-  slug: InvestmentBucketSlug;
   name: string;
 }): Pick<InvestmentBucketRow, "household_id" | "slug" | "name"> {
+  const name = input.name.trim();
   return {
     household_id: input.householdId,
-    slug: input.slug,
-    name: input.name.trim(),
+    slug: slugifyBucketName(name),
+    name,
   };
 }
 
@@ -1411,56 +1414,98 @@ export async function listInvestmentBuckets(
   return (data ?? []) as InvestmentBucketRow[];
 }
 
+// pt-BR because the investments page shows them to the household directly.
+const BUCKET_NAME_REQUIRED = "Informe um nome para o objetivo.";
+const BUCKET_SLUG_TAKEN = "Já existe um objetivo com esse nome.";
+const BUCKET_BALANCE_NOT_ZERO =
+  "Só é possível excluir um objetivo com saldo zerado.";
+
+/** Postgres `unique_violation`, surfaced by PostgREST as the error code. */
+const UNIQUE_VIOLATION = "23505";
+
+/** A bucket name must contain a letter or digit, so it yields a slug. */
+function requireBucketName(name: string): string {
+  const trimmed = name.trim();
+  if (slugifyBucketName(trimmed) === "") {
+    throw new Error(BUCKET_NAME_REQUIRED);
+  }
+  return trimmed;
+}
+
 /**
- * Create an investment bucket. The `(household_id, slug)` unique constraint means
- * each caixinha kind (filhos / casa / independencia_financeira) exists once per
- * household; RLS scopes the insert.
+ * Create an investment bucket named after a household goal. The slug comes
+ * from the name and is unique per household (`unique (household_id, slug)`);
+ * RLS scopes the insert.
  */
 export async function createInvestmentBucket(
   client: AppSupabaseClient,
-  input: { householdId: string; slug: InvestmentBucketSlug; name: string },
+  input: { householdId: string; name: string },
 ): Promise<InvestmentBucketRow> {
+  const name = requireBucketName(input.name);
   const { data, error } = await client
     .from("investment_buckets")
-    .insert(investmentBucketInsert(input))
+    .insert(investmentBucketInsert({ householdId: input.householdId, name }))
     .select("*")
     .single();
   if (error !== null) {
-    throw new Error(`createInvestmentBucket failed: ${error.message}`);
+    throw new Error(
+      error.code === UNIQUE_VIOLATION
+        ? BUCKET_SLUG_TAKEN
+        : `createInvestmentBucket failed: ${error.message}`,
+    );
   }
   return data as InvestmentBucketRow;
 }
 
-/** Rename an investment bucket. RLS scopes the update to the household. */
-export async function updateInvestmentBucket(
+/** Rename an investment bucket; its slug stays. RLS scopes the update. */
+export async function renameInvestmentBucket(
   client: AppSupabaseClient,
-  householdId: string,
-  bucketId: string,
-  changes: { name: string },
+  input: { householdId: string; bucketId: string; name: string },
 ): Promise<void> {
+  const name = requireBucketName(input.name);
   const { error } = await client
     .from("investment_buckets")
-    .update({ name: changes.name.trim() })
-    .eq("household_id", householdId)
-    .eq("id", bucketId);
+    .update({ name })
+    .eq("household_id", input.householdId)
+    .eq("id", input.bucketId);
   if (error !== null) {
-    throw new Error(`updateInvestmentBucket failed: ${error.message}`);
+    throw new Error(`renameInvestmentBucket failed: ${error.message}`);
   }
 }
 
-/** Delete an investment bucket. RLS scopes the delete to the household. */
+/**
+ * Delete an investment bucket whose balance is zero. The balance guard is part
+ * of the delete itself; when nothing was deleted, a bucket that still exists
+ * had money in it. RLS scopes both statements.
+ */
 export async function deleteInvestmentBucket(
   client: AppSupabaseClient,
-  householdId: string,
-  bucketId: string,
+  input: { householdId: string; bucketId: string },
 ): Promise<void> {
-  const { error } = await client
+  const { data: deleted, error } = await client
     .from("investment_buckets")
     .delete()
-    .eq("household_id", householdId)
-    .eq("id", bucketId);
+    .eq("household_id", input.householdId)
+    .eq("id", input.bucketId)
+    .eq("balance_cents", 0)
+    .select("id");
   if (error !== null) {
     throw new Error(`deleteInvestmentBucket failed: ${error.message}`);
+  }
+  if ((deleted ?? []).length > 0) {
+    return;
+  }
+  const { data: remaining, error: readError } = await client
+    .from("investment_buckets")
+    .select("id")
+    .eq("household_id", input.householdId)
+    .eq("id", input.bucketId)
+    .maybeSingle();
+  if (readError !== null) {
+    throw new Error(`deleteInvestmentBucket failed: ${readError.message}`);
+  }
+  if (remaining !== null) {
+    throw new Error(BUCKET_BALANCE_NOT_ZERO);
   }
 }
 

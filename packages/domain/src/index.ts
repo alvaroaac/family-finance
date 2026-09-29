@@ -23,12 +23,11 @@ export type {
   Account,
   AccountKind,
   InvestmentBucket,
-  InvestmentBucketSlug,
   CreditCard,
 } from "./accounts.js";
 export {
   accountKindSchema,
-  investmentBucketSlugSchema,
+  slugifyBucketName,
   creditCardSchema,
 } from "./accounts.js";
 

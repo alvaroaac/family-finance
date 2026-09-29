@@ -27,7 +27,8 @@ do $$ begin
   end if;
 end $$;
 
--- Investment buckets (caixinhas): filhos, casa, independência financeira.
+-- Starter investment buckets (caixinhas); households can rename, delete or add
+-- their own. Slugs are derived from the name (see slugifyBucketName).
 insert into investment_buckets (household_id, slug, name)
 values
   ('00000000-0000-0000-0000-000000000001', 'filhos', 'Filhos'),

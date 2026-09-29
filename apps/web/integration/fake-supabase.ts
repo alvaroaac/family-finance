@@ -21,13 +21,15 @@
  * This is a TEST fake. It does NOT enforce RLS (the real schema does); the test
  * always passes the correct household_id, so household scoping is still
  * exercised through the repositories' explicit `.eq("household_id", ...)`.
+ * It enforces only the unique keys listed in UNIQUE_KEYS, answering a violating
+ * insert with Postgres' `23505` code like PostgREST does.
  */
 
 type Row = Record<string, unknown>;
 
 type Result<T> = {
   data: T;
-  error: { message: string } | null;
+  error: { message: string; code?: string } | null;
   /** Present when the query asked for `{ count: "exact" }` (else null). */
   count?: number | null;
 };
@@ -77,6 +79,20 @@ function ilikePatternToRegExp(pattern: string): RegExp {
 }
 
 type Order = { column: string; ascending: boolean };
+
+/** Unique keys mirrored from the schema, per table. */
+const UNIQUE_KEYS: Record<string, string[][]> = {
+  investment_buckets: [["household_id", "slug"]],
+};
+
+/** True when `row` repeats a unique key of `tableName` already in `rows`. */
+function violatesUniqueKey(tableName: string, rows: Row[], row: Row): boolean {
+  return (UNIQUE_KEYS[tableName] ?? []).some((columns) =>
+    rows.some((existing) =>
+      columns.every((column) => existing[column] === row[column]),
+    ),
+  );
+}
 
 /** A tiny auto-incrementing id generator so inserted rows get stable ids. */
 function makeIdFactory(): () => string {
@@ -315,6 +331,18 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
     const rows = this.store.table(this.tableName);
 
     if (this.mutation.kind === "insert") {
+      const duplicate = this.mutation.rows.some((r) =>
+        violatesUniqueKey(this.tableName, rows, r),
+      );
+      if (duplicate) {
+        return {
+          data: null,
+          error: {
+            code: "23505",
+            message: "duplicate key value violates unique constraint",
+          },
+        };
+      }
       const inserted = this.mutation.rows.map((r) => {
         const row = this.store.materialize(r);
         rows.push(row);

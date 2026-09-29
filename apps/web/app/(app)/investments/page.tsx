@@ -1,29 +1,26 @@
 import {
-  findHouseholdIdForCurrentUser,
   listInvestmentBuckets,
   type InvestmentBucketRow,
-  type InvestmentBucketSlug,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { formatBrlCents } from "../../../lib/format";
 import {
   Card,
+  EmptyState,
   Field,
-  IconHome,
   IconJar,
-  IconPlusCircle,
   Input,
   PageTitle,
-  Select,
   SubmitButton,
 } from "../../../components/ui";
 import {
   createBucketAction,
-  updateBucketAction,
+  renameBucketAction,
   updateBucketBalanceAction,
   deleteBucketAction,
 } from "./actions";
+import { BucketActionForm } from "./bucket-form";
 
 export const metadata = {
   title: "Investimentos — Casa",
@@ -31,37 +28,6 @@ export const metadata = {
 
 // This page reads per-request, RLS-scoped data; never statically prerender it.
 export const dynamic = "force-dynamic";
-
-/** MVP caixinha slugs and their default Portuguese labels. */
-const BUCKET_OPTIONS: ReadonlyArray<{
-  slug: InvestmentBucketSlug;
-  label: string;
-}> = [
-  { slug: "filhos", label: "Filhos" },
-  { slug: "casa", label: "Casa" },
-  {
-    slug: "independencia_financeira",
-    label: "Independência financeira / aposentadoria",
-  },
-];
-
-const SLUG_LABEL: Record<InvestmentBucketSlug, string> = {
-  filhos: "Filhos",
-  casa: "Casa",
-  independencia_financeira: "Independência financeira / aposentadoria",
-};
-
-/** Line-art icon per caixinha (Mais Telas: casa → home, IF → plus circle). */
-function BucketIcon({ slug }: { slug: InvestmentBucketSlug }) {
-  switch (slug) {
-    case "casa":
-      return <IconHome size={17} />;
-    case "independencia_financeira":
-      return <IconPlusCircle size={17} />;
-    default:
-      return <IconJar size={17} />;
-  }
-}
 
 /** Integer cents -> plain pt-BR reais input value, e.g. 123456 -> "1.234,56". */
 function centsToReaisInput(cents: number): string {
@@ -76,14 +42,10 @@ type InvestmentsData = {
   loadError: string | null;
 };
 
-async function loadData(): Promise<InvestmentsData> {
+async function loadData(householdId: string): Promise<InvestmentsData> {
   try {
     const { createServerSupabaseClient } = await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
-    const householdId = await findHouseholdIdForCurrentUser(client);
-    if (householdId === null) {
-      return { buckets: [], loadError: null };
-    }
     const buckets = await listInvestmentBuckets(client, householdId);
     return { buckets, loadError: null };
   } catch (error) {
@@ -97,13 +59,42 @@ async function loadData(): Promise<InvestmentsData> {
   }
 }
 
-export default async function InvestmentsPage() {
-  await requireAuthorizedUser();
-  const { buckets, loadError } = await loadData();
+/** Name a new caixinha; the slug is derived on the server. */
+function CreateBucketForm() {
+  return (
+    <BucketActionForm
+      action={createBucketAction}
+      style={{
+        display: "flex",
+        gap: 12,
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+        justifyContent: "center",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 200, textAlign: "left" }}>
+        <Field label="Objetivo">
+          <Input
+            type="text"
+            name="name"
+            placeholder="Ex.: Viagem 2027"
+            required
+            maxLength={60}
+            autoComplete="off"
+            aria-label="Nome do objetivo"
+          />
+        </Field>
+      </div>
+      <SubmitButton variant="primary" pendingLabel="Criando…">
+        Criar caixinha
+      </SubmitButton>
+    </BucketActionForm>
+  );
+}
 
-  // A caixinha slug can exist at most once per household; offer only free slugs.
-  const usedSlugs = new Set(buckets.map((b) => b.slug));
-  const availableSlugs = BUCKET_OPTIONS.filter((o) => !usedSlugs.has(o.slug));
+export default async function InvestmentsPage() {
+  const { householdId } = await requireAuthorizedUser();
+  const { buckets, loadError } = await loadData(householdId);
   const totalCents = buckets.reduce((sum, b) => sum + b.balance_cents, 0);
 
   return (
@@ -130,141 +121,117 @@ export default async function InvestmentsPage() {
         </div>
       ) : null}
 
-      {/* Caixinha cards */}
-      <div className="ff-cards-grid" style={{ marginTop: 26 }}>
-        {buckets.length === 0 ? (
-          <p className="ff-muted">Nenhuma caixinha cadastrada.</p>
-        ) : (
-          buckets.map((bucket) => (
-            <Card key={bucket.id} hoverable>
-              <div className="ff-head-row">
-                <span className="ff-bubble ff-bubble--md">
-                  <BucketIcon slug={bucket.slug} />
-                </span>
-                <div>
-                  <div className="ff-name">{bucket.name}</div>
-                  <div className="ff-name-sub">{SLUG_LABEL[bucket.slug]}</div>
-                </div>
-              </div>
-              <div className="ff-bucket__value ff-serif ff-num">
-                {formatBrlCents(bucket.balance_cents)}
-              </div>
-              <form
-                action={updateBucketBalanceAction}
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  marginTop: 12,
-                }}
-              >
-                <input type="hidden" name="bucketId" value={bucket.id} />
-                <div style={{ width: 130 }}>
-                  <Input
-                    type="text"
-                    name="balance"
-                    inputMode="decimal"
-                    defaultValue={centsToReaisInput(bucket.balance_cents)}
-                    required
-                    className="ff-input--compact ff-num"
-                    aria-label={`Saldo da caixinha ${bucket.name} (R$)`}
-                  />
-                </div>
-                <SubmitButton
-                  unstyled
-                  className="ff-chip-link"
-                  pendingLabel="Atualizando…"
-                >
-                  Atualizar saldo
-                </SubmitButton>
-              </form>
-              <div className="ff-actions">
-                <form
-                  action={updateBucketAction}
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    flex: 1,
-                    minWidth: 180,
-                  }}
-                >
-                  <input type="hidden" name="bucketId" value={bucket.id} />
-                  <Input
-                    type="text"
-                    name="name"
-                    defaultValue={bucket.name}
-                    required
-                    className="ff-input--compact"
-                    aria-label={`Nome da caixinha ${bucket.name}`}
-                  />
-                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
-                    Salvar
-                  </SubmitButton>
-                </form>
-                <form action={deleteBucketAction}>
-                  <input type="hidden" name="bucketId" value={bucket.id} />
-                  <SubmitButton variant="danger" pendingLabel="Excluindo…">
-                    Excluir
-                  </SubmitButton>
-                </form>
+      {buckets.length === 0 ? (
+        loadError ? null : (
+          <div style={{ marginTop: 26 }}>
+            <EmptyState
+              icon={<IconJar size={22} />}
+              title="Nenhuma caixinha ainda"
+              description="Dê um nome ao primeiro objetivo — uma viagem, a reserva de emergência, a casa nova."
+              action={<CreateBucketForm />}
+            />
+          </div>
+        )
+      ) : (
+        <>
+          <div className="ff-cards-grid" style={{ marginTop: 26 }}>
+            {buckets.map((bucket) => (
+              <BucketCard key={bucket.id} bucket={bucket} />
+            ))}
+          </div>
+
+          <div style={{ marginTop: 20 }}>
+            <Card>
+              <h2 className="ff-h2">Nova caixinha</h2>
+              <p className="ff-sub">
+                Um objetivo novo para guardar dinheiro junto.
+              </p>
+              <div style={{ marginTop: 18 }}>
+                <CreateBucketForm />
               </div>
             </Card>
-          ))
-        )}
-      </div>
-
-      {/* Create */}
-      <div style={{ marginTop: 20 }}>
-        <Card>
-          <h2 className="ff-h2">Nova caixinha</h2>
-          {availableSlugs.length === 0 ? (
-            <p className="ff-sub">Todas as caixinhas do MVP já foram criadas.</p>
-          ) : (
-            <form
-              action={createBucketAction}
-              style={{
-                display: "flex",
-                gap: 12,
-                flexWrap: "wrap",
-                alignItems: "flex-end",
-                marginTop: 18,
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <Field label="Tipo de caixinha">
-                  <Select
-                    name="slug"
-                    defaultValue={availableSlugs[0]?.slug}
-                    aria-label="Tipo de caixinha"
-                  >
-                    {availableSlugs.map((o) => (
-                      <option key={o.slug} value={o.slug}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-              <div style={{ flex: 1, minWidth: 170 }}>
-                <Field label="Nome exibido">
-                  <Input
-                    type="text"
-                    name="name"
-                    placeholder="Nome exibido"
-                    required
-                    aria-label="Nome da caixinha"
-                  />
-                </Field>
-              </div>
-              <SubmitButton variant="ghost" pendingLabel="Adicionando…">
-                Adicionar caixinha
-              </SubmitButton>
-            </form>
-          )}
-        </Card>
-      </div>
+          </div>
+        </>
+      )}
     </section>
+  );
+}
+
+/** One caixinha: balance, rename, and delete (allowed once the balance is zero). */
+function BucketCard({ bucket }: { bucket: InvestmentBucketRow }) {
+  return (
+    <Card hoverable>
+      <div className="ff-head-row">
+        <span className="ff-bubble ff-bubble--md">
+          <IconJar size={17} />
+        </span>
+        <div className="ff-name">{bucket.name}</div>
+      </div>
+      <div className="ff-bucket__value ff-serif ff-num">
+        {formatBrlCents(bucket.balance_cents)}
+      </div>
+      <form
+        action={updateBucketBalanceAction}
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+          marginTop: 12,
+        }}
+      >
+        <input type="hidden" name="bucketId" value={bucket.id} />
+        <div style={{ width: 130 }}>
+          <Input
+            type="text"
+            name="balance"
+            inputMode="decimal"
+            defaultValue={centsToReaisInput(bucket.balance_cents)}
+            required
+            className="ff-input--compact ff-num"
+            aria-label={`Saldo da caixinha ${bucket.name} (R$)`}
+          />
+        </div>
+        <SubmitButton
+          unstyled
+          className="ff-chip-link"
+          pendingLabel="Atualizando…"
+        >
+          Atualizar saldo
+        </SubmitButton>
+      </form>
+      <div className="ff-actions">
+        <BucketActionForm
+          action={renameBucketAction}
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flex: 1,
+            minWidth: 180,
+          }}
+        >
+          <input type="hidden" name="bucketId" value={bucket.id} />
+          <Input
+            type="text"
+            name="name"
+            defaultValue={bucket.name}
+            required
+            maxLength={60}
+            className="ff-input--compact"
+            aria-label={`Nome da caixinha ${bucket.name}`}
+          />
+          <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
+            Renomear
+          </SubmitButton>
+        </BucketActionForm>
+        <BucketActionForm action={deleteBucketAction}>
+          <input type="hidden" name="bucketId" value={bucket.id} />
+          <SubmitButton variant="danger" pendingLabel="Excluindo…">
+            Excluir
+          </SubmitButton>
+        </BucketActionForm>
+      </div>
+    </Card>
   );
 }

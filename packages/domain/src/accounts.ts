@@ -19,27 +19,31 @@ export type Account = {
 };
 
 /**
- * Investment bucket (caixinha). MVP buckets: filhos, casa, and
- * independencia financeira/aposentadoria. The slug is stable for code;
- * the display name may be Portuguese.
+ * Investment bucket (caixinha). Buckets are free-form per household: the
+ * household names each one after its goal, and the slug derived from that
+ * name identifies it within the household.
  */
-export type InvestmentBucketSlug =
-  | "filhos"
-  | "casa"
-  | "independencia_financeira";
-
-export const investmentBucketSlugSchema = z.enum([
-  "filhos",
-  "casa",
-  "independencia_financeira",
-]);
-
 export type InvestmentBucket = {
   id: string;
   householdId: string;
-  slug: InvestmentBucketSlug;
+  slug: string;
   name: string;
 };
+
+/**
+ * Derive a bucket slug from its name: lowercase, accents removed, runs of
+ * non-alphanumeric characters become `_`, and leading/trailing `_` trimmed.
+ * "Independência Financeira" -> "independencia_financeira". A name without
+ * letters or digits yields "".
+ */
+export function slugifyBucketName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
 
 /** Credit card used for expenses and installment purchases. */
 export type CreditCard = {

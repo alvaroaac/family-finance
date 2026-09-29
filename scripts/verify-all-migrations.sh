@@ -428,4 +428,37 @@ for scenario in empty single ambiguous; do
   [[ "$before" == "$after" ]] || { echo "0029 replay changed $scenario database" >&2; exit 1; }
 done
 
+# Exercise 0030 on buckets created under the old slug enum, then replay it.
+buckets_db="family_finance_free_form_buckets"
+docker exec "$container" createdb -U postgres "$buckets_db"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "0030_" ]] || continue
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$buckets_db" -f - \
+    < "$migration" >/dev/null
+done
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db" -c \
+  "insert into households(id,name) values
+     ('00000000-0000-0000-0000-000000000001','A'),
+     ('00000000-0000-0000-0000-000000000002','B');
+   insert into investment_buckets(household_id,slug,name,balance_cents) values
+     ('00000000-0000-0000-0000-000000000001','filhos','Filhos',100),
+     ('00000000-0000-0000-0000-000000000001','casa','Casa',200),
+     ('00000000-0000-0000-0000-000000000001','independencia_financeira','Independência Financeira',300);" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$buckets_db" -f - \
+  < "$repo_root/supabase/migrations/0030_free_form_investment_buckets.sql" >/dev/null
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db" -f - \
+  < "$repo_root/packages/db/test/free-form-investment-buckets-functional.sql" >/dev/null
+before="$(docker exec "$container" pg_dump -U postgres -d "$buckets_db" | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$buckets_db" -f - \
+  < "$repo_root/supabase/migrations/0030_free_form_investment_buckets.sql" >/dev/null
+after="$(docker exec "$container" pg_dump -U postgres -d "$buckets_db" | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
+[[ "$before" == "$after" ]] || { echo "0030 replay changed the buckets database" >&2; exit 1; }
+
 echo "all migrations apply cleanly twice"

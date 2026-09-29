@@ -3,22 +3,20 @@
 import { revalidatePath } from "next/cache";
 
 import {
-  findHouseholdIdForCurrentUser,
   createInvestmentBucket,
-  updateInvestmentBucket,
+  renameInvestmentBucket,
   updateInvestmentBucketBalance,
   deleteInvestmentBucket,
-  type InvestmentBucketSlug,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { parseReaisToCents } from "../../../lib/format";
 
 /**
- * Server actions for the "Investimentos" screen (caixinhas). MVP buckets are
- * filhos, casa, and independencia_financeira/aposentadoria. Each action is
- * guarded, resolves the caller's household via RLS, calls a household-scoped
- * `packages/db` repository, and revalidates the page.
+ * Server actions for the "Investimentos" screen (caixinhas). Buckets are
+ * free-form household goals. Each action is guarded, takes the household from
+ * the session (never from the form), calls a household-scoped `packages/db`
+ * repository, and revalidates the pages that show buckets.
  */
 
 type ServerSupabaseClient = Awaited<
@@ -29,13 +27,9 @@ async function authedHousehold(): Promise<{
   householdId: string;
   client: ServerSupabaseClient;
 }> {
-  await requireAuthorizedUser();
+  const { householdId } = await requireAuthorizedUser();
   const { createServerSupabaseClient } = await import("../../../lib/supabase");
   const client = await createServerSupabaseClient();
-  const householdId = await findHouseholdIdForCurrentUser(client);
-  if (householdId === null) {
-    throw new Error("No active household membership for the current user.");
-  }
   return { householdId, client };
 }
 
@@ -47,33 +41,83 @@ function requireField(formData: FormData, name: string): string {
   return value.trim();
 }
 
-function parseBucketSlug(value: string): InvestmentBucketSlug {
-  if (
-    value === "filhos" ||
-    value === "casa" ||
-    value === "independencia_financeira"
-  ) {
-    return value;
+/** The raw bucket name; the repository validates it with a pt-BR message. */
+function bucketName(formData: FormData): string {
+  const value = formData.get("name");
+  return typeof value === "string" ? value : "";
+}
+
+/** Outcome of a bucket action, shown to the household as a toast. */
+export type BucketActionResult = {
+  ok: boolean;
+  message: string;
+};
+
+/** Run a bucket change, revalidate on success, and report the outcome. */
+async function runBucketAction(
+  change: () => Promise<unknown>,
+  successMessage: string,
+): Promise<BucketActionResult> {
+  try {
+    await change();
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar a caixinha.",
+    };
   }
-  throw new Error("Caixinha inválida.");
+  revalidatePath("/investments");
+  revalidatePath("/dashboard");
+  return { ok: true, message: successMessage };
 }
 
-/** Create an investment bucket (caixinha). One per slug per household. */
-export async function createBucketAction(formData: FormData): Promise<void> {
+/** Create a caixinha; its slug comes from the name. */
+export async function createBucketAction(
+  formData: FormData,
+): Promise<BucketActionResult> {
   const { householdId, client } = await authedHousehold();
-  const name = requireField(formData, "name");
-  const slug = parseBucketSlug(requireField(formData, "slug"));
-  await createInvestmentBucket(client, { householdId, slug, name });
-  revalidatePath("/investments");
+  return runBucketAction(
+    () =>
+      createInvestmentBucket(client, {
+        householdId,
+        name: bucketName(formData),
+      }),
+    "Caixinha criada.",
+  );
 }
 
-/** Rename an investment bucket. */
-export async function updateBucketAction(formData: FormData): Promise<void> {
+/** Rename a caixinha; its slug stays. */
+export async function renameBucketAction(
+  formData: FormData,
+): Promise<BucketActionResult> {
   const { householdId, client } = await authedHousehold();
-  const bucketId = requireField(formData, "bucketId");
-  const name = requireField(formData, "name");
-  await updateInvestmentBucket(client, householdId, bucketId, { name });
-  revalidatePath("/investments");
+  return runBucketAction(
+    () =>
+      renameInvestmentBucket(client, {
+        householdId,
+        bucketId: requireField(formData, "bucketId"),
+        name: bucketName(formData),
+      }),
+    "Nome atualizado.",
+  );
+}
+
+/** Delete a caixinha whose balance is zero. */
+export async function deleteBucketAction(
+  formData: FormData,
+): Promise<BucketActionResult> {
+  const { householdId, client } = await authedHousehold();
+  return runBucketAction(
+    () =>
+      deleteInvestmentBucket(client, {
+        householdId,
+        bucketId: requireField(formData, "bucketId"),
+      }),
+    "Caixinha excluída.",
+  );
 }
 
 /**
@@ -95,12 +139,4 @@ export async function updateBucketBalanceAction(
   await updateInvestmentBucketBalance(client, householdId, bucketId, balanceCents);
   revalidatePath("/investments");
   revalidatePath("/dashboard");
-}
-
-/** Delete an investment bucket. */
-export async function deleteBucketAction(formData: FormData): Promise<void> {
-  const { householdId, client } = await authedHousehold();
-  const bucketId = requireField(formData, "bucketId");
-  await deleteInvestmentBucket(client, householdId, bucketId);
-  revalidatePath("/investments");
 }

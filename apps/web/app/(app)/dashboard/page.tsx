@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { InvestmentBucketSlug } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { formatBrlCents } from "../../../lib/format";
@@ -64,12 +63,6 @@ function formatDateBr(iso: string): string {
   if (match === null) return iso;
   return `${match[3]}/${match[2]}`;
 }
-
-const BUCKET_LABEL: Record<InvestmentBucketSlug, string> = {
-  filhos: "Filhos",
-  casa: "Casa",
-  independencia_financeira: "Independência financeira",
-};
 
 const RECENT_COLUMNS = [
   { key: "dia", label: "Dia" },
@@ -323,7 +316,7 @@ export default async function DashboardPage() {
                     <IconJar size={16} />
                   </span>
                   <span className="ff-caixinha__name">
-                    {BUCKET_LABEL[bucket.slug]}
+                    {bucket.name}
                   </span>
                   <span className="ff-caixinha__value ff-num">
                     {formatBrlCents(bucket.balance_cents)}
