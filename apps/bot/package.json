@@ -12,7 +12,8 @@
     "eval:score": "node --import tsx src/evaluation/cli.ts score",
     "eval:gaps": "node --import tsx src/evaluation/cli.ts gaps",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval:portuguese": "node --import tsx src/evaluation/portuguese-cli.ts"
   },
   "dependencies": {
     "@family-finance/categorization": "workspace:*",

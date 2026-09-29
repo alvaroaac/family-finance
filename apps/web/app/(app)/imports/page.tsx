@@ -72,8 +72,8 @@ function formatBrl(cents: number): string {
   });
 }
 
-function providerLabel(provider: "codex" | "paid_fallback"): string {
-  return provider === "codex" ? "Codex" : "fallback pago";
+function providerLabel(provider: "jev" | "codex" | "paid_fallback"): string {
+  return provider === "jev" ? "Jev" : provider === "codex" ? "Codex" : "GPT";
 }
 
 function installmentConfidenceLabel(
@@ -235,7 +235,7 @@ export default function ImportsPage() {
       categoryName: string;
       subcategoryName: string | null;
       explanation: string;
-      provider: "codex" | "paid_fallback";
+      provider: "jev" | "codex" | "paid_fallback";
     }>
   >([]);
   const [persistedDuplicates, setPersistedDuplicates] = useState<Set<number>>(
@@ -269,6 +269,7 @@ export default function ImportsPage() {
           | "memory"
           | "source_mapping"
           | "rule"
+          | "jev"
           | "codex"
           | "paid_fallback"
           | "user";
@@ -2419,7 +2420,7 @@ export default function ImportsPage() {
                 (bundle?.categorizationPlan.aiItems.length ?? 0) === 0
               }
             >
-              {isPending ? "Consultando…" : "Sugerir com Codex"}
+              {isPending ? "Consultando…" : "Sugerir categorias"}
             </Button>
           </div>
 

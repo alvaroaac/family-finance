@@ -355,9 +355,7 @@ describe("createImportSuggestionHandler", () => {
       expect.objectContaining({ requestedItems: 2 }),
     );
     expect(String(complete.mock.calls[0]?.[0])).toContain('"key":"row-1"');
-    expect(String(complete.mock.calls[0]?.[0])).not.toContain(
-      '"key":"row-2"',
-    );
+    expect(String(complete.mock.calls[0]?.[0])).not.toContain('"key":"row-2"');
     expect(result.body).toMatchObject({
       providerRuns: expect.arrayContaining([
         expect.objectContaining({
@@ -418,5 +416,209 @@ describe("createImportSuggestionHandler", () => {
     expect(result.body).toMatchObject({ version: 1, outcome: "unavailable" });
     expect(reservePaidItems).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+describe("Jev-first import routing", () => {
+  const candidate = {
+    categoryId: "food",
+    subcategoryId: "market",
+    confidence: 0.96,
+    explanation: "Mercado",
+  };
+  function handler(
+    overrides: Partial<
+      Parameters<typeof createImportSuggestionHandler>[0]
+    > = {},
+  ) {
+    return createImportSuggestionHandler({
+      jevPrimary: true,
+      jevModel: "jev-test",
+      codexEnabled: true,
+      codexModel: "unused",
+      codexTimeoutMs: 1000,
+      codexHome: "/tmp/unused",
+      paidFallbackEnabled: true,
+      paidFallbackProvider: "openai",
+      paidFallbackModel: "gpt-test",
+      paidFallbackMaxItems: 1,
+      reservePaidItems: vi.fn(async (input) => input.requestedItems),
+      recordPaidResult: vi.fn(async () => undefined),
+      ...overrides,
+    });
+  }
+  it("runs Jev before any GPT/Codex work and returns Jev provenance", async () => {
+    const codexRunner = vi.fn();
+    const reservePaidItems = vi.fn();
+    const complete = vi.fn();
+    const run = handler({
+      jevClient: {
+        classify: async () => ({
+          decision: "single",
+          candidates: [candidate],
+          needsFallback: false,
+        }),
+      },
+      codexRunner,
+      reservePaidItems,
+      paidFallbackClient: { complete },
+    });
+    const result = await run(request(1));
+    expect(result.body).toMatchObject({
+      outcome: "success",
+      providerRuns: [{ provider: "jev" }],
+      items: [
+        { key: "row-1", candidates: [{ provider: "jev", categoryId: "food" }] },
+      ],
+    });
+    expect(codexRunner).not.toHaveBeenCalled();
+    expect(reservePaidItems).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+  it("uses the paid budget only for uncertain items and preserves unprocessed Jev suggestions", async () => {
+    const complete = vi.fn(async (_prompt: string) =>
+      JSON.stringify({
+        items: [
+          {
+            key: "row-1",
+            candidates: [{ ...candidate, explanation: "GPT" }],
+            proposedTaxonomyChange: null,
+          },
+        ],
+      }),
+    );
+    const reserve = vi.fn(async () => 1);
+    const run = handler({
+      jevClient: {
+        classify: async () => ({
+          decision: "choose",
+          candidates: [{ ...candidate, confidence: 0.5 }],
+          needsFallback: true,
+        }),
+      },
+      reservePaidItems: reserve,
+      paidFallbackClient: { complete },
+    });
+    const result = await run(request(2));
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedItems: 1, previewMaxItems: 1 }),
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete.mock.calls[0]?.[0]).not.toContain('"key":"row-2"');
+    expect(result.body).toMatchObject({
+      items: [
+        { key: "row-1", candidates: [{ provider: "paid_fallback" }] },
+        { key: "row-2", candidates: [{ provider: "jev" }] },
+      ],
+    });
+  });
+  it("leaves deliberate abstentions manual without GPT spending", async () => {
+    const reserve = vi.fn();
+    const complete = vi.fn();
+    const result = await handler({
+      jevClient: {
+        classify: async () => ({
+          decision: "abstain",
+          candidates: [],
+          needsFallback: false,
+        }),
+      },
+      reservePaidItems: reserve,
+      paidFallbackClient: { complete },
+    })(request(1));
+    expect(result.body).toMatchObject({ items: [], unresolvedKeys: ["row-1"] });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+  it("falls back only for failed siblings in a partial Jev batch", async () => {
+    const complete = vi.fn(async (_prompt: string) =>
+      JSON.stringify({
+        items: [
+          {
+            key: "row-2",
+            candidates: [candidate],
+            proposedTaxonomyChange: null,
+          },
+        ],
+      }),
+    );
+    const result = await handler({
+      jevClient: {
+        classify: async (text) =>
+          text.endsWith("1")
+            ? {
+                decision: "single",
+                candidates: [candidate],
+                needsFallback: false,
+              }
+            : null,
+      },
+      paidFallbackClient: { complete },
+    })(request(2));
+    expect(result.body).toMatchObject({
+      items: [
+        { key: "row-1", candidates: [{ provider: "jev" }] },
+        { key: "row-2", candidates: [{ provider: "paid_fallback" }] },
+      ],
+    });
+    expect(complete.mock.calls[0]?.[0]).not.toContain('"key":"row-1"');
+  });
+  it("keeps GPT taxonomy proposals pending instead of inventing category IDs", async () => {
+    const proposal = {
+      kind: "subcategory",
+      categoryName: "Alimentação",
+      subcategoryName: "Padaria",
+      explanation: "Sugestão para revisão",
+    };
+    const result = await handler({
+      jevClient: {
+        classify: async () => ({
+          decision: "propose_new",
+          candidates: [],
+          needsFallback: true,
+        }),
+      },
+      paidFallbackClient: {
+        complete: async () =>
+          JSON.stringify({
+            items: [
+              {
+                key: "row-1",
+                candidates: [],
+                proposedTaxonomyChange: proposal,
+              },
+            ],
+          }),
+      },
+    })(request(1));
+    expect(result.body).toMatchObject({
+      items: [
+        {
+          candidates: [],
+          proposedTaxonomyChange: { ...proposal, provider: "paid_fallback" },
+        },
+      ],
+    });
+  });
+  it("missing Jev credentials can use GPT while preserving the configured quota", async () => {
+    const complete = vi.fn(async (_prompt: string) =>
+      JSON.stringify({
+        items: [
+          {
+            key: "row-1",
+            candidates: [candidate],
+            proposedTaxonomyChange: null,
+          },
+        ],
+      }),
+    );
+    const result = await handler({ paidFallbackClient: { complete } })(
+      request(2),
+    );
+    expect(result.body).toMatchObject({
+      items: [{ key: "row-1", candidates: [{ provider: "paid_fallback" }] }],
+      unresolvedKeys: ["row-2"],
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 });

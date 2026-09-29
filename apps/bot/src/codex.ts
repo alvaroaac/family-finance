@@ -686,14 +686,26 @@ export function createUnifiedCompletionMessageClassifier(
   client: AiCompletionClient,
   observability: {
     provider?: string;
+    extractionOnly?: boolean;
     telemetry?: (event: Record<string, unknown>) => void;
   } = {},
 ): MessageClassifier {
   return async (text, options) => {
     try {
-      const reply = await client.complete(buildCodexPrompt(text, options), {
-        label: "message_classifier",
-      });
+      const prompt = buildCodexPrompt(
+        text,
+        observability.extractionOnly
+          ? { ...options, catalog: undefined }
+          : options,
+      );
+      const reply = await client.complete(
+        observability.extractionOnly
+          ? `${prompt}\nExtraia somente intenção e campos financeiros. Não categorize: category_hint=null, category_candidates=[], proposed_taxonomy_change=null.`
+          : prompt,
+        {
+          label: "message_classifier",
+        },
+      );
       if (!reply) return null;
       const start = reply.indexOf("{");
       const end = reply.lastIndexOf("}");
@@ -702,7 +714,32 @@ export function createUnifiedCompletionMessageClassifier(
         JSON.parse(reply.slice(start, end + 1)),
       );
       if (!parsed.success) semanticError("invalid_output_schema");
-      return mapResult(parsed.data, options);
+      const data = observability.extractionOnly
+        ? {
+            ...parsed.data,
+            category_hint: null,
+            category_candidates: [],
+            proposed_taxonomy_change: null,
+          }
+        : parsed.data;
+      const result = mapResult(data, options);
+      if (!result || !observability.extractionOnly) return result;
+      // Clearing the unified category marker lets the conversation use memory,
+      // rules and Jev even after successful GPT financial-field extraction.
+      const fields = {
+        unifiedPrimary: false,
+        categoryHint: undefined,
+        categoryCandidates: undefined,
+        proposedCategoryName: undefined,
+        proposedSubcategory: undefined,
+      };
+      if (result.intent === "plain")
+        return { ...result, expense: { ...result.expense, ...fields } };
+      if (result.intent === "card_installment")
+        return { ...result, purchase: { ...result.purchase, ...fields } };
+      if (result.intent === "obligation")
+        return { ...result, obligation: { ...result.obligation, ...fields } };
+      return result;
     } catch (error) {
       observability.telemetry?.({
         type: "ai_call",

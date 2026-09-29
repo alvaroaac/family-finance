@@ -548,3 +548,69 @@ describe("withClassifierDeadline", () => {
     }
   });
 });
+
+describe("GPT extraction with independent category routing", () => {
+  it("preserves financial fields but discards GPT category decisions", async () => {
+    const complete = vi.fn(async (_prompt: string) => JSON.stringify(VALID));
+    const extracted = await createUnifiedCompletionMessageClassifier(
+      { complete },
+      { extractionOnly: true },
+    )("giassi 123,45 no nubank", OPTIONS);
+    expect(extracted).toMatchObject({
+      intent: "plain",
+      expense: {
+        amountCents: 12345,
+        cardKeyword: "Nubank",
+        unifiedPrimary: false,
+      },
+    });
+    if (extracted?.intent === "plain")
+      expect(extracted.expense.categoryCandidates).toBeUndefined();
+    expect(complete.mock.calls[0]?.[0]).toContain("Não categorize");
+  });
+  it("routes a GPT-extracted Telegram expense through the household category engine before saving", async () => {
+    const classify = createUnifiedCompletionMessageClassifier(
+      { complete: async () => JSON.stringify(VALID) },
+      { extractionOnly: true },
+    );
+    const suggestCategory = vi.fn(async () => ({
+      status: "matched" as const,
+      requiresConfirmation: true,
+      suggestion: {
+        macroCategoryId: "cat-food",
+        subcategoryId: "sub-market",
+        source: "ai" as const,
+        confidence: 0.96,
+        explanation: "Jev",
+      },
+    }));
+    const createTransaction = vi.fn(async () => ({ id: "tx" }));
+    const deps: ConversationDeps = {
+      householdId: "house-1",
+      catalog: OPTIONS.catalog,
+      defaultAccountId: "account-1",
+      resolveCardId: () => undefined,
+      resolveAccountId: () => "account-1",
+      resolveResponsibleUserId: () => undefined,
+      suggestCategory,
+      createTransaction,
+      logInteraction: async () => undefined,
+      classifyMessage: classify,
+      listActiveCards: () => [{ id: "card-1", name: "Nubank" }],
+    };
+    const started = await startConversation(
+      { text: "giassi 123,45 no nubank", fromUserId: "user-1" },
+      deps,
+      { today: OPTIONS.today },
+    );
+    expect(suggestCategory).toHaveBeenCalledTimes(1);
+    expect(started.state.draft).toMatchObject({
+      amountCents: 12345,
+      categoryId: "cat-food",
+      subcategoryId: "sub-market",
+      categoryExplanation: "Jev",
+    });
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(started.state.status).toBe("awaiting_confirmation");
+  });
+});

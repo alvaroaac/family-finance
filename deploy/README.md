@@ -144,50 +144,39 @@ On the VPS, with the repo checked out and `deploy/bot/.env` filled from
 [`bot/.env.example`](./bot/.env.example) (chmod 600 — this is the ONLY place
 the service-role key lives outside the Supabase stack):
 
-Telegram message reading runs on the OpenAI API (`OPENAI_API_KEY`; default
-`gpt-6-luna`, then Claude) and needs no extra setup.
+Telegram financial-field extraction runs on OpenAI (`OPENAI_API_KEY`, default
+`gpt-6-luna`). Categorization runs through household memory and deterministic
+rules, then Jev, with GPT handling errors, uncertainty and pending taxonomy
+proposals. Runtime routing never uses Haiku or the Codex CLI.
 
-The image pins `@openai/codex@0.156.1` (the first release with GPT-6 Sol) for **import categorization only**. Before
-enabling that Codex primary, authenticate once into its named volume (never copy
-auth files into the repo or image):
-
-```bash
-cd deploy/bot
-docker compose build bot
-docker compose run --rm bot codex login --device-auth
-```
-
-Then configure the VPS-only `.env`:
+Configure the VPS-only `.env`:
 
 ```dotenv
-CODEX_ENABLED=true
-CODEX_MODEL=gpt-6-sol
-CODEX_TIMEOUT_MS=12000
+TYPESAFE_API_KEY=<typesafe-api-key>
+JEV_MODEL=jev-1.13.0
+JEV_TIMEOUT_MS=2500
 IMPORT_SUGGESTION_SHARED_SECRET=<same-random-32+-character-secret-as-vercel>
 IMPORT_PAID_FALLBACK_ENABLED=true
 IMPORT_PAID_FALLBACK_PROVIDER=openai
-IMPORT_PAID_FALLBACK_MODEL=gpt-5.4
+IMPORT_PAID_FALLBACK_MODEL=
 IMPORT_PAID_FALLBACK_MAX_ITEMS=10
 OPENAI_API_KEY=<openai-api-key>
+OPENAI_MODEL=
 ```
 
-Import paid fallback has an 8-second request timeout and runs only for operational
-Codex failures or omitted/invalid items; explicit Codex abstentions stay manual.
-The quota is capped per preview and at 25 items per household/day. OpenAI is the
-evaluated recommendation; Anthropic remains available only when explicitly
-configured with `provider=anthropic`, an exact model, and `ANTHROPIC_API_KEY`.
-The `codex-auth` volume
-persists device credentials across container replacement. This CLI login is
-operationally more fragile than a service API: monitor the structured Codex
-fallback telemetry and repeat device login if credentials expire. Message
-reading and Whisper do not depend on it.
-The CLI still holds a reusable device credential in-process; the deny list,
-event audit, non-root user, read-only filesystem, empty cwd, and secret-free
-child environment reduce exposure but do not eliminate credential risk. A
-separate sidecar/broker remains a defense-in-depth follow-up.
-Codex can surface a pending new subcategory in the confirmation explanation,
-but creating/persisting that subcategory from Telegram is intentionally a
-follow-up; it is never silently dropped into or written as an existing category.
+A blank import model uses `OPENAI_MODEL` or the current `gpt-6-luna` default.
+The import GPT fallback has an 8-second request timeout. Its existing quota is
+capped per preview and at 25 items per household/day. Jev requests have a
+2.5-second timeout, run at most four in parallel per import chunk, and return
+at most three existing-category candidates. Catalogs above the native 255-option
+limit use the bounded GPT fallback. Provider failure never confirms or writes
+transactions. Category and subcategory proposals require explicit user acceptance.
+
+Missing Jev credentials use GPT when its import fallback is enabled; missing both
+providers leaves manual categorization available. Jev abstentions remain manual.
+Set `IMPORT_PAID_FALLBACK_ENABLED=false` to disable paid import fallback explicitly.
+The web import review displays Jev/GPT provenance and still requires the user to
+accept each AI suggestion. No database migration is required for this routing change.
 
 ```bash
 cd deploy/bot
