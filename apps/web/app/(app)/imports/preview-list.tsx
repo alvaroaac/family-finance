@@ -116,17 +116,25 @@ function formatDayMonth(iso: string): string {
   return `${day}/${month}`;
 }
 
-/** Rows whose category the group controls: attached and not installment-bound. */
+/** Selected, attached rows whose categorization the group may change. */
+export function isGroupEditableRow(
+  view: PreviewRowView | undefined,
+): view is PreviewRowView {
+  return (
+    view !== undefined &&
+    !view.detached &&
+    !view.installmentRow &&
+    !view.excluded &&
+    !view.suppressed
+  );
+}
 function editableRows(
   group: MerchantGroup,
   rowsByIndex: ReadonlyMap<number, PreviewRowView>,
 ): PreviewRowView[] {
   return group.indices
     .map((index) => rowsByIndex.get(index))
-    .filter(
-      (view): view is PreviewRowView =>
-        view !== undefined && !view.detached && !view.installmentRow,
-    );
+    .filter(isGroupEditableRow);
 }
 
 function uniform<T>(values: T[]): T | "mixed" | undefined {

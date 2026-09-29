@@ -381,3 +381,78 @@ it("ignores drafts saved by another account for the same file", async () => {
   expect(document.body.textContent).not.toContain("Rascunho restaurado");
   expect(selectValue("Categoria do grupo UBER TRIP")).toBe("");
 });
+
+it.each(["suppressed", "excluded"])(
+  "keeps %s siblings unchanged when editing the selected merchant group",
+  async (protectedKind) => {
+    const base = await mocks.preview.getMockImplementation()!();
+    mocks.preview.mockResolvedValueOnce({
+      ...base,
+      categorizationPlan: {
+        rows: [
+          { status: "unresolved", selection: null, candidates: [] },
+          protectedKind === "suppressed"
+            ? { status: "suppressed", selection: null, candidates: [] }
+            : {
+                status: "selected",
+                selection: { categoryId: "transport", source: "memory" },
+                candidates: [],
+              },
+          { status: "unresolved", selection: null, candidates: [] },
+        ],
+        aiItems: [],
+      },
+    });
+    await openPreview();
+    await chooseAccount();
+    await clickLabel("Ver lançamentos de IFOOD *RESTAURANTE");
+    if (protectedKind === "excluded") await clickLabel("Importar linha 2");
+
+    // The protected sibling must not determine the group's displayed state.
+    expect(selectValue("Categoria do grupo IFOOD *RESTAURANTE")).toBe("");
+    expect(container.textContent).not.toContain("misto");
+    await select("Categoria do grupo IFOOD *RESTAURANTE", "food");
+    await select("Subcategoria do grupo IFOOD *RESTAURANTE", "delivery");
+    await clickLabel("Lembrar IFOOD *RESTAURANTE");
+    await clickLabel("Lembrar IFOOD *RESTAURANTE");
+    expect(selectValue("Categoria do grupo IFOOD *RESTAURANTE")).toBe("food");
+    expect(selectValue("Subcategoria do grupo IFOOD *RESTAURANTE")).toBe(
+      "delivery",
+    );
+    await select("Categoria do grupo UBER TRIP", "transport");
+    await click(
+      protectedKind === "excluded"
+        ? "Gravar 2 lançamentos"
+        : "Gravar 3 lançamentos",
+    );
+
+    const request = mocks.confirm.mock.calls[0]![0];
+    expect(request.mapping[0]).toEqual({
+      categoryId: "food",
+      subcategoryId: "delivery",
+    });
+    expect(request.learning[0]).toEqual({ merchant: true });
+    expect(request.provenance[0]).toEqual({
+      source: "user",
+      accepted: true,
+      changed: true,
+    });
+    expect(request.learning[1]).toBeUndefined();
+    if (protectedKind === "suppressed") {
+      expect(request.mapping[1]).toBeUndefined();
+      expect(request.provenance[1]).toBeUndefined();
+    } else {
+      expect(request.selectedIndices).not.toContain(1);
+      expect(request.mapping[1]).toEqual({
+        categoryId: "transport",
+        subcategoryId: undefined,
+      });
+      expect(request.provenance[1]).toEqual({
+        source: "memory",
+        confidence: undefined,
+        accepted: true,
+        changed: false,
+      });
+    }
+  },
+);

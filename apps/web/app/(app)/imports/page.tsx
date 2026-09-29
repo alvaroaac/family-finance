@@ -55,7 +55,11 @@ import {
   type MerchantGroup,
   type PreviewFilter,
 } from "./merchant-groups";
-import { PreviewList, type PreviewRowView } from "./preview-list";
+import {
+  PreviewList,
+  isGroupEditableRow,
+  type PreviewRowView,
+} from "./preview-list";
 
 // NOTE: server-driven page metadata cannot be exported from a client component.
 // The layout already establishes the "Casa" workspace title; this screen is the
@@ -1299,12 +1303,11 @@ export default function ImportsPage() {
       ? "pending"
       : "ok";
 
-  /** Attached, non-installment rows: what the group selects and Lembrar control. */
+  /** Use the same eligible rows for group controls and their displayed values. */
   function groupEditableIndices(group: MerchantGroup): number[] {
-    return group.indices.filter((index) => {
-      const view = rowViews.get(index);
-      return view !== undefined && !view.detached && !view.installmentRow;
-    });
+    return group.indices.filter((index) =>
+      isGroupEditableRow(rowViews.get(index)),
+    );
   }
   function markUserChoice(indices: number[]) {
     setProvenance((previous) => {
