@@ -443,7 +443,8 @@ repeat one Google sign-in and one bot message from a linked member.
 - Verification: the script prints the household id; the tester signs in on
   `https://family-finance.ondemandly.dev` and lands on an empty dashboard with
   the household name in the sidebar. The tester opens Configurações, chooses
-  "Vincular Telegram" and sends the shown `/vincular` message to the bot; the
+  "Vincular Telegram" and sends the shown `/vincular` message to the bot in a private chat (the bot
+  refuses to link in a group); the
   bot confirms, and the next bot message creates a draft in the tester's
   household only.
 - Rollback: delete the household row; membership, allowlist and data cascade.

@@ -94,6 +94,34 @@ Consequence for the owner: members whose Telegram link exists only as a
 username (no numeric id yet) must link again with `/vincular`. Runbook
 section 0 has the query that lists them.
 
+### Pull request review, round 2
+
+GPT-6 Astra (Codex, adversarial, cold read): three findings.
+
+| Id  | Finding                                                                          | Disposition                                                                                                         |
+| --- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| A1  | `0032` applied while autoconfirm is still on; existing memberships never audited | Fixed in the runbook: autoconfirm goes off before the migrations (step 2.0), password identities audited (step 0.1) |
+| A2  | Numeric Telegram ids stored before `0032` may come from username matching        | Fixed in the runbook: step 0.1 audits legacy bindings; doubtful ones are cleared and linked again by code           |
+| A3  | Membership survives a change away from the allowlisted email                     | Rejected, by design: membership belongs to the account. Runbook section 9 documents removal (`is_active = false`)   |
+
+Fable 5.1 (primary): code mergeable, runbook not ready. Findings:
+
+| Id  | Finding                                                                        | Disposition                                                                       |
+| --- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| M1  | Runbook changed `NEXT_PUBLIC_SITE_URL` while `main` still uses it for OAuth    | Fixed in the runbook: only `ALLOWED_WEB_HOSTS` first, site URL moves in step 5    |
+| M2  | Bot `SUPABASE_URL` still pointed at the old hostname when its route is removed | Fixed in the runbook: bot moves first, checked before and after the route removal |
+| m1  | Link command accepted in groups; a rejected code stayed valid                  | Fixed: private chat only, a rejected code is deleted                              |
+| m2  | Username plumbing left in the bot and the resolver                             | Removed; `resolve_telegram_member` takes the numeric id alone                     |
+| m3  | `redeemLinkCode` was an optional dependency                                    | Fixed: required                                                                   |
+| m4  | Settings showed raw error text and no hint to reload after linking             | Fixed: errors are logged, friendly copy, reload hint                              |
+| m5  | Telegram base URL declared twice; trailing slash not normalised                | Fixed: bot schema only, normalised to the origin                                  |
+| m6  | Runbook promised that sessions survive the hostname move                       | Fixed in the runbook: sessions may end                                            |
+| m7  | Compose mapping of `GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI` not confirmed         | Fixed in the runbook: step 4 checks the `auth` service environment                |
+| m8  | Migration number `0028` lives on an unmerged branch                            | Recorded in tech debt                                                             |
+| m9  | Renaming a bucket kept the old slug                                            | Fixed: the slug follows the name; a collision reports "Já existe um objetivo..."  |
+| m10 | Rollback not rehearsed                                                         | Already stated in the runbook                                                     |
+| m11 | No attempt limit on link codes                                                 | Accepted: 40-bit code, 10 minutes, single use, private chat only                  |
+
 ## End-to-end evidence (local, 2026-09-29)
 
 Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:category-migration`.
@@ -101,12 +129,12 @@ Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:
 | Suite                                                                   | Result             |
 | ----------------------------------------------------------------------- | ------------------ |
 | domain                                                                  | 104 passed         |
-| config                                                                  | 18 passed          |
+| config                                                                  | 19 passed          |
 | importers                                                               | 53 passed          |
 | categorization                                                          | 38 passed          |
-| db                                                                      | 110 passed         |
-| bot                                                                     | 1974 passed        |
-| web                                                                     | 515 passed         |
+| db                                                                      | 111 passed         |
+| bot                                                                     | 1976 passed        |
+| web                                                                     | 518 passed         |
 | `pnpm e2e:bot` (harness, create-household, rls-proof, bot multi-tenant) | 21 passed, 4 files |
 | `pnpm e2e:web` (Playwright: harness smoke, multi-tenant)                | 8 passed           |
 | `node deploy/checks/rls-proof.mjs` on the e2e stack                     | 397/397 PASS       |

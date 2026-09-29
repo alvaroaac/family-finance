@@ -816,3 +816,19 @@ column stays in the schema and types with no reader.
 **Revisit trigger:** Next migration touching `household_members`.
 
 **Status:** open
+
+## 2026-09-29: Migration number 0028 is reserved by an unmerged branch
+
+**Area:** `supabase/migrations/`, branch `codex/merchant-categorization-evidence`
+
+**Impact:** `main` goes from `0027` to `0029`. The unmerged branch holds
+`0028`. If it merges as is, its migration sorts before `0029`–`0032`, which
+production will already have applied, and it was written without the
+`household_id` rules.
+
+**Current workaround:** None; the gap is harmless while the branch is unmerged.
+
+**Revisit trigger:** Before merging `codex/merchant-categorization-evidence`:
+rebase over `main` and renumber its migration to the next free number.
+
+**Status:** open
