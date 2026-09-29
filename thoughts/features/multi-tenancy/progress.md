@@ -122,6 +122,17 @@ Fable 5.1 (primary): code mergeable, runbook not ready. Findings:
 | m10 | Rollback not rehearsed                                                         | Already stated in the runbook                                                     |
 | m11 | No attempt limit on link codes                                                 | Accepted: 40-bit code, 10 minutes, single use, private chat only                  |
 
+### Pull request review, round 3
+
+GPT-6 Astra (Codex, adversarial, cold read): four findings.
+
+| Id  | Finding                                                                          | Disposition                                                                                                                                                                   |
+| --- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | In a Telegram group shared by two households, a member's bot replies are visible | Rejected, by design: the bot answers in the chat where the member wrote. Group use is part of the design and tested. Owner decision: restrict the bot to private chats or not |
+| A2  | Runbook kept the account and membership of a disowned password signup            | Fixed in the runbook: membership deactivated and auth user deleted                                                                                                            |
+| A3  | A signup before `0032` could leave an active membership on an unconfirmed email  | Fixed in the runbook: audit in step 0.1 and a zero-count check after the migrations                                                                                           |
+| A4  | A rejected redemption consumes the link code                                     | Rejected: a leaked code must die. Whoever holds it could otherwise link as the member. The member generates a new one                                                         |
+
 ## End-to-end evidence (local, 2026-09-29)
 
 Release gate: `pnpm typecheck && pnpm test && pnpm test:migrations && pnpm test:category-migration`.

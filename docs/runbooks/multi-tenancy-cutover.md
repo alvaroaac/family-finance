@@ -111,8 +111,38 @@ where exists (
 );
 ```
 
-Expected: zero rows. For any row, ask the member whether they created it. If
-not, delete the email identity in Studio and sign out that user's sessions.
+Expected: zero rows. For any row, ask the member whether the account is
+theirs.
+
+- The account is theirs (it also has a Google identity they use): delete the
+  email identity in Studio and sign out that user's sessions.
+- The member disowns the account: it belongs to someone else. Deactivate the
+  membership, then delete the auth user in Studio, which also ends its
+  sessions.
+
+  ```sql
+  update household_members set is_active = false where user_id = '<user id>';
+  ```
+
+  Verification: the user is gone from `auth.users`, and no active
+  `household_members` row references it.
+
+  If the delete is refused by a foreign key, the account wrote records in the
+  household. Keep the membership deactivated, review those records with the
+  members (`created_by_user_id = '<user id>'`), and delete the auth user
+  after they are reassigned or removed.
+
+Members without a confirmed email. No membership may rest on an unconfirmed
+address:
+
+```sql
+select m.id, u.email
+from household_members m
+join auth.users u on u.id = m.user_id
+where m.is_active and u.email_confirmed_at is null;
+```
+
+Expected: zero rows. Deactivate any row found and delete its auth user.
 
 Pending bot drafts are deleted by `0031` (the conversation table is re-keyed).
 Finish or cancel any draft in Telegram before the window.
@@ -258,6 +288,9 @@ confirms every signup by itself.
 
   ```sql
   select count(*) from allowed_emails where household_id is null;      -- 0
+  select count(*) from household_members m
+    join auth.users u on u.id = m.user_id
+    where m.is_active and u.email_confirmed_at is null;                 -- 0
   select theme from households;                                         -- {"base": "esmeralda"}
   select conname from pg_constraint where conname = 'household_members_user_id_key';
   select has_table_privilege('authenticated', 'household_members', 'update');            -- f
