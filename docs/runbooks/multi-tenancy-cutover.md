@@ -5,7 +5,15 @@ Moves production from one household to several households on one deployment
 
 Nothing in this runbook was executed by the implementation session. Production
 was not touched. Every step lists its action, its verification and its rollback.
-Run the steps in order.
+Run the steps in order. The order matters in three places, each explained where
+it applies:
+
+- the database is migrated from the branch **before** the pull request is
+  merged (step 2);
+- Google learns the new callback **before** the auth server starts sending it
+  (steps 3 and 4);
+- the old callback and the old Supabase route are removed only after a fresh
+  Google sign-in was seen using the new ones (step 5).
 
 Hostnames used below:
 
@@ -47,6 +55,29 @@ select user_id, count(*) from household_members group by 1 having count(*) > 1;
 
 Expected: zero rows.
 
+Auth users that are not members. Public email signup was open until this
+cutover, so stray accounts may exist:
+
+```sql
+select u.email, u.created_at, u.email_confirmed_at, u.raw_app_meta_data->'providers' as providers
+from auth.users u
+where not exists (select 1 from household_members m where m.user_id = u.id);
+```
+
+Expected: zero rows, or only accounts the owner recognises. Delete the others
+in Supabase Studio (Authentication → Users) before the window.
+
+Members linked to Telegram by username only. Migration `0032` stops matching
+by username, so these members link again with a code after the cutover
+(Configurações → Vincular Telegram):
+
+```sql
+select display_name from household_members
+where telegram_user_id is null and telegram_username is not null;
+```
+
+Members with a numeric `telegram_user_id` keep working without action.
+
 Pending bot drafts are deleted by `0031` (the conversation table is re-keyed).
 Finish or cancel any draft in Telegram before the window.
 
@@ -64,9 +95,9 @@ Finish or cancel any draft in Telegram before the window.
 
 ### 0.3 Decisions the owner takes before onboarding the tester
 
-- Third-party processing: message text and audio go to OpenAI, Anthropic and
-  Telegram under the operator's keys. Decide what is disclosed and whether any
-  provider is disabled for tenant households.
+- Third-party processing: message text, audio and member display names go to
+  OpenAI, Anthropic and Telegram under the operator's keys. Decide what is
+  disclosed and whether any provider is disabled for tenant households.
 - Data is not encrypted at rest until spec 2 ships. As VPS and database owner,
   the operator can technically read tenant data. Spec 1 gives isolation
   between households, not privacy from the operator.
@@ -75,16 +106,58 @@ Finish or cancel any draft in Telegram before the window.
   acceptance, incident runbook, record of processing activities, VPS location
   confirmed.
 
+### 0.4 Do not merge yet
+
+The new web build does not run on the old schema (it selects
+`households.theme`) and refuses to start without `NEXT_PUBLIC_SITE_URL`. If
+the Vercel project deploys `main` automatically, merging before step 2 takes
+the existing household's site down until step 5 is finished.
+
+- Action: keep the pull request open until step 5. In Vercel, add the two
+  additive variables now, for Production: `ALLOWED_WEB_HOSTS` =
+  `<existing host>,family-finance.ondemandly.dev` and `NEXT_PUBLIC_SITE_URL` =
+  `https://family-finance.ondemandly.dev`. The current build ignores both.
+- Verification: the variables are listed in the project settings; the
+  production site still works.
+- Rollback: remove the two variables.
+
+The reverse combination is safe: the current web build keeps working on the
+migrated schema between step 2 and step 5, with one exception. Its Telegram
+field in Configurações fails with a permission error after `0032`, because
+members can no longer write Telegram columns.
+
 ## 1. Backup
 
-- Action: on the VPS,
-  `docker exec supabase-db pg_dump -U postgres -d postgres | gzip > /var/backups/family-finance/pre-multi-tenancy-$(date +%F-%H%M).sql.gz`.
-  Copy `deploy/bot/.env` and the Supabase stack `.env` next to it (mode 600).
-- Verification: `gunzip -t` on the file succeeds and its size is close to the
-  latest nightly dump.
-- Rollback: not applicable. This file is the rollback source for step 2.
+Tell the members not to use the web app or the bot during the window. Anything
+written after this step is lost if the database is rolled back.
 
-## 2. Migrations 0029–0031 and bot redeploy (same window)
+- Action: on the VPS,
+  1. logical dump, kept as the long-term copy:
+     `docker exec supabase-db pg_dump -U postgres -d postgres | gzip > /var/backups/family-finance/pre-multi-tenancy-$(date +%F-%H%M).sql.gz`;
+  2. physical copy, which is the rollback source. Stop the database container,
+     archive its data volume (the volume mounted at
+     `/var/lib/postgresql/data` in the `db` service of the Supabase compose
+     file), start the container again:
+
+     ```bash
+     docker compose stop db
+     tar -C <host path of the db data volume> -czf /var/backups/family-finance/pre-multi-tenancy-pgdata.tgz .
+     docker compose start db
+     ```
+
+  3. copy `deploy/bot/.env` and the Supabase stack `.env` next to the archives
+     (mode 600).
+
+- Verification: `gunzip -t` succeeds on both archives; the dump size is close
+  to the latest nightly dump; the site answers again after the restart.
+- Rollback: not applicable. These files are the rollback source for step 2.
+
+The physical copy is used because the plain dump cannot be piped into the live
+database: it has no `DROP` statements and fails on the first existing object.
+The restore procedure in step 2.2 was not rehearsed by the implementation
+session. Rehearse it once on a copy if the window allows.
+
+## 2. Migrations 0029–0032 and bot redeploy (same window)
 
 Order constraint: the bot must be redeployed with the new env in the same
 window as migration `0031`. The old bot build cannot use the re-keyed
@@ -102,7 +175,8 @@ migration and the redeploy the bot fails closed; keep that gap short.
 
 ### 2.2 Apply migrations
 
-- Action: update the VPS checkout to the merged `main`, then
+- Action: on the VPS checkout, `git fetch` and check out the head commit of
+  the pull request branch `feat/multi-tenancy` (not `main`, see 0.4), then
   `./deploy/migrate.sh status` and `./deploy/migrate.sh apply`.
 - What they do:
   - `0029`: `allowed_emails.household_id` (not null, backfilled),
@@ -113,54 +187,49 @@ migration and the redeploy the bot fails closed; keep that gap short.
   - `0031`: bot conversation table re-keyed by chat, Telegram user and
     household; `resolve_telegram_member`; the three RPCs above require an
     authenticated member.
-- Verification: `./deploy/migrate.sh status` is clean through `0031`, and
+  - `0032`: only users with a confirmed email are provisioned; members can
+    update `display_name` only; Telegram is linked with a one-time code
+    redeemed by the bot; username matching is removed.
+- Verification: `./deploy/migrate.sh status` is clean through `0032`, and
 
   ```sql
   select count(*) from allowed_emails where household_id is null;      -- 0
   select theme from households;                                         -- {"base": "esmeralda"}
   select conname from pg_constraint where conname = 'household_members_user_id_key';
+  select has_table_privilege('authenticated', 'household_members', 'update');            -- f
+  select has_column_privilege('authenticated', 'household_members', 'display_name', 'update'); -- t
   ```
 
-- Rollback: restore the step 1 dump into the database and redeploy the
-  previous bot and web builds. The migrations have no down scripts.
+- Rollback: the migrations have no down scripts. Restore the physical copy of
+  step 1 and start the previous bot image:
+
+  ```bash
+  docker compose stop            # whole Supabase stack
+  mv <host path of the db data volume> <same path>.failed
+  mkdir <host path of the db data volume>
+  tar -C <host path of the db data volume> -xzf /var/backups/family-finance/pre-multi-tenancy-pgdata.tgz
+  docker compose up -d
+  ```
+
+  Then check the row counts of `transactions` and `household_members` against
+  the values noted before the window. The web build was not changed yet, so
+  it needs no rollback at this point.
 
 ### 2.3 Bot env and redeploy
 
 - Action: in `deploy/bot/.env` add `SUPABASE_JWT_SECRET` (the `JWT_SECRET` of
   the Supabase stack) and `SUPABASE_ANON_KEY`. Keep the file at mode 600.
-  Rebuild and start the bot from the merged `main`.
+  Rebuild and start the bot from the same branch commit as step 2.2.
 - Verification: the bot's health endpoint answers; a message from a linked
   member gets a normal reply; a message from an unlinked Telegram account gets
-  the refusal "Oi! Eu ainda não conheço você por aqui — peça para quem
-  administra a sua casa vincular seu Telegram nas Configurações."
-- Rollback: restore the dump (step 2.2 rollback) and start the previous image.
-  The previous image does not work against the migrated schema.
+  the refusal that starts with "Oi! Eu ainda não conheço você por aqui."
+- Rollback: restore the database (step 2.2 rollback) and start the previous
+  image. The previous image does not work against the migrated schema.
 
-## 3. Supabase hostname move
+## 3. Google console
 
-The old hostname stays routed until the new one is verified.
-
-- Action:
-  1. DNS: `supabase.family-finance.ondemandly.dev` points at the VPS.
-  2. Reverse proxy (Traefik in production; `deploy/caddy/Caddyfile` is the
-     repository template): add a route for the new hostname to Kong, keeping
-     the old route.
-  3. Supabase stack `.env`: `API_EXTERNAL_URL` and `SUPABASE_PUBLIC_URL` become
-     `https://supabase.family-finance.ondemandly.dev`. `SITE_URL` becomes
-     `https://family-finance.ondemandly.dev`. `ADDITIONAL_REDIRECT_URLS` lists
-     the callback of every web hostname, for example
-     `https://<existing host>/auth/callback,https://family-finance.ondemandly.dev/auth/callback`.
-  4. `docker compose up -d` for the auth and Kong services.
-- Verification: `curl https://supabase.family-finance.ondemandly.dev/auth/v1/health`
-  answers 200, and the old hostname still answers.
-- Rollback: restore the previous `.env` values and restart. The old route was
-  never removed.
-
-Existing sessions end when the web app starts using the new Supabase URL,
-because the auth cookie name derives from the Supabase hostname. Members sign
-in again once. The owner accepted this.
-
-## 4. Google console
+Done before the auth server changes, so Google already accepts the new
+callback when the auth server starts sending it.
 
 - Action: on the existing OAuth client,
   - add the authorized redirect URI
@@ -171,36 +240,90 @@ in again once. The owner accepted this.
     `email`, `profile`, app name "Family Finance", homepage and privacy policy
     on `ondemandly.dev`.
 - Verification: the client shows both redirect URIs; the consent screen shows
-  "In production".
-- Rollback: the old redirect URI is still present, so reverting step 3 and
-  step 5 restores the previous flow.
+  "In production". Sign-in on the existing site still works.
+- Rollback: remove the added URI and origins. Nothing uses them yet.
 
 "In production" with non-sensitive scopes has no user cap and no fee.
 "Testing" status limits sign-in to listed test users and expires refresh
 tokens after seven days; do not leave it in "Testing".
 
-## 5. Vercel
+## 4. Supabase hostname move and signup hardening
+
+The old hostname stays routed until step 5 is verified.
+
+- Action:
+  1. DNS: `supabase.family-finance.ondemandly.dev` points at the VPS.
+  2. Reverse proxy (Traefik in production; `deploy/caddy/Caddyfile` is the
+     repository template): add a route for the new hostname to Kong, keeping
+     the old route.
+  3. Supabase stack `.env`:
+     - `API_EXTERNAL_URL` and `SUPABASE_PUBLIC_URL` become
+       `https://supabase.family-finance.ondemandly.dev`;
+     - `GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI` becomes
+       `https://supabase.family-finance.ondemandly.dev/auth/v1/callback`;
+     - `SITE_URL` becomes `https://family-finance.ondemandly.dev`;
+     - `ADDITIONAL_REDIRECT_URLS` lists the callback of every web hostname,
+       for example
+       `https://<existing host>/auth/callback,https://family-finance.ondemandly.dev/auth/callback`;
+     - `ENABLE_EMAIL_AUTOCONFIRM=false`. The email provider stays enabled,
+       because the isolation proof of step 6 signs in with passwords.
+  4. `docker compose up -d` for the auth and Kong services.
+- Verification:
+  - `curl https://supabase.family-finance.ondemandly.dev/auth/v1/health`
+    answers 200, and the old hostname still answers;
+  - a fresh Google sign-in on the existing site succeeds, and the Google
+    consent URL carries `redirect_uri` with the **new** Supabase host;
+  - public signup yields no session:
+
+    ```bash
+    curl -s -X POST https://supabase.family-finance.ondemandly.dev/auth/v1/signup \
+      -H "apikey: <anon key>" -H "Content-Type: application/json" \
+      -d '{"email":"signup-probe@example.com","password":"<throwaway>"}'
+    ```
+
+    Expected: an error, or a user object without `access_token`. If a user
+    was created, delete it in Studio.
+
+- Rollback: restore the previous `.env` values and restart. The old route and
+  the old Google redirect URI were never removed.
+
+Why autoconfirm matters: with autoconfirm, anyone could sign up with a
+password for an allowlisted address and be provisioned into that household.
+Migration `0032` provisions confirmed users only, and without autoconfirm a
+self-signup stays unconfirmed. Google sign-ins and users created by the
+operator are confirmed.
+
+Existing sessions end when the web app starts using the new Supabase URL,
+because the auth cookie name derives from the Supabase hostname. Members sign
+in again once. The owner accepted this.
+
+## 5. Vercel and merge
 
 - Action:
   - add the domain `family-finance.ondemandly.dev` to the same project;
-  - env `ALLOWED_WEB_HOSTS` = `<existing host>,family-finance.ondemandly.dev`;
-  - env `NEXT_PUBLIC_SITE_URL` = `https://family-finance.ondemandly.dev`;
   - env `NEXT_PUBLIC_SUPABASE_URL` = `https://supabase.family-finance.ondemandly.dev`;
+  - confirm `ALLOWED_WEB_HOSTS` and `NEXT_PUBLIC_SITE_URL` from step 0.4;
   - remove `AUTHORIZED_EMAILS` and `HOUSEHOLD_SLUG`;
-  - deploy the merged `main`.
+  - merge the pull request and deploy `main` (automatic, or by hand if
+    automatic deployment is off);
+  - update the VPS checkout to the merged `main`.
 - Verification:
   - sign in on the existing host with both existing accounts; each lands on
     `/dashboard` and sees the existing data;
   - sign in on the neutral host with an existing account; same household;
   - a Google account that is not allowlisted lands on the access-denied
     screen on both hosts;
-  - a request with an unknown `Host` header redirects to the neutral host.
+  - a request with an unknown `Host` header redirects to the neutral host;
+  - each sign-in above showed the new Supabase host in the Google consent
+    URL.
 - Rollback: promote the previous Vercel deployment and restore the previous
-  env values. This only works if the database was also rolled back, because
-  the previous build reads `AUTHORIZED_EMAILS` and the old schema.
+  env values, including `NEXT_PUBLIC_SUPABASE_URL`. The previous build works
+  on the migrated schema (see 0.4), so the database does not need a rollback
+  for this step.
 
-After verification, remove the old Supabase route from the reverse proxy and
-the old redirect URI from the Google client.
+Only after every verification above passed: remove the old Supabase route
+from the reverse proxy and the old redirect URI from the Google client. Then
+repeat one Google sign-in.
 
 ## 6. rls-proof against production
 
@@ -222,16 +345,29 @@ the old redirect URI from the Google client.
   inside the existing household, tagged with the run marker printed on the
   first line; member B gets a throwaway household. The script proves that
   neither side can read or write the other's rows through tables, views or
-  RPCs, then deletes its fixtures and users.
+  RPCs, that members cannot write identity columns, and that public signup
+  yields neither a session nor a membership. It then deletes its fixtures and
+  users.
 
-- Verification: exit code 0, every check reports PASS (361 checks on the
-  local stack), and no household named `rls-proof-*` remains.
+- Verification: exit code 0, every check reports PASS, and no household named
+  `rls-proof-*` remains.
 - Rollback: if any check fails, do not create the tester's household. If the
   run was killed before teardown, remove its fixtures with
   `node deploy/checks/rls-proof.mjs --cleanup <marker>` (needs `SUPABASE_URL`,
   `SERVICE_ROLE_KEY`, `DATABASE_URL`).
 
 ## 7. Create the tester's household
+
+- Precheck: no auth user may already exist for an address about to be
+  allowlisted. An existing confirmed user would be provisioned immediately.
+
+  ```sql
+  select id, email, email_confirmed_at, raw_app_meta_data->'providers'
+  from auth.users where lower(email) in ('<tester email>', '<second email>');
+  ```
+
+  Expected: zero rows. If a row exists and the tester did not create it,
+  delete that user before continuing.
 
 - Action: on a machine that can reach the production database,
 
@@ -248,8 +384,10 @@ the old redirect URI from the Google client.
 
 - Verification: the script prints the household id; the tester signs in on
   `https://family-finance.ondemandly.dev` and lands on an empty dashboard with
-  the household name in the sidebar. After the tester links Telegram in
-  Configurações, a bot message creates a draft in the tester's household only.
+  the household name in the sidebar. The tester opens Configurações, chooses
+  "Vincular Telegram" and sends the shown `/vincular` message to the bot; the
+  bot confirms, and the next bot message creates a draft in the tester's
+  household only.
 - Rollback: delete the household row; membership, allowlist and data cascade.
 
   ```sql
@@ -263,7 +401,8 @@ Send before the first login:
 - what is stored: transactions, accounts, imports, Telegram messages sent to
   the bot;
 - who processes it: the operator's VPS, Vercel, Telegram, and the AI providers
-  that read message text and audio (OpenAI, Anthropic);
+  that read message text, audio and the display names of the household's
+  members (OpenAI, Anthropic);
 - that data is isolated from other households by database policy;
 - that data is not yet encrypted at rest and the operator can technically
   access it; encryption is planned (spec 2);
