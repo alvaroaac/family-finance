@@ -6,6 +6,7 @@ export default defineConfig({
       "harness.test.ts",
       "create-household.test.ts",
       "rls-proof.test.ts",
+      "bot-multi-tenant.test.ts",
     ],
     testTimeout: 180_000,
     maxWorkers: 1,

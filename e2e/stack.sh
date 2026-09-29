@@ -30,7 +30,7 @@ case "${1:-}" in
     ;;
   bot|web)
     eval "$(bash "$0" env)"
-    export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET
+    export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET DATABASE_URL
     if [[ "$1" == bot ]]; then
       cd "$root"
       exec pnpm --filter @family-finance/e2e test:bot
@@ -40,7 +40,7 @@ case "${1:-}" in
       export NEXT_PUBLIC_SITE_URL=http://localhost:3100
       export ALLOWED_WEB_HOSTS=localhost:3100,127.0.0.1:3100
       pnpm --filter @family-finance/web build
-      exec pnpm --filter @family-finance/web exec playwright test --config playwright.config.ts e2e/harness-smoke.spec.ts
+      exec pnpm --filter @family-finance/web exec playwright test --config playwright.config.ts e2e/harness-smoke.spec.ts e2e/multi-tenant.spec.ts
     fi
     ;;
   *) echo "Usage: $0 {up|down|env|bot|web}" >&2; exit 2 ;;

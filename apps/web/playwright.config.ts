@@ -16,13 +16,18 @@ import { defineConfig, devices } from "@playwright/test";
  */
 
 const harness = process.env.E2E_HARNESS === "1";
-const baseURL = process.env.E2E_BASE_URL ?? (harness ? "http://localhost:3100" : "http://localhost:3000");
+const baseURL =
+  process.env.E2E_BASE_URL ??
+  (harness ? "http://localhost:3100" : "http://localhost:3000");
 
 export default defineConfig({
   testDir: "./e2e",
   // Only the Playwright specs; the offline vitest integration test lives under
   // integration/ and must never be picked up here.
-  testMatch: harness ? /harness-smoke\.spec\.ts/ : /.*\.spec\.ts/,
+  testMatch: harness
+    ? /(?:harness-smoke|multi-tenant)\.spec\.ts/
+    : /.*\.spec\.ts/,
+  globalSetup: harness ? "./e2e/global-setup.ts" : undefined,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -42,7 +47,9 @@ export default defineConfig({
   webServer: process.env.E2E_NO_SERVER
     ? undefined
     : {
-        command: harness ? "pnpm exec next start --port 3100 --hostname 0.0.0.0" : "pnpm dev",
+        command: harness
+          ? "pnpm exec next start --port 3100 --hostname 0.0.0.0"
+          : "pnpm dev",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
