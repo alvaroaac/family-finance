@@ -46,11 +46,8 @@ export type ObligationStatus = "active" | "ended" | "canceled";
 export type HouseholdRow = {
   id: string;
   name: string;
-  theme: {
-    base: string;
-    overrides?: Record<string, string>;
-    lockBase?: boolean;
-  };
+  /** Member-writable jsonb; validate with `parseHouseholdTheme` before use. */
+  theme: unknown;
   created_at: string;
   updated_at: string;
 };

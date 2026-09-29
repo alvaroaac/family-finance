@@ -1495,7 +1495,7 @@ export default function ImportsPage() {
       {matchPageError !== null ? <p role="alert">{matchPageError}</p> : null}
       <header>
         <div className="ff-kicker" style={{ letterSpacing: "0.26em" }}>
-          Nossa casa · Importação
+          Importação
         </div>
         <h1 className="ff-page-title__heading">
           {step === 1

@@ -56,7 +56,7 @@ export default function GlobalError({
               color: "#d4af6a",
             }}
           >
-            Nossa casa
+            Family Finance
           </p>
           <h1
             style={{
@@ -76,8 +76,8 @@ export default function GlobalError({
               color: "rgba(242, 237, 224, 0.66)",
             }}
           >
-            O app inteiro travou nessa. Recarregar a página costuma resolver — se continuar,
-            volta mais tarde que a gente já dá um jeito.
+            O app inteiro travou nessa. Recarregar a página costuma resolver —
+            se continuar, volta mais tarde que a gente já dá um jeito.
           </p>
           <button
             type="button"

@@ -16,7 +16,9 @@ import {
   brl,
   currentHouseholdMonth,
   paidKey,
+  parseHouseholdTheme,
   projectObligations,
+  type HouseholdTheme,
   type MoneyAmount,
   type TransactionDraft,
   type TransactionKind,
@@ -864,6 +866,35 @@ export async function findHouseholdIdForCurrentUser(
     throw new Error(`findHouseholdIdForCurrentUser failed: ${error.message}`);
   }
   return data?.household_id ?? null;
+}
+
+export type CurrentHousehold = {
+  id: string;
+  name: string;
+  theme: HouseholdTheme;
+};
+
+/**
+ * The caller's household with its validated theme. RLS shows exactly the one
+ * household of the caller's membership. An invalid theme document falls back
+ * to Esmeralda and logs a warning naming the household.
+ */
+export async function getCurrentHousehold(
+  client: AppSupabaseClient,
+): Promise<CurrentHousehold> {
+  const { data, error } = await client
+    .from("households")
+    .select("id, name, theme")
+    .limit(1)
+    .single();
+  if (error !== null) {
+    throw new Error(`getCurrentHousehold failed: ${error.message}`);
+  }
+  const { theme, valid } = parseHouseholdTheme(data.theme);
+  if (!valid) {
+    console.warn(`household ${data.id} has an invalid theme document`);
+  }
+  return { id: data.id, name: data.name, theme };
 }
 
 /** List ALL macro categories for a household (active and archived), by name. */

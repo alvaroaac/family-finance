@@ -44,7 +44,8 @@ type InvestmentsData = {
 
 async function loadData(householdId: string): Promise<InvestmentsData> {
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const buckets = await listInvestmentBuckets(client, householdId);
     return { buckets, loadError: null };
@@ -100,7 +101,6 @@ export default async function InvestmentsPage() {
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
       <PageTitle
-        kicker="Nossa casa"
         title="Caixinhas"
         lead="O que a gente está guardando pros nossos planos."
         actions={
@@ -116,7 +116,11 @@ export default async function InvestmentsPage() {
       />
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
+        <div
+          role="alert"
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 20 }}
+        >
           {loadError}
         </div>
       ) : null}

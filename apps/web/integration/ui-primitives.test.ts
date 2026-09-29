@@ -46,7 +46,10 @@ describe("ui primitives — core", () => {
 
   it("Button variant=primary renders <button class~=ff-btn--primary type=button>", () => {
     const html = renderToStaticMarkup(
-      createElement(Button, { variant: "primary", children: "Salvar lançamento" }),
+      createElement(Button, {
+        variant: "primary",
+        children: "Salvar lançamento",
+      }),
     );
     expect(html).toMatch(/<button[^>]*class="[^"]*ff-btn--primary[^"]*"/);
     expect(html).toMatch(/<button[^>]*type="button"/);
@@ -54,7 +57,9 @@ describe("ui primitives — core", () => {
   });
 
   it("Button defaults to ghost variant", () => {
-    const html = renderToStaticMarkup(createElement(Button, { children: "Cancelar" }));
+    const html = renderToStaticMarkup(
+      createElement(Button, { children: "Cancelar" }),
+    );
     expect(html).toContain("ff-btn--ghost");
   });
 
@@ -87,7 +92,9 @@ describe("ui primitives — core", () => {
       settings: "ff-skeleton-theme-grid",
     } as const;
 
-    for (const [variant, expectedClass] of Object.entries(expectedClassByVariant)) {
+    for (const [variant, expectedClass] of Object.entries(
+      expectedClassByVariant,
+    )) {
       const html = renderToStaticMarkup(
         createElement(RouteSkeleton, {
           variant: variant as keyof typeof expectedClassByVariant,
@@ -148,22 +155,32 @@ describe("ui primitives — core", () => {
   });
 
   it("Kicker renders the .ff-kicker class", () => {
-    const html = renderToStaticMarkup(createElement(Kicker, { children: "Nossa casa" }));
+    const html = renderToStaticMarkup(
+      createElement(Kicker, { children: "Importação" }),
+    );
     expect(html).toContain("ff-kicker");
-    expect(html).toContain("Nossa casa");
+    expect(html).toContain("Importação");
   });
 
   it("PageTitle renders kicker, title and optional lead", () => {
     const html = renderToStaticMarkup(
       createElement(PageTitle, {
-        kicker: "Nossa casa · Julho de 2026",
+        kicker: "Julho de 2026",
         title: "Transações",
         lead: "Tudo que entrou e saiu — dá pra ajustar categoria, descrição e responsável direto na lista.",
       }),
     );
-    expect(html).toContain("Nossa casa · Julho de 2026");
+    expect(html).toContain("Julho de 2026");
     expect(html).toMatch(/<h1[^>]*>Transações<\/h1>/);
     expect(html).toContain("Tudo que entrou e saiu");
+  });
+
+  it("PageTitle omits the kicker when none is given", () => {
+    const html = renderToStaticMarkup(
+      createElement(PageTitle, { title: "Contas" }),
+    );
+    expect(html).not.toContain("ff-kicker");
+    expect(html).toMatch(/<h1[^>]*>Contas<\/h1>/);
   });
 
   it("Delta renders the arrow for its direction and the tone wash", () => {
@@ -202,13 +219,18 @@ describe("ui primitives — core", () => {
         children: createElement(Input, { defaultValue: "Mercado Guanabara" }),
       }),
     );
-    expect(html).toMatch(/<label[^>]*class="[^"]*ff-field__label[^"]*"[^>]*>Descrição<\/label>/);
+    expect(html).toMatch(
+      /<label[^>]*class="[^"]*ff-field__label[^"]*"[^>]*>Descrição<\/label>/,
+    );
     expect(html).toContain("ff-input");
   });
 
   it("Input renders the .ff-input class and forwards native props", () => {
     const html = renderToStaticMarkup(
-      createElement(Input, { name: "description", placeholder: "PIX João da horta" }),
+      createElement(Input, {
+        name: "description",
+        placeholder: "PIX João da horta",
+      }),
     );
     expect(html).toMatch(/<input[^>]*class="[^"]*ff-input[^"]*"/);
     expect(html).toContain('name="description"');
@@ -398,7 +420,7 @@ describe("ui primitives — app shell", () => {
     return renderToStaticMarkup(
       createElement(AppShell, {
         items,
-        brand: { kicker: "Nossa casa", title: "Alvaro & Karol" },
+        householdName: "Casa Azul",
         user: { initial: "K", name: "Karol", email: "karol@casa.com" },
         signOut: createElement("button", { type: "submit" }, "sair"),
         children: "conteúdo da página",
@@ -409,8 +431,7 @@ describe("ui primitives — app shell", () => {
   it("renders the sidebar with brand, every nav item and the user footer", () => {
     const html = renderShell();
     expect(html).toContain("ff-sidebar");
-    expect(html).toContain("Nossa casa");
-    expect(html).toContain("Alvaro &amp; Karol");
+    expect(html).toContain("Casa Azul");
     for (const item of items) {
       expect(html).toContain(`href="${item.href}"`);
       expect(html).toContain(item.label);
@@ -428,12 +449,16 @@ describe("ui primitives — app shell", () => {
     expect(html).toMatch(/ff-bottomnav[^]*href="\/transactions"/);
     expect(html).toMatch(/ff-bottomnav[^]*href="\/cards"/);
     // "Mais" is a toggle for the sheet with every other section, not a link.
-    expect(html).toMatch(/<button[^>]*aria-controls="ff-morenav"[^>]*aria-expanded="false"[^>]*>[^]*Mais/);
+    expect(html).toMatch(
+      /<button[^>]*aria-controls="ff-morenav"[^>]*aria-expanded="false"[^>]*>[^]*Mais/,
+    );
   });
 
   it("the 'Mais' sheet lists every nav item missing from the bottom bar", () => {
     const html = renderShell();
-    const sheet = html.match(/<nav[^>]*id="ff-morenav"[^>]*hidden[^>]*>[^]*?<\/nav>/)?.[0];
+    const sheet = html.match(
+      /<nav[^>]*id="ff-morenav"[^>]*hidden[^>]*>[^]*?<\/nav>/,
+    )?.[0];
     expect(sheet).toBeDefined();
     const bottomHrefs = ["/resumo", "/transactions", "/cards"];
     for (const item of items) {

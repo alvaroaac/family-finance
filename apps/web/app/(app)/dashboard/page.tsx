@@ -107,7 +107,7 @@ export default async function DashboardPage() {
   return (
     <section>
       <PageTitle
-        kicker={`Nossa casa · ${formatMonthLabel(month)}`}
+        kicker={formatMonthLabel(month)}
         title="O mês inteiro, de uma vez"
         lead="Quanto entrou, quanto sobrou, a pressão dos cartões e as caixinhas."
         actions={
@@ -118,9 +118,13 @@ export default async function DashboardPage() {
       />
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 16 }}>
-          Não foi possível carregar os dados agora; mostrando o resumo zerado.{" "}
-          ({loadError})
+        <div
+          role="alert"
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 16 }}
+        >
+          Não foi possível carregar os dados agora; mostrando o resumo zerado. (
+          {loadError})
         </div>
       ) : null}
 
@@ -187,7 +191,11 @@ export default async function DashboardPage() {
             <div className="ff-minicards">
               {pendingReview.map((tx) => {
                 const isIncome = tx.kind === "income";
-                const sign = isIncome ? "+ " : tx.kind === "expense" ? "− " : "";
+                const sign = isIncome
+                  ? "+ "
+                  : tx.kind === "expense"
+                    ? "− "
+                    : "";
                 const tone = isIncome
                   ? " ff-amount--pos"
                   : tx.kind === "expense"
@@ -208,7 +216,10 @@ export default async function DashboardPage() {
                       <span className="ff-minicard__meta">
                         {formatDateBr(tx.occurredOn)}
                       </span>
-                      <Link href="/transactions?pending=1" className="ff-chip-link">
+                      <Link
+                        href="/transactions?pending=1"
+                        className="ff-chip-link"
+                      >
                         categorizar
                       </Link>
                     </div>
@@ -241,7 +252,11 @@ export default async function DashboardPage() {
               <Table columns={RECENT_COLUMNS} gridTemplate="60px 1fr 120px">
                 {recent.map((tx) => {
                   const isIncome = tx.kind === "income";
-                  const sign = isIncome ? "+ " : tx.kind === "expense" ? "− " : "";
+                  const sign = isIncome
+                    ? "+ "
+                    : tx.kind === "expense"
+                      ? "− "
+                      : "";
                   const tone = isIncome
                     ? " ff-amount--pos"
                     : tx.kind === "expense"
@@ -269,7 +284,11 @@ export default async function DashboardPage() {
               <RowCardList>
                 {recent.map((tx) => {
                   const isIncome = tx.kind === "income";
-                  const sign = isIncome ? "+ " : tx.kind === "expense" ? "− " : "";
+                  const sign = isIncome
+                    ? "+ "
+                    : tx.kind === "expense"
+                      ? "− "
+                      : "";
                   const tone = isIncome
                     ? " ff-amount--pos"
                     : tx.kind === "expense"
@@ -315,9 +334,7 @@ export default async function DashboardPage() {
                   <span className="ff-bubble">
                     <IconJar size={16} />
                   </span>
-                  <span className="ff-caixinha__name">
-                    {bucket.name}
-                  </span>
+                  <span className="ff-caixinha__name">{bucket.name}</span>
                   <span className="ff-caixinha__value ff-num">
                     {formatBrlCents(bucket.balance_cents)}
                   </span>

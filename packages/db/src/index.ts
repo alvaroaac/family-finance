@@ -194,6 +194,7 @@ export type {
   ObligationPaymentKey,
   ObligationsPressure,
   CardBillSettlement,
+  CurrentHousehold,
 } from "./repositories.js";
 export {
   transactionInsertFromDraft,
@@ -221,6 +222,7 @@ export {
   findImportItemClaims,
   // Category cleanup + categorization memory (Task 6).
   findHouseholdIdForCurrentUser,
+  getCurrentHousehold,
   listAllCategories,
   listAllSubcategories,
   archiveCategory,

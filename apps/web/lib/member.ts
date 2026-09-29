@@ -1,9 +1,20 @@
+import { cache } from "react";
 import {
   findHouseholdIdForCurrentUser,
+  getCurrentHousehold,
   listHouseholdMembers,
 } from "@family-finance/db";
 import { createServerSupabaseClient } from "./supabase";
-/** "karol@casa.com" → "Karol" — fallback until the member sets a name. */
+
+/**
+ * The logged-in member's household (name + validated theme), loaded once per
+ * request and shared by the root layout, the app layout and the pages.
+ */
+export const currentHousehold = cache(async () =>
+  getCurrentHousehold(await createServerSupabaseClient()),
+);
+
+/** "ana@casa.com" → "Ana" — fallback until the member sets a name. */
 export function nameFromEmail(email: string): string {
   const local = email.split("@")[0] ?? email;
   return local.length > 0

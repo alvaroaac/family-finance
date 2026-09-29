@@ -162,7 +162,6 @@ export default async function ObligationsPage({
       style={{ maxWidth: 980, margin: "0 auto" }}
     >
       <PageTitle
-        kicker="Nossa casa"
         title="Obrigações fixas"
         lead="Financiamentos e contas que se repetem todo mês — projetados, não lançados."
         actions={

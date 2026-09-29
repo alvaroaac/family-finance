@@ -4,7 +4,14 @@ import { requireAuthorizedUser } from "../../../lib/auth";
 import { currentMemberName } from "../../../lib/member";
 import { formatBrlCents } from "../../../lib/format";
 import { RecentTransactions } from "../../../components/recent-transactions";
-import { Badge, Card, Delta, IconCard, IconTag, Kicker } from "../../../components/ui";
+import {
+  Badge,
+  Card,
+  Delta,
+  IconCard,
+  IconTag,
+  Kicker,
+} from "../../../components/ui";
 import {
   loadResumoData,
   monthLabelPtBr,
@@ -18,7 +25,6 @@ export const metadata = {
 
 // Per-request, RLS-scoped data; never statically prerender.
 export const dynamic = "force-dynamic";
-
 
 /** Split "R$ 4.812,90" into ["R$ 4.812", ",90"] for the hero's smaller cents. */
 function splitCents(value: string): [string, string] {
@@ -48,19 +54,28 @@ export default async function ResumoPage() {
   } = data;
   const previousMonth = shiftMonth(month, -1);
   const name = await currentMemberName(email);
-  const [spentMain, spentCentsPart] = splitCents(formatBrlCents(totalSpentCents));
-  const comparison = spendingComparisonLabel(deltaVsPreviousCents, previousMonth);
+  const [spentMain, spentCentsPart] = splitCents(
+    formatBrlCents(totalSpentCents),
+  );
+  const comparison = spendingComparisonLabel(
+    deltaVsPreviousCents,
+    previousMonth,
+  );
 
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
-      <Kicker>Nossa casa · {monthLabelPtBr(month)}</Kicker>
+      <Kicker>{monthLabelPtBr(month)}</Kicker>
       <h1 className="ff-hello">Oi, {name}</h1>
       <p className="ff-hello-lead">Como estão as contas da casa?</p>
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
-          Não foi possível carregar o resumo agora; mostrando tudo zerado.{" "}
-          ({loadError})
+        <div
+          role="alert"
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 20 }}
+        >
+          Não foi possível carregar o resumo agora; mostrando tudo zerado. (
+          {loadError})
         </div>
       ) : null}
 
@@ -111,7 +126,10 @@ export default async function ResumoPage() {
 
           {/* Pendentes de revisão */}
           {pendingCount > 0 ? (
-            <Link href="/transactions?pending=1" className="ff-callout ff-callout--warn">
+            <Link
+              href="/transactions?pending=1"
+              className="ff-callout ff-callout--warn"
+            >
               <span className="ff-callout__bubble">
                 <IconTag size={17} />
               </span>
@@ -127,7 +145,9 @@ export default async function ResumoPage() {
             </Link>
           ) : (
             <div className="ff-callout ff-callout--positive">
-              <span className="ff-callout__text">Tudo revisado por aqui ✨</span>
+              <span className="ff-callout__text">
+                Tudo revisado por aqui ✨
+              </span>
             </div>
           )}
 
@@ -148,7 +168,9 @@ export default async function ResumoPage() {
                       </span>
                       <div className="ff-icard__name">
                         {card.name}
-                        {card.settled ? <Badge tone="positive">paga ✅</Badge> : null}
+                        {card.settled ? (
+                          <Badge tone="positive">paga ✅</Badge>
+                        ) : null}
                       </div>
                     </div>
                     <div className="ff-icard__value ff-serif ff-num">
@@ -170,7 +192,10 @@ export default async function ResumoPage() {
             </Link>
           </div>
           <div className="ff-listcard__body">
-            <RecentTransactions transactions={recent} formatCents={formatBrlCents} />
+            <RecentTransactions
+              transactions={recent}
+              formatCents={formatBrlCents}
+            />
           </div>
         </div>
       </div>

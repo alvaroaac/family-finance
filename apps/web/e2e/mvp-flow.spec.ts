@@ -41,14 +41,14 @@ test.describe("MVP review loop — public guarantees (no session)", () => {
     ).toBeVisible();
   });
 
-  test("login page presents the Casa workspace and the allowlist note", async ({
+  test("login page presents the product and the invite note", async ({
     page,
   }) => {
     await page.goto("/login");
     await expect(
-      page.getByRole("heading", { name: /Alvaro\s*&\s*Karol/i }),
+      page.getByRole("heading", { name: "Family Finance" }),
     ).toBeVisible();
-    await expect(page.getByText(/Só a gente entra por aqui/i)).toBeVisible();
+    await expect(page.getByText("Acesso por convite.")).toBeVisible();
   });
 });
 

@@ -51,7 +51,8 @@ type AccountsData = {
  */
 async function loadData(): Promise<AccountsData> {
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
@@ -77,13 +78,16 @@ export default async function AccountsPage() {
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
       <PageTitle
-        kicker="Nossa casa"
         title="Contas"
         lead="O dinheiro do dia a dia e o que está guardado."
       />
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
+        <div
+          role="alert"
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 20 }}
+        >
           {loadError}
         </div>
       ) : null}
@@ -130,7 +134,10 @@ export default async function AccountsPage() {
                     className="ff-input--compact"
                     aria-label={`Nome da conta ${account.name}`}
                   />
-                  <SubmitButton className="ff-btn--ghost-sm" pendingLabel="Salvando…">
+                  <SubmitButton
+                    className="ff-btn--ghost-sm"
+                    pendingLabel="Salvando…"
+                  >
                     Salvar
                   </SubmitButton>
                 </form>

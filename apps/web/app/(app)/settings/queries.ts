@@ -24,6 +24,7 @@ export {
   THEME_COOKIE,
   DEFAULT_THEME,
   parseTheme,
+  resolveBaseTheme,
   memberPatchFromFormData,
   telegramDisplayValue,
   botStatusLabel,
@@ -66,7 +67,8 @@ function emptySettings(loadError: string | null): SettingsData {
  */
 export async function loadSettingsData(): Promise<SettingsData> {
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {

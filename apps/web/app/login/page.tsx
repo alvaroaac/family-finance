@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getAuthState } from "../../lib/auth";
 
 export const metadata = {
-  title: "Entrar — Casa"
+  title: "Entrar — Casa",
 };
 
 /**
@@ -21,8 +21,8 @@ async function signInWithGoogle(): Promise<void> {
     options: {
       // Supabase redirects back here with a `?code=`; the callback route
       // exchanges it for a session before forwarding to the dashboard.
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/auth/callback`
-    }
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/auth/callback`,
+    },
   });
 
   if (error || !data?.url) {
@@ -44,7 +44,7 @@ type LoginSearchParams = {
  * - default sign-in with Google.
  */
 export default async function LoginPage({
-  searchParams
+  searchParams,
 }: {
   searchParams: Promise<LoginSearchParams>;
 }) {
@@ -63,11 +63,10 @@ export default async function LoginPage({
   return (
     <main className="ff-auth">
       <div className="ff-auth-card">
-        <div className="ff-auth-card__kicker">Nossa casa</div>
-        <h1 className="ff-auth-card__title ff-serif">
-          Alvaro <span className="ff-amp">&amp;</span> Karol
-        </h1>
-        <p className="ff-auth-card__lead">As contas da casa, do nosso jeitinho.</p>
+        <h1 className="ff-auth-card__title ff-serif">Family Finance</h1>
+        <p className="ff-auth-card__lead">
+          As contas da casa, do jeito de vocês.
+        </p>
 
         {denied ? (
           <div role="alert" className="ff-alert ff-alert--negative">
@@ -75,7 +74,8 @@ export default async function LoginPage({
             <div style={{ marginTop: 4 }}>
               {deniedEmail ? (
                 <>
-                  A conta <strong>{deniedEmail}</strong> não pertence a uma casa ativa.
+                  A conta <strong>{deniedEmail}</strong> não pertence a uma casa
+                  ativa.
                 </>
               ) : (
                 <>Esta conta Google não pertence a uma casa ativa.</>
@@ -112,9 +112,7 @@ export default async function LoginPage({
           </button>
         </form>
 
-        <p className="ff-auth-card__note">
-          Só a gente entra por aqui — convite de dois.
-        </p>
+        <p className="ff-auth-card__note">Acesso por convite.</p>
       </div>
     </main>
   );

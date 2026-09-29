@@ -23,6 +23,7 @@ import {
   botStatusLabel,
   inputKindLabel,
   THEMES,
+  resolveBaseTheme,
 } from "../app/(app)/settings/queries.js";
 import {
   FakeSupabaseStore,
@@ -52,22 +53,42 @@ describe("memberPatchFromFormData", () => {
       memberPatchFromFormData(
         form({ displayName: "  Karol  ", telegram: " 654321 " }),
       ),
-    ).toEqual({ displayName: "Karol", telegramUserId: 654321, telegramUsername: null });
+    ).toEqual({
+      displayName: "Karol",
+      telegramUserId: 654321,
+      telegramUsername: null,
+    });
   });
 
   it("accepts an @username, stripping the @ and lowercasing", () => {
     expect(
-      memberPatchFromFormData(form({ displayName: "K", telegram: "@KarolZinha" })),
-    ).toEqual({ displayName: "K", telegramUserId: null, telegramUsername: "karolzinha" });
+      memberPatchFromFormData(
+        form({ displayName: "K", telegram: "@KarolZinha" }),
+      ),
+    ).toEqual({
+      displayName: "K",
+      telegramUserId: null,
+      telegramUsername: "karolzinha",
+    });
     expect(
-      memberPatchFromFormData(form({ displayName: "K", telegram: "karolzinha" })),
-    ).toEqual({ displayName: "K", telegramUserId: null, telegramUsername: "karolzinha" });
+      memberPatchFromFormData(
+        form({ displayName: "K", telegram: "karolzinha" }),
+      ),
+    ).toEqual({
+      displayName: "K",
+      telegramUserId: null,
+      telegramUsername: "karolzinha",
+    });
   });
 
   it("maps blank fields to null (unset name / unlink telegram)", () => {
     expect(
       memberPatchFromFormData(form({ displayName: "   ", telegram: "" })),
-    ).toEqual({ displayName: null, telegramUserId: null, telegramUsername: null });
+    ).toEqual({
+      displayName: null,
+      telegramUserId: null,
+      telegramUsername: null,
+    });
   });
 
   it("rejects an invalid username with a pt-BR message", () => {
@@ -126,6 +147,29 @@ describe("inputKindLabel", () => {
 describe("THEMES", () => {
   it("offers exactly the two household themes", () => {
     expect(THEMES.map((t) => t.id)).toEqual(["esmeralda", "salvia"]);
+  });
+});
+
+describe("resolveBaseTheme", () => {
+  it("uses the household base with lockBase and ignores the cookie", () => {
+    const locked = { base: "salvia", lockBase: true } as const;
+    expect(resolveBaseTheme(locked, "esmeralda")).toBe("salvia");
+    expect(resolveBaseTheme(locked, undefined)).toBe("salvia");
+  });
+
+  it("lets a known cookie choose the base without lockBase", () => {
+    expect(resolveBaseTheme({ base: "esmeralda" }, "salvia")).toBe("salvia");
+    expect(
+      resolveBaseTheme({ base: "salvia", lockBase: false }, "esmeralda"),
+    ).toBe("esmeralda");
+  });
+
+  it("falls back to the household base without a known cookie", () => {
+    expect(resolveBaseTheme({ base: "salvia" }, undefined)).toBe("salvia");
+    expect(resolveBaseTheme({ base: "salvia" }, "roxo")).toBe("salvia");
+    expect(resolveBaseTheme({ base: "esmeralda" }, undefined)).toBe(
+      "esmeralda",
+    );
   });
 });
 

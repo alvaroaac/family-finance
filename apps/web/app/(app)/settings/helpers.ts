@@ -1,3 +1,5 @@
+import type { HouseholdTheme } from "@family-finance/domain";
+
 /**
  * PURE helpers for "Configurações" — no server-only imports, so both the
  * client widgets (settings-forms.tsx) and the server side (page, actions,
@@ -8,7 +10,7 @@
 // Themes
 // ---------------------------------------------------------------------------
 
-export type ThemeId = "esmeralda" | "salvia";
+export type ThemeId = HouseholdTheme["base"];
 
 /** The two household skins; Esmeralda (dark) is the default. */
 export const THEMES: ReadonlyArray<{
@@ -37,6 +39,22 @@ export function parseTheme(value: string | undefined): ThemeId {
   return value === "salvia" ? "salvia" : DEFAULT_THEME;
 }
 
+/**
+ * The base theme a member sees: the household's `base` when it is locked,
+ * otherwise the `ff-theme` cookie, falling back to the household's `base`.
+ */
+export function resolveBaseTheme(
+  theme: HouseholdTheme,
+  cookieValue: string | undefined,
+): ThemeId {
+  if (theme.lockBase === true) {
+    return theme.base;
+  }
+  return cookieValue === "esmeralda" || cookieValue === "salvia"
+    ? cookieValue
+    : theme.base;
+}
+
 // ---------------------------------------------------------------------------
 // Member form parsing
 // ---------------------------------------------------------------------------
@@ -50,7 +68,7 @@ export type MemberPatch = {
 /**
  * Parse the member profile form into a repo patch. Blank fields become null
  * (clear the name / unlink Telegram). The single Telegram field accepts a
- * numeric user id OR an @username ("@karol" / "karol"): digits go to
+ * numeric user id OR an @username ("@ana" / "ana"): digits go to
  * `telegramUserId`, anything else to `telegramUsername` (lowercased, "@"
  * stripped). Throws a pt-BR message the action surfaces as-is.
  */
@@ -59,7 +77,8 @@ export function memberPatchFromFormData(formData: FormData): MemberPatch {
   const name = typeof rawName === "string" ? rawName.trim() : "";
 
   const rawTelegram = formData.get("telegram");
-  const telegramText = typeof rawTelegram === "string" ? rawTelegram.trim() : "";
+  const telegramText =
+    typeof rawTelegram === "string" ? rawTelegram.trim() : "";
 
   let telegramUserId: number | null = null;
   let telegramUsername: string | null = null;
