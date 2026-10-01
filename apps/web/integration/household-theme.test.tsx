@@ -37,6 +37,7 @@ const state = vi.hoisted(() => ({
     name: "Casa Azul",
     theme: { base: "esmeralda" } as HouseholdTheme,
   },
+  householdFails: false,
 }));
 
 vi.mock("next/headers", () => ({
@@ -66,10 +67,16 @@ vi.mock("../lib/auth", () => ({
     householdId: "h",
   }),
 }));
-vi.mock("../lib/member", () => ({
-  currentHousehold: async () => state.household,
-  currentMemberName: async () => "Ana",
-}));
+vi.mock("../lib/member", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/member")>();
+  return {
+    ...actual,
+    currentHousehold: async () => state.household,
+    currentHouseholdOrFallback: async () =>
+      state.householdFails ? actual.FALLBACK_HOUSEHOLD : state.household,
+    currentMemberName: async () => "Ana",
+  };
+});
 vi.mock("../app/(app)/settings/actions", () => ({
   setThemeAction: async () => undefined,
   updateMemberAction: async () => undefined,
@@ -119,6 +126,26 @@ beforeEach(() => {
     name: "Casa Azul",
     theme: { base: "esmeralda" },
   };
+  state.householdFails = false;
+});
+
+describe("household load failure", () => {
+  it("renders the root element on the cookie theme without overrides", async () => {
+    state.household.theme = LOCKED;
+    state.householdFails = true;
+    state.cookie = "salvia";
+    const root = await renderRoot();
+    expect(root.getAttribute("data-theme")).toBe("salvia");
+    expect(root.style.getPropertyValue("--ff-accent")).toBe("");
+  });
+
+  it("still renders the authenticated shell with a neutral name", async () => {
+    state.householdFails = true;
+    const html = await renderApp();
+    expect(html).toContain("conteúdo");
+    expect(html).toContain("Casa");
+    expect(html).not.toContain("Casa Azul");
+  });
 });
 
 describe("getCurrentHousehold", () => {

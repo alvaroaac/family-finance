@@ -6,7 +6,7 @@ import { themeStyle } from "@family-finance/domain";
 import "./globals.css";
 import "../components/ui/ui.css";
 import { getAuthState } from "../lib/auth";
-import { currentHousehold } from "../lib/member";
+import { currentHouseholdOrFallback } from "../lib/member";
 import {
   parseTheme,
   resolveBaseTheme,
@@ -54,7 +54,7 @@ export default async function RootLayout({
   const cookie = (await cookies()).get(THEME_COOKIE)?.value;
   const auth = await getAuthState();
   const household =
-    auth.status === "authorized" ? await currentHousehold() : null;
+    auth.status === "authorized" ? await currentHouseholdOrFallback() : null;
 
   return (
     <html

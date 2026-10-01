@@ -10,7 +10,10 @@ import {
   type NavItem,
 } from "../../components/ui";
 import { requireAuthorizedUser } from "../../lib/auth";
-import { currentHousehold, currentMemberName } from "../../lib/member";
+import {
+  currentHouseholdOrFallback,
+  currentMemberName,
+} from "../../lib/member";
 import { setThemeAction } from "./settings/actions";
 import { resolveBaseTheme, THEME_COOKIE } from "./settings/helpers";
 
@@ -50,7 +53,7 @@ async function signOutAction(): Promise<void> {
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { email } = await requireAuthorizedUser();
   const cookieStore = await cookies();
-  const household = await currentHousehold();
+  const household = await currentHouseholdOrFallback();
   const theme = resolveBaseTheme(
     household.theme,
     cookieStore.get(THEME_COOKIE)?.value,

@@ -363,6 +363,69 @@ describe("handleWebhook: callback routing", () => {
     );
   });
 
+  it("a failed re-save after a correction still lets the new keyboard confirm", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const inner = createInMemoryConversationStore();
+    let failNextSave = false;
+    const store: typeof inner = {
+      ...inner,
+      // Save a copy, like the real table: later in-memory mutations of the
+      // state object must not leak into what was persisted.
+      async save(chatId, telegramUserId, householdId, state) {
+        if (failNextSave) {
+          failNextSave = false;
+          throw new Error("supabase blip");
+        }
+        return inner.save(
+          chatId,
+          telegramUserId,
+          householdId,
+          structuredClone(state),
+        );
+      },
+    };
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      memberClient: () => client,
+      resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
+      store,
+    };
+
+    await handleWebhook({
+      ...base,
+      telegram,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    // The re-save that would record the new prompt id (1002) fails.
+    await handleWebhook({
+      ...base,
+      telegram: {
+        ...telegram,
+        async sendMessage(chatId, text, options) {
+          const result = await telegram.sendMessage(chatId, text, options);
+          failNextSave = true;
+          return result;
+        },
+      },
+      rawBody: textUpdate(777, "valor 45,90"),
+    });
+    expect(
+      sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
+    ).toBe("cf");
+
+    await handleWebhook({
+      ...base,
+      telegram,
+      rawBody: callbackUpdate(777, "cf", 555, 1002),
+    });
+    expect(tables.transactions).toHaveLength(1);
+    expect(sent.at(-1)?.text).toContain("Lançamento salvo");
+  });
+
   it("voice draft reply carries the confirmation keyboard and records promptMessageId", async () => {
     const { client } = fakeSupabase();
     const { telegram, sent } = fakeTelegram();

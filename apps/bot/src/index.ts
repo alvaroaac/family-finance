@@ -674,6 +674,13 @@ export async function handleWebhook(args: {
       // so the state MUST already be saved — otherwise a re-tap on a
       // still-"awaiting_confirmation" state with an unstripped keyboard would
       // insert a second transaction.
+      const willReply = outcome.silent !== true && outcome.reply.length > 0;
+      if (willReply) {
+        // The tapped prompt is superseded by the reply below. Clear its id now
+        // so a failed re-save can't leave it stored, which would refuse taps
+        // on the new keyboard as "session expired".
+        outcome.state.promptMessageId = undefined;
+      }
       await args.store.save(
         chatId,
         callback.fromId,
@@ -685,7 +692,7 @@ export async function handleWebhook(args: {
       // The tapped message's buttons are spent either way (acted on or stale).
       await strip(chatId, messageId);
 
-      if (outcome.silent !== true && outcome.reply.length > 0) {
+      if (willReply) {
         const sent = await args.telegram.sendMessage(
           chatId,
           outcome.reply,
@@ -710,8 +717,9 @@ export async function handleWebhook(args: {
             outcome.state,
           );
         } catch (error) {
-          // Best-effort only: losing promptMessageId just means a future stale
-          // tap won't get its keyboard stripped, which is already handled.
+          // Best-effort only: the stored promptMessageId stays cleared, so taps
+          // on the new keyboard are still accepted; only the prompt-id checks
+          // (stale-keyboard strip, other-member toast) are lost for this draft.
           console.warn("[bot] re-save after send failed:", error);
         }
       }
@@ -812,6 +820,9 @@ export async function handleWebhook(args: {
       // Persist FIRST: startConversationFromAudio may already have inserted a
       // transaction (auto-confirm paths). If sendMessage below throws, the
       // state must already reflect that so a retry/re-send can't double-insert.
+      // No prompt id until the reply is sent: a stale one would refuse taps on
+      // the new keyboard if the re-save below fails.
+      outcome.state.promptMessageId = undefined;
       await args.store.save(
         voice.chatId,
         voice.fromId,
@@ -925,6 +936,24 @@ export async function handleWebhook(args: {
       keyboard = outcome.keyboard;
     }
 
+    // nextState may be the same object as existing; read the old id first.
+    const previousPromptId = existing?.promptMessageId;
+    const shouldStripPreviousPrompt =
+      existing !== undefined &&
+      existing.status !== "saved" &&
+      existing.status !== "cancelled" &&
+      previousPromptId !== undefined &&
+      (keyboard !== undefined ||
+        nextState.status === "saved" ||
+        nextState.status === "cancelled" ||
+        nextState !== existing);
+    if (keyboard !== undefined || shouldStripPreviousPrompt) {
+      // The previous prompt is superseded. Clear its id before the first save
+      // so a failed re-save can't leave it stored, which would refuse taps on
+      // the new keyboard as "session expired".
+      nextState.promptMessageId = undefined;
+    }
+
     // Persist FIRST: applyMessage/startConversation may already have inserted a
     // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
     // the state must already be saved so a re-send/retry can't double-insert.
@@ -935,21 +964,11 @@ export async function handleWebhook(args: {
       nextState,
     );
 
-    const shouldStripPreviousPrompt =
-      existing !== undefined &&
-      existing.status !== "saved" &&
-      existing.status !== "cancelled" &&
-      existing.promptMessageId !== undefined &&
-      (keyboard !== undefined ||
-        nextState.status === "saved" ||
-        nextState.status === "cancelled" ||
-        nextState !== existing);
-
-    if (shouldStripPreviousPrompt && existing?.promptMessageId !== undefined) {
+    if (shouldStripPreviousPrompt && previousPromptId !== undefined) {
       try {
         await args.telegram.editMessageReplyMarkup(
           message.chatId,
-          existing.promptMessageId,
+          previousPromptId,
         );
       } catch (error) {
         console.warn("[bot] editMessageReplyMarkup failed:", error);
@@ -969,8 +988,8 @@ export async function handleWebhook(args: {
       nextState.promptMessageId = sent?.messageId;
     } else if (shouldStripPreviousPrompt) {
       nextState.promptMessageId = undefined;
-    } else if (existing?.promptMessageId !== undefined) {
-      nextState.promptMessageId = existing.promptMessageId;
+    } else if (previousPromptId !== undefined) {
+      nextState.promptMessageId = previousPromptId;
     } else {
       nextState.promptMessageId = undefined;
     }

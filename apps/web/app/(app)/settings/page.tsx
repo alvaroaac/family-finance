@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
-import { currentHousehold } from "../../../lib/member";
+import { currentHouseholdOrFallback } from "../../../lib/member";
 import { Badge, Card, IconHome, PageTitle } from "../../../components/ui";
 import {
   loadSettingsData,
@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   await requireAuthorizedUser();
   const cookieStore = await cookies();
-  const { theme } = await currentHousehold();
+  const { theme } = await currentHouseholdOrFallback();
   const activeTheme = resolveBaseTheme(
     theme,
     cookieStore.get(THEME_COOKIE)?.value,
