@@ -7,7 +7,7 @@
  * "Mais" opens a sheet above the bar with every remaining section, so no
  * page is reachable only by typing its URL on a phone.
  *
- * Design firewall: presentational only. Nav items, brand, user identity,
+ * Design firewall: presentational only. Nav items, household name, user identity,
  * sign-out form and theme picker all arrive via props from `(app)/layout.tsx`.
  * The only client concern here is the active state via `usePathname()`.
  */
@@ -69,13 +69,13 @@ const MORE_NAV_ID = "ff-morenav";
 
 export function AppShell(props: {
   items: NavItem[];
-  brand: { kicker: string; title: ReactNode };
+  householdName: string;
   user: { initial: string; name: string; email: string };
   signOut?: ReactNode;
   themePicker?: ReactNode;
   children: ReactNode;
 }) {
-  const { items, brand, user, signOut, themePicker, children } = props;
+  const { items, householdName, user, signOut, themePicker, children } = props;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -193,8 +193,9 @@ export function AppShell(props: {
     <div className="ff-shell">
       <aside className="ff-sidebar">
         <div className="ff-sidebar__brand">
-          <div className="ff-sidebar__brand-kicker">{brand.kicker}</div>
-          <div className="ff-sidebar__brand-title ff-serif">{brand.title}</div>
+          <div className="ff-sidebar__brand-title ff-serif">
+            {householdName}
+          </div>
         </div>
 
         <nav className="ff-sidebar__nav">

@@ -41,6 +41,45 @@ function parseEnvExample(filePath: string): Record<string, string> {
 describe("getBotServerEnv", () => {
   const templatePath = findRepoFile(path.join("deploy", "bot", ".env.example"));
 
+  it("restricts Telegram API overrides to loopback hosts", () => {
+    const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
+    env.NODE_ENV = "production";
+    env.TELEGRAM_API_BASE_URL = "https://evil.example";
+    expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
+    env.TELEGRAM_API_BASE_URL = "http://127.0.0.1:4010";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "http://127.0.0.1:4010",
+    );
+    env.TELEGRAM_API_BASE_URL = "http://localhost:4010";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "http://localhost:4010",
+    );
+    env.TELEGRAM_API_BASE_URL = "http://[::1]:4010";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "http://[::1]:4010",
+    );
+    delete env.TELEGRAM_API_BASE_URL;
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "https://api.telegram.org",
+    );
+    env.NODE_ENV = "test";
+    env.TELEGRAM_API_BASE_URL = "https://evil.example";
+    expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
+  });
+
+  it("normalizes the official API origin and rejects lookalike hosts", () => {
+    const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
+    env.TELEGRAM_API_BASE_URL = "https://api.telegram.org/";
+    expect(getBotServerEnv(env).TELEGRAM_API_BASE_URL).toBe(
+      "https://api.telegram.org",
+    );
+    for (const nodeEnv of ["production", "test", "development"]) {
+      env.NODE_ENV = nodeEnv;
+      env.TELEGRAM_API_BASE_URL = "https://api.telegram.org.evil.example";
+      expect(() => getBotServerEnv(env)).toThrow(/TELEGRAM_API_BASE_URL/);
+    }
+  });
+
   it("accepts exactly the deploy/bot/.env.example variable set (spec §3.5)", () => {
     const env = parseEnvExample(templatePath) as NodeJS.ProcessEnv;
     // Guard against template drift: the web-only vars must NOT be needed.
@@ -49,8 +88,10 @@ describe("getBotServerEnv", () => {
     expect(env.AUTHORIZED_EMAILS).toBeUndefined();
 
     const parsed = getBotServerEnv(env);
-    expect(parsed.SUPABASE_URL).toBe("https://supabase.alvaroekarol.com.br");
+    expect(parsed.SUPABASE_URL).toBe(env.SUPABASE_URL);
     expect(parsed.SUPABASE_SERVICE_ROLE_KEY).toBeTruthy();
+    expect(parsed.SUPABASE_ANON_KEY).toBeTruthy();
+    expect(parsed.SUPABASE_JWT_SECRET).toBeTruthy();
     expect(parsed.TELEGRAM_WEBHOOK_SECRET).toBeTruthy();
     expect(parsed.IMPORT_PAID_FALLBACK_ENABLED).toBe("false");
     expect(parsed.IMPORT_PAID_FALLBACK_MAX_ITEMS).toBe(10);
@@ -90,5 +131,41 @@ describe("getBotServerEnv", () => {
   it("getServerEnv (web) keeps requiring the NEXT_PUBLIC_* vars", () => {
     const env = parseEnvExample(templatePath);
     expect(() => getServerEnv(env as NodeJS.ProcessEnv)).toThrow();
+  });
+});
+
+describe("retired email gate", () => {
+  const baseEnv = {
+    NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:56321",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  it("parses web config without the retired email variable", () => {
+    expect(getServerEnv(baseEnv).NEXT_PUBLIC_SUPABASE_URL).toBe(
+      baseEnv.NEXT_PUBLIC_SUPABASE_URL,
+    );
+  });
+
+  it("ignores the retired email variable when present", () => {
+    const parsed = getServerEnv({
+      ...baseEnv,
+      AUTHORIZED_EMAILS: "someone@example.com",
+    });
+    expect(parsed).not.toHaveProperty("AUTHORIZED_EMAILS");
+  });
+});
+
+describe("web host configuration", () => {
+  it("accepts an optional comma-separated host list", () => {
+    const env = {
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:56321",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_SITE_URL: "https://family-finance.example.dev",
+      ALLOWED_WEB_HOSTS: "casa.example.com,localhost:3100",
+    };
+    expect(getServerEnv(env)).toMatchObject(env);
+    expect(
+      getServerEnv({ ...env, ALLOWED_WEB_HOSTS: "" }).ALLOWED_WEB_HOSTS,
+    ).toBeUndefined();
   });
 });

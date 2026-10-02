@@ -34,7 +34,7 @@ const render = () =>
         { href: "/cards", label: "Cartões", icon: "card" },
         { href: "/categories", label: "Categorias", icon: "tag" },
       ]}
-      brand={{ kicker: "Casa", title: "Casa" }}
+      householdName="Casa Azul"
       user={{ initial: "A", name: "Member", email: "member@example.test" }}
     >
       <p>Page content</p>
@@ -61,6 +61,13 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
+});
+describe("sidebar brand", () => {
+  it("shows the household name without a kicker", () => {
+    const brand = container.querySelector(".ff-sidebar__brand")!;
+    expect(brand.textContent).toBe("Casa Azul");
+    expect(brand.querySelectorAll("*")).toHaveLength(1);
+  });
 });
 describe("mobile Mais menu lifecycle", () => {
   it("toggles and closes from the backdrop", async () => {

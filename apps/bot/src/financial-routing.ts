@@ -53,6 +53,7 @@ export type DeterministicFinancialDecision = {
 };
 
 type RoutingContext = {
+  memberNames?: readonly string[];
   knownCards?: ReadonlyArray<{ id: string; name: string }>;
   knownAccounts?: ReadonlyArray<{ id: string; name: string }>;
   merchantAliases?: Record<string, readonly string[]>;
@@ -174,6 +175,29 @@ function normalize(value: string): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+const MEMBER_PURCHASE_PREFIX = /^\s*([\p{L}]+(?:[ '-][\p{L}]+)*)\s+comprou\b/iu;
+
+export function memberPurchaseName(
+  text: string,
+  memberNames: readonly string[],
+): string | undefined {
+  const match = MEMBER_PURCHASE_PREFIX.exec(text);
+  if (match === null) return undefined;
+  const speaker = normalize(match[1] ?? "").trim();
+  if (!speaker) return undefined;
+  return memberNames.find((name) => normalize(name).trim() === speaker);
+}
+
+function stripMemberPurchasePrefix(
+  text: string,
+  memberNames: readonly string[],
+): string {
+  if (memberPurchaseName(text, memberNames) === undefined) return text;
+  const match = MEMBER_PURCHASE_PREFIX.exec(text);
+  if (match === null) return text;
+  return text.slice(match[0].length);
 }
 
 /**
@@ -1831,6 +1855,7 @@ export function canonicalFinancialDescription(
   route: DeterministicFinancialRoute,
   context: RoutingContext = {},
 ): string | undefined {
+  rawText = stripMemberPurchasePrefix(rawText, context.memberNames ?? []);
   const normalized = normalize(rawText);
   const financialGrammarText =
     maskExplicitKnownInstrumentNamesForFinancialGrammar(rawText, context);
@@ -2157,7 +2182,7 @@ export function canonicalFinancialDescription(
       " ",
     )
     .replace(
-      /\b(Karol comprou|eu comprei|comprei|compra (?:de|no|na)|ontem gastei)\b/giu,
+      /\b(eu comprei|comprei|compra (?:de|no|na)|ontem gastei)\b/giu,
       " ",
     )
     .replace(
@@ -2183,10 +2208,7 @@ export function canonicalFinancialDescription(
       /^\s*(?:eu\s+)?(?:paguei|pago|comprei|compra|gastei|passei|lancei|registrei)\s+(?:com\s+)?(?:(?:um|uma|o|a|os|as)\s+)?/iu,
       " ",
     )
-    .replace(
-      /\b(Karol comprou|eu comprei|comprei|compra (?:de|no|na)|gastei)\b/giu,
-      " ",
-    )
+    .replace(/\b(eu comprei|comprei|compra (?:de|no|na)|gastei)\b/giu, " ")
     .replace(/\b(um|uma)\b/giu, " ")
     .replace(/\b(categoria\s+\p{L}+|responsavel\s+\p{L}+)\b/giu, " ")
     .replace(

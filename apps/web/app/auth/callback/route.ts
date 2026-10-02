@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createServerSupabaseClient } from "../../../lib/supabase";
+import { resolveSiteOrigin, safeCallbackPath } from "../../../lib/site-origin";
 
 /**
  * OAuth code-exchange handler. After Google sign-in, Supabase redirects the
@@ -14,11 +15,15 @@ import { createServerSupabaseClient } from "../../../lib/supabase";
  * non-allowlisted account that signs in is bounced to the access-denied state.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { searchParams, origin } = request.nextUrl;
+  const { searchParams } = request.nextUrl;
+  const origin = resolveSiteOrigin({
+    host: request.headers.get("host"),
+    forwardedProto: request.headers.get("x-forwarded-proto"),
+  });
   const code = searchParams.get("code");
   // Where to land after a successful exchange. Defaults to the dashboard, whose
   // route group then runs the authorization guard.
-  const next = searchParams.get("next") ?? "/dashboard";
+  const next = safeCallbackPath(searchParams.get("next"));
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=oauth`);

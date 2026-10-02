@@ -443,34 +443,20 @@ const IDENTITIES: Record<string, BotMemberIdentity> = {
     displayName: "Alvaro",
   },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
-  "@karolzinha": {
-    householdId: "house-1",
-    userId: "user-karol",
-    displayName: "Karol",
-  },
 };
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
-  telegramUsername?: string;
 }): Promise<BotMemberIdentity | null> =>
-  IDENTITIES[sender.telegramUserId] ??
-  (sender.telegramUsername !== undefined
-    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
-    : null);
+  IDENTITIES[sender.telegramUserId] ?? null;
 
-function textUpdate(
-  fromId: number,
-  text: string,
-  chatId = 555,
-  fromUsername?: string,
-): unknown {
+function textUpdate(fromId: number, text: string, chatId = 555): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
-      chat: { id: chatId },
-      from: { id: fromId, username: fromUsername },
+      chat: { id: chatId, type: "private" },
+      from: { id: fromId },
       text,
     },
   };
@@ -557,9 +543,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "Paguei a parcela do carro 900"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage: classifierReturning(null),
     });
@@ -619,9 +607,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, "paguei academia R$ 0 ontem pela conta Inter"),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage: classifierReturning(classified),
       });
@@ -687,9 +677,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, "Paguei o cartão de nome Parcela Solar"),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -702,9 +694,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, "confirmar"),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -748,9 +742,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           rawBody: textUpdate(777, text),
           secretHeader: SECRET,
           configuredSecret: SECRET,
-          client,
+          memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
+          discardLinkCode: vi.fn(),
           store,
           classifyMessage,
         });
@@ -786,9 +782,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, text),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -832,9 +830,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           rawBody: textUpdate(777, text),
           secretHeader: SECRET,
           configuredSecret: SECRET,
-          client,
+          memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
+          discardLinkCode: vi.fn(),
           store,
           classifyMessage,
         });
@@ -890,9 +890,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           rawBody: textUpdate(777, text),
           secretHeader: SECRET,
           configuredSecret: SECRET,
-          client,
+          memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
+          discardLinkCode: vi.fn(),
           store,
           classifyMessage: classifierReturning(classified),
         });
@@ -919,9 +921,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           rawBody: textUpdate(777, text),
           secretHeader: SECRET,
           configuredSecret: SECRET,
-          client,
+          memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
+          discardLinkCode: vi.fn(),
           store,
           classifyMessage: classifierReturning(null),
         });
@@ -963,9 +967,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           rawBody: textUpdate(777, text),
           secretHeader: SECRET,
           configuredSecret: SECRET,
-          client,
+          memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
+          discardLinkCode: vi.fn(),
           store,
           classifyMessage: classifierReturning(null),
         });
@@ -1015,9 +1021,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           rawBody: textUpdate(777, text),
           secretHeader: SECRET,
           configuredSecret: SECRET,
-          client,
+          memberClient: () => client,
           telegram,
           resolveMember: resolveMemberFake,
+          redeemLinkCode: vi.fn(),
+          discardLinkCode: vi.fn(),
           store,
           classifyMessage,
         });
@@ -1041,9 +1049,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, "mercado 10"),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
       });
 
@@ -1051,9 +1061,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, "confirmar"),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
       });
 
@@ -1084,9 +1096,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "notebook 3600 em 12x no nubank"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1100,9 +1114,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "confirmar"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1171,9 +1187,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, message),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1187,9 +1205,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, "confirmar"),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1257,9 +1277,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "nubank pago"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1273,9 +1295,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "confirmar"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1346,9 +1370,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "nubank pago"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1356,9 +1382,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "confirmar"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1371,9 +1399,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "nubank pago"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1381,9 +1411,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "confirmar"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1406,11 +1438,16 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     const memoryStore = createInMemoryConversationStore();
     const savedStatuses: ConversationState["status"][] = [];
     const store: ConversationStore = {
-      load: (chatId) => memoryStore.load(chatId),
-      async save(chatId, state) {
+      load: (chatId, telegramUserId, householdId) =>
+        memoryStore.load(chatId, telegramUserId, householdId),
+      async save(chatId, telegramUserId, householdId, state) {
         savedStatuses.push(state.status);
-        await memoryStore.save(chatId, state);
+        await memoryStore.save(chatId, telegramUserId, householdId, state);
       },
+      delete: (chatId, telegramUserId) =>
+        memoryStore.delete(chatId, telegramUserId),
+      hasOtherPrompt: (chatId, telegramUserId, messageId) =>
+        memoryStore.hasOtherPrompt(chatId, telegramUserId, messageId),
     };
     const classifyMessage = classifierReturning({
       intent: "card_installment",
@@ -1425,9 +1462,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "notebook 3600 em 12x no nubank"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1436,9 +1475,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: callbackUpdate(777, TOKENS.confirm),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1455,9 +1496,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: callbackUpdate(777, TOKENS.confirm),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1476,14 +1519,19 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     const durableStore = createDbConversationStore(client);
     let failNextSavedState = true;
     const store: ConversationStore = {
-      load: (chatId) => durableStore.load(chatId),
-      async save(chatId, state) {
+      load: (chatId, telegramUserId, householdId) =>
+        durableStore.load(chatId, telegramUserId, householdId),
+      async save(chatId, telegramUserId, householdId, state) {
         if (state.status === "saved" && failNextSavedState) {
           failNextSavedState = false;
           throw new Error("post-write conversation save failed");
         }
-        await durableStore.save(chatId, state);
+        await durableStore.save(chatId, telegramUserId, householdId, state);
       },
+      delete: (chatId, telegramUserId) =>
+        durableStore.delete(chatId, telegramUserId),
+      hasOtherPrompt: (chatId, telegramUserId, messageId) =>
+        durableStore.hasOtherPrompt(chatId, telegramUserId, messageId),
     };
     const classifyMessage = classifierReturning({
       intent: "card_installment",
@@ -1498,9 +1546,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, text),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client,
+        memberClient: () => client,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1509,14 +1559,16 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     // ordinary draft operations and never touch the purchase RPC.
     await send("notebook 3600 em 12x no nubank");
     await send("valor 3.700");
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "awaiting_installment_confirmation",
     );
-    expect((await store.load("555"))?.installmentDraft?.totalCents).toBe(
-      370000,
-    );
+    expect(
+      (await store.load("555", "777", "house-1"))?.installmentDraft?.totalCents,
+    ).toBe(370000);
     await send("cancelar");
-    expect((await store.load("555"))?.status).toBe("cancelled");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
+      "cancelled",
+    );
     expect(tables.installment_groups).toHaveLength(0);
 
     await send("notebook 3600 em 12x no nubank");
@@ -1525,7 +1577,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       "post-write conversation save failed",
     );
     expect(tables.installment_groups).toHaveLength(1);
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_submission_started",
     );
 
@@ -1538,17 +1590,18 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     ).toBe(committedKey);
 
     await send("cancelar");
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_submission_started",
     );
     await send("valor 4.000");
-    expect((await store.load("555"))?.installmentDraft?.totalCents).toBe(
-      360000,
-    );
+    expect(
+      (await store.load("555", "777", "house-1"))?.installmentDraft?.totalCents,
+    ).toBe(360000);
     await send("geladeira 2400 em 12x no nubank");
-    expect((await store.load("555"))?.installmentDraft?.idempotencyKey).toBe(
-      committedKey,
-    );
+    expect(
+      (await store.load("555", "777", "house-1"))?.installmentDraft
+        ?.idempotencyKey,
+    ).toBe(committedKey);
     expect(tables.installment_groups).toHaveLength(1);
 
     if (persistedConversation !== undefined) {
@@ -1562,7 +1615,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(tables.installment_groups).toHaveLength(1);
     expect(tables.installments).toHaveLength(12);
     expect(tables.installment_groups?.[0]?.idempotency_key).toBe(committedKey);
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
   });
 
   it("reconciles a lost RPC response with the same purchase identity and timing snapshot", async () => {
@@ -1596,9 +1649,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "notebook 3600 em 12x no nubank"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client: lossyClient,
+      memberClient: () => lossyClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1606,15 +1661,17 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "confirmar"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client: lossyClient,
+      memberClient: () => lossyClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
 
     expect(tables.installment_groups).toHaveLength(1);
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
     expect(sent.at(-1)?.text).toContain("não vou duplicar a compra");
@@ -1629,9 +1686,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "confirmar"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client: lossyClient,
+      memberClient: () => lossyClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1639,7 +1698,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(tables.installment_groups).toHaveLength(1);
     expect(tables.installments).toHaveLength(12);
     expect(tables.installments?.[0]?.due_month).toBe(persistedFirstDue);
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
   });
 
   it("reconciles a committed purchase after more than 24h with the same persisted key", async () => {
@@ -1673,9 +1732,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, text),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client: lossyClient,
+        memberClient: () => lossyClient,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1686,7 +1747,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(tables.installment_groups).toHaveLength(1);
     const committedKey = tables.installment_groups?.[0]?.idempotency_key;
     expect(committedKey).toEqual(expect.any(String));
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
 
@@ -1702,7 +1763,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(tables.installment_groups).toHaveLength(1);
     expect(tables.installments).toHaveLength(12);
     expect(tables.installment_groups?.[0]?.idempotency_key).toBe(committedKey);
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
   });
 
   it("typed cancel/edit cannot escape post-commit uncertainty; typed retry reconciles", async () => {
@@ -1725,34 +1786,36 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         rawBody: textUpdate(777, text),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client: guardedClient,
+        memberClient: () => guardedClient,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
 
     await send("notebook 3600 em 12x no nubank");
     await send("confirmar");
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
     expect(tables.installment_groups).toHaveLength(1);
 
     await send("cancelar");
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
     expect(sent.at(-1)?.text).toContain("Não posso editar nem cancelar");
 
     await send("valor 4.000");
-    const afterEdit = await store.load("555");
+    const afterEdit = await store.load("555", "777", "house-1");
     expect(afterEdit?.status).toBe("installment_outcome_uncertain");
     expect(afterEdit?.installmentDraft?.totalCents).toBe(360000);
     expect(tables.installment_groups).toHaveLength(1);
 
     await send("confirmar");
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
     expect(tables.installment_groups).toHaveLength(1);
     expect(tables.installments).toHaveLength(12);
   });
@@ -1772,14 +1835,21 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
         installmentCount: 12,
       },
     });
-    const tap = (token: string) =>
+    const tap = async (token: string) =>
       handleWebhook({
-        rawBody: callbackUpdate(777, token),
+        rawBody: callbackUpdate(
+          777,
+          token,
+          555,
+          (await store.load("555", "777", "house-1"))?.promptMessageId ?? 1001,
+        ),
         secretHeader: SECRET,
         configuredSecret: SECRET,
-        client: guardedClient,
+        memberClient: () => guardedClient,
         telegram,
         resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
         store,
         classifyMessage,
       });
@@ -1788,31 +1858,33 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "notebook 3600 em 12x no nubank"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client: guardedClient,
+      memberClient: () => guardedClient,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
     await tap(TOKENS.confirm);
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
 
     await tap(TOKENS.cancel);
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
     expect(answered.at(-1)?.text).toContain("Confirmação pendente");
 
     await tap(`${CARD_TOKEN_PREFIX}card-1`);
-    expect((await store.load("555"))?.status).toBe(
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
       "installment_outcome_uncertain",
     );
     expect(tables.installment_groups).toHaveLength(1);
 
     await tap(TOKENS.confirm);
-    expect((await store.load("555"))?.status).toBe("saved");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe("saved");
     expect(tables.installment_groups).toHaveLength(1);
     expect(tables.installments).toHaveLength(12);
   });
@@ -1845,9 +1917,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: textUpdate(777, "notebook 3600 em 12x"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
@@ -1857,20 +1931,29 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       rawBody: callbackUpdate(777, `${CARD_TOKEN_PREFIX}card-1`),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });
 
     await handleWebhook({
-      rawBody: callbackUpdate(777, TOKENS.confirm),
+      rawBody: callbackUpdate(
+        777,
+        TOKENS.confirm,
+        555,
+        (await store.load("555", "777", "house-1"))?.promptMessageId ?? 1001,
+      ),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       classifyMessage,
     });

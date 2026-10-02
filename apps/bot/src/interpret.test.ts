@@ -2,10 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import type { AiCompletionClient } from "@family-finance/categorization";
 
-import {
-  createTextInterpreter,
-  createMessageClassifier,
-} from "./interpret.js";
+import { createTextInterpreter, createMessageClassifier } from "./interpret.js";
 
 const TODAY = "2026-06-22";
 
@@ -59,6 +56,18 @@ describe("createTextInterpreter", () => {
     // description must be JUST the merchant/service, not "Gasto X valor".
     expect(prompt).toMatch(/estabelecimento|serviço/i);
     expect(prompt).toMatch(/"gasto"/i);
+    expect(prompt).toContain('"foi a Ana quem pagou"');
+  });
+
+  it("includes only the supplied household member names in the interpretation prompt", async () => {
+    const client = clientReplying(null);
+    await createTextInterpreter(client)("Ana comprou pão", {
+      today: TODAY,
+      memberNames: ["Ana", "Bruno"],
+    });
+    expect(client.complete.mock.calls[0]?.[0]).toContain(
+      'Pessoas desta casa: ["Ana","Bruno"]',
+    );
   });
 
   it("accepts optional fields as absent or null", async () => {
@@ -328,10 +337,18 @@ describe("createMessageClassifier", () => {
       await createMessageClassifier(obligationClient)("placa solar pago", {
         today: TODAY_JUL,
       }),
-    ).toEqual({ intent: "mark_paid", target: "obligation", keyword: "placa solar" });
+    ).toEqual({
+      intent: "mark_paid",
+      target: "obligation",
+      keyword: "placa solar",
+    });
 
     const cardClient = clientReplying(
-      JSON.stringify({ intent: "mark_paid", target: "card", keyword: "nubank" }),
+      JSON.stringify({
+        intent: "mark_paid",
+        target: "card",
+        keyword: "nubank",
+      }),
     );
     expect(
       await createMessageClassifier(cardClient)("nubank pago", {

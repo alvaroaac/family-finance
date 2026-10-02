@@ -55,7 +55,7 @@ export type InterpretedExpense = {
 
 export type TextInterpreter = (
   text: string,
-  options: { today: string },
+  options: { today: string; memberNames?: readonly string[] },
 ) => Promise<InterpretedExpense | null>;
 
 /** Strict schema for the JSON object the prompt demands from the model. */
@@ -75,13 +75,18 @@ const interpretedReplySchema = z.object({
  * dates ("ontem", "sábado passado") into ISO dates. The output contract is a
  * single strict JSON object (or the literal `null` when nothing is extractable).
  */
-export function buildInterpretationPrompt(text: string, today: string): string {
+export function buildInterpretationPrompt(
+  text: string,
+  today: string,
+  memberNames: readonly string[] = [],
+): string {
   return [
     "Você ajuda uma família brasileira a registrar despesas a partir de mensagens informais de Telegram.",
     `Hoje é ${today}.`,
     "",
     "Extraia os campos da despesa descrita na mensagem abaixo.",
     `Mensagem: "${text}"`,
+    `Pessoas desta casa: ${JSON.stringify(memberNames)}`,
     "",
     "Responda APENAS com um objeto JSON, sem texto extra, no formato:",
     '{"amount_cents": number | null, "description": string, "occurred_on": "YYYY-MM-DD" | null, "category_hint": string | null, "responsible_hint": string | null}',
@@ -91,7 +96,7 @@ export function buildInterpretationPrompt(text: string, today: string): string {
     '- description é APENAS o nome do estabelecimento ou serviço (ex.: "OpenAI", "Uber", "Padaria"), sem palavras como "gasto", "compra" ou "valor".',
     '- occurred_on resolve datas relativas ("ontem", "sábado") usando a data de hoje; null se não houver data.',
     '- category_hint é uma sugestão livre de categoria (ex.: "Alimentação"); null se não estiver claro.',
-    '- responsible_hint é o nome da pessoa responsável, SOMENTE se a mensagem citar uma (ex.: "foi a Karol quem pagou"); null caso contrário.',
+    '- responsible_hint é o nome da pessoa responsável, SOMENTE se a mensagem citar uma (ex.: "foi a Ana quem pagou"); null caso contrário.',
     "- Se a mensagem não descrever uma despesa, responda exatamente: null",
   ].join("\n");
 }
@@ -194,6 +199,7 @@ export type MessageClassifier = (
       }>;
     };
     merchantAliases?: Record<string, readonly string[]>;
+    memberNames?: readonly string[];
   },
 ) => Promise<InterpretedIntent | null>;
 
@@ -257,13 +263,18 @@ const classifiedReplySchema = z.discriminatedUnion("intent", [
  * Build the pt-BR classification prompt. One strict JSON object out; `today`
  * resolves relative dates and "a partir de 05/10"-style start months.
  */
-export function buildClassifierPrompt(text: string, today: string): string {
+export function buildClassifierPrompt(
+  text: string,
+  today: string,
+  memberNames: readonly string[] = [],
+): string {
   return [
     "Você ajuda uma família brasileira a registrar finanças a partir de mensagens informais de Telegram.",
     `Hoje é ${today}.`,
     "",
     "Classifique a mensagem abaixo em UMA intenção e extraia os campos.",
     `Mensagem: "${text}"`,
+    `Pessoas desta casa: ${JSON.stringify(memberNames)}`,
     "",
     "Intenções possíveis:",
     '- "plain": uma despesa avulsa (ex.: "mercado 230", "farmácia 45 ontem").',
@@ -302,7 +313,7 @@ export function createMessageClassifier(
   return async (text, options) => {
     try {
       const reply = await client.complete(
-        buildClassifierPrompt(text, options.today),
+        buildClassifierPrompt(text, options.today, options.memberNames),
         { label: "classifier" },
       );
       if (reply === null) {
@@ -383,7 +394,7 @@ export function createTextInterpreter(
   return async (text, options) => {
     try {
       const reply = await client.complete(
-        buildInterpretationPrompt(text, options.today),
+        buildInterpretationPrompt(text, options.today, options.memberNames),
         { label: "interpreter" },
       );
       if (reply === null) {

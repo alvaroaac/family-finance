@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import { handleWebhook } from "./index.js";
 import { createInMemoryConversationStore } from "./store.js";
@@ -162,34 +162,20 @@ const IDENTITIES: Record<string, BotMemberIdentity> = {
     displayName: "Alvaro",
   },
   "888": { householdId: "house-1", userId: "user-karol", displayName: "Karol" },
-  "@karolzinha": {
-    householdId: "house-1",
-    userId: "user-karol",
-    displayName: "Karol",
-  },
 };
 
 const resolveMemberFake = async (sender: {
   telegramUserId: string;
-  telegramUsername?: string;
 }): Promise<BotMemberIdentity | null> =>
-  IDENTITIES[sender.telegramUserId] ??
-  (sender.telegramUsername !== undefined
-    ? (IDENTITIES[`@${sender.telegramUsername.toLowerCase()}`] ?? null)
-    : null);
+  IDENTITIES[sender.telegramUserId] ?? null;
 
-function textUpdate(
-  fromId: number,
-  text: string,
-  chatId = 555,
-  fromUsername?: string,
-): unknown {
+function textUpdate(fromId: number, text: string, chatId = 555): unknown {
   return {
     update_id: 1,
     message: {
       message_id: 1,
-      chat: { id: chatId },
-      from: { id: fromId, username: fromUsername },
+      chat: { id: chatId, type: "private" },
+      from: { id: fromId },
       text,
     },
   };
@@ -200,7 +186,7 @@ function voiceUpdate(fromId: number, fileId: string, chatId = 555): unknown {
     update_id: 3,
     message: {
       message_id: 3,
-      chat: { id: chatId },
+      chat: { id: chatId, type: "private" },
       from: { id: fromId },
       voice: { file_id: fileId, mime_type: "audio/ogg" },
     },
@@ -274,16 +260,18 @@ describe("handleWebhook: callback routing", () => {
       rawBody: textUpdate(777, "Uber 32 reais ontem"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
     expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
       "cf",
     );
-    const state = await store.load("555");
+    const state = await store.load("555", "777", "house-1");
     expect(state?.promptMessageId).toBe(1001);
   });
 
@@ -294,9 +282,11 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -319,9 +309,11 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -348,9 +340,11 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -364,7 +358,72 @@ describe("handleWebhook: callback routing", () => {
     expect(
       sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
     ).toBe("cf");
-    expect((await store.load("555"))?.promptMessageId).toBe(1002);
+    expect((await store.load("555", "777", "house-1"))?.promptMessageId).toBe(
+      1002,
+    );
+  });
+
+  it("a failed re-save after a correction still lets the new keyboard confirm", async () => {
+    const { client, tables } = fakeSupabase();
+    const { telegram, sent } = fakeTelegram();
+    const inner = createInMemoryConversationStore();
+    let failNextSave = false;
+    const store: typeof inner = {
+      ...inner,
+      // Save a copy, like the real table: later in-memory mutations of the
+      // state object must not leak into what was persisted.
+      async save(chatId, telegramUserId, householdId, state) {
+        if (failNextSave) {
+          failNextSave = false;
+          throw new Error("supabase blip");
+        }
+        return inner.save(
+          chatId,
+          telegramUserId,
+          householdId,
+          structuredClone(state),
+        );
+      },
+    };
+    const base = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      memberClient: () => client,
+      resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
+      store,
+    };
+
+    await handleWebhook({
+      ...base,
+      telegram,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    // The re-save that would record the new prompt id (1002) fails.
+    await handleWebhook({
+      ...base,
+      telegram: {
+        ...telegram,
+        async sendMessage(chatId, text, options) {
+          const result = await telegram.sendMessage(chatId, text, options);
+          failNextSave = true;
+          return result;
+        },
+      },
+      rawBody: textUpdate(777, "valor 45,90"),
+    });
+    expect(
+      sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
+    ).toBe("cf");
+
+    await handleWebhook({
+      ...base,
+      telegram,
+      rawBody: callbackUpdate(777, "cf", 555, 1002),
+    });
+    expect(tables.transactions).toHaveLength(1);
+    expect(sent.at(-1)?.text).toContain("Lançamento salvo");
   });
 
   it("voice draft reply carries the confirmation keyboard and records promptMessageId", async () => {
@@ -380,9 +439,11 @@ describe("handleWebhook: callback routing", () => {
       rawBody: voiceUpdate(777, "voice-1"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       transcribe,
     });
@@ -390,7 +451,7 @@ describe("handleWebhook: callback routing", () => {
     expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
       "cf",
     );
-    const state = await store.load("555");
+    const state = await store.load("555", "777", "house-1");
     expect(state?.draft.inputKind).toBe("audio");
     expect(state?.promptMessageId).toBe(1001);
   });
@@ -404,9 +465,11 @@ describe("handleWebhook: callback routing", () => {
       rawBody: callbackUpdate(777, "cf", 555, 77),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -425,9 +488,11 @@ describe("handleWebhook: callback routing", () => {
       rawBody: callbackUpdate(999, "cf"),
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -451,9 +516,11 @@ describe("handleWebhook: callback routing", () => {
       },
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     });
 
@@ -473,9 +540,11 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -533,9 +602,11 @@ describe("handleWebhook: callback routing", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
 
@@ -554,7 +625,7 @@ describe("handleWebhook: callback routing", () => {
 
     await handleWebhook({
       ...base,
-      client: throwingClient,
+      memberClient: () => throwingClient,
       rawBody: callbackUpdate(777, "cf", 555, 1001),
     });
 
@@ -569,9 +640,11 @@ describe("handleWebhook: callback routing", () => {
       rawBody: callbackUpdate(777, "cf"),
       secretHeader: "wrong",
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store: createInMemoryConversationStore(),
     });
     expect(result.status).toBe(401);
@@ -598,9 +671,11 @@ describe("integration: the Petz flow (spec §6)", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
       ai: petsAi,
     };
@@ -731,9 +806,11 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     const base = {
       secretHeader: SECRET,
       configuredSecret: SECRET,
-      client,
+      memberClient: () => client,
       telegram,
       resolveMember: resolveMemberFake,
+      redeemLinkCode: vi.fn(),
+      discardLinkCode: vi.fn(),
       store,
     };
     return { base, tables, sent, answered, stripped };
@@ -762,6 +839,39 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     expect(tables.transactions).toHaveLength(1);
   });
 
+  it("refuses a tap on another member's button even when the tapper has a draft", async () => {
+    const { base, tables, answered, stripped } = harness();
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(888, "Mercado 42 reais hoje"),
+    });
+    expect(
+      (await base.store.load("555", "777", "house-1"))?.promptMessageId,
+    ).toBe(1001);
+    expect(
+      (await base.store.load("555", "888", "house-1"))?.promptMessageId,
+    ).toBe(1002);
+
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(888, "cf", 555, 1001),
+    });
+
+    expect(answered.at(-1)?.text).toContain("outra pessoa");
+    expect(tables.transactions).toHaveLength(0);
+    expect((await base.store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+    expect((await base.store.load("555", "888", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+    expect(stripped).toHaveLength(0);
+  });
+
   it("another member's tap cannot cancel or re-categorize the creator's draft", async () => {
     const { base, tables } = harness();
     const store = base.store;
@@ -779,13 +889,17 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     });
 
     await handleWebhook({ ...base, rawBody: callbackUpdate(888, "cx") });
-    expect((await store.load("555"))?.status).toBe("awaiting_confirmation");
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
 
     await handleWebhook({
       ...base,
       rawBody: callbackUpdate(888, "ct:cat-food"),
     });
-    expect((await store.load("555"))?.draft.categoryId).not.toBe("cat-food");
+    expect(
+      (await store.load("555", "777", "house-1"))?.draft.categoryId,
+    ).not.toBe("cat-food");
     expect(tables.transactions).toHaveLength(0);
   });
 

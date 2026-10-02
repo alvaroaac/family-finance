@@ -10,9 +10,12 @@ import {
   type NavItem,
 } from "../../components/ui";
 import { requireAuthorizedUser } from "../../lib/auth";
-import { currentMemberName } from "../../lib/member";
+import {
+  currentHouseholdOrFallback,
+  currentMemberName,
+} from "../../lib/member";
 import { setThemeAction } from "./settings/actions";
-import { parseTheme, THEME_COOKIE } from "./settings/helpers";
+import { resolveBaseTheme, THEME_COOKIE } from "./settings/helpers";
 
 /**
  * Navigation for the private Casa workspace — the ONLY nav source. Labels are
@@ -29,7 +32,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/cards", label: "Cartões", icon: "card" },
   { href: "/obligations", label: "Obrigações", icon: "bank" },
   { href: "/investments", label: "Investimentos", icon: "jar" },
-  { href: "/settings", label: "Configurações", icon: "sliders" }
+  { href: "/settings", label: "Configurações", icon: "sliders" },
 ];
 
 /** End the Supabase session and send the visitor back to the login screen. */
@@ -41,31 +44,27 @@ async function signOutAction(): Promise<void> {
   redirect("/login");
 }
 
-
 /**
  * Protected app shell. This layout guards the entire `(app)` route group
  * server-side: any unauthenticated visitor is redirected to `/login` and any
- * authenticated-but-not-allowlisted email is sent to the access-denied state
+ * authenticated user without an active membership reaches access denied
  * BEFORE any child page renders, so protected content never reaches the client.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { email } = await requireAuthorizedUser();
   const cookieStore = await cookies();
-  const theme = parseTheme(cookieStore.get(THEME_COOKIE)?.value);
+  const household = await currentHouseholdOrFallback();
+  const theme = resolveBaseTheme(
+    household.theme,
+    cookieStore.get(THEME_COOKIE)?.value,
+  );
   const name = await currentMemberName(email);
 
   return (
     <ToastProvider>
       <AppShell
         items={NAV_ITEMS}
-        brand={{
-          kicker: "Nossa casa",
-          title: (
-            <>
-              Alvaro <span className="ff-amp">&amp;</span> Karol
-            </>
-          )
-        }}
+        householdName={household.name}
         user={{ initial: name.charAt(0).toUpperCase(), name, email }}
         signOut={
           <form action={signOutAction}>
@@ -78,7 +77,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             </SubmitButton>
           </form>
         }
-        themePicker={<ThemePicker current={theme} onSelect={setThemeAction} />}
+        themePicker={
+          household.theme.lockBase ? undefined : (
+            <ThemePicker current={theme} onSelect={setThemeAction} />
+          )
+        }
       >
         {children}
       </AppShell>

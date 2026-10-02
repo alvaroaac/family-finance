@@ -777,30 +777,9 @@
   padding: 0 12px 28px;
 }
 
-.ff-sidebar__brand-kicker {
-  font-family: var(--ff-font-body), Inter, sans-serif;
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--ff-accent);
-}
-
 .ff-sidebar__brand-title {
   font-size: 23px;
   color: var(--ff-ink);
-  margin-top: 6px;
-}
-
-/* Gold italic ampersand — "Alvaro & Karol" (16px sidebar, 22px login). */
-.ff-amp {
-  font-style: italic;
-  font-weight: 500;
-  color: var(--ff-accent);
-}
-
-.ff-sidebar__brand-title .ff-amp {
-  font-size: 16px;
 }
 
 .ff-sidebar__nav {
@@ -1162,23 +1141,10 @@
   animation: ffFadeUp 0.4s ease-out;
 }
 
-.ff-auth-card__kicker {
-  font-family: var(--ff-font-body), Inter, sans-serif;
-  font-weight: 600;
-  font-size: 11px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: var(--ff-accent);
-}
-
 .ff-auth-card__title {
   font-size: 34px;
   color: var(--ff-ink);
-  margin: 14px 0 0;
-}
-
-.ff-auth-card__title .ff-amp {
-  font-size: 22px;
+  margin: 0;
 }
 
 .ff-auth-card__lead {
@@ -1306,7 +1272,7 @@
   color: var(--ff-negative);
 }
 
-/* Resumo greeting — "Oi, Karol" (desktop 40px, mobile 30px). */
+/* Resumo greeting — "Oi, Ana" (desktop 40px, mobile 30px). */
 .ff-hello {
   font-family: var(--ff-font-display), "Playfair Display", Georgia, serif;
   font-weight: 600;

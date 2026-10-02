@@ -109,7 +109,7 @@ export function confirmationMessage(view: SummaryView): string {
   lines.push("");
   lines.push("Responda *confirmar* para salvar, ou corrija:");
   lines.push(
-    '"valor 45,90" · "data 12/03" · "categoria Alimentação" · "responsável Karol"',
+    '"valor 45,90" · "data 12/03" · "categoria Alimentação" · "responsável Ana"',
   );
   lines.push("Para descartar, responda *cancelar*.");
   return lines.join("\n");
@@ -161,7 +161,7 @@ export function notUnderstoodMessage(): string {
   return [
     "Não entendi. Você pode:",
     "• confirmar · cancelar",
-    '• corrigir: "valor 32,50", "data 12/03", "categoria X", "responsável Karol"',
+    '• corrigir: "valor 32,50", "data 12/03", "categoria X", "responsável Bruno"',
   ].join("\n");
 }
 

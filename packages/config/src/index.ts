@@ -32,10 +32,14 @@ export type {
 export const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
+  ALLOWED_WEB_HOSTS: optionalNonEmptyString,
   // Bot-side Supabase URL (the bot container carries no NEXT_PUBLIC_* build
   // context); consumers fall back to NEXT_PUBLIC_SUPABASE_URL when unset.
   SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
   // AI providers (all optional so builds compile without secrets):
@@ -71,22 +75,20 @@ export const envSchema = z.object({
     .max(25)
     .default(10),
   OPENAI_API_KEY: z.string().min(1).optional(),
-  AUTHORIZED_EMAILS: z.string().min(1),
-  HOUSEHOLD_SLUG: z.string().min(1).default("casa"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
 
 /**
  * Bot-container environment (spec §3.5): the webhook server ships without any
- * web-only configuration, so the NEXT_PUBLIC_* pair and AUTHORIZED_EMAILS are
- * optional here. `SUPABASE_URL` (or the NEXT_PUBLIC fallback) plus the
- * service-role key are enforced by `startBot` itself.
+ * web-only configuration, so the NEXT_PUBLIC_* pair is optional here.
+ * `SUPABASE_URL` (or the NEXT_PUBLIC fallback), the service-role key,
+ * anon key and JWT secret are enforced by `startBot` itself.
  */
 export const botEnvSchema = envSchema.extend({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
-  AUTHORIZED_EMAILS: z.string().min(1).optional(),
+  TELEGRAM_API_BASE_URL: z.string().url().default("https://api.telegram.org"),
 });
 
 export type BotEnv = z.infer<typeof botEnvSchema>;
@@ -97,6 +99,16 @@ export type BotEnv = z.infer<typeof botEnvSchema>;
  */
 export function getBotServerEnv(env: NodeJS.ProcessEnv = process.env): BotEnv {
   const parsed = botEnvSchema.parse(env);
+  const telegramUrl = new URL(parsed.TELEGRAM_API_BASE_URL);
+  if (
+    telegramUrl.origin !== "https://api.telegram.org" &&
+    !["localhost", "127.0.0.1", "[::1]"].includes(telegramUrl.hostname)
+  ) {
+    throw new Error(
+      "TELEGRAM_API_BASE_URL must be https://api.telegram.org or a loopback host",
+    );
+  }
+  parsed.TELEGRAM_API_BASE_URL = telegramUrl.origin;
   if (
     parsed.IMPORT_PAID_FALLBACK_ENABLED === "true" &&
     parsed.OPENAI_API_KEY === undefined
@@ -127,61 +139,4 @@ export function getSupabasePublicConfig(env: NodeJS.ProcessEnv = process.env): {
     supabaseUrl: env.NEXT_PUBLIC_SUPABASE_URL ?? "",
     supabaseAnonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
   };
-}
-
-/**
- * The household slug for the single MVP workspace ("casa").
- */
-export function getHouseholdSlug(env: NodeJS.ProcessEnv = process.env): string {
-  return env.HOUSEHOLD_SLUG?.trim() || "casa";
-}
-
-/**
- * Normalize a raw `AUTHORIZED_EMAILS` value (comma/semicolon/whitespace
- * separated) into a deduplicated, lowercased list of allowed emails. Returns an
- * empty array when unset; this never throws so it is safe to call at build time.
- */
-export function parseAuthorizedEmails(
-  raw: string | undefined | null,
-): string[] {
-  if (!raw) {
-    return [];
-  }
-  const seen = new Set<string>();
-  for (const part of raw.split(/[,;\s]+/)) {
-    const email = part.trim().toLowerCase();
-    if (email.length > 0) {
-      seen.add(email);
-    }
-  }
-  return [...seen];
-}
-
-/**
- * Lazily read the authorized-email allowlist from the environment.
- */
-export function getAuthorizedEmails(
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
-  return parseAuthorizedEmails(env.AUTHORIZED_EMAILS);
-}
-
-/**
- * Decide whether an email is on the allowlist. Comparison is case-insensitive
- * and trims surrounding whitespace. An empty/undefined email is never allowed.
- */
-export function isEmailAuthorized(
-  email: string | undefined | null,
-  allowlist: readonly string[],
-): boolean {
-  if (!email) {
-    return false;
-  }
-  const normalized = email.trim().toLowerCase();
-  if (normalized.length === 0) {
-    return false;
-  }
-  return allowlist.some(
-    (allowed) => allowed.trim().toLowerCase() === normalized,
-  );
 }

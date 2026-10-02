@@ -24,8 +24,8 @@ export {
   THEME_COOKIE,
   DEFAULT_THEME,
   parseTheme,
+  resolveBaseTheme,
   memberPatchFromFormData,
-  telegramDisplayValue,
   botStatusLabel,
   inputKindLabel,
   type ThemeId,
@@ -34,7 +34,7 @@ export {
 } from "./helpers";
 
 export type SettingsData = {
-  members: HouseholdMemberProfile[];
+  members: (Omit<HouseholdMemberProfile, "userId"> & { isSelf: boolean })[];
   lastBotInteraction: LastBotInteraction | null;
   /** Non-null when data could not be loaded; the page shows an empty state. */
   loadError: string | null;
@@ -48,12 +48,20 @@ export type SettingsData = {
 export async function buildSettingsData(
   client: AppSupabaseClient,
   householdId: string,
+  currentUserId?: string,
 ): Promise<SettingsData> {
   const [members, lastBotInteraction] = await Promise.all([
     listHouseholdMembers(client, householdId),
     findLastBotInteraction(client, householdId),
   ]);
-  return { members, lastBotInteraction, loadError: null };
+  return {
+    members: members.map(({ userId, ...member }) => ({
+      ...member,
+      isSelf: userId === currentUserId,
+    })),
+    lastBotInteraction,
+    loadError: null,
+  };
 }
 
 function emptySettings(loadError: string | null): SettingsData {
@@ -66,13 +74,18 @@ function emptySettings(loadError: string | null): SettingsData {
  */
 export async function loadSettingsData(): Promise<SettingsData> {
   try {
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
       return emptySettings(null);
     }
-    return await buildSettingsData(client, householdId);
+    const { data, error } = await client.auth.getUser();
+    if (error || !data.user) {
+      return emptySettings("Não foi possível identificar o usuário atual.");
+    }
+    return await buildSettingsData(client, householdId, data.user.id);
   } catch (error) {
     return emptySettings(
       error instanceof Error

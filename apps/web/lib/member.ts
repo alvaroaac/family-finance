@@ -1,9 +1,43 @@
+import { cache } from "react";
 import {
+  type CurrentHousehold,
   findHouseholdIdForCurrentUser,
+  getCurrentHousehold,
   listHouseholdMembers,
 } from "@family-finance/db";
 import { createServerSupabaseClient } from "./supabase";
-/** "karol@casa.com" → "Karol" — fallback until the member sets a name. */
+
+/**
+ * The logged-in member's household (name + validated theme), loaded once per
+ * request and shared by the root layout, the app layout and the pages.
+ */
+export const currentHousehold = cache(async () =>
+  getCurrentHousehold(await createServerSupabaseClient()),
+);
+
+/**
+ * Shell fallback when the household cannot be loaded: neutral name, default
+ * theme. Keeps one failed lookup from replacing every page with the global
+ * error screen; the pages' own loads still surface the failure.
+ */
+export const FALLBACK_HOUSEHOLD = {
+  name: "Casa",
+  theme: { base: "esmeralda" },
+} as const satisfies Pick<CurrentHousehold, "name" | "theme">;
+
+/** `currentHousehold()` for layouts and theme: never throws. */
+export async function currentHouseholdOrFallback(): Promise<
+  Pick<CurrentHousehold, "name" | "theme">
+> {
+  try {
+    return await currentHousehold();
+  } catch (error) {
+    console.error("[web] household load failed, using fallback:", error);
+    return FALLBACK_HOUSEHOLD;
+  }
+}
+
+/** "ana@casa.com" → "Ana" — fallback until the member sets a name. */
 export function nameFromEmail(email: string): string {
   const local = email.split("@")[0] ?? email;
   return local.length > 0

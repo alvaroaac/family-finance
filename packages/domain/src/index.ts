@@ -23,21 +23,16 @@ export type {
   Account,
   AccountKind,
   InvestmentBucket,
-  InvestmentBucketSlug,
   CreditCard,
 } from "./accounts.js";
 export {
   accountKindSchema,
-  investmentBucketSlugSchema,
+  slugifyBucketName,
   creditCardSchema,
 } from "./accounts.js";
 
 // Categories.
-export type {
-  Category,
-  Subcategory,
-  CategoryRef,
-} from "./categories.js";
+export type { Category, Subcategory, CategoryRef } from "./categories.js";
 export {
   categorySchema,
   subcategorySchema,
@@ -88,6 +83,10 @@ export {
   projectObligations,
   paidKey,
 } from "./obligations.js";
+
+// Household theme document: base theme plus validated color overrides.
+export type { HouseholdTheme, ThemeToken } from "./theme.js";
+export { THEME_TOKENS, parseHouseholdTheme, themeStyle } from "./theme.js";
 
 // Household-local calendar semantics shared by server and browser entry points.
 export {

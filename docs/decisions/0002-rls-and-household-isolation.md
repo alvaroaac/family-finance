@@ -83,6 +83,34 @@ To keep the SQL reviewable and proven anyway, the migration + seed were validate
 
 When the Supabase CLI is available, re-run `supabase start && supabase db reset` to confirm against the real Auth stack; the schema is expected to apply unchanged because it only depends on `auth.users`/`auth.uid()`, both provided by Supabase.
 
+## 2026-09-29: multiple households and bot member scope
+
+The "second household" revisit trigger fired. Design:
+`thoughts/features/multi-tenancy/design.md`.
+
+- The isolation model is unchanged: shared database, RLS by `household_id`,
+  `is_household_member()` as the single rule. No per-tenant schema or database.
+- One user belongs to one household (`household_members_user_id_key`, migration
+  `0029`). `allowed_emails.household_id` is required and decides which household
+  a sign-up joins; the provisioning triggers no longer pick the first household.
+- Web access is an active membership row. The `AUTHORIZED_EMAILS` env gate is
+  gone. The household is always derived from the member, never from the
+  hostname; hostnames only affect auth redirects (`ALLOWED_WEB_HOSTS`).
+- The bot no longer does business reads and writes as service role. It resolves
+  the Telegram sender with `resolve_telegram_member` (service role), then acts
+  as that member through a short-lived HS256 JWT, so RLS applies to the bot too.
+  Service role remains for the resolver, the conversation store and the import
+  nonce/quota RPCs (migration `0031`).
+- `create_installment_purchase`, `settle_card_bill` and
+  `materialize_obligation_payment` require an authenticated member.
+- Investment bucket slugs are free text, unique per household (migration
+  `0030`).
+- `deploy/checks/rls-proof.mjs` discovers household-scoped tables and
+  `SECURITY DEFINER` functions from the catalog and fails by name on anything it
+  does not cover, so a new table cannot ship without an isolation check.
+- Not covered: privacy from the operator. Data is not encrypted at rest; see
+  `thoughts/features/multi-tenancy/spec-2-privacy-research.md`.
+
 ## Alternatives considered
 
 - **Defer RLS until multi-household is needed:** rejected. This is a private finance app; retrofitting isolation onto existing rows and write paths is expensive and risky. The plan explicitly requires RLS from day one.

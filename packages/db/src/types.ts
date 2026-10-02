@@ -14,10 +14,6 @@
 
 export type AccountKind = "checking" | "investment";
 export type TransactionKind = "expense" | "income" | "transfer";
-export type InvestmentBucketSlug =
-  | "filhos"
-  | "casa"
-  | "independencia_financeira";
 export type ImportSource =
   | "minhas_financas_csv"
   | "nubank_csv"
@@ -50,8 +46,15 @@ export type ObligationStatus = "active" | "ended" | "canceled";
 export type HouseholdRow = {
   id: string;
   name: string;
+  /** Member-writable jsonb; validate with `parseHouseholdTheme` before use. */
+  theme: unknown;
   created_at: string;
   updated_at: string;
+};
+
+export type AllowedEmailRow = {
+  email: string;
+  household_id: string;
 };
 
 export type HouseholdMemberRow = {
@@ -67,6 +70,12 @@ export type HouseholdMemberRow = {
   updated_at: string;
 };
 
+export type TelegramLinkCodeRow = {
+  member_id: string;
+  code_hash: string;
+  expires_at: string;
+};
+
 export type AccountRow = {
   id: string;
   household_id: string;
@@ -79,7 +88,8 @@ export type AccountRow = {
 export type InvestmentBucketRow = {
   id: string;
   household_id: string;
-  slug: InvestmentBucketSlug;
+  /** Derived from the name on creation; unique within the household. */
+  slug: string;
   name: string;
   balance_cents: number;
   created_at: string;
@@ -333,19 +343,22 @@ export type BotInteractionRow = {
 };
 
 /**
- * Persisted bot conversation state, keyed by the Telegram chat id. NOT
- * household-scoped: rows exist before the sender is resolved to a member, and
- * the table has RLS enabled with zero policies, so only the bot's
- * service_role client (which bypasses RLS) can read or write it.
+ * Persisted bot conversation state, keyed by chat and Telegram sender. The
+ * table has RLS enabled with zero policies; only the bot's service-role client
+ * reads and writes it after sender resolution.
  */
 export type BotConversationRow = {
   chat_id: number;
+  telegram_user_id: number;
+  household_id: string;
   state: unknown;
   updated_at: string;
 };
 
 export type BotConversationInsert = {
   chat_id: number;
+  telegram_user_id: number;
+  household_id: string;
   state: unknown;
   updated_at?: string;
 };
@@ -698,10 +711,12 @@ export type Database = {
   public: {
     Tables: {
       households: TableDef<HouseholdRow, Partial<HouseholdRow>>;
+      allowed_emails: TableDef<AllowedEmailRow, AllowedEmailRow>;
       household_members: TableDef<
         HouseholdMemberRow,
         Partial<HouseholdMemberRow>
       >;
+      telegram_link_codes: TableDef<TelegramLinkCodeRow, TelegramLinkCodeRow>;
       accounts: TableDef<AccountRow, Partial<AccountRow>>;
       investment_buckets: TableDef<
         InvestmentBucketRow,
@@ -736,9 +751,37 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      create_telegram_link_code: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
+      unlink_telegram: {
+        Args: Record<string, never>;
+        Returns: undefined;
+      };
+      redeem_telegram_link_code: {
+        Args: { p_code: string; p_telegram_user_id: number };
+        Returns: {
+          household_id: string;
+          user_id: string;
+          display_name: string | null;
+        }[];
+      };
+      discard_telegram_link_code: {
+        Args: { p_code: string };
+        Returns: undefined;
+      };
       is_household_member: {
         Args: { target_household_id: string };
         Returns: boolean;
+      };
+      resolve_telegram_member: {
+        Args: { p_telegram_user_id: number };
+        Returns: {
+          household_id: string;
+          user_id: string;
+          display_name: string | null;
+        }[];
       };
       // Atomic parcelado write (group + installments in one transaction).
       // See supabase/migrations/0002_create_installment_purchase.sql. Returns
@@ -865,7 +908,6 @@ export type Database = {
     Enums: {
       account_kind: AccountKind;
       transaction_kind: TransactionKind;
-      investment_bucket_slug: InvestmentBucketSlug;
       import_source: ImportSource;
       import_batch_status: ImportBatchStatus;
       responsibility_scope: ResponsibilityScope;

@@ -391,7 +391,9 @@ wrong if a second household ever exists.
 **Revisit trigger:** Multi-household support — join `households` on the slug (needs a
 slug column on households) or drop the `household_slug` column.
 
-**Status:** open (flagged MINOR by the v1.0 final whole-branch review)
+**Status:** resolved (2026-09-29) by migration `0029_multi_household_provisioning.sql` —
+`allowed_emails.household_slug` was replaced by a required `household_id`, and
+both provisioning triggers use that household.
 
 ## 2026-07-02: Resumo lacks a spending-by-category chart
 
@@ -443,7 +445,7 @@ are now enforced for every write path, including service-role RPCs.
 **Impact:** The redesign spec offered two ways to read the 12-month horizon:
 option A (the change-only list that shipped) and option B, a grid of obligation
 rows × month columns. A picked A and B went to "Out of scope". The list answers
-"what changes next month?" well but cannot answer "which months does *this one*
+"what changes next month?" well but cannot answer "which months does _this one_
 obligation still hit?" without opening each month's `<details>` — B was the view
 that made a single template's future scannable.
 
@@ -600,6 +602,7 @@ behaviour, or the next a11y pass — port `payment-dialog.tsx` onto
 
 **Impact:** Three small drifts found in review of the redesign CSS, none
 user-visible on their own but each a wrong precedent to copy:
+
 - `.ff-dialog__close:focus-visible` (line ~451) indicates focus with
   `color` / `background` / `border-color` and `outline: none` — no ring. The
   convention elsewhere (e.g. `.ff-seg__item:focus-visible`) is a two-step
@@ -738,5 +741,109 @@ the phrasings tried so far.
 **Revisit trigger:** Third time a real user phrasing misses. Then break the
 sentence into tokens and match each component (verb / count / noun) with its
 own small regex independent of position, instead of one ordered pattern.
+
+**Status:** open
+
+## 2026-09-29: Tenant data is readable by the operator (no encryption at rest)
+
+**Area:** database, backups, bot AI providers
+
+**Impact:** Multi-tenancy isolates households from each other, not from the
+VPS/database owner. Amounts, descriptions and bot messages are plaintext in
+Postgres and in the nightly dumps, and message text/audio goes to third-party
+AI providers under the operator's keys.
+
+**Current workaround:** Disclosure to the tester before first login
+(`docs/runbooks/multi-tenancy-cutover.md`, step 8).
+
+**Revisit trigger:** Before a second external household, or before charging.
+Plan in `thoughts/features/multi-tenancy/spec-2-privacy-research.md`.
+
+**Status:** open
+
+## 2026-09-29: mvp-flow browser spec is outside the e2e harness
+
+**Area:** `apps/web/e2e/mvp-flow.spec.ts`, `e2e/stack.sh`
+
+**Impact:** `pnpm e2e:web` runs the harness smoke and multi-tenant specs only.
+The MVP flow spec still needs a manual Google session, so it is not run.
+
+**Current workaround:** The offline integration test covers the same story.
+
+**Revisit trigger:** Next change to the import or dashboard flow — move the
+spec onto the harness session helper.
+
+**Status:** open
+
+## 2026-09-29: Deploy templates still carry the first household's bot hostname
+
+**Area:** `deploy/bot/docker-compose.override.yml`, `deploy/caddy/Caddyfile`, `deploy/bot/.env.example`, `deploy/README.md`
+
+**Impact:** The bot hostname is on the first household's domain. No member sees
+it (only Telegram and the web server call it), but it is not neutral.
+
+**Current workaround:** Left unchanged so the cutover does not move the webhook.
+
+**Revisit trigger:** Moving the bot host, or onboarding beyond the beta tester.
+
+**Status:** open
+
+## 2026-09-29: `confirm_import_v2` keeps a service-role branch
+
+**Area:** `supabase/migrations` (`confirm_import_v2`)
+
+**Impact:** The function still accepts a service-role caller without a member
+identity. Nothing calls it that way since the bot acts as the resolved member,
+so the branch is an unused path around the membership check.
+
+**Current workaround:** `service_role` is held only by the bot and operator
+scripts; members cannot reach the branch.
+
+**Revisit trigger:** Next change to `confirm_import_v2` — drop the branch in
+the same migration.
+
+**Status:** open
+
+## 2026-09-29: `household_members.telegram_username` is unused
+
+**Area:** `supabase/migrations/0032_verified_identity_binding.sql`, `packages/db`
+
+**Impact:** Linking is by one-time code and resolution by numeric id. The
+column stays in the schema and types with no reader.
+
+**Current workaround:** None needed; the column is always null for new links.
+
+**Revisit trigger:** Next migration touching `household_members`.
+
+**Status:** open
+
+## 2026-09-29: Migration number 0028 is reserved by an unmerged branch
+
+**Area:** `supabase/migrations/`, branch `codex/merchant-categorization-evidence`
+
+**Impact:** `main` goes from `0027` to `0029`. The unmerged branch holds
+`0028`. If it merges as is, its migration sorts before `0029`–`0032`, which
+production will already have applied, and it was written without the
+`household_id` rules.
+
+**Current workaround:** None; the gap is harmless while the branch is unmerged.
+
+**Revisit trigger:** Before merging `codex/merchant-categorization-evidence`:
+rebase over `main` and renumber its migration to the next free number.
+
+**Status:** open
+
+## 2026-09-29: A member can rename another member of the same household
+
+**Area:** `household_members_update` policy (`supabase/migrations/0010_*`), column grant in `0032`
+
+**Impact:** The policy allows updates on any row of the member's household,
+and `0032` limits the column to `display_name`. The display name feeds the
+"<nome> comprou" routing and the AI prompts, so one member can change how
+another is addressed. Same household only; no effect on isolation.
+
+**Current workaround:** None; the first household edits both names on purpose.
+
+**Revisit trigger:** A household asks for it, or an administrator role appears.
 
 **Status:** open

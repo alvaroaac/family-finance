@@ -809,7 +809,7 @@ describe("MVP review loop — dashboard reconciles with the whole scenario", () 
       "2026-08",
     ]);
 
-    // --- Caixinhas: the three MVP buckets are present (count + names). ----
+    // --- Caixinhas: the three seeded buckets are present (count + slugs). -
     expect(buckets).toHaveLength(3);
     expect(buckets.map((b) => b.slug).sort()).toEqual([
       "casa",

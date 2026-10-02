@@ -4,8 +4,13 @@ import { useState, useTransition } from "react";
 
 import type { HouseholdMemberProfile } from "@family-finance/db";
 
-import { setThemeAction, updateMemberAction } from "./actions";
-import { THEMES, telegramDisplayValue, type ThemeId } from "./helpers";
+import {
+  setThemeAction,
+  updateMemberAction,
+  createTelegramLinkCodeAction,
+  unlinkTelegramAction,
+} from "./actions";
+import { THEMES, type ThemeId } from "./helpers";
 import {
   Badge,
   Button,
@@ -119,16 +124,50 @@ const roleLabelPtBr: Record<string, string> = {
 };
 
 /** Avatar initial from the display name (fallback: house member glyph). */
-function memberInitial(member: HouseholdMemberProfile): string {
+function memberInitial(
+  member: Pick<HouseholdMemberProfile, "displayName">,
+): string {
   const name = member.displayName?.trim() ?? "";
   return name.length > 0 ? name.charAt(0).toUpperCase() : "?";
 }
 
-export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
+export function MemberRow({
+  member,
+}: {
+  member: Omit<HouseholdMemberProfile, "userId"> & { isSelf: boolean };
+}) {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [linked, setLinked] = useState(member.telegramUserId !== null);
+  const [code, setCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  function link() {
+    setError(null);
+    startTransition(async () => {
+      const result = await createTelegramLinkCodeAction();
+      if (result.ok && result.code) {
+        setCode(result.code);
+      } else {
+        setError(result.error ?? "Não deu pra gerar o código.");
+      }
+    });
+  }
+
+  function unlink() {
+    setError(null);
+    startTransition(async () => {
+      const result = await unlinkTelegramAction();
+      if (result.ok) {
+        setLinked(false);
+        setCode(null);
+        toast.success("Telegram desvinculado.");
+      } else {
+        setError(result.error ?? "Não deu pra desvincular.");
+      }
+    });
+  }
 
   function submit(formData: FormData) {
     setError(null);
@@ -171,14 +210,27 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
           </Field>
         </div>
         <div className="ff-member__field">
-          <Field label="Telegram (@username ou ID)">
-            <Input
-              name="telegram"
-              defaultValue={telegramDisplayValue(member)}
-              placeholder="@username"
-              aria-label="Telegram (@username ou ID)"
-            />
-          </Field>
+          <span className="ff-muted">
+            {linked ? "Telegram vinculado" : "Telegram não vinculado"}
+          </span>
+          {member.isSelf ? (
+            code === null ? (
+              <Button
+                type="button"
+                className="ff-btn--ghost-sm"
+                onClick={linked ? unlink : link}
+                disabled={isPending}
+              >
+                {linked ? "Desvincular" : "Vincular Telegram"}
+              </Button>
+            ) : (
+              <div>
+                <span>Envie esta mensagem pro bot em até 10 minutos:</span>{" "}
+                <code style={{ userSelect: "all" }}>/vincular {code}</code>
+                <div>Depois que o bot confirmar, recarregue esta página.</div>
+              </div>
+            )
+          ) : null}
         </div>
         <Badge tone="accent">{roleLabelPtBr[member.role] ?? member.role}</Badge>
         <Button
@@ -191,7 +243,11 @@ export function MemberRow({ member }: { member: HouseholdMemberProfile }) {
         </Button>
         {saved ? <span className="ff-hint-pos">Salvo ✓</span> : null}
         {error ? (
-          <span role="alert" className="ff-note" style={{ color: "var(--ff-negative)" }}>
+          <span
+            role="alert"
+            className="ff-note"
+            style={{ color: "var(--ff-negative)" }}
+          >
             {error}
           </span>
         ) : null}
