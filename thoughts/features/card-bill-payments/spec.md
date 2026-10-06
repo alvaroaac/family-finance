@@ -303,7 +303,8 @@ date, parcelas by due month (D12). Only the per-card fatura blocks use
 Unchanged code. Imported card rows keep today's attribution (calendar month of
 the purchase date) and are never bumped. Tech-debt entry to add: attribute
 imported fatura rows by the statement's `referenceMonth` (needs the import RPCs
-to carry it).
+to carry it). Worst for early closing days: with closing day 1, nearly every
+imported purchase lands one fatura early. Spending numbers are unaffected (D12).
 
 ## Edge cases → required tests
 
