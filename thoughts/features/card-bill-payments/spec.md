@@ -103,10 +103,12 @@ A card closing on day 1: purchases 02/10–01/11 form fatura 11 (closes 01/11);
 they still count as October/November spending by their own dates.
 
 **Parcelados** (`installments.due_month` already is the fatura month):
-`create_installment_purchase` (manual web/bot path) shifts the **whole plan**
-forward by N months, where N is the smallest shift that puts parcel 1 in a fatura
-that is not closed. Import RPCs that create installments are not shifted (D11).
-The `/cards` parcel preview shows the shifted months, so preview = what is saved.
+the manual web/bot path shifts the **whole plan** forward by N months, where N
+is the smallest shift that puts parcel 1 in a fatura that is not closed. The
+shift happens in `packages/db` `createInstallmentPurchase` (shared by web and
+bot) *before* calling the unchanged `create_installment_purchase` RPC, so the
+idempotent replay payload stays identical. Import RPCs are not shifted (D11).
+The `/cards` parcel preview uses the same helper, so preview = what is saved.
 
 ### Totals and status
 
@@ -146,10 +148,14 @@ being paid and the open one collecting new purchases. Per card, relative to
 
 Used by the Resumo card blocks, the default `/cards` view and the bot's default month.
 
-## Data model — migration `0029_card_bill_closing_and_payments.sql`
+## Data model — migration `0033_card_bill_closing_and_payments.sql`
 
-Numbered 0029 because `0028_import_evidence_and_memory.sql` is in flight on
-another branch. Every statement re-runnable (0015 style).
+Numbered 0033: `0028` is in flight locally and open PR #40 (multi-tenancy) owns
+`0029`–`0032`. `deploy/migrate.sh` applies any pending version, so gaps are
+fine. PR #40's `0031` re-creates the 7-arg `settle_card_bill` and
+`create_installment_purchase` with a stricter gate; whichever PR merges second
+must reconcile (noted in this PR and in tech-debt). Every statement
+re-runnable (0015 style).
 
 **Payments**
 1. Drop index `transactions_card_bill_month_uniq`.
@@ -178,11 +184,11 @@ another branch. Every statement re-runnable (0015 style).
    `invoice_month is null` unless `credit_card_id is not null and kind <> 'transfer'`;
    BEFORE INSERT/UPDATE trigger implementing the rule above; backfill existing
    card rows; index `(household_id, credit_card_id, invoice_month)`.
-7. `create_installment_purchase`: re-create from its latest body (0019) adding
-   the whole-plan shift for closed faturas. Idempotent replay keeps returning the
-   originally stored parcels.
+7. `create_installment_purchase` is **not** modified (shift lives in `packages/db`, see Parcelados).
 8. Grants: as 0015/0019 for the RPCs; table grants like the other household tables.
-9. `scripts/verify-all-migrations.sh` applies 0029 twice cleanly and runs its SQL assertions.
+9. New `scripts/verify-card-bill-migration.sh` (+ `pnpm test:card-bill-migration`,
+   wired into CI) applies all migrations, re-applies 0033, and runs
+   `packages/db/test/card-bill-functional.sql` assertions.
 
 ## Domain — `packages/domain`
 
@@ -350,8 +356,8 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
 | C12 | Edit amount of a charge in a closed fatura | stays put; closed total follows unless overridden | M, R |
 | C13 | Edit date/card of a charge | re-attributed with the insert rule | M |
 | C14 | Delete a charge in a closed fatura | total drops (unless overridden); paid may become overpaid | R |
-| C15 | Parcelado whose first parcel would land in a closed fatura | whole plan shifts; preview shows the shift + note | D, M, E |
-| C16 | Parcelado idempotent replay after the fatura closed | returns originally stored parcels, no shift | M |
+| C15 | Parcelado whose first parcel would land in a closed fatura | whole plan shifts; preview shows the shift + note; import path not shifted | D, R, E |
+| C16 | Parcelado idempotent replay (same payload) | returns originally stored parcels | R |
 | C17 | Closing with the unchanged total | no override stored | R |
 | C18 | Closing with a corrected total | override used for status; `total ajustado` hint shown | R, E |
 | C19 | Clear corrected total | back to live sum | R |
