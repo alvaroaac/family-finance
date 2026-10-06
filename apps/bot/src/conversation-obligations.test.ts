@@ -5576,7 +5576,7 @@ describe("obligation confirmation buttons", () => {
     expect(tokens).toContain(TOKENS.cancel);
   });
 
-  it("shows ranked category choices and applies one before confirmation", async () => {
+  it("hides the prefilled category and applies a remaining alternative before confirmation", async () => {
     const { deps } = buildDeps({
       catalog: {
         householdId: "house-1",
@@ -5597,6 +5597,11 @@ describe("obligation confirmation buttons", () => {
               confidence: 0.9,
               explanation: "Conta recorrente da casa.",
             },
+            {
+              categoryName: "Moradia",
+              confidence: 0.5,
+              explanation: "Categoria geral.",
+            },
           ],
           unifiedPrimary: true,
         },
@@ -5608,16 +5613,22 @@ describe("obligation confirmation buttons", () => {
       { today: TODAY },
     );
     expect(started.keyboard?.inline_keyboard.flat()).toContainEqual({
-      text: "📂 Moradia › Contas",
-      callback_data: "cs:0",
+      text: "📂 Moradia",
+      callback_data: "cs:1",
     });
 
-    const selected = await applyCallback(started.state, "cs:0", deps, {
+    expect(started.state.obligationDraft?.subcategoryId).toBe("sub-contas");
+    expect(
+      started.keyboard?.inline_keyboard
+        .flat()
+        .some((button) => button.callback_data === "cs:0"),
+    ).toBe(false);
+    const selected = await applyCallback(started.state, "cs:1", deps, {
       today: TODAY,
     });
     expect(selected.state.obligationDraft).toMatchObject({
       categoryId: "cat-moradia",
-      subcategoryId: "sub-contas",
+      subcategoryId: undefined,
     });
     expect(selected.state.categoryCandidates).toBeUndefined();
   });
