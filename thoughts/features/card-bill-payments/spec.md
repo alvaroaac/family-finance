@@ -122,6 +122,21 @@ Status and badge copy (contractual, same text on `/cards` and `/resumo`):
 
 An open fatura with total 0 and nothing paid is `open` / `aberta`.
 
+### Fatura pair (what "now" shows, per card)
+
+Right after a fatura closes, two faturas matter at once: the closed one still
+being paid and the open one collecting new purchases. Per card, relative to
+`today_SP`:
+
+- `openMonth` = `firstOpenInvoiceMonth(month(today_SP))` — the fatura new
+  purchases go to today.
+- `pendingMonth` = `openMonth − 1` **only if** that fatura is closed and its
+  status is `closed_unpaid` or `closed_partial`; otherwise none.
+- Only one month back is surfaced. Older closed faturas are not, because
+  history has no payment rows from before this feature and would all look unpaid.
+
+Used by the Resumo card blocks, the default `/cards` view and the bot's default month.
+
 ## Data model — migration `0029_card_bill_closing_and_payments.sql`
 
 Numbered 0029 because `0028_import_evidence_and_memory.sql` is in flight on
@@ -171,6 +186,8 @@ Pure, unit-tested, no I/O:
 - `cardBillBadge(summary)` → badge string (table above), formatted pt-BR.
 - `firstOpenInvoiceMonth(startMonth, isClosed: (m) => boolean)` → month, max 24
   steps; used by the parcel preview to shift a plan the same way the RPC does.
+- `cardFaturaPair({ openMonth, previous })` → `{ pending | null, open }` applying
+  the pair rule (pure: caller passes the previous month's summary).
 
 ## DB package — `packages/db`
 
@@ -192,16 +209,22 @@ Pure, unit-tested, no I/O:
   (upsert `state='closed'`); `reopenCardBill(…)` (upsert `state='open'`, override null);
   `setCardBillTotal(…)` (update override on a closed fatura; null = back to live sum).
 - `getCardBillOverview(client, householdId, month, todaySp)` → per card:
-  closing info + `summarizeCardBill` result + payments. Used by `/cards`,
-  `/resumo` and the bot so the three never disagree.
+  closing info + `summarizeCardBill` result + payments, for one month.
+- `getCardFaturaPairs(client, householdId, todaySp)` → per card
+  `{ card, pending: overview | null, open: overview }` (pair rule). Both are the
+  single source for `/cards`, `/resumo` and the bot so the three never disagree.
 
 ## Web — `/cards`
 
 New "Faturas" section above the cards grid.
 
-- **Month selector:** GET form with `<input type="month" name="fatura">`.
-  Default = current São Paulo month. Invalid param → current month.
-- **Per card block** "Fatura MM/YYYY":
+- **Default view (no `?fatura=`):** per card, the fatura pair — the pending
+  closed fatura block (when any) above the open fatura block, each with its own
+  actions below. Heading `Faturas de agora`.
+- **Month selector:** GET form with `<input type="month" name="fatura">` +
+  link `Voltar para agora`. With `?fatura=YYYY-MM`, one block per card for that
+  month. Invalid param → default view.
+- **Fatura block** "Fatura MM/YYYY":
   - Line: `fecha DD/MM` (or `sem dia de fechamento`) and the badge.
   - Total, pago, falta. When a corrected total is active: `total ajustado (soma dos lançamentos: R$ X)`.
   - Payments list: `DD/MM/YYYY · <conta> · R$ X` + `Desfazer` (pending `Desfazendo…`).
@@ -237,11 +260,26 @@ Error copy (contractual):
 
 ## Web — `/resumo`
 
-Each fatura card shows the current month's badge from `getCardBillOverview`
-(replaces `settled: boolean`) and the fatura total (corrected total when set).
+"Faturas dos cartões" uses `getCardFaturaPairs` (replaces `settled: boolean`).
+Per card (contractual layout):
+
+- **Pending closed fatura exists** → main block = pending: `Fatura MM · fechada`,
+  its total (corrected when set) as the big number, its badge
+  (`fechada · a pagar R$ X` / `fechada · parcial, falta R$ X`). Divider, then a
+  small row `Próxima MM · aberta` + open fatura's running total.
+- **No pending** → single block = open fatura: `Fatura MM · aberta` (or
+  `fechada` / `paga ✅` if the current month was closed and settled — then the
+  open one is next month and shows as the main block), its total, its badge.
+
+Top "cartão" spending number = charges attributed to the Resumo month
+(`invoice_month` = current month) + parcelas due, as `getCardPressure` after the
+switch. The account side = expenses without a card, by date.
 
 ## Bot
 
+- Default month when the user doesn't name one = the card's `pendingMonth` if
+  any, else `openMonth` (paying in early October settles September's closed fatura).
+  An explicit month in the message still wins.
 - `getCardBillAmount` → `{ remainingCents, paidCents, closed }` from `getCardBillOverview`.
 - Remaining > 0 → current flow, prefilled with remaining.
 - Remaining = 0 and paid > 0 → reply that the fatura is already paid (paid total)
@@ -318,7 +356,21 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
 | C27 | Backfill | every existing card row gets calendar-month `invoice_month`; card totals per month identical before/after | M |
 | C28 | Resumo account vs card split with a cross-month card purchase | no card purchase counted as account spending | R |
 | C29 | `card_bill_closures` RLS | non-member cannot read/write; member can | M |
-| C30 | Invalid `?fatura=` | falls back to current month | R |
+| C30 | Invalid `?fatura=` | falls back to default (pair) view | R |
+
+**Fatura pair (Resumo + `/cards` default)**
+
+| # | Case | Expected | Layer |
+|---|---|---|---|
+| P1 | Previous fatura closed + partial, new purchases after close | two rows: main `Fatura 09 · fechada` with `fechada · parcial, falta R$ X`; `Próxima 10 · aberta` with only the new purchases | D, R, E |
+| P2 | Previous fatura closed + unpaid | main row `fechada · a pagar R$ X` + próxima row | D, R |
+| P3 | Pending fatura gets fully paid | collapses to single open block | D, R, E |
+| P4 | Previous fatura closed with total 0 (`nada a pagar`) or overpaid | no pending row | D |
+| P5 | Current month closed manually early | pending = current month, open = next month | D, M |
+| P6 | Card without closing day, nothing closed | single open block, current month | D |
+| P7 | Two months back closed and unpaid | not surfaced; only one month back | D |
+| P8 | Resumo cartão number vs pair | equals charges with `invoice_month` = current month + parcelas; Sep-29 purchase counts in October | R |
+| P9 | `/cards` default view | pending + open blocks per card, each with its own pay/close/reopen actions; `?fatura=` shows one month | R, E |
 
 **Bot**
 
@@ -328,6 +380,7 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
 | B2 | Fully paid month | "já está paga" + asks amount; extra payment saved on confirm | B |
 | B3 | Confirm replayed (same key) | success message, one row | B |
 | B4 | Card purchase via bot after manual close | lands in next fatura (trigger) | M |
+| B5 | "paguei a fatura" without month while previous fatura is pending | defaults to the pending month; with none pending, to the open month | B |
 
 ## Verification and evidence
 
@@ -343,7 +396,7 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
   (C6, C18) → purchase after close lands next month (C25) → partial payment →
   completing payment (E2, E3, C26) → double click (E11) → undo (E13) → invalid
   amount (E7) → future-month payment (E5) → parcelado preview shift (C15) →
-  Resumo badge.
+  Resumo pair view (pending + próxima, then collapsed after full payment, P1/P3).
 - **Evidence folder:** `thoughts/features/card-bill-payments/e2e-evidence/` —
   step screenshots, Playwright HTML report, trace zip, run log.
 
