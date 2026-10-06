@@ -54,6 +54,7 @@ same payment rules.
 | D9 | A fatura is closed automatically once the São Paulo date is past the card's closing day in that month, or manually via "Fechar fatura". A per-card+month override row can close early or reopen (manual or auto). | Matches how cards work; one override row explains every non-default state. |
 | D10 | A closed fatura's total = corrected total if the user set one, else the live sum of charges attributed to it. | User decision: correct the total instead of forcing "paga". Freezing comes from attribution (D8), so no snapshot is needed. |
 | D11 | Imported rows are authoritative: never bumped to another fatura. | User decision: the bank statement *is* that fatura. |
+| D12 | **Spending ≠ fatura.** Spending numbers (Resumo headline conta/cartão, dashboard, categories) stay by purchase date (`occurred_on`; parcelas by `due_month`, as today). Fatura numbers (fatura blocks, status, pay amount, bot) use `invoice_month`. A fatura is named by the month it closes in. | User decision (option A). Closing/reopening never moves spending between months; Resumo and dashboard keep matching; early closing days (e.g. day 1) don't lag the headline a month. |
 
 ## Fatura rules (contractual)
 
@@ -90,7 +91,16 @@ Applies to `transactions` rows with `credit_card_id is not null` and
 
 Effect: with auto-close, a purchase on day 29 of a card closing on day 28
 lands in next month's fatura — the real-card behaviour, achieved without a
-separate rule.
+separate rule. Worked example (closes day 28, due ~day 5):
+
+| Purchase | Fatura | Closes | Paid | Counts as spending in |
+|---|---|---|---|---|
+| 29/09 | 10 | 28/10 | ~05/11 | September |
+| 20/10 | 10 | 28/10 | ~05/11 | October |
+| 30/10 | 11 | 28/11 | ~05/12 | October |
+
+A card closing on day 1: purchases 02/10–01/11 form fatura 11 (closes 01/11);
+they still count as October/November spending by their own dates.
 
 **Parcelados** (`installments.due_month` already is the fatura month):
 `create_installment_purchase` (manual web/bot path) shifts the **whole plan**
@@ -101,8 +111,7 @@ The `/cards` parcel preview shows the shifted months, so preview = what is saved
 ### Totals and status
 
 - `chargesCents(c, M)` = card expenses with `invoice_month = M` + installments
-  with `due_month = M` (today's `getCardPressureForCard`, switched from
-  `occurred_on` to `invoice_month`).
+  with `due_month = M` (new fatura query; the spending queries are untouched, D12).
 - `totalCents` = `closed && override.total_override_cents is not null`
   ? that override : `chargesCents`.
 - `paidCents` = sum of payment rows (`kind='transfer'`, `bill_month = M`, card `c`).
@@ -191,12 +200,11 @@ Pure, unit-tested, no I/O:
 
 ## DB package — `packages/db`
 
-- `getCardPressure` / `getCardPressureForCard`: card transactions filtered by
-  `invoice_month = M` instead of `occurred_on` in M. Installments unchanged.
-- Resumo/dashboard account side: "spent from accounts" = expenses with
-  `credit_card_id is null` in the month (by `occurred_on`), no longer
-  "all expenses − card direct". Prevents a Sep-29 purchase attributed to the
-  October fatura from showing up as September account spending.
+- Spending queries unchanged (D12): `getMonthlySummary`, `getCardPressure`
+  and the Resumo conta/cartão split keep filtering by `occurred_on`.
+  `getCardPressureForCard` is no longer used by Resumo (replaced by fatura totals).
+- New `getCardBillCharges(client, householdId, cardId, month)` →
+  `chargesCents` by `invoice_month` + installments `due_month`.
 - `settleCardBill` sends the key; result `{ transaction, replayed }`.
 - `findCardBillPayments(client, householdId, month)` →
   `{ id, creditCardId, accountId, amountCents, paidOn }[]` (replaces
@@ -271,9 +279,9 @@ Per card (contractual layout):
   `fechada` / `paga ✅` if the current month was closed and settled — then the
   open one is next month and shows as the main block), its total, its badge.
 
-Top "cartão" spending number = charges attributed to the Resumo month
-(`invoice_month` = current month) + parcelas due, as `getCardPressure` after the
-switch. The account side = expenses without a card, by date.
+Top spending numbers (gasto do mês, conta, cartão) are unchanged: by purchase
+date, parcelas by due month (D12). Only the per-card fatura blocks use
+`invoice_month`, so their totals can differ from the cartão spending number.
 
 ## Bot
 
@@ -354,7 +362,7 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
 | C25 | Closed fatura paid, then a new purchase | purchase goes to next fatura; closed one stays `paga ✅` | M, E |
 | C26 | Closed unpaid (`fechada · a pagar R$ X`) then partial then full | badge walks closed_unpaid → closed_partial → paid | D, E |
 | C27 | Backfill | every existing card row gets calendar-month `invoice_month`; card totals per month identical before/after | M |
-| C28 | Resumo account vs card split with a cross-month card purchase | no card purchase counted as account spending | R |
+| C28 | Card purchase 30/10 on a card closing day 28 | October spending (Resumo + dashboard) includes it; fatura 11 block includes it, fatura 10 does not | R |
 | C29 | `card_bill_closures` RLS | non-member cannot read/write; member can | M |
 | C30 | Invalid `?fatura=` | falls back to default (pair) view | R |
 
@@ -369,7 +377,8 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
 | P5 | Current month closed manually early | pending = current month, open = next month | D, M |
 | P6 | Card without closing day, nothing closed | single open block, current month | D |
 | P7 | Two months back closed and unpaid | not surfaced; only one month back | D |
-| P8 | Resumo cartão number vs pair | equals charges with `invoice_month` = current month + parcelas; Sep-29 purchase counts in October | R |
+| P8 | Closing, reopening or correcting a fatura | Resumo headline + dashboard spending identical before/after; only fatura blocks change | R |
+| P10 | Card closing day 1 | purchase 15/10 → fatura 11, counts as October spending | D, M, R |
 | P9 | `/cards` default view | pending + open blocks per card, each with its own pay/close/reopen actions; `?fatura=` shows one month | R, E |
 
 **Bot**
