@@ -29,6 +29,7 @@ import { summarizeMonth } from "@family-finance/db";
 import type { InterpretedIntent, MessageClassifier } from "./interpret.js";
 import { CARD_TOKEN_PREFIX, TOKENS } from "./keyboards.js";
 import type { ConversationState } from "./conversation.js";
+import { addMonthsYm, currentHouseholdDate } from "@family-finance/domain";
 
 // ---------------------------------------------------------------------------
 // Fixtures copied verbatim from bot-callbacks.test.ts (itself copied from
@@ -89,6 +90,10 @@ function fakeQueryBuilder(rows: FakeRow[]) {
     },
     eq(column: string, value: unknown) {
       filtered = filtered.filter((r) => r[column] === value);
+      return api;
+    },
+    in(column: string, values: unknown[]) {
+      filtered = filtered.filter((r) => values.includes(r[column]));
       return api;
     },
     // getCardPressureForCard/fetchAllRows also filter with gte/lte/not before
@@ -236,10 +241,8 @@ function createInstallmentPurchaseRpc(
 }
 
 /**
- * `settle_card_bill`: idempotent on (credit_card_id, bill_month, kind
- * transfer), mirroring `settleCardBillRpc` in
- * apps/web/integration/fake-supabase.ts (card lookup, description
- * `Fatura <name> — MM/YYYY`, both instruments, `already_paid`).
+ * `settle_card_bill`: idempotent per household and caller key. Replays
+ * return the original payment; another key permits an additional payment.
  */
 function settleCardBillRpc(
   tables: Record<string, FakeRow[]>,
@@ -251,6 +254,7 @@ function settleCardBillRpc(
     target_amount_cents: number;
     target_paid_on: string | null;
     target_created_by_user_id: string;
+    target_idempotency_key: string;
   },
 ): { data: FakeRow; error: { message: string } | null } {
   const cards = tables.credit_cards ?? [];
@@ -269,9 +273,8 @@ function settleCardBillRpc(
   const transactions = tables.transactions ?? (tables.transactions = []);
   const existing = transactions.find(
     (r) =>
-      r.kind === "transfer" &&
-      r.credit_card_id === args.target_credit_card_id &&
-      r.bill_month === args.target_bill_month,
+      r.household_id === args.target_household_id &&
+      r.idempotency_key === args.target_idempotency_key,
   );
   if (existing !== undefined) {
     return {
@@ -300,6 +303,8 @@ function settleCardBillRpc(
     obligation_id: null,
     obligation_month: null,
     bill_month: month,
+    invoice_month: null,
+    idempotency_key: args.target_idempotency_key,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   };
@@ -389,6 +394,7 @@ function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {
                 target_amount_cents: number;
                 target_paid_on: string | null;
                 target_created_by_user_id: string;
+                target_idempotency_key: string;
               },
             ),
           );
@@ -647,7 +653,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
   ])(
     "settles an explicitly named obligation-shaped card with a %s",
     async (_label, classified) => {
-      const todayIsoDate = new Date().toISOString().slice(0, 10);
+      const todayIsoDate = currentHouseholdDate();
       const month = todayIsoDate.slice(0, 7);
       const solarCard = {
         ...CARD_SEED,
@@ -663,6 +669,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
             kind: "expense",
             amount_cents: 15000,
             occurred_on: `${month}-02`,
+            invoice_month: month,
             description: "Mercado",
             category_id: null,
             subcategory_id: null,
@@ -1206,12 +1213,11 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
   );
 
   it("story 2 + 3: card-bill payment settles as ONE transfer row; summarizeMonth excludes it (no double count)", async () => {
-    const todayIsoDate = new Date().toISOString().slice(0, 10);
+    const todayIsoDate = currentHouseholdDate();
     const month = todayIsoDate.slice(0, 7);
     const { client, tables } = fakeSupabase({
       credit_cards: [{ ...CARD_SEED }],
-      // A direct card expense this month, feeding getCardPressureForCard's
-      // "directCents" — this is the amount the bill confirmation should show.
+      // A charge attributed to this fatura feeds the shared bill overview.
       transactions: [
         {
           id: "txn-seed-1",
@@ -1219,6 +1225,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           kind: "expense",
           amount_cents: 15000,
           occurred_on: `${month}-02`,
+          invoice_month: month,
           description: "Mercado",
           category_id: null,
           subcategory_id: null,
@@ -1265,8 +1272,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     });
 
     expect(sent).toHaveLength(1);
-    // The confirmation shows the computed pressure: the seeded direct expense
-    // (150,00) since there are no parcels due this month.
+    // The confirmation shows the remaining fatura balance (150,00).
     expect(sent[0]?.text).toContain("R$ 150,00");
 
     await handleWebhook({
@@ -1302,8 +1308,8 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     expect(afterSummary.expenseCents).toBe(15000);
   });
 
-  it("story 4: repeating 'nubank pago' + confirmar after settlement is an already-paid no-op (still one transfer row)", async () => {
-    const todayIsoDate = new Date().toISOString().slice(0, 10);
+  it("story 4: a paid fatura asks for an extra amount before saving another transfer", async () => {
+    const todayIsoDate = currentHouseholdDate();
     const month = todayIsoDate.slice(0, 7);
     const { client, tables } = fakeSupabase({
       credit_cards: [{ ...CARD_SEED }],
@@ -1318,6 +1324,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
           kind: "expense",
           amount_cents: 15000,
           occurred_on: `${month}-02`,
+          invoice_month: month,
           description: "Mercado",
           category_id: null,
           subcategory_id: null,
@@ -1366,9 +1373,12 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       (tables.transactions as FakeRow[]).filter((r) => r.kind === "transfer"),
     ).toHaveLength(1);
 
-    // Repeat the whole flow: a fresh "nubank pago" -> "confirmar".
+    // Keep the paid month explicit: the default moves to the open fatura.
     await handleWebhook({
-      rawBody: textUpdate(777, "nubank pago"),
+      rawBody: textUpdate(
+        777,
+        `paguei a fatura Nubank de ${month.slice(5, 7)}/${month.slice(0, 4)}`,
+      ),
       secretHeader: SECRET,
       configuredSecret: SECRET,
       client,
@@ -1393,9 +1403,32 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     );
     expect(transferRows).toHaveLength(1);
     expect(transferRows[0]?.bill_month).toBe(month);
-    // The already-paid no-op reply.
-    const lastSent = sent[sent.length - 1];
-    expect(lastSent?.text).toContain("já estava paga");
+    expect(sent[2]?.text).toContain("já está paga (R$ 150,00)");
+    expect(
+      (await store.load("555"))?.cardBillDraft?.amountCents,
+    ).toBeUndefined();
+    for (const message of ["valor 50,00", "confirmar"]) {
+      await handleWebhook({
+        rawBody: textUpdate(777, message),
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage,
+      });
+    }
+    const payments = tables.transactions?.filter(
+      (row) => row.kind === "transfer",
+    );
+    expect(payments).toHaveLength(2);
+    expect(payments?.map((row) => row.amount_cents)).toEqual([15000, 5000]);
+    expect(payments?.every((row) => row.bill_month === month)).toBe(true);
+    expect(payments?.[0]?.idempotency_key).not.toBe(
+      payments?.[1]?.idempotency_key,
+    );
+    expect(sent.at(-1)?.text).toContain("Fatura paga! ✅");
   });
 
   it("story 5: callback path parity — confirm installment via cf button; double-tap cf is a silent no-op with no second group", async () => {
@@ -1880,4 +1913,43 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       ((tables.installment_groups as FakeRow[])[0] as FakeRow).credit_card_id,
     ).toBe("card-1");
   });
+});
+
+it("C15: bot shifts the whole installment plan past a manually closed first fatura", async () => {
+  const month = currentHouseholdDate().slice(0, 7);
+  const { client, tables } = fakeSupabase({
+    credit_cards: [{ ...CARD_SEED, closing_day: null }],
+    card_bill_closures: [
+      {
+        household_id: "house-1",
+        credit_card_id: "card-1",
+        bill_month: month,
+        state: "closed",
+        total_override_cents: null,
+      },
+    ],
+  });
+  const { telegram, sent } = fakeTelegram();
+  const store = createInMemoryConversationStore();
+  const args = {
+    secretHeader: SECRET,
+    configuredSecret: SECRET,
+    client,
+    telegram,
+    resolveMember: resolveMemberFake,
+    store,
+    classifyMessage: classifierReturning(null),
+  };
+  await handleWebhook({
+    ...args,
+    rawBody: textUpdate(777, "notebook 300 em 3x no nubank"),
+  });
+  await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+  expect(tables.installment_groups).toHaveLength(1);
+  expect(tables.installments?.map((row) => row.due_month)).toEqual([
+    addMonthsYm(month, 1),
+    addMonthsYm(month, 2),
+    addMonthsYm(month, 3),
+  ]);
+  expect(sent.at(-1)?.text).toContain("1ª parcela");
 });

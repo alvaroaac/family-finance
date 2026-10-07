@@ -450,12 +450,14 @@ export function cardBillPaidMessage(view: {
   return `Fatura paga! ✅ ${view.cardName} — R$ ${formatBrl(view.amountCents)} (${monthAbbrPtBr(view.month)})`;
 }
 
-/** Friendly no-op when the bill month was already settled (idempotent repeat). */
-export function cardBillAlreadyPaidMessage(view: {
+/** A covered fatura can still receive an extra payment with an explicit amount. */
+export function cardBillExtraPaymentMessage(view: {
   cardName: string;
   month: string;
+  paidCents: number;
 }): string {
-  return `A fatura do ${view.cardName} de ${monthAbbrPtBr(view.month)} já estava paga — nada mudou. 👍`;
+  const monthLabel = `${view.month.slice(5, 7)}/${view.month.slice(0, 4)}`;
+  return `A fatura ${view.cardName} de ${monthLabel} já está paga (R$ ${formatBrl(view.paidCents)}). Quer registrar um pagamento extra? Envie "valor 50,00".`;
 }
 
 /** Settle failed (RPC threw) — mirrors `obligationSettleFailedMessage`. */

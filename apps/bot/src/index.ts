@@ -47,7 +47,9 @@ import {
   restoreCategory as dbRestoreCategory,
   restoreSubcategory as dbRestoreSubcategory,
   createCategorizationMemory,
-  getCardPressureForCard,
+  getCardBillOverview,
+  getCardFaturaPairs,
+  planWithOpenFaturas,
   settleCardBill as dbSettleCardBill,
   type AppSupabaseClient,
   type BotMemberIdentity,
@@ -438,7 +440,13 @@ async function buildDeps(
             : undefined,
       })),
     createInstallmentPurchase: async (plan, idempotencyKey) => {
-      const result = await dbCreateInstallmentPurchase(client, plan, {
+      const shifted = await planWithOpenFaturas(
+        client,
+        householdId,
+        plan,
+        currentHouseholdDate(),
+      );
+      const result = await dbCreateInstallmentPurchase(client, shifted.plan, {
         idempotencyKey,
       });
       return {
@@ -452,20 +460,36 @@ async function buildDeps(
           result.group.purchased_on.slice(0, 7),
       };
     },
-    // Card-bill payment (PR-2 / Task 6): computed monthly pressure + the
-    // settle_card_bill RPC (transfer row, idempotent per caller key).
-    getCardBillAmount: async (creditCardId, month) => {
-      const pressure = await getCardPressureForCard(
+    // Shared fatura read models keep defaults and remaining balances in sync
+    // with /cards and /resumo; settlements are idempotent per draft key.
+    resolveDefaultBillMonth: async (creditCardId) => {
+      const pairs = await getCardFaturaPairs(
         client,
         householdId,
-        creditCardId,
-        month,
+        currentHouseholdDate(),
       );
-      return pressure.totalCents;
+      const pair = pairs.find((entry) => entry.card.id === creditCardId);
+      if (pair === undefined) throw new Error("Card fatura pair not found");
+      return pair.pending?.month ?? pair.open.month;
+    },
+    getCardBillAmount: async (creditCardId, month) => {
+      const overviews = await getCardBillOverview(
+        client,
+        householdId,
+        month,
+        currentHouseholdDate(),
+      );
+      const overview = overviews.find(
+        (entry) => entry.card.id === creditCardId,
+      );
+      if (overview === undefined)
+        throw new Error("Card bill overview not found");
+      const { remainingCents, paidCents, closed } = overview.summary;
+      return { remainingCents, paidCents, closed };
     },
     settleCardBill: async (draft) => {
       const result = await dbSettleCardBill(client, draft);
-      return { alreadyPaid: result.replayed };
+      return { replayed: result.replayed };
     },
   };
 }

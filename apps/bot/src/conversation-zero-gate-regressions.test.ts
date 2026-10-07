@@ -1172,14 +1172,18 @@ describe("zero-gate conversation regressions", () => {
     "never resolves an authoritative %s name through its registered prefix",
     async (_flow, text, authoritativeName, registeredPrefix) => {
       for (const classified of [null, WRONG_PLAIN_INTENT]) {
-        const settleCardBill = vi.fn(async () => ({ alreadyPaid: false }));
+        const settleCardBill = vi.fn(async () => ({ replayed: false }));
         const { deps, createTransaction, createInstallmentPurchase } =
           buildDeps({
             classifyMessage: classifierReturning(classified),
             listActiveCards: () => [
               { id: "card-prefix", name: registeredPrefix },
             ],
-            getCardBillAmount: vi.fn(async () => 100_000),
+            getCardBillAmount: vi.fn(async () => ({
+              remainingCents: 100_000,
+              paidCents: 0,
+              closed: false,
+            })),
             settleCardBill,
           });
 
@@ -1210,8 +1214,12 @@ describe("zero-gate conversation regressions", () => {
         const { deps } = buildDeps({
           classifyMessage: classifierReturning(classified),
           listActiveCards: () => [{ id: "card-exact", name: "Áurea+ 2" }],
-          getCardBillAmount: vi.fn(async () => 100_000),
-          settleCardBill: vi.fn(async () => ({ alreadyPaid: false })),
+          getCardBillAmount: vi.fn(async () => ({
+            remainingCents: 100_000,
+            paidCents: 0,
+            closed: false,
+          })),
+          settleCardBill: vi.fn(async () => ({ replayed: false })),
         });
 
         const outcome = await startConversation(
@@ -1267,8 +1275,12 @@ describe("zero-gate conversation regressions", () => {
     const billDeps = buildDeps({
       classifyMessage: classifierReturning(null),
       listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
-      getCardBillAmount: vi.fn(async () => 100_000),
-      settleCardBill: vi.fn(async () => ({ alreadyPaid: false })),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 100_000,
+        paidCents: 0,
+        closed: false,
+      })),
+      settleCardBill: vi.fn(async () => ({ replayed: false })),
     }).deps;
     const bill = await startConversation(
       {
@@ -1292,7 +1304,11 @@ describe("zero-gate conversation regressions", () => {
   it.each([null, WRONG_PLAIN_INTENT, WRONG_CARD_PAYMENT_INTENT])(
     "uses the computed bill instead of a digit inside an authoritative card name with %s AI",
     async (classified) => {
-      const getCardBillAmount = vi.fn(async () => 123_400);
+      const getCardBillAmount = vi.fn(async () => ({
+        remainingCents: 123_400,
+        paidCents: 0,
+        closed: false,
+      }));
       const { deps } = buildDeps({
         classifyMessage: classifierReturning(classified),
         listActiveCards: () => [{ id: "card-aurea", name: "Áurea+ 2" }],
@@ -1321,7 +1337,11 @@ describe("zero-gate conversation regressions", () => {
   it.each([null, WRONG_PLAIN_INTENT])(
     "keeps an explicit amount outside an authoritative numeric card name with %s AI",
     async (classified) => {
-      const getCardBillAmount = vi.fn(async () => 123_400);
+      const getCardBillAmount = vi.fn(async () => ({
+        remainingCents: 123_400,
+        paidCents: 0,
+        closed: false,
+      }));
       const { deps } = buildDeps({
         classifyMessage: classifierReturning(classified),
         listActiveCards: () => [{ id: "card-aurea", name: "Áurea+ 2" }],
@@ -1351,7 +1371,11 @@ describe("zero-gate conversation regressions", () => {
       const { deps } = buildDeps({
         classifyMessage: classifierReturning(classified),
         listActiveCards: () => [{ id: "card-nubank", name: "Nubank" }],
-        getCardBillAmount: vi.fn(async () => 100_000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 100_000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const outcome = await startConversation(
@@ -1374,7 +1398,11 @@ describe("zero-gate conversation regressions", () => {
         { id: "card-plain", name: "Minha.Conta" },
         { id: "card-punctuated", name: "Minha.Conta." },
       ],
-      getCardBillAmount: vi.fn(async () => 100_000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 100_000,
+        paidCents: 0,
+        closed: false,
+      })),
     });
 
     const outcome = await startConversation(
@@ -1422,7 +1450,11 @@ describe("zero-gate conversation regressions", () => {
         { id: "card-xp", name: "XP" },
         { id: "card-c6", name: "C6" },
       ],
-      getCardBillAmount: vi.fn(async () => 100_000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 100_000,
+        paidCents: 0,
+        closed: false,
+      })),
     });
 
     const billPicker = await startConversation(
@@ -1498,8 +1530,12 @@ describe("complete authoritative metadata tails", () => {
       name.trim().toLowerCase() === "hoje" ? "acct-today" : undefined,
     accountNameById: (id) => (id === "acct-today" ? "Hoje" : undefined),
     cardNameById: (id) => (id === "card-today" ? "Hoje" : undefined),
-    getCardBillAmount: vi.fn(async () => 45_000),
-    settleCardBill: vi.fn(async () => ({ alreadyPaid: false })),
+    getCardBillAmount: vi.fn(async () => ({
+      remainingCents: 45_000,
+      paidCents: 0,
+      closed: false,
+    })),
+    settleCardBill: vi.fn(async () => ({ replayed: false })),
   };
 
   it.each([null, WRONG_PLAIN_INTENT])(
@@ -1619,7 +1655,7 @@ describe("complete authoritative metadata tails", () => {
     "preserves unknown residue and performs no write in the %s flow",
     async (_flow, text) => {
       for (const classified of [null, WRONG_PLAIN_INTENT]) {
-        const settleCardBill = vi.fn(async () => ({ alreadyPaid: false }));
+        const settleCardBill = vi.fn(async () => ({ replayed: false }));
         const {
           deps,
           createTransaction,
@@ -1671,8 +1707,12 @@ describe("complete authoritative metadata tails", () => {
           amountCents: 10_000,
         },
       ]) {
-        const getCardBillAmount = vi.fn(async () => 50_000);
-        const settleCardBill = vi.fn(async () => ({ alreadyPaid: false }));
+        const getCardBillAmount = vi.fn(async () => ({
+          remainingCents: 50_000,
+          paidCents: 0,
+          closed: false,
+        }));
+        const settleCardBill = vi.fn(async () => ({ replayed: false }));
         const { deps, createTransaction, materializeObligationPayment } =
           buildDeps({
             classifyMessage: classifierReturning(classified),
