@@ -10,6 +10,47 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 ## Open Debt
 
+## 2026-10-06: Imported card rows are attributed by purchase date, not statement month
+
+**Area:** supabase/migrations/202610070000_card_bill_closing_and_payments.sql (`transactions_set_invoice_month`), import RPCs
+
+**Impact:** The `invoice_month` trigger gives imported card rows the calendar
+month of the purchase date and never shifts them (spec D11: imports are
+authoritative). The bank statement, though, says which fatura each row belongs
+to. With an early closing day (e.g. day 1) nearly every imported purchase lands
+one fatura early, so `/cards` and the bot show the wrong fatura totals.
+Spending numbers are unaffected (D12).
+
+**Current workaround:** Close the fatura with a corrected total ("Ajustar
+total") when the imported sum disagrees with the bank's.
+
+**Revisit trigger:** First household card with an early closing day, or any
+import-vs-fatura mismatch report. Fix: carry the statement's `referenceMonth`
+through the import RPCs and let the trigger use it.
+
+**Status:** open
+
+## 2026-10-06: PR #40 must be reconciled with the card-bill migration
+
+**Area:** supabase/migrations, PR #40 (`0029`–`0032`)
+
+**Impact:** `202610070000_card_bill_closing_and_payments.sql` drops the 7-arg
+`settle_card_bill` and creates an 8-arg one (idempotency key). PR #40's `0031`
+re-creates the 7-arg `settle_card_bill` and `create_installment_purchase` with a
+different security gate. Its 4-digit files sort *before* the timestamped one,
+so on a fresh database they run first and are then overridden; on a database
+that already applied `202610070000` they run *after* it and bring the old
+overload back next to the new one.
+
+**Current workaround:** None yet. Whichever PR merges second rebases its
+migration onto the other: PR #40 should rename to timestamped files, drop its
+`settle_card_bill` re-creation and keep the 0019 `is_household_member` gate.
+
+**Revisit trigger:** Before merging PR #40 or this PR, whichever is second.
+New migrations use `YYYYMMDDHHMM_name.sql` (UTC); never add new 4-digit files.
+
+**Status:** open
+
 ## 2026-06-29: Migration 0001 shipped no table GRANTs (found via live Supabase)
 
 **Area:** supabase/migrations
