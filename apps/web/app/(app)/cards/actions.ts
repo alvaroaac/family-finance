@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import { brl, createInstallmentPlan, createTransactionDraft } from "@family-finance/domain";
+import {
+  brl,
+  createCardBillSettlement,
+  createInstallmentPlan,
+  createTransactionDraft,
+  currentHouseholdDate,
+} from "@family-finance/domain";
 import {
   findHouseholdIdForCurrentUser,
   createCreditCard,
@@ -11,9 +17,16 @@ import {
   createInstallmentPurchase,
   createTransaction,
   listCreditCards,
+  settleCardBill,
+  deleteCardBillPayment,
+  closeCardBill,
+  reopenCardBill,
+  setCardBillTotal,
+  planWithOpenFaturas,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
+import { parseReaisToCents } from "../../../lib/format";
 
 /**
  * Server actions for the "Cartões" screen.
@@ -49,6 +62,208 @@ function requireField(formData: FormData, name: string): string {
     throw new Error(`Missing required field: ${name}`);
   }
   return value.trim();
+}
+
+// --- Fatura payments and closing ------------------------------------------
+
+export type CardBillActionState =
+  | { status: "idle" }
+  | { status: "success"; message: string }
+  | { status: "error"; message: string };
+
+function formField(formData: FormData, name: string): string {
+  const value = formData.get(name);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function cardBillMoneyCents(value: string): number | null {
+  // The shared parser uses parseFloat; reject partial numeric strings before
+  // parsing so malformed submissions cannot become a different payment.
+  if (!/^(?:\d+(?:[.,]\d{1,2})?|\d{1,3}(?:\.\d{3})+,\d{1,2})$/.test(value)) {
+    return null;
+  }
+  const cents = parseReaisToCents(value);
+  return cents !== null && Number.isSafeInteger(cents) ? cents : null;
+}
+
+function validPaymentDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return (
+    !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+  );
+}
+
+async function authedCardBill() {
+  const { householdId, client } = await authedHousehold();
+  const {
+    data: { user },
+  } = await client.auth.getUser();
+  if (user === null) throw new Error("Sessão inválida. Faça login novamente.");
+  return { householdId, client, userId: user.id };
+}
+
+function revalidateCardBills(): void {
+  revalidatePath("/cards");
+  revalidatePath("/resumo");
+  revalidatePath("/dashboard");
+  revalidatePath("/transactions");
+}
+
+export async function payCardBillAction(
+  _prev: CardBillActionState,
+  formData: FormData,
+): Promise<CardBillActionState> {
+  const amountCents = cardBillMoneyCents(formField(formData, "amount"));
+  if (amountCents === null || amountCents <= 0) {
+    return { status: "error", message: "Informe um valor maior que zero." };
+  }
+  const accountId = formField(formData, "accountId");
+  if (accountId === "") {
+    return {
+      status: "error",
+      message: "Escolha a conta de onde saiu o pagamento.",
+    };
+  }
+  const billMonth = formField(formData, "billMonth");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(billMonth)) {
+    return { status: "error", message: "Mês da fatura inválido." };
+  }
+  const paidOn = formField(formData, "paidOn");
+  if (!validPaymentDate(paidOn)) {
+    return {
+      status: "error",
+      message: "Não foi possível registrar o pagamento.",
+    };
+  }
+  if (paidOn > currentHouseholdDate()) {
+    return {
+      status: "error",
+      message: "A data do pagamento não pode ser no futuro.",
+    };
+  }
+  try {
+    const { householdId, client, userId } = await authedCardBill();
+    const draft = createCardBillSettlement({
+      householdId,
+      creditCardId: formField(formData, "creditCardId"),
+      accountId,
+      billMonth,
+      amountCents,
+      paidOn,
+      createdByUserId: userId,
+      idempotencyKey: formField(formData, "idempotencyKey"),
+    });
+    if (!draft.ok) {
+      return {
+        status: "error",
+        message: "Não foi possível registrar o pagamento.",
+      };
+    }
+    await settleCardBill(client, draft.value);
+    revalidateCardBills();
+    return { status: "success", message: "Pagamento registrado." };
+  } catch {
+    return {
+      status: "error",
+      message: "Não foi possível registrar o pagamento.",
+    };
+  }
+}
+
+export async function undoCardBillPaymentAction(
+  _prev: CardBillActionState,
+  formData: FormData,
+): Promise<CardBillActionState> {
+  try {
+    const { householdId, client } = await authedCardBill();
+    await deleteCardBillPayment(
+      client,
+      householdId,
+      requireField(formData, "transactionId"),
+    );
+    revalidateCardBills();
+    return { status: "success", message: "Pagamento desfeito." };
+  } catch (error) {
+    return {
+      status: "error",
+      message:
+        error instanceof Error && error.message === "Pagamento não encontrado."
+          ? error.message
+          : "Não foi possível registrar o pagamento.",
+    };
+  }
+}
+
+async function updateCardBillFromForm(
+  formData: FormData,
+  operation: "close" | "reopen" | "total",
+): Promise<CardBillActionState> {
+  const month = formField(formData, "billMonth");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return { status: "error", message: "Mês da fatura inválido." };
+  }
+  const rawTotal = operation === "reopen" ? null : formData.get("total");
+  if (rawTotal !== null && typeof rawTotal !== "string") {
+    return {
+      status: "error",
+      message: "Informe um total válido (zero ou mais).",
+    };
+  }
+  const total = rawTotal?.trim() ?? "";
+  const totalOverrideCents = total === "" ? null : cardBillMoneyCents(total);
+  if (total !== "" && totalOverrideCents === null) {
+    return {
+      status: "error",
+      message: "Informe um total válido (zero ou mais).",
+    };
+  }
+  try {
+    const { householdId, client, userId } = await authedCardBill();
+    const input = {
+      householdId,
+      creditCardId: requireField(formData, "creditCardId"),
+      month,
+      totalOverrideCents,
+      userId,
+    };
+    let message: string;
+    if (operation === "close") {
+      await closeCardBill(client, input);
+      message = "Fatura fechada.";
+    } else if (operation === "reopen") {
+      await reopenCardBill(client, input);
+      message = "Fatura reaberta.";
+    } else {
+      await setCardBillTotal(client, input);
+      message = "Total atualizado.";
+    }
+    revalidateCardBills();
+    return { status: "success", message };
+  } catch {
+    return { status: "error", message: "Não foi possível atualizar a fatura." };
+  }
+}
+
+export async function closeCardBillAction(
+  _prev: CardBillActionState,
+  formData: FormData,
+): Promise<CardBillActionState> {
+  return updateCardBillFromForm(formData, "close");
+}
+
+export async function reopenCardBillAction(
+  _prev: CardBillActionState,
+  formData: FormData,
+): Promise<CardBillActionState> {
+  return updateCardBillFromForm(formData, "reopen");
+}
+
+export async function setCardBillTotalAction(
+  _prev: CardBillActionState,
+  formData: FormData,
+): Promise<CardBillActionState> {
+  return updateCardBillFromForm(formData, "total");
 }
 
 /**
@@ -96,7 +311,11 @@ export async function updateCardAction(formData: FormData): Promise<void> {
   const name = requireField(formData, "name");
   const closingDay = optionalDay(formData, "closingDay");
   const dueDay = optionalDay(formData, "dueDay");
-  await updateCreditCard(client, householdId, cardId, { name, closingDay, dueDay });
+  await updateCreditCard(client, householdId, cardId, {
+    name,
+    closingDay,
+    dueDay,
+  });
   revalidatePath("/cards");
 }
 
@@ -133,7 +352,12 @@ export type PurchaseInput = {
 };
 
 export type PreviewResult =
-  | { ok: true; parcels: ParcelPreview[]; totalCents: number }
+  | {
+      ok: true;
+      parcels: ParcelPreview[];
+      totalCents: number;
+      shiftedFrom: string | null;
+    }
   | { ok: false; message: string };
 
 /**
@@ -179,10 +403,18 @@ export async function previewCardPurchase(
       };
     }
 
+    const { plan, shiftedFrom } = await planWithOpenFaturas(
+      client,
+      householdId,
+      planResult.value,
+      currentHouseholdDate(),
+    );
+
     return {
       ok: true,
       totalCents: input.totalCents,
-      parcels: planResult.value.installments.map((p) => ({
+      shiftedFrom,
+      parcels: plan.installments.map((p) => ({
         number: p.number,
         installmentCount: p.installmentCount,
         amountCents: p.amount.cents,
@@ -200,7 +432,9 @@ export async function previewCardPurchase(
   }
 }
 
-export type SaveResult = { ok: boolean; message: string };
+export type SaveResult =
+  | { ok: true; message: string; shiftedFrom: string | null }
+  | { ok: false; message: string; shiftedFrom?: null };
 
 /**
  * Persist a card purchase. À vista (installmentCount === 1) is stored as a
@@ -215,15 +449,26 @@ export async function saveCardPurchase(
   try {
     const { householdId, client } = await authedHousehold();
 
-    if (typeof input.creditCardId !== "string" || input.creditCardId.length === 0) {
-      return { ok: false, message: "Escolha o cartão antes de salvar." };
+    if (
+      typeof input.creditCardId !== "string" ||
+      input.creditCardId.length === 0
+    ) {
+      return {
+        ok: false,
+        message: "Escolha o cartão antes de salvar.",
+        shiftedFrom: null,
+      };
     }
 
     const {
       data: { user },
     } = await client.auth.getUser();
     if (user === null) {
-      return { ok: false, message: "Sessão inválida. Faça login novamente." };
+      return {
+        ok: false,
+        message: "Sessão inválida. Faça login novamente.",
+        shiftedFrom: null,
+      };
     }
     const createdByUserId = user.id;
 
@@ -249,14 +494,15 @@ export async function saveCardPurchase(
         return {
           ok: false,
           message: draftResult.errors.map((e) => e.message).join(" "),
+          shiftedFrom: null,
         };
       }
       await createTransaction(client, draftResult.value);
-      revalidatePath("/cards");
-      revalidatePath("/dashboard");
+      revalidateCardBills();
       return {
         ok: true,
         message: "Compra à vista registrada no cartão.",
+        shiftedFrom: null,
       };
     }
 
@@ -283,15 +529,22 @@ export async function saveCardPurchase(
       return {
         ok: false,
         message: planResult.errors.map((e) => e.message).join(" "),
+        shiftedFrom: null,
       };
     }
 
-    const { installments } = await createInstallmentPurchase(client, planResult.value);
-    revalidatePath("/cards");
-    revalidatePath("/dashboard");
+    const { plan, shiftedFrom } = await planWithOpenFaturas(
+      client,
+      householdId,
+      planResult.value,
+      currentHouseholdDate(),
+    );
+    const { installments } = await createInstallmentPurchase(client, plan);
+    revalidateCardBills();
     return {
       ok: true,
       message: `Compra parcelada registrada: ${installments.length} parcelas geradas.`,
+      shiftedFrom,
     };
   } catch (error) {
     return {
@@ -300,6 +553,7 @@ export async function saveCardPurchase(
         error instanceof Error
           ? error.message
           : "Não foi possível salvar a compra.",
+      shiftedFrom: null,
     };
   }
 }
