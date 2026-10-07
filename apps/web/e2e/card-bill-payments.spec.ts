@@ -38,19 +38,26 @@ const nextMonth = addMonths(openMonth, 1);
 const futureMonth = addMonths(openMonth, 3);
 
 async function shot(page: Page, name: string): Promise<void> {
-  await page.screenshot({ path: join(EVIDENCE, `${name}.png`), fullPage: true });
+  await page.screenshot({
+    path: join(EVIDENCE, `${name}.png`),
+    fullPage: true,
+  });
 }
 
 function fatura(page: Page, month: string): Locator {
   return page
     .locator(".ff-fatura")
-    .filter({ has: page.getByRole("heading", { name: `Fatura ${monthLabel(month)}` }) });
+    .filter({
+      has: page.getByRole("heading", { name: `Fatura ${monthLabel(month)}` }),
+    });
 }
 
 function figure(block: Locator, label: "Total" | "Pago" | "Falta"): Locator {
   return block
     .locator(".ff-fatura__figure")
-    .filter({ has: block.page().locator("dt", { hasText: new RegExp(`^${label}$`) }) })
+    .filter({
+      has: block.page().locator("dt", { hasText: new RegExp(`^${label}$`) }),
+    })
     .locator("dd");
 }
 
@@ -61,7 +68,9 @@ function payments(block: Locator): Locator {
 function field(scope: Locator, label: string): Locator {
   return scope
     .locator(".ff-field")
-    .filter({ has: scope.page().locator("label", { hasText: new RegExp(`^${label}$`) }) })
+    .filter({
+      has: scope.page().locator("label", { hasText: new RegExp(`^${label}$`) }),
+    })
     .locator("input, select");
 }
 
@@ -71,9 +80,12 @@ async function buyOnCard(
   amount: string,
   installments?: number,
 ): Promise<Locator> {
-  const form = page.locator("section, div").filter({
-    has: page.getByRole("heading", { name: "Lançar compra no cartão" }),
-  }).last();
+  const form = page
+    .locator("section, div")
+    .filter({
+      has: page.getByRole("heading", { name: "Lançar compra no cartão" }),
+    })
+    .last();
   await field(form, "Cartão").selectOption({ label: E2E_CARD });
   await field(form, "Descrição").fill(description);
   await field(form, "Valor total \\(R\\$\\)").fill(amount);
@@ -89,11 +101,15 @@ async function pay(block: Locator, amount: string): Promise<void> {
   const open = block.getByRole("button", { name: "Pagar fatura" });
   if (await open.isVisible()) await open.click();
   await block.getByLabel("Valor", { exact: true }).fill(amount);
-  await block.getByLabel("Conta", { exact: true }).selectOption({ label: E2E_ACCOUNT });
+  await block
+    .getByLabel("Conta", { exact: true })
+    .selectOption({ label: E2E_ACCOUNT });
 }
 
 async function expectToast(page: Page, message: string): Promise<void> {
-  await expect(page.locator(".ff-toast").filter({ hasText: message }).last()).toBeVisible();
+  await expect(
+    page.locator(".ff-toast").filter({ hasText: message }).last(),
+  ).toBeVisible();
 }
 
 test.describe.configure({ mode: "serial" });
@@ -113,7 +129,9 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     await form.getByRole("button", { name: "Salvar compra" }).click();
     await expectToast(page, "Compra salva.");
     await page.reload();
-    await expect(figure(fatura(page, openMonth), "Total")).toHaveText("R$ 400,00");
+    await expect(figure(fatura(page, openMonth), "Total")).toHaveText(
+      "R$ 400,00",
+    );
     await shot(page, "02-purchase-added");
   });
 
@@ -147,13 +165,17 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
 
   await test.step("05 partial payment (E2, C26)", async () => {
     const block = fatura(page, openMonth);
-    await expect(block.getByLabel("Valor", { exact: true })).toHaveValue("380,00");
+    await expect(block.getByLabel("Valor", { exact: true })).toHaveValue(
+      "380,00",
+    );
     await pay(block, "100,00");
     await block.getByRole("button", { name: "Registrar pagamento" }).click();
     await expectToast(page, "Pagamento registrado.");
     await expect(figure(block, "Pago")).toHaveText("R$ 100,00");
     await expect(figure(block, "Falta")).toHaveText("R$ 280,00");
-    await expect(block.getByText("fechada · parcial, falta R$ 280,00")).toBeVisible();
+    await expect(
+      block.getByText("fechada · parcial, falta R$ 280,00"),
+    ).toBeVisible();
     await shot(page, "05-partial-payment");
   });
 
@@ -166,7 +188,9 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     await expect(figure(block, "Pago")).toHaveText("R$ 130,00");
     await page.reload();
     await expect(payments(fatura(page, openMonth))).toHaveCount(2);
-    await expect(figure(fatura(page, openMonth), "Falta")).toHaveText("R$ 250,00");
+    await expect(figure(fatura(page, openMonth), "Falta")).toHaveText(
+      "R$ 250,00",
+    );
     await shot(page, "06-double-submit-single-payment");
   });
 
@@ -180,7 +204,9 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     await expect(fatura(page, nextMonth)).toBeVisible();
     await shot(page, "07-paid-collapses-to-open");
     await page.goto("/resumo");
-    await expect(page.getByText(`Fatura ${openMonth.slice(5, 7)} · fechada`)).toHaveCount(0);
+    await expect(
+      page.getByText(`Fatura ${openMonth.slice(5, 7)} · fechada`),
+    ).toHaveCount(0);
     await shot(page, "07b-resumo-after-paid");
   });
 
@@ -189,7 +215,9 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     const block = fatura(page, openMonth);
     await expect(block.getByText("paga ✅")).toBeVisible();
     await shot(page, "08a-paid-month-view");
-    await block.getByRole("button", { name: /^Desfazer pagamento .* R\$ 250,00$/ }).click();
+    await block
+      .getByRole("button", { name: /^Desfazer pagamento .* R\$ 250,00$/ })
+      .click();
     await expectToast(page, "Pagamento desfeito.");
     await expect(payments(block)).toHaveCount(2);
     await expect(figure(block, "Falta")).toHaveText("R$ 250,00");
@@ -201,7 +229,9 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     const block = fatura(page, openMonth);
     await pay(block, "0,00");
     await block.getByRole("button", { name: "Registrar pagamento" }).click();
-    await expect(block.getByRole("alert")).toHaveText("Informe um valor maior que zero.");
+    await expect(block.getByRole("alert")).toHaveText(
+      "Informe um valor maior que zero.",
+    );
     await expect(payments(block)).toHaveCount(2);
     await shot(page, "09-invalid-amount");
   });
@@ -232,8 +262,12 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
   await test.step("12 /resumo shows the pending + open pair (P1)", async () => {
     await page.goto("/resumo");
     const card = page.locator(".ff-icard").filter({ hasText: E2E_CARD });
-    await expect(card.getByText(`Fatura ${openMonth.slice(5, 7)} · fechada`)).toBeVisible();
-    await expect(card.getByText(`Próxima ${nextMonth.slice(5, 7)} · aberta`)).toBeVisible();
+    await expect(
+      card.getByText(`Fatura ${openMonth.slice(5, 7)} · fechada`),
+    ).toBeVisible();
+    await expect(
+      card.getByText(`Próxima ${nextMonth.slice(5, 7)} · aberta`),
+    ).toBeVisible();
     await shot(page, "12-resumo-pair");
   });
 });

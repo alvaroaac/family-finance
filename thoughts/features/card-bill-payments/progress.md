@@ -15,6 +15,7 @@ approved; the [plan](plan.md) has tasks T1–T8.
   - 8-arg `settle_card_bill`.
 
   It has SQL functional tests (`pnpm test:card-bill-migration`).
+
 - **T2 domain:** pure rules for closed/open, totals, status, badge copy, the
   pending/open pair and `planWithOpenFaturas`.
 - **T3 db:** `getCardFaturaPairs` and `getCardBillOverview` read models, plus

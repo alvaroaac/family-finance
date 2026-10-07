@@ -41,21 +41,32 @@ setup("seed local household and sign in", async ({ baseURL }) => {
     auth: { persistSession: false },
   });
 
-  const { data: created, error: userError } = await admin.auth.admin.createUser({
-    email: E2E_EMAIL,
-    password: E2E_PASSWORD,
-    email_confirm: true,
-  });
+  const { data: created, error: userError } = await admin.auth.admin.createUser(
+    {
+      email: E2E_EMAIL,
+      password: E2E_PASSWORD,
+      email_confirm: true,
+    },
+  );
   if (userError !== null) throw userError;
   const userId = created.user.id;
 
-  async function insert<T>(table: string, row: Record<string, unknown>): Promise<T> {
-    const { data, error } = await admin.from(table).insert(row).select().single();
+  async function insert<T>(
+    table: string,
+    row: Record<string, unknown>,
+  ): Promise<T> {
+    const { data, error } = await admin
+      .from(table)
+      .insert(row)
+      .select()
+      .single();
     if (error !== null) throw new Error(`${table}: ${error.message}`);
     return data as T;
   }
 
-  const household = await insert<{ id: string }>("households", { name: "Casa E2E" });
+  const household = await insert<{ id: string }>("households", {
+    name: "Casa E2E",
+  });
   await insert("household_members", {
     household_id: household.id,
     user_id: userId,

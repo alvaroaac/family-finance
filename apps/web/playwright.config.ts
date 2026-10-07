@@ -61,7 +61,10 @@ export default defineConfig({
           name: "local-chromium",
           testMatch: /card-bill-payments\.spec\.ts/,
           dependencies: ["local-setup"],
-          use: { ...devices["Desktop Chrome"], storageState: LOCAL_STORAGE_STATE },
+          use: {
+            ...devices["Desktop Chrome"],
+            storageState: LOCAL_STORAGE_STATE,
+          },
         },
       ]
     : [
