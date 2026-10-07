@@ -12,7 +12,7 @@
 
 - TDD: each task's **Behavior** bullets are its test list — write failing tests from them first, then implement. Commit per task.
 - Worktree: `/Users/alvarocarvalho/desenv/personal/alvaro-e-karol/family-finance/.claude/worktrees/card-bill-payments`, branch `feat/card-bill-payments`. Never touch the main checkout.
-- Migration file: `supabase/migrations/0033_card_bill_closing_and_payments.sql`. Every statement re-runnable (`if not exists`, `drop … if exists`, `create or replace`, guarded `do $$` blocks as in 0015/0016).
+- Migration file: `supabase/migrations/202610070000_card_bill_closing_and_payments.sql`. Every statement re-runnable (`if not exists`, `drop … if exists`, `create or replace`, guarded `do $$` blocks as in 0015/0016).
 - Security gate for RPCs = the 0019 pattern on main (`coalesce(auth.role(), '') <> 'service_role'` → must be `is_household_member`). Do not adopt PR #40's gate.
 - `create_installment_purchase` and the import RPCs are **not** modified.
 - Spending queries (`getMonthlySummary`, `getCardPressure`, Resumo conta/cartão split) are **not** modified (spec D12).
@@ -26,10 +26,10 @@
 
 | File | Responsibility | Task |
 |---|---|---|
-| `supabase/migrations/0033_card_bill_closing_and_payments.sql` | schema, trigger, `card_bill_is_closed`, 8-arg `settle_card_bill` | 1 |
-| `packages/db/test/card-bill-functional.sql` | executable SQL assertions for 0033 | 1 |
+| `supabase/migrations/202610070000_card_bill_closing_and_payments.sql` | schema, trigger, `card_bill_is_closed`, 8-arg `settle_card_bill` | 1 |
+| `packages/db/test/card-bill-functional.sql` | executable SQL assertions for 202610070000 | 1 |
 | `scripts/verify-card-bill-migration.sh`, root `package.json`, `.github/workflows/ci.yml` | run them in CI | 1 |
-| `packages/db/src/card-bill-migration.test.ts` | static guard on 0033 text (0019-test style) | 1 |
+| `packages/db/src/card-bill-migration.test.ts` | static guard on 202610070000 text (0019-test style) | 1 |
 | `packages/domain/src/card-bills.ts` (+ `.test.ts`), `index.ts` export | pure fatura rules | 2 |
 | `packages/domain/src/transactions.ts` | settlement schema gets `idempotencyKey` | 2 |
 | `packages/db/src/types.ts` | `invoice_month`, `idempotency_key`, `card_bill_closures`, RPC arg/return types | 3 |
@@ -46,10 +46,10 @@
 
 ---
 
-### Task 1: Migration 0033 + SQL verification
+### Task 1: Migration 202610070000 + SQL verification
 
 **Files:**
-- Create: `supabase/migrations/0033_card_bill_closing_and_payments.sql`, `packages/db/test/card-bill-functional.sql`, `scripts/verify-card-bill-migration.sh`, `packages/db/src/card-bill-migration.test.ts`
+- Create: `supabase/migrations/202610070000_card_bill_closing_and_payments.sql`, `packages/db/test/card-bill-functional.sql`, `scripts/verify-card-bill-migration.sh`, `packages/db/src/card-bill-migration.test.ts`
 - Modify: root `package.json` (script `test:card-bill-migration`), `.github/workflows/ci.yml` (step after `test:migrations`)
 
 **Interfaces:**
@@ -61,7 +61,7 @@
   - `settle_card_bill(target_household_id uuid, target_credit_card_id uuid, target_account_id uuid, target_bill_month text, target_amount_cents bigint, target_paid_on date, target_created_by_user_id uuid, target_idempotency_key text) returns jsonb` → `{"transaction": <row>, "replayed": bool}`; old 7-arg overload dropped; grants as 0015 (revoke public/anon, grant authenticated, service_role).
 
 **Behavior:**
-- Applying all migrations then 0033 a second time succeeds (re-runnable).
+- Applying all migrations then 202610070000 a second time succeeds (re-runnable).
 - Backfill: every pre-existing card row with `kind <> 'transfer'` gets `invoice_month = to_char(occurred_on,'YYYY-MM')`; all other rows null; per-card per-month sums by `invoice_month` equal the old sums by `occurred_on` (C27).
 - `card_bill_is_closed`: override `'closed'` → true; override `'open'` → false; no row → `closing_day is not null and today_SP > make_date(y, m, least(closing_day, last_day_of_m))`; today = closing date → false (C1, C3 for 30-day month and Feb, C4, C5 via a fixed date — tests freeze "today" by choosing months relative to the real SP date, e.g. a month 3 months in the past is always auto-closed when closing_day is set, current month with closing_day = 28 depends on date, so use past/future months only).
 - Trigger (BEFORE INSERT OR UPDATE OF occurred_on, credit_card_id, kind, invoice_month): card expense, `import_batch_id is null` → start at month(occurred_on), advance while `card_bill_is_closed`, raise after 24 steps (C2, C6, C9, C10, B4); `import_batch_id is not null` → month(occurred_on), never bumped (C11); non-card or transfer → null; UPDATE that changes none of occurred_on/credit_card_id/kind keeps the stored value even if its fatura is closed (C12); changing occurred_on or credit_card_id recomputes (C13). A client-supplied `invoice_month` on insert is ignored (always computed).
@@ -260,7 +260,7 @@
 - Modify: `apps/web/playwright.config.ts` (setup project only when `E2E_LOCAL_SUPABASE=1`; screenshots/trace on), `apps/web/package.json` (script `test:e2e:local`)
 
 **Interfaces:**
-- Consumes: everything above; local Supabase at `http://127.0.0.1:54321` with 0033 applied.
+- Consumes: everything above; local Supabase at `http://127.0.0.1:54321` with 202610070000 applied.
 
 **Behavior:**
 - Guard: setup refuses to run unless `NEXT_PUBLIC_SUPABASE_URL` host is `127.0.0.1` or `localhost`.

@@ -148,11 +148,11 @@ being paid and the open one collecting new purchases. Per card, relative to
 
 Used by the Resumo card blocks, the default `/cards` view and the bot's default month.
 
-## Data model — migration `0033_card_bill_closing_and_payments.sql`
+## Data model — migration `202610070000_card_bill_closing_and_payments.sql`
 
-Numbered 0033: `0028` is in flight locally and open PR #40 (multi-tenancy) owns
-`0029`–`0032`. `deploy/migrate.sh` applies any pending version, so gaps are
-fine. PR #40's `0031` re-creates the 7-arg `settle_card_bill` and
+Named with a short UTC timestamp (new convention; 4-digit files are legacy and
+`deploy/migrate.sh` accepts both). Legacy `0028` (local) and PR #40's
+`0029`–`0032` still sort before it. PR #40's `0031` re-creates the 7-arg `settle_card_bill` and
 `create_installment_purchase` with a stricter gate; whichever PR merges second
 must reconcile (noted in this PR and in tech-debt). Every statement
 re-runnable (0015 style).
@@ -187,7 +187,7 @@ re-runnable (0015 style).
 7. `create_installment_purchase` is **not** modified (shift lives in `packages/db`, see Parcelados).
 8. Grants: as 0015/0019 for the RPCs; table grants like the other household tables.
 9. New `scripts/verify-card-bill-migration.sh` (+ `pnpm test:card-bill-migration`,
-   wired into CI) applies all migrations, re-applies 0033, and runs
+   wired into CI) applies all migrations, re-applies the migration, and runs
    `packages/db/test/card-bill-functional.sql` assertions.
 
 ## Domain — `packages/domain`
