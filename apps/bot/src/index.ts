@@ -53,6 +53,7 @@ import {
   settleCardBill as dbSettleCardBill,
   type AppSupabaseClient,
   type BotMemberIdentity,
+  type CardBillOverview,
 } from "@family-finance/db";
 import {
   suggestCategory,
@@ -84,6 +85,8 @@ import {
   applyMessage,
   isBareConfirmation,
   isConfirmationCommand,
+  prepareInstallmentSubmission,
+  prepareCardBillSubmission,
   type ConversationDeps,
   type ConversationState,
 } from "./conversation.js";
@@ -135,6 +138,14 @@ function canSubmitInstallment(state: ConversationState): boolean {
     state.installmentDraft?.totalCents !== undefined &&
     state.installmentDraft.installmentCount !== undefined &&
     state.installmentDraft.cardId !== undefined
+  );
+}
+
+function canSubmitCardBill(state: ConversationState): boolean {
+  return (
+    state.status === "awaiting_card_bill_confirmation" &&
+    state.cardBillDraft?.cardId !== undefined &&
+    state.cardBillDraft.amountCents !== undefined
   );
 }
 
@@ -229,6 +240,7 @@ async function buildDeps(
   const cards = await listCreditCards(client, householdId);
   const members = await listHouseholdMembers(client, householdId);
   const memoryStore = memoryStoreFor(client);
+  const cardBillSummaries = new Map<string, CardBillOverview["summary"]>();
 
   return {
     householdId,
@@ -480,9 +492,16 @@ async function buildDeps(
       );
       const pair = pairs.find((entry) => entry.card.id === creditCardId);
       if (pair === undefined) throw new Error("Card fatura pair not found");
-      return pair.pending?.month ?? pair.open.month;
+      const chosen = pair.pending ?? pair.open;
+      cardBillSummaries.set(`${creditCardId}:${chosen.month}`, chosen.summary);
+      return chosen.month;
     },
     getCardBillAmount: async (creditCardId, month) => {
+      const cached = cardBillSummaries.get(`${creditCardId}:${month}`);
+      if (cached !== undefined) {
+        const { remainingCents, paidCents, closed } = cached;
+        return { remainingCents, paidCents, closed };
+      }
       const overviews = await getCardBillOverview(
         client,
         householdId,
@@ -618,17 +637,25 @@ export async function handleWebhook(args: {
         );
         return deps;
       };
-      // Cross the durable submission boundary before the purchase RPC. If the
-      // RPC commits and saving the final `saved` state fails, a reload retains
+      // Cross the durable submission boundary before the purchase/settlement
+      // RPC. If it commits and saving the final `saved` state fails, a reload retains
       // this exact draft/key and permits reconciliation only — never edit,
       // cancel, or a fresh purchase identity.
-      const callbackState =
-        canSubmitInstallment(existing) && data === TOKENS.confirm
-          ? ({
-              ...existing,
-              status: "installment_submission_started",
-            } satisfies ConversationState)
-          : existing;
+      let callbackState = existing;
+      if (data === TOKENS.confirm) {
+        if (canSubmitInstallment(existing)) {
+          try {
+            callbackState = await prepareInstallmentSubmission(
+              existing,
+              await getDeps(),
+            );
+          } catch (error) {
+            console.warn("[bot] prepareInstallmentSubmission failed:", error);
+          }
+        } else if (canSubmitCardBill(existing)) {
+          callbackState = prepareCardBillSubmission(existing, todayIso());
+        }
+      }
       if (callbackState !== existing) {
         await args.store.save(chatId, callbackState);
       }
@@ -823,16 +850,21 @@ export async function handleWebhook(args: {
       reply = outcome.reply;
       keyboard = outcome.keyboard;
     } else {
-      // Persist the retry-only state before an installment purchase can reach
+      // Persist the retry-only state before a purchase or settlement can reach
       // the database. It survives a later final-state save failure and keeps
       // every retry on the original idempotency key.
-      const messageState =
-        canSubmitInstallment(existing) && isConfirmationCommand(message.text)
-          ? ({
-              ...existing,
-              status: "installment_submission_started",
-            } satisfies ConversationState)
-          : existing;
+      let messageState = existing;
+      if (isConfirmationCommand(message.text)) {
+        if (canSubmitInstallment(existing)) {
+          try {
+            messageState = await prepareInstallmentSubmission(existing, deps);
+          } catch (error) {
+            console.warn("[bot] prepareInstallmentSubmission failed:", error);
+          }
+        } else if (canSubmitCardBill(existing)) {
+          messageState = prepareCardBillSubmission(existing, todayIso());
+        }
+      }
       if (messageState !== existing) {
         await args.store.save(message.chatId, messageState);
       }

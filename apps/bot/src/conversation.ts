@@ -144,6 +144,8 @@ export type ConversationStatus =
   | "installment_recovery_required"
   /** A card-bill payment draft awaits its "confirmar" (PR-2, "nubank pago"). */
   | "awaiting_card_bill_confirmation"
+  /** Settlement may have reached the database; only same-key, same-payload retry is safe. */
+  | "card_bill_submission_started"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
   | "awaiting_mark_paid_choice"
   /** A provider name matched both an account and a card. */
@@ -221,7 +223,8 @@ export type InstallmentDraftInProgress = {
 
 /** The editable, in-progress CARD-BILL payment draft ("nubank pago", PR-2). */
 export type CardBillDraftInProgress = {
-  idempotencyKey: string;
+  /** Older persisted drafts may not yet have a settlement identity. */
+  idempotencyKey?: string;
   cardId?: string; // undefined while the picker is open
   overrideAmountCents?: number; // classifier trailing amount or `valor` correction
   amountCents?: number; // resolved (override ?? computed) once the card is known
@@ -260,7 +263,7 @@ export type ConversationState = {
   obligationDraft?: ObligationDraftInProgress;
   /** Set while status = awaiting_installment_confirmation. */
   installmentDraft?: InstallmentDraftInProgress;
-  /** Set while status = awaiting_card_bill_confirmation. */
+  /** Set while a card-bill payment is awaiting confirmation or reconciliation. */
   cardBillDraft?: CardBillDraftInProgress;
   /** Set while status = awaiting_mark_paid_choice. */
   markPaidCandidates?: MarkPaidCandidate[];
@@ -1712,16 +1715,12 @@ function findActiveCard(
   return deps.listActiveCards?.().find((c) => c.id === cardId);
 }
 
-/**
- * Resolve the first parcel's due month via the pure domain generator — only
- * when the draft is complete enough (total, count, purchase date, card). A
- * validation failure (e.g. an amount of 0 mid-correction) simply omits the
- * parenthetical rather than surfacing a domain error in the summary.
- */
-function firstDueMonthFor(
+/** Build the domain plan for a complete installment draft; undefined while incomplete. */
+function buildInstallmentPlan(
   draft: InstallmentDraftInProgress,
-  deps: ConversationDeps,
-): string | undefined {
+  householdId: string,
+  closingDay: number | undefined,
+): ReturnType<typeof createInstallmentPlan> | undefined {
   if (
     draft.totalCents === undefined ||
     draft.installmentCount === undefined ||
@@ -1729,9 +1728,8 @@ function firstDueMonthFor(
   ) {
     return undefined;
   }
-  const card = findActiveCard(deps, draft.cardId);
-  const built = createInstallmentPlan({
-    householdId: deps.householdId,
+  return createInstallmentPlan({
+    householdId,
     creditCardId: draft.cardId,
     description: draft.description,
     totalAmount: { currency: "BRL", cents: draft.totalCents },
@@ -1743,9 +1741,24 @@ function firstDueMonthFor(
       draft.categoryId !== undefined
         ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
         : undefined,
-    closingDay: card?.closingDay,
+    closingDay,
   });
-  return built.ok ? built.value.installments[0]?.dueMonth : undefined;
+}
+
+/**
+ * Resolve the first parcel's due month via the pure domain generator — only
+ * when the draft is complete enough (total, count, purchase date, card). A
+ * validation failure (e.g. an amount of 0 mid-correction) simply omits the
+ * parenthetical rather than surfacing a domain error in the summary.
+ */
+function firstDueMonthFor(
+  draft: InstallmentDraftInProgress,
+  deps: ConversationDeps,
+): string | undefined {
+  const card =
+    draft.cardId === undefined ? undefined : findActiveCard(deps, draft.cardId);
+  const built = buildInstallmentPlan(draft, deps.householdId, card?.closingDay);
+  return built?.ok ? built.value.installments[0]?.dueMonth : undefined;
 }
 
 function installmentSummaryView(
@@ -3811,6 +3824,33 @@ async function applyObligationMessage(
   };
 }
 
+/** Pin the first open fatura before the webhook persists the submission boundary. */
+export async function prepareInstallmentSubmission(
+  state: ConversationState,
+  deps: ConversationDeps,
+): Promise<ConversationState> {
+  const next: ConversationState = {
+    ...state,
+    status: "installment_submission_started",
+  };
+  const draft = state.installmentDraft;
+  if (
+    draft === undefined ||
+    draft.firstOpenMonth !== undefined ||
+    deps.resolveInstallmentOpenMonth === undefined
+  ) {
+    return next;
+  }
+  const built = buildInstallmentPlan(
+    draft,
+    deps.householdId,
+    draft.cardClosingDay,
+  );
+  if (built === undefined || !built.ok) return next;
+  const firstOpenMonth = await deps.resolveInstallmentOpenMonth(built.value);
+  return { ...next, installmentDraft: { ...draft, firstOpenMonth } };
+}
+
 /**
  * Confirm a card-installment draft: build the plan via the pure domain
  * generator and persist it. Shared by BOTH the typed "confirmar" and the
@@ -3859,36 +3899,18 @@ async function confirmInstallment(
     workingState = resolved.state;
     draft = resolved.draft;
   }
-  const cardId = draft.cardId;
-  const totalCents = draft.totalCents;
-  const installmentCount = draft.installmentCount;
-  if (
-    cardId === undefined ||
-    totalCents === undefined ||
-    installmentCount === undefined
-  ) {
-    return { state, reply: notUnderstoodMessage() };
-  }
   if (deps.createInstallmentPurchase === undefined) {
     return { state, reply: obligationUnavailableMessage() };
   }
 
-  const card = findActiveCard(deps, cardId);
-  const built = createInstallmentPlan({
-    householdId: deps.householdId,
-    creditCardId: cardId,
-    description: draft.description,
-    totalAmount: { currency: "BRL", cents: totalCents },
-    installmentCount,
-    purchasedOn: draft.purchasedOn,
-    createdByUserId: draft.createdByUserId,
-    responsibleUserId: draft.responsibleUserId,
-    category:
-      draft.categoryId !== undefined
-        ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
-        : undefined,
-    closingDay: draft.cardClosingDay,
-  });
+  const built = buildInstallmentPlan(
+    draft,
+    deps.householdId,
+    draft.cardClosingDay,
+  );
+  if (built === undefined) {
+    return { state, reply: notUnderstoodMessage() };
+  }
   if (!built.ok) {
     return {
       state,
@@ -3929,9 +3951,7 @@ async function confirmInstallment(
         totalCents: persisted.totalCents,
         installmentCount: persisted.installmentCount,
         cardName:
-          findActiveCard(deps, persisted.creditCardId)?.name ??
-          card?.name ??
-          "cartão",
+          findActiveCard(deps, persisted.creditCardId)?.name ?? "cartão",
         firstDueMonth: persisted.firstDueMonth,
       }),
     };
@@ -4101,6 +4121,23 @@ async function applyInstallmentMessage(
   };
 }
 
+/** Pin the settlement identity and date before its durable submission. */
+export function prepareCardBillSubmission(
+  state: ConversationState,
+  today: string,
+): ConversationState {
+  const draft = state.cardBillDraft!;
+  return {
+    ...state,
+    status: "card_bill_submission_started",
+    cardBillDraft: {
+      ...draft,
+      paidOn: draft.paidOn ?? today,
+      idempotencyKey: draft.idempotencyKey ?? randomUUID(),
+    },
+  };
+}
+
 /**
  * Confirm a card-bill draft: build the settlement via the pure domain
  * validator and settle it. Shared by BOTH the typed "confirmar" and the `cf`
@@ -4112,11 +4149,18 @@ async function confirmCardBill(
   deps: ConversationDeps,
   today: string,
 ): Promise<ConversationOutcome> {
-  const draft = state.cardBillDraft;
-  if (draft === undefined || draft.cardId === undefined) {
+  const originalDraft = state.cardBillDraft;
+  if (originalDraft === undefined || originalDraft.cardId === undefined) {
     // Defensive: the picker must resolve the card before confirmation.
     return { state, reply: notUnderstoodMessage() };
   }
+  const draft = {
+    ...originalDraft,
+    cardId: originalDraft.cardId,
+    paidOn: originalDraft.paidOn ?? today,
+    idempotencyKey: originalDraft.idempotencyKey ?? randomUUID(),
+  };
+  const workingState = { ...state, cardBillDraft: draft };
   const card = findActiveCard(deps, draft.cardId);
   const cardName = card?.name ?? "cartão";
   if (draft.amountCents === undefined) {
@@ -4136,12 +4180,12 @@ async function confirmCardBill(
     accountId: draft.accountId,
     billMonth: draft.month,
     amountCents: draft.amountCents,
-    paidOn: draft.paidOn ?? today,
+    paidOn: draft.paidOn,
     createdByUserId: draft.createdByUserId,
   });
   if (!built.ok) {
     return {
-      state,
+      state: workingState,
       reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
     };
   }
@@ -4163,11 +4207,11 @@ async function confirmCardBill(
     );
     return {
       state: {
-        ...state,
-        cardBillDraft: { ...draft, paidOn: draft.paidOn ?? today },
+        ...workingState,
+        status: "card_bill_submission_started",
       },
       reply: cardBillSettleFailedMessage(cardName),
-      keyboard: confirmCancelKeyboard(),
+      keyboard: installmentReconciliationKeyboard(),
     };
   }
 
@@ -4372,6 +4416,18 @@ export async function applyMessage(
   }
 
   const today = options.today ?? state.draft.occurredOn;
+
+  if (state.status === "card_bill_submission_started") {
+    if (CONFIRM_RE.test(message)) {
+      return confirmCardBill(state, deps, today);
+    }
+    return {
+      state,
+      reply:
+        "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; confirme novamente para concluir sem duplicar.",
+      keyboard: installmentReconciliationKeyboard(),
+    };
+  }
 
   if (state.status === "awaiting_category_name") {
     return applyCategoryName(state, message, deps);
@@ -4942,6 +4998,19 @@ export async function applyCallback(
       state,
       reply:
         "Ainda estou verificando se essa compra já foi salva. Não posso editar nem cancelar agora; toque em verificar para concluir sem duplicar.",
+      keyboard: installmentReconciliationKeyboard(),
+      toast: "Confirmação pendente — verifique para concluir.",
+    };
+  }
+
+  if (state.status === "card_bill_submission_started") {
+    if (token === TOKENS.confirm) {
+      return confirmCardBill(state, await getDeps(), today);
+    }
+    return {
+      state,
+      reply:
+        "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; toque em verificar para concluir sem duplicar.",
       keyboard: installmentReconciliationKeyboard(),
       toast: "Confirmação pendente — verifique para concluir.",
     };

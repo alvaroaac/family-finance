@@ -25,7 +25,11 @@ import {
   type ConversationDeps,
 } from "./conversation.js";
 import type { InterpretedIntent, MessageClassifier } from "./interpret.js";
-import { CARD_TOKEN_PREFIX, TOKENS } from "./keyboards.js";
+import {
+  CARD_TOKEN_PREFIX,
+  TOKENS,
+  installmentReconciliationKeyboard,
+} from "./keyboards.js";
 
 const TODAY = "2026-07-06";
 
@@ -2949,7 +2953,7 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     });
     expect(settleCardBill).toHaveBeenCalledWith({
       householdId: "house-1",
-      idempotencyKey: started.state.cardBillDraft!.idempotencyKey,
+      idempotencyKey: started.state.cardBillDraft!.idempotencyKey!,
       creditCardId: "card-1",
       accountId: "acct-1",
       billMonth: "2026-07",
@@ -2999,16 +3003,101 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     const outcome = await applyMessage(started.state, "confirmar", deps, {
       today: TODAY,
     });
-    expect(outcome.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(outcome.state.status).toBe("card_bill_submission_started");
     expect(outcome.state.cardBillDraft).toEqual({
       ...started.state.cardBillDraft,
       paidOn: TODAY,
     });
-    expect(outcome.keyboard).toEqual(started.keyboard);
+    expect(outcome.keyboard).toEqual(installmentReconciliationKeyboard());
     expect(outcome.reply).toBe(
       "Não consegui confirmar agora se o pagamento da fatura do Nubank foi registrado. Tente confirmar novamente — não vou duplicar o pagamento.",
     );
   });
+
+  it("refuses typed edits and cancel buttons after an uncertain settlement", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      settleCardBill: vi.fn(async () => {
+        throw new Error("response lost");
+      }),
+      classifyMessage: classifierReturning(markPaidCardIntent()),
+    });
+    const started = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const uncertain = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    for (const message of ["cancelar", "valor 999,90"]) {
+      const refused = await applyMessage(uncertain.state, message, deps, {
+        today: TODAY,
+      });
+      expect(refused.state).toBe(uncertain.state);
+      expect(refused.reply).toBe(
+        "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; confirme novamente para concluir sem duplicar.",
+      );
+      expect(refused.keyboard).toEqual(installmentReconciliationKeyboard());
+    }
+    const refused = await applyCallback(uncertain.state, TOKENS.cancel, deps, {
+      today: TODAY,
+    });
+    expect(refused.state).toBe(uncertain.state);
+    expect(refused.reply).toBe(
+      "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; toque em verificar para concluir sem duplicar.",
+    );
+    expect(refused.keyboard).toEqual(installmentReconciliationKeyboard());
+    expect(refused.toast).toBe(
+      "Confirmação pendente — verifique para concluir.",
+    );
+    expect(settleCardBill).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "confirms a legacy draft without a key (initial failure=%s)",
+    async (failFirst) => {
+      const settleCardBill = vi.fn(async (_draft: CardBillSettlementDraft) => ({
+        replayed: true,
+      }));
+      if (failFirst)
+        settleCardBill.mockRejectedValueOnce(new Error("response lost"));
+      const { deps } = buildDeps({
+        settleCardBill,
+        classifyMessage: classifierReturning(markPaidCardIntent()),
+      });
+      const started = await startConversation(
+        { text: "nubank pago", fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      const legacy = {
+        ...started.state,
+        cardBillDraft: {
+          ...started.state.cardBillDraft!,
+          idempotencyKey: undefined,
+        },
+      };
+      const first = await applyMessage(legacy, "confirmar", deps, {
+        today: TODAY,
+      });
+      const key = settleCardBill.mock.calls[0]?.[0]?.idempotencyKey;
+      expect(key).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      if (failFirst) {
+        expect(first.state.cardBillDraft?.idempotencyKey).toBe(key);
+        const retry = await applyMessage(first.state, "confirmar", deps, {
+          today: "2026-07-07",
+        });
+        expect(settleCardBill.mock.calls[1]?.[0]).toEqual(
+          settleCardBill.mock.calls[0]?.[0],
+        );
+        expect(retry.state.status).toBe("saved");
+      } else {
+        expect(first.state.status).toBe("saved");
+      }
+    },
+  );
 
   it("B3: retries on another day with the same payload and accepts a replay", async () => {
     const settleCardBill = vi

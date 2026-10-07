@@ -39,6 +39,7 @@
  * Prints PASS/FAIL per check; exits non-zero if ANY check fails.
  */
 
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 
 // This file lives outside the pnpm workspaces, so resolve supabase-js through
@@ -535,6 +536,7 @@ async function checkAnonCannotExecuteRpcs(householdId) {
         target_amount_cents: 100,
         target_paid_on: "2026-01-01",
         target_created_by_user_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        target_idempotency_key: randomUUID(),
       },
     ],
   ];
@@ -658,7 +660,7 @@ async function checkObligationMaterialization(member, householdId) {
  */
 async function checkCardBillSettlement(member, householdId) {
   // (g1) member settles the bill for the fixture card+account.
-  const first = await member.rpc("settle_card_bill", {
+  const paymentArgs = {
     target_household_id: householdId,
     target_credit_card_id: created.creditCardId,
     target_account_id: created.accountId,
@@ -666,13 +668,13 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-04-10",
     target_created_by_user_id: created.memberUserId,
-  });
+    target_idempotency_key: randomUUID(),
+  };
+  const first = await member.rpc("settle_card_bill", paymentArgs);
   record(
-    "(g1) member settles a card bill (already_paid=false)",
-    !first.error && first.data && first.data.already_paid === false,
-    first.error
-      ? first.error.message
-      : `already_paid=${first.data?.already_paid}`,
+    "(g1) member settles a card bill (replayed=false)",
+    !first.error && first.data && first.data.replayed === false,
+    first.error ? first.error.message : `replayed=${first.data?.replayed}`,
   );
   record(
     "(g1b) settle row carries BOTH instruments + bill_month",
@@ -684,7 +686,19 @@ async function checkCardBillSettlement(member, householdId) {
   );
 
   // (g2) repeat is idempotent.
-  const repeat = await member.rpc("settle_card_bill", {
+  const repeat = await member.rpc("settle_card_bill", paymentArgs);
+  record(
+    "(g2) repeat settle is idempotent (replayed=true)",
+    !repeat.error &&
+      repeat.data?.replayed === true &&
+      Boolean(first.data?.transaction?.id) &&
+      repeat.data?.transaction?.id === first.data.transaction.id,
+    repeat.error ? repeat.error.message : `replayed=${repeat.data?.replayed}`,
+  );
+
+  // (g3) service-role (auth.uid() null — the bot path) adds a distinct-key
+  // payment to the same card+month.
+  const svc = await admin.rpc("settle_card_bill", {
     target_household_id: householdId,
     target_credit_card_id: created.creditCardId,
     target_account_id: created.accountId,
@@ -692,28 +706,14 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-04-10",
     target_created_by_user_id: created.memberUserId,
+    target_idempotency_key: randomUUID(),
   });
   record(
-    "(g2) repeat settle is idempotent (already_paid=true)",
-    !repeat.error && repeat.data && repeat.data.already_paid === true,
-    repeat.error
-      ? repeat.error.message
-      : `already_paid=${repeat.data?.already_paid}`,
-  );
-
-  // (g3) service-role (auth.uid() null — the bot path) settles another month.
-  const svc = await admin.rpc("settle_card_bill", {
-    target_household_id: householdId,
-    target_credit_card_id: created.creditCardId,
-    target_account_id: created.accountId,
-    target_bill_month: "2026-05",
-    target_amount_cents: 123456,
-    target_paid_on: "2026-05-10",
-    target_created_by_user_id: created.memberUserId,
-  });
-  record(
-    "(g3) service-role null-uid path settles (bot)",
-    !svc.error && svc.data && svc.data.already_paid === false,
+    "(g3) service-role adds another payment to the same card+month (bot)",
+    !svc.error &&
+      svc.data?.replayed === false &&
+      Boolean(svc.data?.transaction?.id) &&
+      svc.data.transaction.id !== first.data?.transaction?.id,
     svc.error ? svc.error.message : "",
   );
 
@@ -727,6 +727,7 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-06-10",
     target_created_by_user_id: created.memberUserId,
+    target_idempotency_key: randomUUID(),
   });
   const g4Ok =
     Boolean(foreign.error) && /not found/i.test(foreign.error.message);

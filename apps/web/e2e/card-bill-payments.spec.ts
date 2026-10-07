@@ -7,13 +7,19 @@
  * open fatura is this month (next month after the 28th).
  */
 
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { createClient } from "@supabase/supabase-js";
 
+import { localAdminClient, localSupabaseConfig } from "./local-db";
 import {
   E2E_ACCOUNT,
   E2E_CARD,
+  E2E_EMAIL,
+  E2E_PASSWORD,
+  E2E_SEED_PURCHASE,
   addMonths,
   monthLabel,
   todaySp,
@@ -45,11 +51,9 @@ async function shot(page: Page, name: string): Promise<void> {
 }
 
 function fatura(page: Page, month: string): Locator {
-  return page
-    .locator(".ff-fatura")
-    .filter({
-      has: page.getByRole("heading", { name: `Fatura ${monthLabel(month)}` }),
-    });
+  return page.locator(".ff-fatura").filter({
+    has: page.getByRole("heading", { name: `Fatura ${monthLabel(month)}` }),
+  });
 }
 
 function figure(block: Locator, label: "Total" | "Pago" | "Falta"): Locator {
@@ -113,6 +117,49 @@ async function expectToast(page: Page, message: string): Promise<void> {
 }
 
 test.describe.configure({ mode: "serial" });
+
+test.beforeEach(async () => {
+  const admin = localAdminClient();
+  const { data: card, error: cardError } = await admin
+    .from("credit_cards")
+    .select("id, household_id")
+    .eq("name", E2E_CARD)
+    .single();
+  if (cardError !== null) throw cardError;
+  const { data: member, error: memberError } = await admin
+    .from("household_members")
+    .select("user_id")
+    .eq("household_id", card.household_id)
+    .single();
+  if (memberError !== null) throw memberError;
+
+  // Remove referencing rows first; preserve the household and its instruments.
+  for (const table of [
+    "import_rows",
+    "import_item_claims",
+    "import_transaction_replacements",
+    "transactions",
+    "installments",
+    "installment_groups",
+    "card_bill_closures",
+  ]) {
+    const { error } = await admin
+      .from(table)
+      .delete()
+      .eq("household_id", card.household_id);
+    if (error !== null) throw new Error(`${table}: ${error.message}`);
+  }
+  const { error } = await admin.from("transactions").insert({
+    household_id: card.household_id,
+    kind: "expense",
+    amount_cents: E2E_SEED_PURCHASE.cents,
+    occurred_on: today,
+    description: E2E_SEED_PURCHASE.description,
+    credit_card_id: card.id,
+    created_by_user_id: member.user_id,
+  });
+  if (error !== null) throw error;
+});
 
 test("pay, close and correct faturas from /cards", async ({ page }) => {
   await test.step("01 seeded purchase shows in the open fatura", async () => {
@@ -179,7 +226,7 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     await shot(page, "05-partial-payment");
   });
 
-  await test.step("06 double-click submit records one payment (E11)", async () => {
+  await test.step("06 double-click submit records one payment (E11, client guard)", async () => {
     const block = fatura(page, openMonth);
     await expect(payments(block)).toHaveCount(1);
     await pay(block, "30,00");
@@ -245,6 +292,67 @@ test("pay, close and correct faturas from /cards", async ({ page }) => {
     await expectToast(page, "Pagamento registrado.");
     await expect(figure(block, "Pago")).toHaveText("R$ 20,00");
     await shot(page, "10-future-month-payment");
+  });
+
+  await test.step("10b same-key replay records one payment (E11, server)", async () => {
+    const { url, anonKey } = localSupabaseConfig();
+    const client = createClient(url, anonKey, {
+      auth: { persistSession: false },
+    });
+    try {
+      const { data: session, error: signInError } =
+        await client.auth.signInWithPassword({
+          email: E2E_EMAIL,
+          password: E2E_PASSWORD,
+        });
+      if (signInError !== null) throw signInError;
+      const { data: member, error: memberError } = await client
+        .from("household_members")
+        .select("household_id")
+        .eq("user_id", session.user.id)
+        .single();
+      if (memberError !== null) throw memberError;
+      const { data: card, error: cardError } = await client
+        .from("credit_cards")
+        .select("id")
+        .eq("household_id", member.household_id)
+        .eq("name", E2E_CARD)
+        .single();
+      if (cardError !== null) throw cardError;
+      const { data: account, error: accountError } = await client
+        .from("accounts")
+        .select("id")
+        .eq("household_id", member.household_id)
+        .eq("name", E2E_ACCOUNT)
+        .single();
+      if (accountError !== null) throw accountError;
+      const args = {
+        target_household_id: member.household_id,
+        target_credit_card_id: card.id,
+        target_account_id: account.id,
+        target_bill_month: futureMonth,
+        target_amount_cents: 500,
+        target_paid_on: today,
+        target_created_by_user_id: session.user.id,
+        target_idempotency_key: randomUUID(),
+      };
+      const first = await client.rpc("settle_card_bill", args);
+      expect(first.error).toBeNull();
+      expect(first.data.replayed).toBe(false);
+      expect(first.data.transaction.id).toEqual(expect.any(String));
+      const repeat = await client.rpc("settle_card_bill", args);
+      expect(repeat.error).toBeNull();
+      expect(repeat.data.replayed).toBe(true);
+      expect(repeat.data.transaction.id).toBe(first.data.transaction.id);
+      await page.goto(`/cards?fatura=${futureMonth}`);
+      await expect(figure(fatura(page, futureMonth), "Pago")).toHaveText(
+        "R$ 25,00",
+      );
+      await shot(page, "10b-same-key-replay");
+    } finally {
+      // Local scope: a global sign-out would revoke the browser session too.
+      await client.auth.signOut({ scope: "local" });
+    }
   });
 
   await test.step("11 parcelado preview shifts past the closed fatura (C15)", async () => {

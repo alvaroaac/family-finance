@@ -84,6 +84,34 @@ approved; the [plan](plan.md) has tasks T1–T8.
   purpose.
 - **Minor nits:** naming and comment suggestions with no behavior impact.
 
+### PR review (#42) — fixed
+
+- **Installment month pinned before the RPC (F1):** the webhook resolves
+  `firstOpenMonth` and saves it with `installment_submission_started`, so a
+  crash after the commit still replays the same schedule. If the resolver
+  fails, nothing is pre-saved.
+- **Card-bill durable state (F2, F9):** one new status,
+  `card_bill_submission_started`, saved before the settle RPC with `paidOn`
+  and the idempotency key pinned. A failure stays in it. Only confirm is
+  accepted, never edit or cancel, so a retry cannot use a new key. It survives
+  the 24h TTL. Legacy drafts without a key get one. One status, not two
+  (started + uncertain): both states allow the same actions.
+- **E2E (F3, F8):** a `beforeEach` resets the household so retries start
+  clean. The new step 10b calls `settle_card_bill` twice with the same key to
+  prove the server dedupes, not just the client.
+- **rls-proof (F4):** updated to the 8-arg `settle_card_bill`.
+- **Bill loaded once (F5):** the bot reuses the summary from the fatura pairs.
+- **Tests:** "Ajustar total" and "Reabrir" interactions (F6). The fake
+  repository caps unranged reads at 1000 rows, like PostgREST (F7).
+- **Docs (F10, F11):** `card_bill_is_closed` is SECURITY DEFINER with a
+  membership gate. The installment shift happens in `planWithOpenFaturas`, not
+  the RPC.
+
+### Tried that didn't work
+
+- **Global sign-out in e2e step 10b:** `signOut()` revokes every session for
+  the user, browser included. The step uses `scope: "local"`.
+
 ### Open
 
 - **Merge order with PR #40:** see [tech-debt](../../tech-debt.md).

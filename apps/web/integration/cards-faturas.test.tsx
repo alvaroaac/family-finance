@@ -11,9 +11,10 @@
  *     corrected-total hint and the zero-accounts hint (E10).
  */
 
-import { createElement } from "react";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   AppSupabaseClient,
@@ -27,12 +28,18 @@ vi.mock("../app/(app)/cards/actions", () => {
   return {
     payCardBillAction: idle,
     undoCardBillPaymentAction: idle,
-    closeCardBillAction: idle,
-    reopenCardBillAction: idle,
-    setCardBillTotalAction: idle,
+    closeCardBillAction: vi.fn(idle),
+    reopenCardBillAction: vi.fn(idle),
+    setCardBillTotalAction: vi.fn(idle),
   };
 });
 
+import {
+  closeCardBillAction,
+  reopenCardBillAction,
+  setCardBillTotalAction,
+} from "../app/(app)/cards/actions";
+import { BillCloseForm } from "../app/(app)/cards/bill-close-form";
 import {
   loadFaturasView,
   parseFaturaParam,
@@ -40,7 +47,7 @@ import {
 } from "../app/(app)/cards/faturas";
 import { FaturasSection } from "../app/(app)/cards/faturas-section";
 import { ToastProvider } from "../components/ui/toast";
-import { formatBrlCents } from "../lib/format";
+import { formatBrlCents, parseReaisToCents } from "../lib/format";
 import {
   FakeSupabaseStore,
   createFakeSupabaseClient,
@@ -286,4 +293,130 @@ describe("FaturasSection", () => {
     expect(host.querySelector('input[name="amount"]')).toBeNull();
     expect(host.textContent).not.toContain("Pagar fatura");
   });
+});
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+describe("BillCloseForm interactions", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  async function renderForm(closed = true): Promise<void> {
+    await act(async () => {
+      root.render(
+        <ToastProvider>
+          <BillCloseForm
+            creditCardId={ROXINHO.id}
+            billMonth="2026-06"
+            closed={closed}
+            totalCents={20000}
+          />
+        </ToastProvider>,
+      );
+    });
+  }
+
+  function button(label: string): HTMLButtonElement {
+    const found = [...host.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === label,
+    );
+    if (!found) throw new Error(`Missing button: ${label}`);
+    return found;
+  }
+
+  async function click(label: string): Promise<void> {
+    await act(async () => button(label).click());
+  }
+
+  it("adjusts the total with the bill reference and shows success", async () => {
+    vi.mocked(setCardBillTotalAction).mockResolvedValueOnce({
+      status: "success",
+      message: "Total atualizado.",
+    });
+    await renderForm();
+    expect(host.querySelector('input[name="total"]')).toBeNull();
+    await click("Ajustar total");
+    const total = host.querySelector<HTMLInputElement>('input[name="total"]')!;
+    expect(total.value).toBe("200,00");
+    total.value = "1.234,56";
+    await click("Salvar total");
+
+    expect(setCardBillTotalAction).toHaveBeenCalledTimes(1);
+    const [, data] = vi.mocked(setCardBillTotalAction).mock.calls[0]!;
+    expect(data.get("creditCardId")).toBe(ROXINHO.id);
+    expect(data.get("billMonth")).toBe("2026-06");
+    expect(data.get("total")).toBe("1.234,56");
+    expect(parseReaisToCents(String(data.get("total")))).toBe(123456);
+    expect(closeCardBillAction).not.toHaveBeenCalled();
+    expect(
+      document.body.querySelector('[role="status"]')?.textContent,
+    ).toContain("Total atualizado.");
+    expect(host.querySelector('input[name="total"]')).toBeNull();
+    expect(button("Ajustar total")).toBeDefined();
+  });
+
+  it("shows an adjust-total action error inline and keeps the form open", async () => {
+    vi.mocked(setCardBillTotalAction).mockResolvedValueOnce({
+      status: "error",
+      message: "Não foi possível atualizar a fatura.",
+    });
+    await renderForm();
+    await click("Ajustar total");
+    await click("Salvar total");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "Não foi possível atualizar a fatura.",
+    );
+    expect(host.querySelector('input[name="total"]')).not.toBeNull();
+  });
+
+  it("reopens with the card id and month", async () => {
+    vi.mocked(reopenCardBillAction).mockResolvedValueOnce({
+      status: "success",
+      message: "Fatura reaberta.",
+    });
+    await renderForm();
+    await click("Reabrir");
+    expect(reopenCardBillAction).toHaveBeenCalledTimes(1);
+    const [, data] = vi.mocked(reopenCardBillAction).mock.calls[0]!;
+    expect(data.get("creditCardId")).toBe(ROXINHO.id);
+    expect(data.get("billMonth")).toBe("2026-06");
+    expect(setCardBillTotalAction).not.toHaveBeenCalled();
+    expect(
+      document.body.querySelector('[role="status"]')?.textContent,
+    ).toContain("Fatura reaberta.");
+  });
+
+  it.each([false, true])(
+    "renders controls for closed=%s and editing",
+    async (closed) => {
+      await renderForm(closed);
+      expect(host.textContent?.includes("Reabrir")).toBe(closed);
+      expect(host.textContent?.includes("Ajustar total")).toBe(closed);
+      expect(host.textContent?.includes("Fechar fatura")).toBe(!closed);
+      const opener = closed ? "Ajustar total" : "Fechar fatura";
+      await click(opener);
+      expect(host.textContent).not.toContain(opener);
+      expect(host.textContent?.includes("Reabrir")).toBe(closed);
+      expect(
+        button(closed ? "Salvar total" : "Confirmar fechamento"),
+      ).toBeDefined();
+      await click("Cancelar");
+      expect(host.querySelector('input[name="total"]')).toBeNull();
+      expect(button(opener)).toBeDefined();
+    },
+  );
 });

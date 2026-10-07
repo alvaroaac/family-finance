@@ -9,8 +9,8 @@ import { dirname } from "node:path";
 
 import { test as setup } from "@playwright/test";
 import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
 
+import { localAdminClient, localSupabaseConfig } from "./local-db";
 import {
   E2E_ACCOUNT,
   E2E_CARD,
@@ -21,25 +21,9 @@ import {
   todaySp,
 } from "./local-env";
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required (run test:e2e:local).`);
-  return value;
-}
-
-const supabaseUrl = requireEnv("E2E_SUPABASE_URL");
-const anonKey = requireEnv("E2E_SUPABASE_ANON_KEY");
-const serviceRoleKey = requireEnv("E2E_SUPABASE_SERVICE_ROLE_KEY");
-
-const host = new URL(supabaseUrl).hostname;
-if (host !== "127.0.0.1" && host !== "localhost") {
-  throw new Error(`Refusing to seed a non-local Supabase (${host}).`);
-}
-
 setup("seed local household and sign in", async ({ baseURL }) => {
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
+  const { url: supabaseUrl, anonKey } = localSupabaseConfig();
+  const admin = localAdminClient();
 
   const { data: created, error: userError } = await admin.auth.admin.createUser(
     {

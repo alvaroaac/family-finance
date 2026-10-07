@@ -105,9 +105,11 @@ they still count as October/November spending by their own dates.
 **Parcelados** (`installments.due_month` already is the fatura month):
 the manual web/bot path shifts the **whole plan** forward by N months, where N
 is the smallest shift that puts parcel 1 in a fatura that is not closed. The
-shift happens in `packages/db` `createInstallmentPurchase` (shared by web and
-bot) *before* calling the unchanged `create_installment_purchase` RPC, so the
-idempotent replay payload stays identical. Import RPCs are not shifted (D11).
+shift happens in `packages/db` `planWithOpenFaturas` (shared by web and bot)
+*before* calling the unchanged `create_installment_purchase` RPC. The bot
+resolves the first open month once (`firstOpenMonth`), persists it with the
+draft and pins it, so a retry sends the same schedule and the idempotent replay
+payload stays identical. Import RPCs are not shifted (D11).
 The `/cards` parcel preview uses the same helper, so preview = what is saved.
 
 ### Totals and status
@@ -179,7 +181,10 @@ re-runnable (0015 style).
    policy shape as the other household tables). Card delete is blocked by FK
    restrict as for transactions.
 5. SQL function `card_bill_is_closed(card_id uuid, month text) returns boolean`
-   implementing the rule above (stable, security invoker).
+   implementing the rule above (stable, SECURITY DEFINER so the attribution
+   trigger can read closures). Membership gate: an authenticated/anon caller
+   who is not a member of the card's household gets 42501; service_role and
+   migration contexts pass; an unknown card returns false.
 6. **Attribution:** `transactions.invoice_month text` (YYYY-MM check) + check
    `invoice_month is null` unless `credit_card_id is not null and kind <> 'transfer'`;
    BEFORE INSERT/UPDATE trigger implementing the rule above; backfill existing
@@ -200,7 +205,7 @@ Pure, unit-tested, no I/O:
   → `{ closed, totalCents, paidCents, remainingCents, overpaidCents, status }`.
 - `cardBillBadge(summary)` → badge string (table above), formatted pt-BR.
 - `firstOpenInvoiceMonth(startMonth, isClosed: (m) => boolean)` → month, max 24
-  steps; used by the parcel preview to shift a plan the same way the RPC does.
+  steps; used by `planWithOpenFaturas` to shift a plan (preview and save).
 - `cardFaturaPair({ openMonth, previous })` → `{ pending | null, open }` applying
   the pair rule (pure: caller passes the previous month's summary).
 
@@ -302,7 +307,9 @@ date, parcelas by due month (D12). Only the per-card fatura blocks use
 - `CardBillDraftInProgress` gains `idempotencyKey` (`randomUUID()` at draft
   creation); `replayed: true` → same success message. `cardBillAlreadyPaidMessage`
   is replaced by the new message.
-- Bot card purchases need no change: the trigger and the installment RPC do the attribution.
+- Bot card purchases: the trigger attributes à vista charges; installment
+  plans are shifted by `planWithOpenFaturas` with the draft's pinned
+  `firstOpenMonth`.
 
 ## Imports
 

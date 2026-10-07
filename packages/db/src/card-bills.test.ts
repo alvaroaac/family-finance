@@ -80,6 +80,7 @@ function mockClient(
       let upsert: Row | null = null;
       let conflict = "";
       let single = false;
+      let ranged = false;
       const query = {
         select(columns: string) {
           operations.push(["select", columns]);
@@ -105,6 +106,7 @@ function mockClient(
           return query;
         },
         range(from: number, to: number) {
+          ranged = true;
           operations.push(["range", from, to]);
           filtered = filtered.slice(from, to + 1);
           return query;
@@ -143,7 +145,11 @@ function mockClient(
           }
           return Promise.resolve(
             resolve({
-              data: single ? (filtered[0] ?? null) : filtered,
+              data: single
+                ? (filtered[0] ?? null)
+                : ranged
+                  ? filtered
+                  : filtered.slice(0, 1000),
               error: null,
             }),
           );
