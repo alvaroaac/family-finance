@@ -190,7 +190,7 @@ export async function undoCardBillPaymentAction(
       message:
         error instanceof Error && error.message === "Pagamento não encontrado."
           ? error.message
-          : "Não foi possível registrar o pagamento.",
+          : "Não foi possível desfazer o pagamento.",
     };
   }
 }

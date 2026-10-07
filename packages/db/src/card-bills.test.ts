@@ -316,6 +316,25 @@ describe("card bill repositories", () => {
     },
   );
 
+  it.each([null, 1000, 1200, 0])(
+    "sets total %s, normalizing only the live sum",
+    async (total) => {
+      const { client, tables } = mockClient({
+        transactions: [charge(1000)],
+        card_bill_closures: [
+          closure("2026-10", { total_override_cents: 1200 }),
+        ],
+      });
+      await setCardBillTotal(client, { ...input, totalOverrideCents: total });
+      expect(tables.card_bill_closures).toHaveLength(1);
+      expect(tables.card_bill_closures![0]).toMatchObject({
+        state: "closed",
+        total_override_cents: total === 1000 ? null : total,
+        updated_by_user_id: "user-1",
+      });
+    },
+  );
+
   it("updates an existing closure, clears its override and records the actor on reopen (C20)", async () => {
     const { client, tables } = mockClient({
       card_bill_closures: [closure("2026-10", { total_override_cents: 1200 })],
@@ -522,10 +541,32 @@ describe("card bill repositories", () => {
     );
   });
 
-  it("propagates the domain limit after 24 closed months", async () => {
-    const { client } = mockClient({
+  it("finds the open month after exactly 24 closed months", async () => {
+    const { client, calls } = mockClient({
       credit_cards: [card()],
       card_bill_closures: Array.from({ length: 24 }, (_, i) =>
+        closure(addMonthsYm("2026-10", i)),
+      ),
+    });
+    expect(
+      (await getCardFaturaPairs(client, HOUSEHOLD, "2026-10-06"))[0]!.open
+        .month,
+    ).toBe("2028-10");
+    const query = calls.find((call) => call.table === "card_bill_closures");
+    expect(query?.operations).toContainEqual([
+      "in",
+      "bill_month",
+      [
+        "2026-09",
+        ...Array.from({ length: 25 }, (_, i) => addMonthsYm("2026-10", i)),
+      ],
+    ]);
+  });
+
+  it("propagates the domain limit after 25 closed months", async () => {
+    const { client } = mockClient({
+      credit_cards: [card()],
+      card_bill_closures: Array.from({ length: 25 }, (_, i) =>
         closure(addMonthsYm("2026-10", i)),
       ),
     });
@@ -589,6 +630,45 @@ describe("card bill repositories", () => {
       2,
     );
   });
+
+  it.each([
+    ["2027-02", ["2027-02", "2027-03", "2027-04"], "2026-12"],
+    ["2026-12", ["2026-12", "2027-01", "2027-02"], null],
+    ["2026-11", ["2026-12", "2027-01", "2027-02"], null],
+  ])(
+    "uses pinned open month %s without querying closures",
+    async (month, dueMonths, shiftedFrom) => {
+      const generated = createInstallmentPlan({
+        householdId: HOUSEHOLD,
+        creditCardId: "card-1",
+        description: "Compra",
+        totalAmount: { currency: "BRL", cents: 1001 },
+        installmentCount: 3,
+        purchasedOn: "2026-12-06",
+        createdByUserId: "user-1",
+      });
+      if (!generated.ok) throw new Error("fixture invalid");
+      const { client, calls } = mockClient({
+        credit_cards: [card()],
+        card_bill_closures: [closure(month)],
+      });
+      const result = await planWithOpenFaturas(
+        client,
+        HOUSEHOLD,
+        generated.value,
+        "2027-03-06",
+        month,
+      );
+      expect(
+        result.plan.installments.map((installment) => installment.dueMonth),
+      ).toEqual(dueMonths);
+      expect(result.shiftedFrom).toBe(shiftedFrom);
+      expect(
+        calls.filter((call) => call.table === "card_bill_closures"),
+      ).toHaveLength(0);
+      if (shiftedFrom === null) expect(result.plan).toBe(generated.value);
+    },
+  );
 
   it("returns an open first parcel plan unchanged", async () => {
     const generated = createInstallmentPlan({

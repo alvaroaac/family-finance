@@ -59,8 +59,31 @@ approved; the [plan](plan.md) has tasks T1–T8.
 - **Waiting on toasts in Playwright:** an earlier toast can still be on screen,
   so the wait passes too soon. The spec waits for the saved figures instead.
 
+### Review (Fable 5.1 + Codex Astra) — fixed
+
+- **Bot card-bill retry:** a failed settle now keeps the draft and its
+  idempotency key, pins `paidOn`, and asks to confirm again. Before, a retry
+  got a new key and could record a partial payment twice.
+- **Bot installment retry:** the first open fatura is resolved once and
+  stored in the draft (`firstOpenMonth`), so a retry sends the same schedule
+  even if a fatura closed in between. Corrections clear it.
+- **`card_bill_is_closed`:** raises 42501 for an authenticated non-member.
+  service_role and migration contexts pass.
+- **24-month limit:** the TS search checks offsets 0–24, matching the SQL
+  trigger.
+- **`setCardBillTotal`:** stores no override when it equals the live total,
+  same as closing.
+- **Undo error copy:** "Não foi possível desfazer o pagamento."
+- **Attribution trigger:** fires only on updates of `occurred_on`,
+  `credit_card_id`, `kind` or `invoice_month`. `invoice_month` stays in the
+  list so a client cannot overwrite the stored month.
+
+### Review — not changed
+
+- **Bot, paid fatura with an amount:** still asks. The spec (B2) asks first on
+  purpose.
+- **Minor nits:** naming and comment suggestions with no behavior impact.
+
 ### Open
 
-- **Before shipping:** reviews by Fable 5.1 and Codex (Astra), the full gates,
-  then the PR.
 - **Merge order with PR #40:** see [tech-debt](../../tech-debt.md).

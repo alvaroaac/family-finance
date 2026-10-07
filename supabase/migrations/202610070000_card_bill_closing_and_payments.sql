@@ -36,18 +36,26 @@ set search_path = public, pg_temp
 as $$
 declare
   override_state text;
+  card_household_id uuid;
   card_closing_day smallint;
   month_start date;
   last_day integer;
 begin
+  select household_id, closing_day into card_household_id, card_closing_day
+  from credit_cards where id = target_credit_card_id;
+  if not found then return false; end if;
+  if coalesce(auth.role(), '') in ('authenticated', 'anon')
+     and not is_household_member(card_household_id) then
+    raise exception 'card % not accessible', target_credit_card_id
+      using errcode = '42501';
+  end if;
+
   select state into override_state from card_bill_closures
   where credit_card_id = target_credit_card_id and bill_month = target_month;
   if override_state is not null then
     return override_state = 'closed';
   end if;
 
-  select closing_day into card_closing_day from credit_cards
-  where id = target_credit_card_id;
   if card_closing_day is null then return false; end if;
   month_start := to_date(target_month || '-01', 'YYYY-MM-DD');
   last_day := extract(day from month_start + interval '1 month - 1 day');
@@ -132,7 +140,7 @@ end;
 $$;
 drop trigger if exists transactions_set_invoice_month on transactions;
 create trigger transactions_set_invoice_month
-  before insert or update on transactions
+  before insert or update of occurred_on, credit_card_id, kind, invoice_month on transactions
   for each row execute function set_transaction_invoice_month();
 
 alter table transactions add column if not exists idempotency_key text;

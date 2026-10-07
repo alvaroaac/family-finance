@@ -40,11 +40,15 @@ describe("isCardBillClosed", () => {
   });
 
   it("stays open for future months", () => {
-    expect(isCardBillClosed({ ...base, month: "2026-11", todaySp: "2026-10-29" })).toBe(false);
+    expect(
+      isCardBillClosed({ ...base, month: "2026-11", todaySp: "2026-10-29" }),
+    ).toBe(false);
   });
 
   it("closes a past month", () => {
-    expect(isCardBillClosed({ ...base, month: "2026-09", todaySp: "2026-10-01" })).toBe(true);
+    expect(
+      isCardBillClosed({ ...base, month: "2026-09", todaySp: "2026-10-01" }),
+    ).toBe(true);
   });
 
   it("clamps closing day 31 in April and February (C3)", () => {
@@ -66,11 +70,15 @@ describe("isCardBillClosed", () => {
   });
 
   it("override closed beats an open date (C7)", () => {
-    expect(isCardBillClosed({ ...base, todaySp: "2026-10-10", override: "closed" })).toBe(true);
+    expect(
+      isCardBillClosed({ ...base, todaySp: "2026-10-10", override: "closed" }),
+    ).toBe(true);
   });
 
   it("override open beats auto-close (C8)", () => {
-    expect(isCardBillClosed({ ...base, todaySp: "2026-10-30", override: "open" })).toBe(false);
+    expect(
+      isCardBillClosed({ ...base, todaySp: "2026-10-30", override: "open" }),
+    ).toBe(false);
   });
 });
 
@@ -81,7 +89,12 @@ describe("summarizeCardBill", () => {
     paymentCents: number[],
     totalOverrideCents: number | null = null,
   ) {
-    return summarizeCardBill({ closed, chargesCents, totalOverrideCents, paymentCents });
+    return summarizeCardBill({
+      closed,
+      chargesCents,
+      totalOverrideCents,
+      paymentCents,
+    });
   }
 
   it("uses the live charges for an open fatura", () => {
@@ -165,7 +178,9 @@ describe("cardBillBadge", () => {
     expect(badge(false, 10000, [10000])).toBe("aberta · paga até agora");
     expect(badge(true, 0, [])).toBe("nada a pagar");
     expect(badge(true, 123456, [])).toBe("fechada · a pagar R$ 1.234,56");
-    expect(badge(true, 10000, [4000])).toBe("fechada · parcial, falta R$ 60,00");
+    expect(badge(true, 10000, [4000])).toBe(
+      "fechada · parcial, falta R$ 60,00",
+    );
     expect(badge(true, 10000, [10000])).toBe("paga ✅");
     expect(badge(true, 10000, [12500])).toBe("paga ✅ · R$ 25,00 a mais");
   });
@@ -178,22 +193,31 @@ describe("firstOpenInvoiceMonth", () => {
 
   it("skips consecutive closed months (C9)", () => {
     const closed = new Set(["2026-10", "2026-11"]);
-    expect(firstOpenInvoiceMonth("2026-10", (m) => closed.has(m))).toBe("2026-12");
+    expect(firstOpenInvoiceMonth("2026-10", (m) => closed.has(m))).toBe(
+      "2026-12",
+    );
   });
 
   it("crosses the year boundary", () => {
     const closed = new Set(["2026-12"]);
-    expect(firstOpenInvoiceMonth("2026-12", (m) => closed.has(m))).toBe("2027-01");
+    expect(firstOpenInvoiceMonth("2026-12", (m) => closed.has(m))).toBe(
+      "2027-01",
+    );
   });
 
-  it("allows 23 closed months followed by an open one", () => {
+  it("allows 24 closed months followed by an open one", () => {
     let calls = 0;
-    const month = firstOpenInvoiceMonth("2026-01", () => ++calls <= 23);
-    expect(month).toBe("2027-12");
+    const month = firstOpenInvoiceMonth("2026-01", () => ++calls <= 24);
+    expect(month).toBe("2028-01");
+    expect(calls).toBe(25);
   });
 
-  it("throws after 24 closed months", () => {
-    expect(() => firstOpenInvoiceMonth("2026-10", () => true)).toThrow();
+  it("throws after 25 closed months", () => {
+    let calls = 0;
+    expect(() =>
+      firstOpenInvoiceMonth("2026-10", () => ++calls <= 25),
+    ).toThrow();
+    expect(calls).toBe(25);
   });
 });
 
@@ -212,7 +236,10 @@ describe("cardFaturaPair", () => {
 
   it("surfaces a closed unpaid previous fatura (P2)", () => {
     const previous = item(true, 10000, []);
-    expect(cardFaturaPair({ open, previous })).toEqual({ pending: previous, open });
+    expect(cardFaturaPair({ open, previous })).toEqual({
+      pending: previous,
+      open,
+    });
   });
 
   it("surfaces a closed partial previous fatura (P1)", () => {
@@ -221,23 +248,34 @@ describe("cardFaturaPair", () => {
   });
 
   it("drops a paid previous fatura (P3)", () => {
-    expect(cardFaturaPair({ open, previous: item(true, 10000, [10000]) }).pending).toBeNull();
+    expect(
+      cardFaturaPair({ open, previous: item(true, 10000, [10000]) }).pending,
+    ).toBeNull();
   });
 
   it("drops a nothing_due previous fatura (P4)", () => {
-    expect(cardFaturaPair({ open, previous: item(true, 0, []) }).pending).toBeNull();
+    expect(
+      cardFaturaPair({ open, previous: item(true, 0, []) }).pending,
+    ).toBeNull();
   });
 
   it("drops an overpaid previous fatura (P4)", () => {
-    expect(cardFaturaPair({ open, previous: item(true, 10000, [12000]) }).pending).toBeNull();
+    expect(
+      cardFaturaPair({ open, previous: item(true, 10000, [12000]) }).pending,
+    ).toBeNull();
   });
 
   it("drops a previous fatura that is not closed", () => {
-    expect(cardFaturaPair({ open, previous: item(false, 10000, []) }).pending).toBeNull();
+    expect(
+      cardFaturaPair({ open, previous: item(false, 10000, []) }).pending,
+    ).toBeNull();
   });
 
   it("has no pending without a previous fatura (P6)", () => {
-    expect(cardFaturaPair({ open, previous: null })).toEqual({ pending: null, open });
+    expect(cardFaturaPair({ open, previous: null })).toEqual({
+      pending: null,
+      open,
+    });
   });
 });
 
@@ -266,9 +304,9 @@ describe("shiftInstallmentPlan", () => {
   it("keeps everything else", () => {
     const shifted = shiftInstallmentPlan(plan, 1);
     expect(shifted.group).toEqual(plan.group);
-    expect(shifted.installments.map(({ dueMonth: _, ...rest }) => rest)).toEqual(
-      plan.installments.map(({ dueMonth: _, ...rest }) => rest),
-    );
+    expect(
+      shifted.installments.map(({ dueMonth: _, ...rest }) => rest),
+    ).toEqual(plan.installments.map(({ dueMonth: _, ...rest }) => rest));
   });
 
   it("returns an equal plan for 0 months", () => {

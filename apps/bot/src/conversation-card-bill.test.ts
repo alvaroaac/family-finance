@@ -9,8 +9,8 @@
  *  - a computed-zero bill with no override is a terminal no-write no-op
  *  - cf/cx callback parity with typed confirmar/cancelar; cd:<uuid> resolves
  *    the picked card; a typed card name while the picker is open also resolves
- *  - replayed returns the same success; a settle failure cancels with an
- *    apology and never claims success
+ *  - replayed returns the same success; a settle failure keeps the same
+ *    draft retryable and never claims success
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -2984,7 +2984,7 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     );
   });
 
-  it("settle throws -> failure message, state cancelled", async () => {
+  it("B3: settle throws -> same retryable draft with payment date pinned", async () => {
     const { deps } = buildDeps({
       settleCardBill: vi.fn(async () => {
         throw new Error("boom");
@@ -2999,10 +2999,50 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     const outcome = await applyMessage(started.state, "confirmar", deps, {
       today: TODAY,
     });
-    expect(outcome.state.status).toBe("cancelled");
+    expect(outcome.state.status).toBe("awaiting_card_bill_confirmation");
+    expect(outcome.state.cardBillDraft).toEqual({
+      ...started.state.cardBillDraft,
+      paidOn: TODAY,
+    });
+    expect(outcome.keyboard).toEqual(started.keyboard);
     expect(outcome.reply).toBe(
-      "Não consegui registrar o pagamento da fatura do Nubank — tenta de novo em instantes.",
+      "Não consegui confirmar agora se o pagamento da fatura do Nubank foi registrado. Tente confirmar novamente — não vou duplicar o pagamento.",
     );
+  });
+
+  it("B3: retries on another day with the same payload and accepts a replay", async () => {
+    const settleCardBill = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({ replayed: true });
+    const { deps, logInteraction } = buildDeps({
+      settleCardBill,
+      classifyMessage: classifierReturning(markPaidCardIntent()),
+    });
+    const started = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const uncertain = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    const retried = await applyCallback(uncertain.state, TOKENS.confirm, deps, {
+      today: "2026-07-07",
+    });
+    expect(settleCardBill).toHaveBeenCalledTimes(2);
+    expect(settleCardBill.mock.calls[1]?.[0]).toEqual(
+      settleCardBill.mock.calls[0]?.[0],
+    );
+    expect(settleCardBill.mock.calls[1]?.[0]).toMatchObject({
+      idempotencyKey: started.state.cardBillDraft!.idempotencyKey,
+      paidOn: TODAY,
+    });
+    expect(retried.state.status).toBe("saved");
+    expect(retried.reply).toBe(
+      "Fatura paga! ✅ Nubank — R$ 1.230,00 (jul/2026)",
+    );
+    expect(logInteraction).not.toHaveBeenCalled();
   });
 
   it("deps.settleCardBill undefined -> unavailable terminal", async () => {

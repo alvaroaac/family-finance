@@ -51,6 +51,26 @@ describe("card bill closing and payments migration", () => {
     expect(migration).toContain("to authenticated, service_role");
   });
 
+  it("checks card household membership before reading closure state", () => {
+    const helper = migration.slice(
+      migration.indexOf("create or replace function card_bill_is_closed"),
+      migration.indexOf("revoke all on function card_bill_is_closed"),
+    );
+    expect(helper).toContain(
+      "from credit_cards where id = target_credit_card_id",
+    );
+    expect(helper).toContain("if not found then return false");
+    expect(helper).toContain(
+      "coalesce(auth.role(), '') in ('authenticated', 'anon')",
+    );
+    expect(helper).toContain("not is_household_member(card_household_id)");
+    expect(helper).toContain("using errcode = '42501'");
+    expect(helper).toContain("raise exception 'card % not accessible'");
+    expect(helper.indexOf("not is_household_member")).toBeLessThan(
+      helper.indexOf("select state into override_state"),
+    );
+  });
+
   it("stores attribution and household-scoped closure overrides", () => {
     expect(migration).toContain(
       "create table if not exists card_bill_closures",
@@ -64,7 +84,9 @@ describe("card bill closing and payments migration", () => {
     expect(migration).toContain(
       "alter table card_bill_closures enable row level security",
     );
-    expect(migration).toContain("before insert or update on transactions");
+    expect(migration).toContain(
+      "before insert or update of occurred_on, credit_card_id, kind, invoice_month on transactions",
+    );
     expect(migration).toContain("old.invoice_month");
     expect(migration).toContain("new.import_batch_id is null");
     expect(migration).toContain(

@@ -24,7 +24,9 @@ const MAX_CLOSED_MONTHS = 24;
 
 function lastDayOfMonth(month: string): number {
   const [year, month1Based] = month.split("-").map(Number);
-  return new Date(Date.UTC(year as number, month1Based as number, 0)).getUTCDate();
+  return new Date(
+    Date.UTC(year as number, month1Based as number, 0),
+  ).getUTCDate();
 }
 
 /** Closing date (`YYYY-MM-DD`) of a fatura; days 29–31 clamp to the month's last day. */
@@ -137,12 +139,12 @@ export function cardBillBadge(summary: CardBillSummary): string {
   }
 }
 
-/** First fatura at or after `startMonth` that is not closed. Throws after 24 closed months. */
+/** First fatura at or after `startMonth` that is not closed. Throws after 25 closed months. */
 export function firstOpenInvoiceMonth(
   startMonth: string,
   isClosed: (month: string) => boolean,
 ): string {
-  for (let offset = 0; offset < MAX_CLOSED_MONTHS; offset += 1) {
+  for (let offset = 0; offset <= MAX_CLOSED_MONTHS; offset += 1) {
     const month = addMonthsYm(startMonth, offset);
     if (!isClosed(month)) {
       return month;

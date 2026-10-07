@@ -439,12 +439,22 @@ async function buildDeps(
             ? card.closing_day
             : undefined,
       })),
-    createInstallmentPurchase: async (plan, idempotencyKey) => {
+    resolveInstallmentOpenMonth: async (plan) => {
+      const result = await planWithOpenFaturas(
+        client,
+        householdId,
+        plan,
+        currentHouseholdDate(),
+      );
+      return result.plan.installments[0]!.dueMonth;
+    },
+    createInstallmentPurchase: async (plan, idempotencyKey, firstOpenMonth) => {
       const shifted = await planWithOpenFaturas(
         client,
         householdId,
         plan,
         currentHouseholdDate(),
+        firstOpenMonth,
       );
       const result = await dbCreateInstallmentPurchase(client, shifted.plan, {
         idempotencyKey,

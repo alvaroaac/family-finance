@@ -281,7 +281,7 @@ describe("bill action validation and session failures", () => {
     [
       "undo",
       actions.undoCardBillPaymentAction,
-      "Não foi possível registrar o pagamento.",
+      "Não foi possível desfazer o pagamento.",
     ],
   ] as const) {
     it(`${name}: authorization failure prevents writes`, async () => {
@@ -435,6 +435,23 @@ describe("closing, reopening, and adjusting totals", () => {
 });
 
 describe("undoCardBillPaymentAction", () => {
+  it("reports undo failure with the correct fallback copy", async () => {
+    fixture();
+    vi.mocked(requireAuthorizedUser).mockRejectedValueOnce(
+      new Error("session unavailable"),
+    );
+    expect(
+      await actions.undoCardBillPaymentAction(
+        idle,
+        form({ transactionId: "payment-1" }),
+      ),
+    ).toEqual({
+      status: "error",
+      message: "Não foi possível desfazer o pagamento.",
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
   it("deletes only the session household payment and revalidates (E13)", async () => {
     const { store } = fixture();
     await actions.payCardBillAction(idle, form());

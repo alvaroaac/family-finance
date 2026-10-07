@@ -210,6 +210,8 @@ export type InstallmentDraftInProgress = {
   cardId?: string;
   /** Closing-day snapshot used to rebuild the same plan on every retry. */
   cardClosingDay?: number;
+  /** YYYY-MM of the first open fatura, resolved once before the first save so retries send the same schedule. */
+  firstOpenMonth?: string;
   categoryId?: string;
   subcategoryId?: string;
   categoryExplanation?: string;
@@ -448,6 +450,7 @@ export type ConversationDeps = {
   createInstallmentPurchase?: (
     plan: InstallmentPlan,
     idempotencyKey: string,
+    firstOpenMonth?: string,
   ) => Promise<{
     groupId: string;
     creditCardId: string;
@@ -456,6 +459,8 @@ export type ConversationDeps = {
     installmentCount: number;
     firstDueMonth: string;
   }>;
+  /** First open fatura month for the plan's first installment. */
+  resolveInstallmentOpenMonth?: (plan: InstallmentPlan) => Promise<string>;
   /** Remaining balance and payments for one card/month. */
   getCardBillAmount?: (
     creditCardId: string,
@@ -3895,9 +3900,20 @@ async function confirmInstallment(
   // any later failure (interaction log, conversation save, Telegram) return the
   // original group instead of inserting a second purchase.
   try {
+    if (
+      draft.firstOpenMonth === undefined &&
+      deps.resolveInstallmentOpenMonth !== undefined
+    ) {
+      const firstOpenMonth = await deps.resolveInstallmentOpenMonth(
+        built.value,
+      );
+      draft = { ...draft, firstOpenMonth };
+      workingState = { ...workingState, installmentDraft: draft };
+    }
     const persisted = await deps.createInstallmentPurchase(
       built.value,
       draft.idempotencyKey,
+      draft.firstOpenMonth,
     );
     await deps.logInteraction({
       fromUserId: draft.createdByUserId,
@@ -3976,6 +3992,7 @@ async function applyInstallmentMessage(
       return { state, reply: notUnderstoodMessage() };
     }
     next.totalCents = parsed.amountCents;
+    delete next.firstOpenMonth;
     fieldLabel = `o valor para R$ ${formatBrl(parsed.amountCents)}`;
   }
 
@@ -3990,6 +4007,7 @@ async function applyInstallmentMessage(
       };
     }
     next.installmentCount = count;
+    delete next.firstOpenMonth;
     fieldLabel = `o número de parcelas para ${count}`;
   }
 
@@ -4014,6 +4032,7 @@ async function applyInstallmentMessage(
     const card = matches[0];
     next.cardId = card?.id;
     next.cardClosingDay = card?.closingDay;
+    delete next.firstOpenMonth;
     next.description = stripSelectedInstrumentFromDescription(
       next.description,
       card?.name,
@@ -4052,6 +4071,7 @@ async function applyInstallmentMessage(
       };
     }
     next.purchasedOn = validatedPurchaseDate.iso;
+    delete next.firstOpenMonth;
     fieldLabel = "a data";
   }
 
@@ -4142,8 +4162,12 @@ async function confirmCardBill(
       error,
     );
     return {
-      state: { status: "cancelled", draft: state.draft },
+      state: {
+        ...state,
+        cardBillDraft: { ...draft, paidOn: draft.paidOn ?? today },
+      },
       reply: cardBillSettleFailedMessage(cardName),
+      keyboard: confirmCancelKeyboard(),
     };
   }
 
@@ -5006,6 +5030,7 @@ export async function applyCallback(
         ...draft,
         cardId,
         cardClosingDay: card.closingDay,
+        firstOpenMonth: undefined,
         description: stripSelectedInstrumentFromDescription(
           draft.description,
           card.name,

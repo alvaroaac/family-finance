@@ -45,6 +45,9 @@ from transactions where credit_card_id is not null and kind <> 'transfer'
 group by household_id,credit_card_id,to_char(occurred_on,'YYYY-MM');
 \else
 \if :{?prepare_reapply}
+-- Migration replay runs outside the API and has no JWT role.
+create or replace function auth.role() returns text language sql stable
+as $$ select null::text $$;
 -- A live shifted attribution must survive migration replay, not be backfilled again.
 insert into card_bill_closures(household_id,credit_card_id,bill_month,state,updated_by_user_id)
 values ('82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000001','2099-12','closed','81000000-0000-0000-0000-000000000001');
@@ -236,6 +239,7 @@ set role authenticated;
 insert into card_bill_closures(household_id,credit_card_id,bill_month,state,updated_by_user_id)
 values ('82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000001','2095-01','closed','81000000-0000-0000-0000-000000000001');
 select pg_temp.assert_bill((select count(*)=1 from card_bill_closures where bill_month='2095-01'), 'C29 member select failed');
+select pg_temp.assert_bill(card_bill_is_closed('84000000-0000-0000-0000-000000000001','2095-01'), 'Member closure helper ignored known closed month');
 select pg_temp.assert_bill((pg_temp.charge_bill('2095-01-10')).invoice_month='2095-02', 'Member trigger cannot read closed override');
 update card_bill_closures set state='open',total_override_cents=null where bill_month='2095-01';
 select pg_temp.assert_bill((select state='open' from card_bill_closures where bill_month='2095-01'), 'C29 member update failed');
@@ -247,6 +251,7 @@ select set_config('request.jwt.claim.sub','81000000-0000-0000-0000-000000000002'
 set role authenticated;
 select pg_temp.assert_bill(auth.uid()='81000000-0000-0000-0000-000000000002' and auth.role()='authenticated' and not is_household_member('82000000-0000-0000-0000-000000000001'), 'Non-member auth stub is stale');
 select pg_temp.assert_bill(not exists(select 1 from card_bill_closures), 'C29 non-member sees closures');
+select pg_temp.expect_bill_error($q$select card_bill_is_closed('84000000-0000-0000-0000-000000000001','2090-12')$q$,'42501','not accessible');
 select pg_temp.expect_bill_error($q$insert into card_bill_closures(household_id,credit_card_id,bill_month,state,updated_by_user_id)
 values ('82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000001','2095-01','closed','81000000-0000-0000-0000-000000000002')$q$,'42501','row-level security');
 update card_bill_closures set state='open' where bill_month='2090-12';

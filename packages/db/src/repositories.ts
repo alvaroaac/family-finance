@@ -3232,10 +3232,10 @@ async function upsertCardBillClosure(
   if (error !== null) throw new Error(`${operation} failed: ${error.message}`);
 }
 
-export async function closeCardBill(
+async function normalizedCardBillTotal(
   client: AppSupabaseClient,
   input: CardBillTotalInput,
-): Promise<void> {
+): Promise<CardBillTotalInput> {
   const charges =
     input.totalOverrideCents === null
       ? null
@@ -3245,13 +3245,20 @@ export async function closeCardBill(
           input.creditCardId,
           input.month,
         );
+  return {
+    ...input,
+    totalOverrideCents:
+      input.totalOverrideCents === charges ? null : input.totalOverrideCents,
+  };
+}
+
+export async function closeCardBill(
+  client: AppSupabaseClient,
+  input: CardBillTotalInput,
+): Promise<void> {
   await upsertCardBillClosure(
     client,
-    {
-      ...input,
-      totalOverrideCents:
-        input.totalOverrideCents === charges ? null : input.totalOverrideCents,
-    },
+    await normalizedCardBillTotal(client, input),
     "closed",
     "closeCardBill",
   );
@@ -3274,7 +3281,12 @@ export async function setCardBillTotal(
   client: AppSupabaseClient,
   input: CardBillTotalInput,
 ): Promise<void> {
-  await upsertCardBillClosure(client, input, "closed", "setCardBillTotal");
+  await upsertCardBillClosure(
+    client,
+    await normalizedCardBillTotal(client, input),
+    "closed",
+    "setCardBillTotal",
+  );
 }
 
 type BillCharge = Pick<
@@ -3423,9 +3435,9 @@ export async function getCardBillOverview(
   );
 }
 
-/** The domain search inspects at most 24 months; fetch its entire window once. */
+/** The domain search inspects offsets 0–24; fetch all 25 months once. */
 function billSearchMonths(startMonth: string): string[] {
-  return Array.from({ length: 24 }, (_, offset) =>
+  return Array.from({ length: 25 }, (_, offset) =>
     addMonthsYm(startMonth, offset),
   );
 }
@@ -3481,31 +3493,35 @@ export async function planWithOpenFaturas(
   householdId: string,
   plan: InstallmentPlan,
   todaySp: string,
+  pinnedOpenMonth?: string,
 ): Promise<{ plan: InstallmentPlan; shiftedFrom: string | null }> {
   const first = plan.installments[0];
   if (first === undefined)
     throw new Error("planWithOpenFaturas: no installments");
-  const { data: card, error } = await client
-    .from("credit_cards")
-    .select("*")
-    .eq("household_id", householdId)
-    .eq("id", plan.group.creditCardId)
-    .single();
-  if (error !== null)
-    throw new Error(`planWithOpenFaturas failed: ${error.message}`);
-  if (card === null) throw new Error("planWithOpenFaturas: card not found");
-  const closures = await findCardBillClosures(
-    client,
-    householdId,
-    billSearchMonths(first.dueMonth),
-  );
-  const openMonth = firstOpenInvoiceMonth(first.dueMonth, (month) =>
-    billIsClosed(card, month, todaySp, closures),
-  );
-  if (openMonth === first.dueMonth) return { plan, shiftedFrom: null };
+  let openMonth = pinnedOpenMonth;
+  if (openMonth === undefined) {
+    const { data: card, error } = await client
+      .from("credit_cards")
+      .select("*")
+      .eq("household_id", householdId)
+      .eq("id", plan.group.creditCardId)
+      .single();
+    if (error !== null)
+      throw new Error(`planWithOpenFaturas failed: ${error.message}`);
+    if (card === null) throw new Error("planWithOpenFaturas: card not found");
+    const closures = await findCardBillClosures(
+      client,
+      householdId,
+      billSearchMonths(first.dueMonth),
+    );
+    openMonth = firstOpenInvoiceMonth(first.dueMonth, (month) =>
+      billIsClosed(card, month, todaySp, closures),
+    );
+  }
   const [startYear, startMonth] = first.dueMonth.split("-").map(Number);
   const [openYear, openMonthNumber] = openMonth.split("-").map(Number);
   const shift = (openYear! - startYear!) * 12 + openMonthNumber! - startMonth!;
+  if (shift <= 0) return { plan, shiftedFrom: null };
   return {
     plan: shiftInstallmentPlan(plan, shift),
     shiftedFrom: first.dueMonth,
