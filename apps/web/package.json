@@ -8,6 +8,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:local": "set -a && eval \"$(../../scripts/e2e-local-stack.sh start | grep ^E2E_)\" && set +a && E2E_LOCAL_SUPABASE=1 playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

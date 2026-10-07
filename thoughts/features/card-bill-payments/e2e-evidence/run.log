@@ -1,0 +1,29 @@
+
+> @family-finance/web@0.0.0 test:e2e:local /Users/alvarocarvalho/desenv/personal/alvaro-e-karol/family-finance/.claude/worktrees/card-bill-payments/apps/web
+> set -a && eval "$(../../scripts/e2e-local-stack.sh start | grep ^E2E_)" && set +a && E2E_LOCAL_SUPABASE=1 playwright test
+
+Resetting local database...
+Recreating database...
+Initialising schema...
+Seeding globals from roles.sql...
+WARNING (01000): member provisioning backfill: no household exists yet — skipped
+Restarting containers...
+Finished supabase db reset on branch main.
+A new version of Supabase CLI is available: v2.120.0 (currently installed v2.108.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
+Stopped services: [supabase_inbucket_ff-e2e-local supabase_realtime_ff-e2e-local supabase_storage_ff-e2e-local supabase_imgproxy_ff-e2e-local supabase_pg_meta_ff-e2e-local supabase_studio_ff-e2e-local supabase_edge_runtime_ff-e2e-local supabase_analytics_ff-e2e-local supabase_vector_ff-e2e-local supabase_pooler_ff-e2e-local]
+A new version of Supabase CLI is available: v2.120.0 (currently installed v2.108.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
+Stopped services: [supabase_inbucket_ff-e2e-local supabase_realtime_ff-e2e-local supabase_storage_ff-e2e-local supabase_imgproxy_ff-e2e-local supabase_pg_meta_ff-e2e-local supabase_studio_ff-e2e-local supabase_edge_runtime_ff-e2e-local supabase_analytics_ff-e2e-local supabase_vector_ff-e2e-local supabase_pooler_ff-e2e-local]
+A new version of Supabase CLI is available: v2.120.0 (currently installed v2.108.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
+Stopped services: [supabase_inbucket_ff-e2e-local supabase_realtime_ff-e2e-local supabase_storage_ff-e2e-local supabase_imgproxy_ff-e2e-local supabase_pg_meta_ff-e2e-local supabase_studio_ff-e2e-local supabase_edge_runtime_ff-e2e-local supabase_analytics_ff-e2e-local supabase_vector_ff-e2e-local supabase_pooler_ff-e2e-local]
+A new version of Supabase CLI is available: v2.120.0 (currently installed v2.108.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
+
+Running 2 tests using 1 worker
+
+  ✓  1 [local-setup] › e2e/local-auth.setup.ts:39:6 › seed local household and sign in (203ms)
+  ✓  2 [local-chromium] › e2e/card-bill-payments.spec.ts:101:5 › pay, close and correct faturas from /cards (12.5s)
+
+  2 passed (17.8s)
