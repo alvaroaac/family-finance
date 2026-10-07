@@ -23,6 +23,8 @@ const original: TransactionRow = {
   obligation_id: null,
   obligation_month: null,
   bill_month: null,
+  invoice_month: "2026-08",
+  idempotency_key: null,
   responsibility_scope: "household",
   responsible_user_id: null,
   created_by_user_id: "user",

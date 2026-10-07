@@ -219,6 +219,7 @@ export type InstallmentDraftInProgress = {
 
 /** The editable, in-progress CARD-BILL payment draft ("nubank pago", PR-2). */
 export type CardBillDraftInProgress = {
+  idempotencyKey: string;
   cardId?: string; // undefined while the picker is open
   overrideAmountCents?: number; // classifier trailing amount or `valor` correction
   amountCents?: number; // resolved (override ?? computed) once the card is known
@@ -2127,6 +2128,7 @@ async function startCardBillIntent(
 
   const month = billMonth ?? options.today.slice(0, 7);
   const draft: CardBillDraftInProgress = {
+    idempotencyKey: randomUUID(),
     overrideAmountCents,
     accountId: settlementAccountId,
     month,
@@ -4073,6 +4075,7 @@ async function confirmCardBill(
 
   const built = createCardBillSettlement({
     householdId: deps.householdId,
+    idempotencyKey: draft.idempotencyKey,
     creditCardId: draft.cardId,
     accountId: draft.accountId,
     billMonth: draft.month,

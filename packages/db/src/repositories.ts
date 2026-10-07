@@ -14,6 +14,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   brl,
+  addMonthsYm,
+  cardBillClosingDate,
+  isCardBillClosed,
+  summarizeCardBill,
+  firstOpenInvoiceMonth,
+  cardFaturaPair,
+  shiftInstallmentPlan,
+  type CardBillSummary,
   currentHouseholdMonth,
   paidKey,
   projectObligations,
@@ -49,6 +57,7 @@ import type {
   AccountRow,
   InvestmentBucketRow,
   CreditCardRow,
+  CardBillClosureRow,
   InstallmentGroupRow,
   InstallmentRow,
   InstallmentGroupInsertPayload,
@@ -3053,7 +3062,7 @@ export async function materializeObligationPayment(
   return data as MaterializeObligationPaymentResult;
 }
 
-/** Settle a card's bill for a month via the settle_card_bill RPC (0015). */
+/** Register or replay a payment via the key-idempotent settlement RPC. */
 export async function settleCardBill(
   client: AppSupabaseClient,
   draft: CardBillSettlementDraft,
@@ -3065,6 +3074,7 @@ export async function settleCardBill(
     target_bill_month: draft.billMonth,
     target_amount_cents: draft.amountCents,
     target_paid_on: draft.paidOn,
+    target_idempotency_key: draft.idempotencyKey,
     target_created_by_user_id: draft.createdByUserId,
   });
   if (error !== null) {
@@ -3073,35 +3083,433 @@ export async function settleCardBill(
   return data as SettleCardBillResult;
 }
 
-export type CardBillSettlement = {
+export type CardBillPayment = {
+  id: string;
   creditCardId: string;
+  accountId: string;
   amountCents: number;
   paidOn: string;
+  billMonth: string;
 };
 
-/** Settled card bills for a month (the kind='transfer' rows with bill_month). */
-export async function findCardBillSettlements(
+export type CardBillClosure = {
+  creditCardId: string;
+  month: string;
+  state: "closed" | "open";
+  totalOverrideCents: number | null;
+};
+
+export type CardBillOverview = {
+  card: CreditCardRow;
+  month: string;
+  closingDate: string | null;
+  summary: CardBillSummary;
+  payments: CardBillPayment[];
+};
+
+export type CardFaturaPair = {
+  card: CreditCardRow;
+  pending: CardBillOverview | null;
+  open: CardBillOverview;
+};
+
+/** Payment dates describe cash movement; bill_month selects the fatura. */
+export async function findCardBillPayments(
+  client: AppSupabaseClient,
+  householdId: string,
+  months: string[],
+): Promise<CardBillPayment[]> {
+  if (months.length === 0) return [];
+  const rows = await fetchAllRows<
+    Pick<
+      TransactionRow,
+      | "id"
+      | "credit_card_id"
+      | "account_id"
+      | "amount_cents"
+      | "occurred_on"
+      | "bill_month"
+    >
+  >("findCardBillPayments", (from, to) =>
+    client
+      .from("transactions")
+      .select(
+        "id, credit_card_id, account_id, amount_cents, occurred_on, bill_month",
+      )
+      .eq("household_id", householdId)
+      .eq("kind", "transfer")
+      .in("bill_month", months)
+      .order("occurred_on", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    creditCardId: row.credit_card_id as string,
+    accountId: row.account_id as string,
+    amountCents: row.amount_cents,
+    paidOn: row.occurred_on,
+    billMonth: row.bill_month as string,
+  }));
+}
+
+export async function deleteCardBillPayment(
+  client: AppSupabaseClient,
+  householdId: string,
+  transactionId: string,
+): Promise<void> {
+  const { data, error } = await client
+    .from("transactions")
+    .delete()
+    .eq("household_id", householdId)
+    .eq("id", transactionId)
+    .eq("kind", "transfer")
+    .not("bill_month", "is", null)
+    .select("id");
+  if (error !== null) {
+    throw new Error(`deleteCardBillPayment failed: ${error.message}`);
+  }
+  if (data === null || data.length === 0) {
+    throw new Error("Pagamento não encontrado.");
+  }
+}
+
+export async function findCardBillClosures(
+  client: AppSupabaseClient,
+  householdId: string,
+  months: string[],
+): Promise<CardBillClosure[]> {
+  if (months.length === 0) return [];
+  const rows = await fetchAllRows<
+    Pick<
+      CardBillClosureRow,
+      "credit_card_id" | "bill_month" | "state" | "total_override_cents"
+    >
+  >("findCardBillClosures", (from, to) =>
+    client
+      .from("card_bill_closures")
+      .select("credit_card_id, bill_month, state, total_override_cents")
+      .eq("household_id", householdId)
+      .in("bill_month", months)
+      .order("credit_card_id", { ascending: true })
+      .order("bill_month", { ascending: true })
+      .range(from, to),
+  );
+  return rows.map((row) => ({
+    creditCardId: row.credit_card_id,
+    month: row.bill_month,
+    state: row.state,
+    totalOverrideCents: row.total_override_cents,
+  }));
+}
+
+type CardBillTotalInput = {
+  householdId: string;
+  creditCardId: string;
+  month: string;
+  totalOverrideCents: number | null;
+  userId: string;
+};
+
+async function upsertCardBillClosure(
+  client: AppSupabaseClient,
+  input: CardBillTotalInput,
+  state: "closed" | "open",
+  operation: string,
+): Promise<void> {
+  const { error } = await client.from("card_bill_closures").upsert(
+    {
+      household_id: input.householdId,
+      credit_card_id: input.creditCardId,
+      bill_month: input.month,
+      state,
+      total_override_cents: input.totalOverrideCents,
+      updated_by_user_id: input.userId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "credit_card_id,bill_month" },
+  );
+  if (error !== null) throw new Error(`${operation} failed: ${error.message}`);
+}
+
+export async function closeCardBill(
+  client: AppSupabaseClient,
+  input: CardBillTotalInput,
+): Promise<void> {
+  const charges =
+    input.totalOverrideCents === null
+      ? null
+      : await getCardBillCharges(
+          client,
+          input.householdId,
+          input.creditCardId,
+          input.month,
+        );
+  await upsertCardBillClosure(
+    client,
+    {
+      ...input,
+      totalOverrideCents:
+        input.totalOverrideCents === charges ? null : input.totalOverrideCents,
+    },
+    "closed",
+    "closeCardBill",
+  );
+}
+
+export async function reopenCardBill(
+  client: AppSupabaseClient,
+  input: Omit<CardBillTotalInput, "totalOverrideCents">,
+): Promise<void> {
+  await upsertCardBillClosure(
+    client,
+    { ...input, totalOverrideCents: null },
+    "open",
+    "reopenCardBill",
+  );
+}
+
+/** Also creates an override row for a fatura that closed automatically. */
+export async function setCardBillTotal(
+  client: AppSupabaseClient,
+  input: CardBillTotalInput,
+): Promise<void> {
+  await upsertCardBillClosure(client, input, "closed", "setCardBillTotal");
+}
+
+type BillCharge = Pick<
+  TransactionRow,
+  "credit_card_id" | "invoice_month" | "kind" | "amount_cents"
+>;
+type BillInstallment = Pick<
+  InstallmentRow,
+  "credit_card_id" | "due_month" | "amount_cents"
+>;
+
+/** Batched by month and card; spending reads continue to use occurred_on. */
+async function findCardBillCharges(
+  client: AppSupabaseClient,
+  householdId: string,
+  months: string[],
+  cardIds: string[],
+): Promise<{ transactions: BillCharge[]; installments: BillInstallment[] }> {
+  if (months.length === 0 || cardIds.length === 0)
+    return { transactions: [], installments: [] };
+  const [transactions, installments] = await Promise.all([
+    fetchAllRows<BillCharge>("getCardBillCharges(transactions)", (from, to) =>
+      client
+        .from("transactions")
+        .select("credit_card_id, invoice_month, kind, amount_cents")
+        .eq("household_id", householdId)
+        .in("credit_card_id", cardIds)
+        .in("invoice_month", months)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<BillInstallment>(
+      "getCardBillCharges(installments)",
+      (from, to) =>
+        client
+          .from("installments")
+          .select("credit_card_id, due_month, amount_cents")
+          .eq("household_id", householdId)
+          .in("credit_card_id", cardIds)
+          .in("due_month", months)
+          .order("id", { ascending: true })
+          .range(from, to),
+    ),
+  ]);
+  return { transactions, installments };
+}
+
+function billChargesCents(
+  charges: { transactions: BillCharge[]; installments: BillInstallment[] },
+  creditCardId: string,
+  month: string,
+): number {
+  return summarizeCardPressure(
+    month,
+    charges.transactions.filter(
+      (row) =>
+        row.credit_card_id === creditCardId && row.invoice_month === month,
+    ),
+    charges.installments.filter(
+      (row) => row.credit_card_id === creditCardId && row.due_month === month,
+    ),
+  ).totalCents;
+}
+
+export async function getCardBillCharges(
+  client: AppSupabaseClient,
+  householdId: string,
+  creditCardId: string,
+  month: string,
+): Promise<number> {
+  return billChargesCents(
+    await findCardBillCharges(client, householdId, [month], [creditCardId]),
+    creditCardId,
+    month,
+  );
+}
+
+function billIsClosed(
+  card: CreditCardRow,
+  month: string,
+  todaySp: string,
+  closures: CardBillClosure[],
+): boolean {
+  return isCardBillClosed({
+    closingDay: card.closing_day,
+    month,
+    todaySp,
+    override:
+      closures.find(
+        (row) => row.creditCardId === card.id && row.month === month,
+      )?.state ?? null,
+  });
+}
+
+function billOverview(
+  card: CreditCardRow,
+  month: string,
+  todaySp: string,
+  closures: CardBillClosure[],
+  charges: { transactions: BillCharge[]; installments: BillInstallment[] },
+  payments: CardBillPayment[],
+): CardBillOverview {
+  const billPayments = payments.filter(
+    (row) => row.creditCardId === card.id && row.billMonth === month,
+  );
+  return {
+    card,
+    month,
+    closingDate:
+      card.closing_day === null
+        ? null
+        : cardBillClosingDate(card.closing_day, month),
+    summary: summarizeCardBill({
+      closed: billIsClosed(card, month, todaySp, closures),
+      chargesCents: billChargesCents(charges, card.id, month),
+      totalOverrideCents:
+        closures.find(
+          (row) => row.creditCardId === card.id && row.month === month,
+        )?.totalOverrideCents ?? null,
+      paymentCents: billPayments.map((row) => row.amountCents),
+    }),
+    payments: billPayments,
+  };
+}
+
+export async function getCardBillOverview(
   client: AppSupabaseClient,
   householdId: string,
   month: string,
-): Promise<CardBillSettlement[]> {
-  const { data, error } = await client
-    .from("transactions")
-    .select("credit_card_id, amount_cents, occurred_on")
-    .eq("household_id", householdId)
-    .eq("kind", "transfer")
-    .eq("bill_month", month);
-  if (error !== null) {
-    throw new Error(`findCardBillSettlements failed: ${error.message}`);
-  }
-  const rows = (data ?? []) as Array<
-    Pick<TransactionRow, "credit_card_id" | "amount_cents" | "occurred_on">
-  >;
-  return rows.map((row) => ({
-    creditCardId: row.credit_card_id as string,
-    amountCents: row.amount_cents,
-    paidOn: row.occurred_on,
+  todaySp: string,
+): Promise<CardBillOverview[]> {
+  const cards = await listCreditCards(client, householdId);
+  if (cards.length === 0) return [];
+  const [closures, charges, payments] = await Promise.all([
+    findCardBillClosures(client, householdId, [month]),
+    findCardBillCharges(
+      client,
+      householdId,
+      [month],
+      cards.map((card) => card.id),
+    ),
+    findCardBillPayments(client, householdId, [month]),
+  ]);
+  return cards.map((card) =>
+    billOverview(card, month, todaySp, closures, charges, payments),
+  );
+}
+
+/** The domain search inspects at most 24 months; fetch its entire window once. */
+function billSearchMonths(startMonth: string): string[] {
+  return Array.from({ length: 24 }, (_, offset) =>
+    addMonthsYm(startMonth, offset),
+  );
+}
+
+export async function getCardFaturaPairs(
+  client: AppSupabaseClient,
+  householdId: string,
+  todaySp: string,
+): Promise<CardFaturaPair[]> {
+  const cards = await listCreditCards(client, householdId);
+  if (cards.length === 0) return [];
+  const startMonth = todaySp.slice(0, 7);
+  const closures = await findCardBillClosures(client, householdId, [
+    addMonthsYm(startMonth, -1),
+    ...billSearchMonths(startMonth),
+  ]);
+  const cardMonths = cards.map((card) => {
+    const open = firstOpenInvoiceMonth(startMonth, (month) =>
+      billIsClosed(card, month, todaySp, closures),
+    );
+    return { card, open, previous: addMonthsYm(open, -1) };
+  });
+  const months = [
+    ...new Set(cardMonths.flatMap(({ open, previous }) => [open, previous])),
+  ];
+  const [charges, payments] = await Promise.all([
+    findCardBillCharges(
+      client,
+      householdId,
+      months,
+      cards.map((card) => card.id),
+    ),
+    findCardBillPayments(client, householdId, months),
+  ]);
+  return cardMonths.map(({ card, open, previous }) => ({
+    card,
+    ...cardFaturaPair({
+      open: billOverview(card, open, todaySp, closures, charges, payments),
+      previous: billOverview(
+        card,
+        previous,
+        todaySp,
+        closures,
+        charges,
+        payments,
+      ),
+    }),
   }));
+}
+
+export async function planWithOpenFaturas(
+  client: AppSupabaseClient,
+  householdId: string,
+  plan: InstallmentPlan,
+  todaySp: string,
+): Promise<{ plan: InstallmentPlan; shiftedFrom: string | null }> {
+  const first = plan.installments[0];
+  if (first === undefined)
+    throw new Error("planWithOpenFaturas: no installments");
+  const { data: card, error } = await client
+    .from("credit_cards")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("id", plan.group.creditCardId)
+    .single();
+  if (error !== null)
+    throw new Error(`planWithOpenFaturas failed: ${error.message}`);
+  if (card === null) throw new Error("planWithOpenFaturas: card not found");
+  const closures = await findCardBillClosures(
+    client,
+    householdId,
+    billSearchMonths(first.dueMonth),
+  );
+  const openMonth = firstOpenInvoiceMonth(first.dueMonth, (month) =>
+    billIsClosed(card, month, todaySp, closures),
+  );
+  if (openMonth === first.dueMonth) return { plan, shiftedFrom: null };
+  const [startYear, startMonth] = first.dueMonth.split("-").map(Number);
+  const [openYear, openMonthNumber] = openMonth.split("-").map(Number);
+  const shift = (openYear! - startYear!) * 12 + openMonthNumber! - startMonth!;
+  return {
+    plan: shiftInstallmentPlan(plan, shift),
+    shiftedFrom: first.dueMonth,
+  };
 }
 
 /** Pure: `obligation_month` date ("2026-10-01") -> `YYYY-MM` ("2026-10"). */

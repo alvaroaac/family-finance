@@ -11,8 +11,8 @@
  * Scope (intentionally minimal — only what the repositories call):
  *   from(table)
  *     .select(cols, { count: "exact" }?) | .insert(payload) | .update(changes)
- *     .delete()
- *     .eq / .neq / .gte / .lte / .is / .not(col, "is", null) / .ilike
+ *     .delete() | .upsert(payload, { onConflict })
+ *     .eq / .in / .neq / .gte / .lte / .is / .not(col, "is", null) / .ilike
  *     .order(col, { ascending }) | .limit(n) | .range(from, to)
  *     .single() | .maybeSingle()
  * A query builder is a PromiseLike resolving to `{ data, error }`, matching the
@@ -34,6 +34,7 @@ type Result<T> = {
 
 type Filter =
   | { op: "eq"; column: string; value: unknown }
+  | { op: "in"; column: string; values: unknown[] }
   | { op: "neq"; column: string; value: unknown }
   | { op: "gte"; column: string; value: unknown }
   | { op: "lte"; column: string; value: unknown }
@@ -133,6 +134,7 @@ export class FakeSupabaseStore {
 type Mutation =
   | { kind: "select" }
   | { kind: "insert"; rows: Row[] }
+  | { kind: "upsert"; rows: Row[]; conflictColumns: string[] }
   | { kind: "update"; changes: Row }
   | { kind: "delete" };
 
@@ -162,6 +164,20 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
   insert(payload: Row | Row[]): this {
     const rows = Array.isArray(payload) ? payload : [payload];
     this.mutation = { kind: "insert", rows };
+    return this;
+  }
+
+  upsert(payload: Row | Row[], options: { onConflict: string }): this {
+    this.mutation = {
+      kind: "upsert",
+      rows: Array.isArray(payload) ? payload : [payload],
+      conflictColumns: options.onConflict.split(","),
+    };
+    return this;
+  }
+
+  in(column: string, values: unknown[]): this {
+    this.filters.push({ op: "in", column, values });
     return this;
   }
 
@@ -260,6 +276,8 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
     return this.filters.every((f) => {
       const cell = row[f.column];
       switch (f.op) {
+        case "in":
+          return f.values.includes(cell);
         case "eq":
           return cell === f.value;
         case "neq":
@@ -321,6 +339,23 @@ class QueryBuilder<T> implements PromiseLike<Result<T>> {
         return row;
       });
       return this.shapeResult(inserted);
+    }
+
+    if (this.mutation.kind === "upsert") {
+      const { conflictColumns } = this.mutation;
+      const affected = this.mutation.rows.map((payload) => {
+        const existing = rows.find((row) =>
+          conflictColumns.every((column) => row[column] === payload[column]),
+        );
+        if (existing !== undefined) {
+          Object.assign(existing, payload);
+          return existing;
+        }
+        const row = this.store.materialize(payload);
+        rows.push(row);
+        return row;
+      });
+      return this.shapeResult(affected);
     }
 
     if (this.mutation.kind === "update") {
@@ -691,10 +726,10 @@ function materializeObligationPaymentRpc(
 }
 
 /**
- * JS stand-in for the `settle_card_bill` plpgsql function (migration 0015).
+ * JS stand-in for the `settle_card_bill` plpgsql function (migration 202610070000).
  * Reproduces the happy-path DATA EFFECT: insert ONE kind='transfer' row
  * (account = source, card = destination, bill_month = the settled marker) —
- * or return the existing one with already_paid = true.
+ * or return the existing one with replayed = true.
  */
 function settleCardBillRpc(
   store: FakeSupabaseStore,
@@ -706,6 +741,7 @@ function settleCardBillRpc(
     target_amount_cents: number;
     target_paid_on: string | null;
     target_created_by_user_id: string;
+    target_idempotency_key: string;
   },
 ): Result<Row> {
   const card = store
@@ -725,12 +761,25 @@ function settleCardBillRpc(
     .table("transactions")
     .find(
       (r) =>
-        r.kind === "transfer" &&
-        r.credit_card_id === args.target_credit_card_id &&
-        r.bill_month === args.target_bill_month,
+        r.household_id === args.target_household_id &&
+        r.idempotency_key === args.target_idempotency_key,
     );
   if (existing !== undefined) {
-    return { data: { transaction: existing, already_paid: true }, error: null };
+    if (
+      existing.kind !== "transfer" ||
+      existing.credit_card_id !== args.target_credit_card_id ||
+      existing.account_id !== args.target_account_id ||
+      existing.bill_month !== args.target_bill_month ||
+      existing.amount_cents !== args.target_amount_cents ||
+      existing.occurred_on !==
+        (args.target_paid_on ?? `${args.target_bill_month}-01`)
+    ) {
+      return {
+        data: null as unknown as Row,
+        error: { message: "idempotency key reused with a different payment" },
+      };
+    }
+    return { data: { transaction: existing, replayed: true }, error: null };
   }
   const month = args.target_bill_month;
   const tx = store.materialize({
@@ -751,9 +800,11 @@ function settleCardBillRpc(
     obligation_id: null,
     obligation_month: null,
     bill_month: month,
+    invoice_month: null,
+    idempotency_key: args.target_idempotency_key,
   });
   store.table("transactions").push(tx);
-  return { data: { transaction: tx, already_paid: false }, error: null };
+  return { data: { transaction: tx, replayed: false }, error: null };
 }
 
 /**
@@ -831,6 +882,7 @@ export function createFakeSupabaseClient(store: FakeSupabaseStore): {
               target_amount_cents: number;
               target_paid_on: string | null;
               target_created_by_user_id: string;
+              target_idempotency_key: string;
             },
           ),
         );

@@ -569,9 +569,7 @@ describe("card-bill start: computed amount / override", () => {
           { id: "card-nubank", name: "Nubank" },
           { id: "card-nubank-pj", name: "Nubank PJ" },
         ],
-        listActiveAccounts: () => [
-          { id: "account-nubank", name: "Nubank" },
-        ],
+        listActiveAccounts: () => [{ id: "account-nubank", name: "Nubank" }],
         resolveAccountIdByName: (name) =>
           name.toLowerCase() === "nubank" ? "account-nubank" : undefined,
         accountNameById: (id) =>
@@ -2621,6 +2619,7 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     });
     expect(settleCardBill).toHaveBeenCalledWith({
       householdId: "house-1",
+      idempotencyKey: started.state.cardBillDraft!.idempotencyKey,
       creditCardId: "card-1",
       accountId: "acct-1",
       billMonth: "2026-07",

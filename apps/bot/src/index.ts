@@ -453,7 +453,7 @@ async function buildDeps(
       };
     },
     // Card-bill payment (PR-2 / Task 6): computed monthly pressure + the
-    // settle_card_bill RPC (ONE transfer row, idempotent per card/month).
+    // settle_card_bill RPC (transfer row, idempotent per caller key).
     getCardBillAmount: async (creditCardId, month) => {
       const pressure = await getCardPressureForCard(
         client,
@@ -465,7 +465,7 @@ async function buildDeps(
     },
     settleCardBill: async (draft) => {
       const result = await dbSettleCardBill(client, draft);
-      return { alreadyPaid: result.already_paid };
+      return { alreadyPaid: result.replayed };
     },
   };
 }

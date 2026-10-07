@@ -275,7 +275,7 @@ function settleCardBillRpc(
   );
   if (existing !== undefined) {
     return {
-      data: { transaction: existing, already_paid: true },
+      data: { transaction: existing, replayed: true },
       error: null,
     };
   }
@@ -305,7 +305,7 @@ function settleCardBillRpc(
   };
   transactions.push(tx);
 
-  return { data: { transaction: tx, already_paid: false }, error: null };
+  return { data: { transaction: tx, replayed: false }, error: null };
 }
 
 function fakeSupabase(seed: Record<string, FakeRow[]> = {}): {

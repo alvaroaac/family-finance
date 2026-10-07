@@ -19,7 +19,7 @@ import {
   getObligationsPressure,
   findRecentTransactions,
   findPendingReviewTransactions,
-  findCardBillSettlements,
+  findCardBillPayments,
   listCreditCards,
   currentMonth,
   type AppSupabaseClient,
@@ -128,7 +128,7 @@ export async function buildResumoData(
     })),
     findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
     findRecentTransactions(client, householdId, 5),
-    findCardBillSettlements(client, householdId, month),
+    findCardBillPayments(client, householdId, [month]),
   ]);
 
   const cards = await Promise.all(
