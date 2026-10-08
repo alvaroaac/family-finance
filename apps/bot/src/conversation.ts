@@ -294,6 +294,8 @@ export type ConversationState = {
   }>;
   /** message_id of the last keyboard-bearing prompt (to strip stale buttons). */
   promptMessageId?: number;
+  /** Persisted before sending a keyboard, even when its message-id save fails. */
+  promptToken?: string;
   /** True when awaiting_category_name was entered with NO expense draft. */
   standaloneCategoryCreation?: boolean;
 };

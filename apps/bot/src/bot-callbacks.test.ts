@@ -9,6 +9,7 @@ import type { TelegramClient, InlineKeyboardMarkup } from "./telegram.js";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import type { AiCategorizer } from "@family-finance/categorization";
 import type { TranscribeDeps } from "./audio.js";
+import { parsePromptCallbackData } from "./keyboards.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures copied verbatim from bot.test.ts (module-private there).
@@ -236,6 +237,23 @@ function fakeTelegram(): {
   };
 }
 
+/** Use the actual Telegram payload when exercising missing-id recovery. */
+function promptAction(
+  sent: SentMessage[],
+  messageId: number,
+  action: string,
+): string {
+  const buttons =
+    sent[messageId - 1001]?.replyMarkup?.inline_keyboard.flat() ?? [];
+  const data = buttons.find(
+    (button) =>
+      parsePromptCallbackData(button.callback_data)?.action === action,
+  )?.callback_data;
+  if (data === undefined)
+    throw new Error(`No ${action} button on prompt ${messageId}`);
+  return data;
+}
+
 function callbackUpdate(
   fromId: number,
   data: string,
@@ -271,9 +289,9 @@ describe("handleWebhook: callback routing", () => {
       store,
     });
 
-    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
-      "cf",
-    );
+    expect(
+      sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
+    ).toMatch(/^p:[a-f0-9]{16}:cf$/);
     const state = await store.load("555", "777", "house-1");
     expect(state?.promptMessageId).toBe(1001);
   });
@@ -360,7 +378,7 @@ describe("handleWebhook: callback routing", () => {
     expect(stripped).toContainEqual({ chatId: "555", messageId: 1001 });
     expect(
       sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
-    ).toBe("cf");
+    ).toMatch(/^p:[a-f0-9]{16}:cf$/);
     expect((await store.load("555", "777", "house-1"))?.promptMessageId).toBe(
       1002,
     );
@@ -418,12 +436,12 @@ describe("handleWebhook: callback routing", () => {
     });
     expect(
       sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
-    ).toBe("cf");
+    ).toMatch(/^p:[a-f0-9]{16}:cf$/);
 
     await handleWebhook({
       ...base,
       telegram,
-      rawBody: callbackUpdate(777, "cf", 555, 1002),
+      rawBody: callbackUpdate(777, promptAction(sent, 1002, "cf"), 555, 1002),
     });
     expect(tables.transactions).toHaveLength(1);
     expect(sent.at(-1)?.text).toContain("Lançamento salvo");
@@ -451,15 +469,15 @@ describe("handleWebhook: callback routing", () => {
       transcribe,
     });
 
-    expect(sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
-      "cf",
-    );
+    expect(
+      sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data,
+    ).toMatch(/^p:[a-f0-9]{16}:cf$/);
     const state = await store.load("555", "777", "house-1");
     expect(state?.draft.inputKind).toBe("audio");
     expect(state?.promptMessageId).toBe(1001);
   });
 
-  it("a tap with NO stored conversation answers Sessão expirada and strips", async () => {
+  it("a tap with NO stored conversation answers Sessão expirada and preserves the keyboard", async () => {
     const { client, tables } = fakeSupabase();
     const { telegram, answered, stripped, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
@@ -477,7 +495,7 @@ describe("handleWebhook: callback routing", () => {
     });
 
     expect(answered[0]?.text).toContain("Sessão expirada");
-    expect(stripped).toContainEqual({ chatId: "555", messageId: 77 });
+    expect(stripped).toHaveLength(0);
     expect(sent).toHaveLength(0);
     expect(tables.transactions).toHaveLength(0);
   });
@@ -576,7 +594,7 @@ describe("handleWebhook: callback routing", () => {
       handleWebhook({
         ...base,
         telegram: flakyTelegram,
-        rawBody: callbackUpdate(777, "cf"),
+        rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf")),
       }),
     ).rejects.toThrow("Telegram 400");
 
@@ -593,14 +611,17 @@ describe("handleWebhook: callback routing", () => {
 
     // A second tap must be a no-op double-tap (state already "saved" →
     // "Já salvo" toast), NOT a second insert.
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf")),
+    });
     expect(tables.transactions).toHaveLength(1);
     expect(answered.at(-1)?.text).toBe("Já salvo ✅");
   });
 
   it("already-saved double-tap answers without rebuilding conversation deps", async () => {
     const { client, tables } = fakeSupabase();
-    const { telegram, answered } = fakeTelegram();
+    const { telegram, answered, sent } = fakeTelegram();
     const store = createInMemoryConversationStore();
     const base = {
       secretHeader: SECRET,
@@ -617,7 +638,10 @@ describe("handleWebhook: callback routing", () => {
       ...base,
       rawBody: textUpdate(777, "Uber 32 reais ontem"),
     });
-    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
+    await handleWebhook({
+      ...base,
+      rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf")),
+    });
     expect(tables.transactions).toHaveLength(1);
 
     const throwingClient = {
@@ -629,7 +653,7 @@ describe("handleWebhook: callback routing", () => {
     await handleWebhook({
       ...base,
       memberClient: () => throwingClient,
-      rawBody: callbackUpdate(777, "cf", 555, 1001),
+      rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf"), 555, 1001),
     });
 
     expect(answered.at(-1)?.text).toBe("Já salvo ✅");
@@ -694,7 +718,7 @@ describe("integration: the Petz flow (spec §6)", () => {
     expect(proposal?.text).toContain('Categoria: "Pets" (nova — sugerida)');
     expect(proposal?.replyMarkup?.inline_keyboard[0]?.[0]).toEqual({
       text: '✅ Confirmar (cria "Pets")',
-      callback_data: "nca",
+      callback_data: expect.stringMatching(/^p:[a-f0-9]{16}:nca$/),
     });
 
     // 2. One tap: category created (active), transaction saved, memory seeded.
@@ -876,7 +900,7 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
   });
 
   it("rejects another sender's prompt when our post-send prompt-ID save failed", async () => {
-    const { base, tables, answered, stripped } = harness();
+    const { base, tables, answered, stripped, sent } = harness();
     const memory = base.store;
     const store: ConversationStore = {
       ...memory,
@@ -922,10 +946,143 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     // Missing-ID recovery still accepts the creator's actual original prompt.
     await handleWebhook({
       ...args,
-      rawBody: callbackUpdate(777, "cf", 555, 1001),
+      rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf"), 555, 1001),
     });
     expect(tables.transactions).toHaveLength(1);
     expect(tables.transactions?.[0]?.created_by_user_id).toBe("user-alvaro");
+  });
+
+  it.each([false, true])(
+    "keeps a creator's unknown-ID keyboard safe when the tapper has an unknown-ID draft: %s",
+    async (tapperHasDraft) => {
+      const { base, tables, answered, stripped, sent } = harness();
+      const memory = base.store;
+      let saveCalls = 0;
+      const store: ConversationStore = {
+        ...memory,
+        async load(chat, sender, household) {
+          const state = await memory.load(chat, sender, household);
+          return state === undefined ? undefined : structuredClone(state);
+        },
+        async save(chat, sender, household, state) {
+          saveCalls++;
+          if (state.promptMessageId !== undefined) {
+            throw new Error("post-send ID save failed");
+          }
+          await memory.save(chat, sender, household, structuredClone(state));
+        },
+      };
+      const args = { ...base, store };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "Uber 32 reais ontem"),
+      });
+      if (tapperHasDraft) {
+        await handleWebhook({
+          ...args,
+          rawBody: textUpdate(888, "Mercado 42 reais hoje"),
+        });
+      }
+      const creatorBefore = await store.load("555", "777", "house-1");
+      const tapperBefore = await store.load("555", "888", "house-1");
+      expect(creatorBefore?.promptMessageId).toBeUndefined();
+      expect(creatorBefore?.promptToken).toMatch(/^[a-f0-9]{16}$/);
+      expect(tapperBefore?.promptMessageId).toBeUndefined();
+      const savesBeforeTap = saveCalls;
+      const tablesBefore = structuredClone(tables);
+      const sentBefore = sent.length;
+      const creatorConfirm = promptAction(sent, 1001, "cf");
+
+      // Both a bound new button and an unbound legacy button need positive ownership.
+      for (const data of [creatorConfirm, "cf"]) {
+        await handleWebhook({ ...args, rawBody: callbackUpdate(888, data) });
+      }
+      expect(saveCalls).toBe(savesBeforeTap);
+      expect(tables).toEqual(tablesBefore);
+      expect(stripped).toHaveLength(0);
+      expect(sent).toHaveLength(sentBefore);
+      expect(answered).toHaveLength(2);
+      expect(await store.load("555", "777", "house-1")).toEqual(creatorBefore);
+      expect(await store.load("555", "888", "house-1")).toEqual(tapperBefore);
+
+      // Only the creator can confirm, despite having no saved Telegram message id.
+      await handleWebhook({
+        ...args,
+        rawBody: callbackUpdate(777, creatorConfirm),
+      });
+      expect(tables.transactions).toHaveLength(1);
+      expect(tables.transactions?.[0]?.created_by_user_id).toBe("user-alvaro");
+      expect(stripped).toContainEqual({ chatId: "555", messageId: 1001 });
+    },
+  );
+
+  it("unknown legacy ownership preserves the controls and allows typed creator recovery", async () => {
+    const { base, tables, answered, stripped } = harness();
+    await handleWebhook({
+      ...base,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    const state = (await base.store.load("555", "777", "house-1"))!;
+    await base.store.save("555", "777", "house-1", {
+      ...state,
+      promptMessageId: undefined,
+      promptToken: undefined,
+    });
+    await handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") });
+    expect(answered.at(-1)?.text).toContain("Sessão expirada");
+    expect(stripped).toHaveLength(0);
+    expect(tables.transactions).toHaveLength(0);
+    await handleWebhook({ ...base, rawBody: textUpdate(777, "confirmar") });
+    expect(tables.transactions).toHaveLength(1);
+  });
+
+  it("rejects an old prompt token after replacing a keyboard whose ID save failed", async () => {
+    const { base, tables, sent, stripped } = harness();
+    const memory = base.store;
+    const store: ConversationStore = {
+      ...memory,
+      async load(chat, sender, household) {
+        const state = await memory.load(chat, sender, household);
+        return state === undefined ? undefined : structuredClone(state);
+      },
+      async save(chat, sender, household, state) {
+        if (state.promptMessageId !== undefined)
+          throw new Error("ID save failed");
+        await memory.save(chat, sender, household, structuredClone(state));
+      },
+    };
+    const args = { ...base, store };
+    await handleWebhook({
+      ...args,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    const oldToken = promptAction(sent, 1001, "cf");
+    // A callback-created category picker also persists its token before sending.
+    await handleWebhook({
+      ...args,
+      rawBody: callbackUpdate(777, promptAction(sent, 1001, "cats")),
+    });
+    expect(
+      (await store.load("555", "777", "house-1"))?.promptMessageId,
+    ).toBeUndefined();
+    const stripsBefore = stripped.length;
+    await handleWebhook({ ...args, rawBody: callbackUpdate(777, oldToken) });
+    expect(tables.transactions).toHaveLength(0);
+    expect(stripped).toHaveLength(stripsBefore);
+    await handleWebhook({
+      ...args,
+      rawBody: callbackUpdate(
+        777,
+        promptAction(sent, 1002, "ct:cat-transport"),
+        555,
+        1002,
+      ),
+    });
+    await handleWebhook({
+      ...args,
+      rawBody: callbackUpdate(777, promptAction(sent, 1003, "cf"), 555, 1003),
+    });
+    expect(tables.transactions).toHaveLength(1);
   });
 
   it("another member's tap cannot cancel or re-categorize the creator's draft", async () => {
@@ -960,7 +1117,7 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
   });
 
   it("two CONCURRENT deliveries of a double-tapped ✅ insert exactly one transaction", async () => {
-    const { base, tables, answered } = harness();
+    const { base, tables, answered, sent } = harness();
 
     await handleWebhook({
       ...base,
@@ -968,8 +1125,14 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
     });
 
     await Promise.all([
-      handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") }),
-      handleWebhook({ ...base, rawBody: callbackUpdate(777, "cf") }),
+      handleWebhook({
+        ...base,
+        rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf")),
+      }),
+      handleWebhook({
+        ...base,
+        rawBody: callbackUpdate(777, promptAction(sent, 1001, "cf")),
+      }),
     ]);
 
     expect(tables.transactions).toHaveLength(1);

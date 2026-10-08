@@ -19,6 +19,8 @@
  * no household to scope a row to.
  */
 
+import { randomBytes } from "node:crypto";
+
 import {
   getBotServerEnv,
   DEFAULT_OPENAI_MODEL,
@@ -119,7 +121,21 @@ import {
   DRAFT_NOT_YOURS_TOAST,
   ALREADY_SAVED_TOAST,
 } from "./replies.js";
-import { TOKENS, installmentReconciliationKeyboard } from "./keyboards.js";
+import {
+  TOKENS,
+  installmentReconciliationKeyboard,
+  bindPromptKeyboard,
+  parsePromptCallbackData,
+} from "./keyboards.js";
+
+/** Call before the durable save, so Telegram never sees an unbound new prompt. */
+function preparePromptKeyboard(
+  state: ConversationState,
+  keyboard: InlineKeyboardMarkup,
+): InlineKeyboardMarkup {
+  state.promptToken = randomBytes(8).toString("hex");
+  return bindPromptKeyboard(keyboard, state.promptToken);
+}
 
 /**
  * GPT extracts financial fields under a four-second deadline. Categorization
@@ -645,7 +661,16 @@ export async function handleWebhook(args: {
       return { status: 200, body: { ok: true } };
     }
 
-    const { chatId, messageId, data, callbackQueryId } = callback;
+    const { chatId, messageId, callbackQueryId } = callback;
+    const parsedData = parsePromptCallbackData(callback.data);
+    if (parsedData === null) {
+      await args.telegram.answerCallbackQuery(
+        callbackQueryId,
+        SESSION_EXPIRED_TOAST,
+      );
+      return { status: 200, body: { ok: true } };
+    }
+    const data = parsedData.action;
 
     // Serialized per chat: two concurrent deliveries (physical double-tap)
     // must not both load the same awaiting_confirmation state.
@@ -670,7 +695,23 @@ export async function handleWebhook(args: {
           callbackQueryId,
           SESSION_EXPIRED_TOAST,
         );
-        await strip(chatId, messageId);
+        // An absent draft cannot prove who owned this message. Keep its controls.
+        return { status: 200, body: { ok: true } };
+      }
+      if (
+        parsedData.promptToken !== undefined
+          ? parsedData.promptToken !== existing.promptToken
+          : existing.promptMessageId === undefined
+      ) {
+        // A token proves the sender's exact prompt even after a failed ID save.
+        // Unbound legacy prompts can only be used with an exact persisted ID;
+        // typed confirmation remains available when legacy ownership is unknown.
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          parsedData.promptToken === undefined
+            ? SESSION_EXPIRED_TOAST
+            : DRAFT_NOT_YOURS_TOAST,
+        );
         return { status: 200, body: { ok: true } };
       }
       if (
@@ -754,7 +795,14 @@ export async function handleWebhook(args: {
       // still-"awaiting_confirmation" state with an unstripped keyboard would
       // insert a second transaction.
       const willReply = outcome.silent !== true && outcome.reply.length > 0;
+      let replyKeyboard = outcome.keyboard;
+      // Retain the identity for harmless repeated taps when no new prompt is sent.
+      outcome.state.promptToken = existing.promptToken;
       if (willReply) {
+        replyKeyboard =
+          outcome.keyboard === undefined
+            ? undefined
+            : preparePromptKeyboard(outcome.state, outcome.keyboard);
         // The tapped prompt is superseded by the reply below. Clear its id now
         // so a failed re-save can't leave it stored, which would refuse taps
         // on the new keyboard as "session expired".
@@ -775,8 +823,8 @@ export async function handleWebhook(args: {
         const sent = await args.telegram.sendMessage(
           chatId,
           outcome.reply,
-          outcome.keyboard !== undefined
-            ? { replyMarkup: outcome.keyboard }
+          replyKeyboard !== undefined
+            ? { replyMarkup: replyKeyboard }
             : undefined,
         );
         // Only record promptMessageId when a keyboard was actually attached —
@@ -796,9 +844,8 @@ export async function handleWebhook(args: {
             outcome.state,
           );
         } catch (error) {
-          // Best-effort only: the stored promptMessageId stays cleared, so taps
-          // on the new keyboard are still accepted; only the prompt-id checks
-          // (stale-keyboard strip, other-member toast) are lost for this draft.
+          // Best-effort only: the pre-send token still proves prompt ownership
+          // and supports creator recovery without the Telegram message id.
           console.warn("[bot] re-save after send failed:", error);
         }
       }
@@ -890,6 +937,10 @@ export async function handleWebhook(args: {
         // Retain the exact durable draft/key, clearing only a stale prompt ID
         // before sending so a failed post-send save still permits recovery.
         const recoveryState = { ...existing, promptMessageId: undefined };
+        const recoveryKeyboard = preparePromptKeyboard(
+          recoveryState,
+          installmentReconciliationKeyboard(),
+        );
         await args.store.save(
           voice.chatId,
           voice.fromId,
@@ -899,7 +950,7 @@ export async function handleWebhook(args: {
         const sentRecovery = await args.telegram.sendMessage(
           voice.chatId,
           'O lançamento anterior ainda precisa ser confirmado. Envie "confirmar" antes de começar outro lançamento.',
-          { replyMarkup: installmentReconciliationKeyboard() },
+          { replyMarkup: recoveryKeyboard },
         );
         try {
           await args.store.save(
@@ -943,6 +994,11 @@ export async function handleWebhook(args: {
       // No prompt id until the reply is sent: a stale one would refuse taps on
       // the new keyboard if the re-save below fails.
       outcome.state.promptMessageId = undefined;
+      outcome.state.promptToken = undefined;
+      const voiceKeyboard =
+        outcome.keyboard === undefined
+          ? undefined
+          : preparePromptKeyboard(outcome.state, outcome.keyboard);
       await args.store.save(
         voice.chatId,
         voice.fromId,
@@ -953,8 +1009,8 @@ export async function handleWebhook(args: {
       const sentVoice = await args.telegram.sendMessage(
         voice.chatId,
         outcome.reply,
-        outcome.keyboard !== undefined
-          ? { replyMarkup: outcome.keyboard }
+        voiceKeyboard !== undefined
+          ? { replyMarkup: voiceKeyboard }
           : undefined,
       );
       // Only record promptMessageId when a keyboard was actually attached.
@@ -1072,20 +1128,31 @@ export async function handleWebhook(args: {
 
     // nextState may be the same object as existing; read the old id first.
     const previousPromptId = existing?.promptMessageId;
-    const shouldStripPreviousPrompt =
+    const supersedesPreviousPrompt =
       existing !== undefined &&
       existing.status !== "saved" &&
       existing.status !== "cancelled" &&
-      previousPromptId !== undefined &&
       (keyboard !== undefined ||
         nextState.status === "saved" ||
         nextState.status === "cancelled" ||
         nextState !== existing);
-    if (keyboard !== undefined || shouldStripPreviousPrompt) {
+    const shouldStripPreviousPrompt =
+      supersedesPreviousPrompt && previousPromptId !== undefined;
+    if (keyboard !== undefined || supersedesPreviousPrompt) {
       // The previous prompt is superseded. Clear its id before the first save
       // so a failed re-save can't leave it stored, which would refuse taps on
       // the new keyboard as "session expired".
       nextState.promptMessageId = undefined;
+    }
+    // Keep an unchanged keyboard bound; rotate the token for every replacement.
+    nextState.promptToken =
+      belongsToSender &&
+      existing.status !== "saved" &&
+      existing.status !== "cancelled"
+        ? existing.promptToken
+        : undefined;
+    if (keyboard !== undefined) {
+      keyboard = preparePromptKeyboard(nextState, keyboard);
     }
 
     // Persist FIRST: applyMessage/startConversation may already have inserted a

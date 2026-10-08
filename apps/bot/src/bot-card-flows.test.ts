@@ -1498,7 +1498,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
     const { client, tables } = fakeSupabase({
       credit_cards: [{ ...CARD_SEED }],
     });
-    const { telegram, answered } = fakeTelegram();
+    const { telegram, answered, sent } = fakeTelegram();
     const memoryStore = createInMemoryConversationStore();
     const savedStatuses: ConversationState["status"][] = [];
     const store: ConversationStore = {
@@ -1535,8 +1535,12 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
       classifyMessage,
     });
 
+    const confirmButton =
+      sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data;
+    expect(confirmButton).toMatch(/^p:[a-f0-9]{16}:cf$/);
+
     await handleWebhook({
-      rawBody: callbackUpdate(777, TOKENS.confirm),
+      rawBody: callbackUpdate(777, confirmButton!),
       secretHeader: SECRET,
       configuredSecret: SECRET,
       memberClient: () => client,
@@ -1557,7 +1561,7 @@ describe("bot card flows: end-to-end webhook integration (Task 8)", () => {
 
     // Double-tap cf on the now-saved state.
     await handleWebhook({
-      rawBody: callbackUpdate(777, TOKENS.confirm),
+      rawBody: callbackUpdate(777, confirmButton!),
       secretHeader: SECRET,
       configuredSecret: SECRET,
       memberClient: () => client,
@@ -2830,7 +2834,7 @@ describe("legacy settlements and submission safety", () => {
       const { client, tables } = fakeSupabase({
         credit_cards: [{ ...CARD_SEED }],
       });
-      const { telegram, answered } = fakeTelegram();
+      const { telegram, answered, sent } = fakeTelegram();
       const durable = createDbConversationStore(client);
       const store: ConversationStore = {
         ...durable,
@@ -2894,10 +2898,15 @@ describe("legacy settlements and submission safety", () => {
       expect(after).toEqual({
         ...before,
         promptMessageId: failPromptSave ? undefined : 1002,
+        promptToken: expect.stringMatching(/^[a-f0-9]{16}$/),
       });
+      expect(after?.promptToken).not.toBe(before?.promptToken);
+      const recoveryButton =
+        sent.at(-1)?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data;
+      expect(recoveryButton).toBe(`p:${after?.promptToken}:${TOKENS.confirm}`);
       await handleWebhook({
         ...args,
-        rawBody: callbackUpdate(777, TOKENS.confirm, 555, 1002),
+        rawBody: callbackUpdate(777, recoveryButton!, 555, 1002),
       });
       expect(answered.at(-1)?.text ?? "").not.toContain("expirada");
       expect((await store.load("555", "777", "house-1"))?.status).toBe(
@@ -2933,7 +2942,7 @@ describe("historical payment undo during legacy recovery", () => {
       const { client, tables } = fakeSupabase({
         credit_cards: [{ ...CARD_SEED }],
       });
-      const { telegram } = fakeTelegram();
+      const { telegram, sent } = fakeTelegram();
       const durable = createDbConversationStore(client);
       let failFinalSave = legacyStatus === "matched";
       const store: ConversationStore = {
@@ -2962,6 +2971,9 @@ describe("historical payment undo during legacy recovery", () => {
         ...args,
         rawBody: textUpdate(777, "nubank pago 50"),
       });
+      const confirmButton =
+        sent[0]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data;
+      expect(confirmButton).toMatch(/^p:[a-f0-9]{16}:cf$/);
       const state = (await store.load("555", "777", "house-1"))!;
       const draft = state.cardBillDraft!;
       tables.transactions!.push({
@@ -3011,7 +3023,7 @@ describe("historical payment undo during legacy recovery", () => {
           rawBody:
             path === "typed"
               ? textUpdate(777, "confirmar")
-              : callbackUpdate(777, TOKENS.confirm),
+              : callbackUpdate(777, confirmButton!),
         });
         expect(settle).toHaveBeenCalledTimes(1);
         expect(tables.transactions).toHaveLength(1);
