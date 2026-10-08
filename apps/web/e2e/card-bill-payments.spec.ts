@@ -163,7 +163,7 @@ test.beforeEach(async () => {
     credit_card_id: card.id,
     created_by_user_id: member.user_id,
   });
-  await memberClient.auth.signOut();
+  await memberClient.auth.signOut({ scope: "local" });
   if (error !== null) throw error;
 });
 
