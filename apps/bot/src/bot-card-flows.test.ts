@@ -2703,3 +2703,102 @@ describe("legacy settlements and submission safety", () => {
     expect(await store.load("555")).toEqual(before);
   });
 });
+
+describe("historical payment undo during legacy recovery", () => {
+  it.each([
+    ["typed", "ambiguous"],
+    ["callback", "ambiguous"],
+    ["typed", "matched"],
+    ["callback", "matched"],
+  ] as const)(
+    "clears the old %s recovery decision (%s) after the historical payment is undone",
+    async (path, legacyStatus) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const durable = createDbConversationStore(client);
+      let failFinalSave = legacyStatus === "matched";
+      const store: ConversationStore = {
+        load: (id) => durable.load(id),
+        save: async (id, state) => {
+          if (state.status === "saved" && failFinalSave) {
+            failFinalSave = false;
+            throw new Error("final save unavailable");
+          }
+          await durable.save(id, state);
+        },
+      };
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "nubank pago 50"),
+      });
+      const state = (await store.load("555"))!;
+      const draft = state.cardBillDraft!;
+      tables.transactions!.push({
+        id: "legacy-payment",
+        household_id: "house-1",
+        kind: "transfer",
+        credit_card_id: draft.cardId,
+        account_id: draft.accountId,
+        bill_month: draft.month,
+        amount_cents: legacyStatus === "matched" ? draft.amountCents : 2500,
+        occurred_on: currentHouseholdDate(),
+        created_by_user_id: "user-alvaro",
+        idempotency_key: null,
+      });
+      await store.save("555", {
+        ...state,
+        cardBillDraft: { ...draft, idempotencyKey: undefined },
+      });
+      const first = handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "confirmar"),
+      });
+      if (legacyStatus === "matched")
+        await expect(first).rejects.toThrow("final save unavailable");
+      else await first;
+      expect(
+        (await store.load("555"))?.cardBillDraft?.legacyPaymentStatus,
+      ).toBe(legacyStatus);
+      // Undo in Cards removes the historical row while its bot draft remains pending.
+      tables.transactions!.splice(0);
+      const originalSettle = db.settleCardBill;
+      const settle = vi
+        .spyOn(db, "settleCardBill")
+        .mockImplementation(async (...params) => {
+          const prepared = (await store.load("555"))!;
+          expect(prepared.status).toBe("card_bill_submission_started");
+          expect(prepared.cardBillDraft?.legacyPaymentStatus).toBeUndefined();
+          expect(prepared.cardBillDraft?.idempotencyKey).toBe(
+            params[1].idempotencyKey,
+          );
+          return originalSettle(...params);
+        });
+      try {
+        await handleWebhook({
+          ...args,
+          rawBody:
+            path === "typed"
+              ? textUpdate(777, "confirmar")
+              : callbackUpdate(777, TOKENS.confirm),
+        });
+        expect(settle).toHaveBeenCalledTimes(1);
+        expect(tables.transactions).toHaveLength(1);
+        expect(tables.transactions![0]?.amount_cents).toBe(5000);
+        expect((await store.load("555"))?.status).toBe("saved");
+      } finally {
+        settle.mockRestore();
+      }
+    },
+  );
+});

@@ -4185,6 +4185,8 @@ export async function prepareCardBillSubmission(
     cardBillDraft: {
       ...draft,
       paidOn,
+      // A fresh authoritative lookup supersedes any earlier recovery decision.
+      legacyPaymentStatus: undefined,
       idempotencyKey: draft.idempotencyKey ?? randomUUID(),
     },
   };
