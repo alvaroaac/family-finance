@@ -1,4 +1,4 @@
--- 0030: free-form investment buckets (caixinhas).
+-- 202610080002: free-form investment buckets (caixinhas).
 --
 -- Buckets used to be one of three fixed slugs (the investment_bucket_slug
 -- enum). A household now names its own goals, so the slug becomes text

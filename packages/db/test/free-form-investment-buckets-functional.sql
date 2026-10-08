@@ -1,4 +1,4 @@
--- Run after 0030 on a database where household A had the three enum buckets
+-- Run after 202610080002 on a database where household A had the three enum buckets
 -- (filhos 100, casa 200, independencia_financeira 300) before the migration,
 -- and household B exists without buckets.
 do $$

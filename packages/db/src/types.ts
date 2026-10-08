@@ -106,6 +106,18 @@ export type CreditCardRow = {
   updated_at: string;
 };
 
+export type CardBillClosureRow = {
+  id: string;
+  household_id: string;
+  credit_card_id: string;
+  bill_month: string;
+  state: "closed" | "open";
+  total_override_cents: number | null;
+  updated_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type CategoryKind = "expense" | "income";
 
 export type CategoryRow = {
@@ -150,6 +162,10 @@ export type TransactionRow = {
   obligation_month: string | null;
   /** Set on the kind='transfer' card-bill settle row (migration 0015). */
   bill_month: string | null;
+  /** Stored attribution for card charges (independent of spending date). */
+  invoice_month: string | null;
+  /** Stable caller key for card-bill payment replays. */
+  idempotency_key: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -388,6 +404,8 @@ export type TransactionInsert = Insertable<
   | "obligation_id"
   | "obligation_month"
   | "bill_month"
+  | "invoice_month"
+  | "idempotency_key"
 >;
 
 export type ObligationInsert = Insertable<
@@ -410,14 +428,10 @@ export type MaterializeObligationPaymentResult = {
   already_paid: boolean;
 };
 
-/**
- * Shape returned by `settle_card_bill` (migration 0015): the settled (or
- * pre-existing) kind='transfer' transactions row plus whether the bill month
- * had already been paid (idempotent no-op).
- */
+/** Payment RPC result; replayed means the same caller key was used again. */
 export type SettleCardBillResult = {
   transaction: TransactionRow;
-  already_paid: boolean;
+  replayed: boolean;
 };
 
 export type ImportBatchInsert = Insertable<
@@ -732,6 +746,12 @@ export type Database = {
         Partial<InstallmentGroupRow>
       >;
       installments: TableDef<InstallmentRow, Partial<InstallmentRow>>;
+      card_bill_closures: TableDef<
+        CardBillClosureRow,
+        Insertable<CardBillClosureRow, "total_override_cents"> & {
+          updated_at?: string;
+        }
+      >;
       import_batches: TableDef<ImportBatchRow, ImportBatchInsert>;
       import_rows: TableDef<ImportRowRow, Partial<ImportRowRow>>;
       import_item_claims: TableDef<
@@ -888,10 +908,7 @@ export type Database = {
         };
         Returns: MaterializeObligationPaymentResult;
       };
-      // Atomic, idempotent card-bill settlement: insert ONE kind='transfer'
-      // transaction (account = source, card = destination, bill_month = the
-      // settled marker), or return the existing one (already_paid = true).
-      // See supabase/migrations/0015_settle_card_bill.sql.
+      // Key-idempotent payment transfer (migration 202610070000).
       settle_card_bill: {
         Args: {
           target_household_id: string;
@@ -901,8 +918,25 @@ export type Database = {
           target_amount_cents: number;
           target_paid_on: string;
           target_created_by_user_id: string;
+          target_idempotency_key: string;
         };
-        Returns: unknown;
+        Returns: SettleCardBillResult;
+      };
+      reconcile_legacy_card_bill_payment: {
+        Args: {
+          target_household_id: string;
+          target_credit_card_id: string;
+          target_account_id: string;
+          target_bill_month: string;
+          target_amount_cents: number;
+          target_paid_on: string;
+          target_created_by_user_id: string;
+        };
+        Returns: "none" | "matched" | "ambiguous";
+      };
+      card_bill_is_closed: {
+        Args: { target_credit_card_id: string; target_month: string };
+        Returns: boolean;
       };
     };
     Enums: {

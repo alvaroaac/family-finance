@@ -2,9 +2,9 @@
  * Data layer for "/resumo" — the 10-second daily summary.
  *
  * Read-only composition over the household-scoped `@family-finance/db`
- * repositories: this month's spending vs the previous month, the projected
- * invoice PER credit card (direct purchases + parcelas due in the month),
- * the pending-review count and the last 5 lançamentos.
+ * repositories: this month's spending vs the previous month, the fatura pair
+ * PER credit card (pending closed fatura + the open one), the pending-review
+ * count and the last 5 lançamentos.
  *
  * `buildResumoData` is the pure(ish) composition tested against the fake
  * store; `loadResumoData` wraps it with auth/household resolution and, like
@@ -15,22 +15,35 @@ import {
   findHouseholdIdForCurrentUser,
   getMonthlySummary,
   getCardPressure,
-  getCardPressureForCard,
   getObligationsPressure,
   findRecentTransactions,
   findPendingReviewTransactions,
-  findCardBillSettlements,
-  listCreditCards,
+  getCardFaturaPairs,
   currentMonth,
   type AppSupabaseClient,
+  type CardBillOverview,
   type DashboardTransaction,
 } from "@family-finance/db";
+import {
+  cardBillBadge,
+  currentHouseholdDate,
+  type CardBillStatus,
+} from "@family-finance/domain";
 
 import { formatBrlCents, monthNamePtBr } from "../../../lib/format";
 import { shiftMonth } from "../transactions/filters";
 
 // Kept on this module's surface: /resumo already imports it here.
 export { monthLabelPtBr } from "../../../lib/format";
+
+/** One fatura as Resumo shows it; `badge` is the shared status copy. */
+export type FaturaView = {
+  month: string;
+  closed: boolean;
+  totalCents: number;
+  status: CardBillStatus;
+  badge: string;
+};
 
 export type ResumoData = {
   month: string;
@@ -45,13 +58,16 @@ export type ResumoData = {
   cardSpentCents: number;
   /** previous composite - current composite; positive = spending less. */
   deltaVsPreviousCents: number;
-  /** Projected invoice per card this month (direct + parcelas due). */
+  /**
+   * Fatura pair per card (by `invoice_month`, so totals can differ from the
+   * cartão spending above): the closed fatura still being paid, if any, and
+   * the open one collecting new purchases.
+   */
   cards: Array<{
     id: string;
     name: string;
-    projectedCents: number;
-    /** True when a card-bill payment (kind='transfer') exists for this month. */
-    settled: boolean;
+    pending: FaturaView | null;
+    open: FaturaView;
   }>;
   /**
    * This month's fixed-obligation total: projected-unpaid + materialized
@@ -85,6 +101,16 @@ export function spendingComparisonLabel(
   return `${formatBrlCents(-deltaCents)} a mais que ${name}`;
 }
 
+function faturaView(overview: CardBillOverview): FaturaView {
+  return {
+    month: overview.month,
+    closed: overview.summary.closed,
+    totalCents: overview.summary.totalCents,
+    status: overview.summary.status,
+    badge: cardBillBadge(overview.summary),
+  };
+}
+
 /** How many pending rows we count before capping (household scale: plenty). */
 const PENDING_COUNT_LIMIT = 200;
 
@@ -106,17 +132,16 @@ export async function buildResumoData(
     previousSummary,
     pressure,
     previousPressure,
-    creditCards,
+    faturaPairs,
     obligationsPressure,
     pending,
     recent,
-    settlements,
   ] = await Promise.all([
     getMonthlySummary(client, householdId, month),
     getMonthlySummary(client, householdId, previousMonth),
     getCardPressure(client, householdId, month),
     getCardPressure(client, householdId, previousMonth),
-    listCreditCards(client, householdId),
+    getCardFaturaPairs(client, householdId, currentHouseholdDate(now)),
     // Resilient on purpose: the obligations schema arrives with migration
     // 0011, applied out-of-band. If the table/columns are missing (or this
     // one query fails), only THIS stat zeroes out — never the whole resumo.
@@ -128,25 +153,14 @@ export async function buildResumoData(
     })),
     findPendingReviewTransactions(client, householdId, PENDING_COUNT_LIMIT),
     findRecentTransactions(client, householdId, 5),
-    findCardBillSettlements(client, householdId, month),
   ]);
 
-  const cards = await Promise.all(
-    creditCards.map(async (card) => {
-      const pressure = await getCardPressureForCard(
-        client,
-        householdId,
-        card.id,
-        month,
-      );
-      return {
-        id: card.id,
-        name: card.name,
-        projectedCents: pressure.totalCents,
-        settled: settlements.some((s) => s.creditCardId === card.id),
-      };
-    }),
-  );
+  const cards = faturaPairs.map(({ card, pending, open }) => ({
+    id: card.id,
+    name: card.name,
+    pending: pending === null ? null : faturaView(pending),
+    open: faturaView(open),
+  }));
 
   // Split without double counting: direct card purchases are already inside
   // expenseCents, so the conta side subtracts them and the cartão side owns

@@ -154,6 +154,7 @@ describe("createCardBillSettlement", () => {
     amountCents: 235000,
     paidOn: "2026-07-06",
     createdByUserId: "user-1",
+    idempotencyKey: "key-1",
   };
 
   it("accepts a valid settlement", () => {
@@ -172,6 +173,7 @@ describe("createCardBillSettlement", () => {
     ["householdId", { ...valid, householdId: "" }],
     ["createdByUserId", { ...valid, createdByUserId: "" }],
     ["paidOn", { ...valid, paidOn: "06/07/2026" }],
+    ["idempotencyKey", { ...valid, idempotencyKey: "" }],
   ])("rejects invalid %s", (field, input) => {
     const result = createCardBillSettlement(input);
     expect(result.ok).toBe(false);

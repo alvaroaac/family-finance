@@ -274,7 +274,8 @@ begin
 end;
 $$;
 
--- settle_card_bill: a missing UID can no longer inherit service-role access.
+-- Replace PR42's 8-argument API without reviving the legacy overload.
+drop function if exists settle_card_bill(uuid, uuid, uuid, text, bigint, date, uuid);
 create or replace function settle_card_bill(
   target_household_id uuid,
   target_credit_card_id uuid,
@@ -282,7 +283,8 @@ create or replace function settle_card_bill(
   target_bill_month text,
   target_amount_cents bigint,
   target_paid_on date,
-  target_created_by_user_id uuid
+  target_created_by_user_id uuid,
+  target_idempotency_key text
 )
 returns jsonb
 language plpgsql
@@ -291,91 +293,158 @@ set search_path = public, pg_temp
 as $$
 declare
   card credit_cards;
-  member_ok boolean;
+  paid_on date := coalesce(target_paid_on, (now() at time zone 'America/Sao_Paulo')::date);
   month_start date;
   inserted transactions;
   existing transactions;
-  already_paid boolean := false;
 begin
+  -- Lock the caller's membership until this transaction completes. A concurrent
+  -- deactivation cannot make an RLS absence look like proof of a missing write.
+  if auth.uid() is null or coalesce(auth.role(), '') <> 'authenticated' then
+    raise exception 'settle_card_bill: active member authentication required' using errcode = '42501';
+  end if;
+  perform 1 from household_members where household_id = target_household_id
+    and user_id = auth.uid() and is_active for share;
+  if not found then
+    raise exception 'settle_card_bill: active member authentication required' using errcode = '42501';
+  end if;
+  if target_idempotency_key is null or target_idempotency_key = '' then
+    raise exception 'settle_card_bill: invalid idempotency key' using errcode = '22023';
+  end if;
+  -- Every same-household/key invocation takes this lock before inspecting or
+  -- claiming a key. Validation hints are issued only after an authoritative
+  -- definer lookup, in the same transaction and while no competing claim exists.
+  perform pg_advisory_xact_lock(hashtextextended(target_household_id::text || ':' || target_idempotency_key, 0));
+  select * into existing from transactions
+  where household_id = target_household_id and idempotency_key = target_idempotency_key;
+  if existing.id is not null then
+    if existing.kind is distinct from 'transfer'::transaction_kind
+       or existing.credit_card_id is distinct from target_credit_card_id
+       or existing.account_id is distinct from target_account_id
+       or existing.bill_month is distinct from target_bill_month
+       or existing.amount_cents is distinct from target_amount_cents
+       or existing.occurred_on is distinct from paid_on
+       or existing.created_by_user_id is distinct from auth.uid()
+       or target_created_by_user_id is distinct from auth.uid() then
+      raise exception 'settle_card_bill: idempotency key reused with a different payment'
+        using errcode = '22023';
+    end if;
+    return jsonb_build_object('transaction', to_jsonb(existing), 'replayed', true);
+  end if;
   if target_bill_month is null
-     or target_bill_month !~ '^\d{4}-(0[1-9]|1[0-2])$' then
+     or target_bill_month !~ '^[0-9]{4}-(0[1-9]|1[0-2])$' then
     raise exception 'settle_card_bill: invalid month %', target_bill_month
-      using errcode = '22023';
+      using errcode = '22023', hint = 'card_bill_definitive_no_write_v1';
   end if;
   if target_amount_cents is null or target_amount_cents <= 0 then
     raise exception 'settle_card_bill: invalid amount'
-      using errcode = '22023';
+      using errcode = '22023', hint = 'card_bill_definitive_no_write_v1';
   end if;
-
-  select * into card
-  from credit_cards
-  where id = target_credit_card_id
-    and household_id = target_household_id;
-
-  -- SECURITY DEFINER skips RLS, so re-assert membership. A non-member gets
-  -- the same 'not found' as a nonexistent id (no probing).
-  if card.id is null
-     or auth.uid() is null
-     or not is_household_member(target_household_id) then
+  if paid_on > (now() at time zone 'America/Sao_Paulo')::date then
+    raise exception 'settle_card_bill: payment date cannot be in the future'
+      using errcode = '22023', hint = 'card_bill_definitive_no_write_v1';
+  end if;
+  select * into card from credit_cards
+  where id = target_credit_card_id and household_id = target_household_id;
+  if card.id is null then
     raise exception 'settle_card_bill: card % not found', target_credit_card_id
-      using errcode = '22023';
+      using errcode = '22023', hint = 'card_bill_definitive_no_write_v1';
   end if;
-
-  -- The claimed creator must also be an active member of the household.
-  select exists (
-    select 1 from household_members
-    where household_id = target_household_id
-      and user_id = target_created_by_user_id
-      and is_active
-  ) into member_ok;
-  if not member_ok then
-    raise exception 'settle_card_bill: created_by is not an active member'
-      using errcode = '22023';
+  if not exists (select 1 from accounts where id = target_account_id and household_id = target_household_id) then
+    raise exception 'settle_card_bill: account % not found', target_account_id
+      using errcode = '22023', hint = 'card_bill_definitive_no_write_v1';
   end if;
-
+  perform 1 from household_members where household_id = target_household_id
+    and user_id = target_created_by_user_id and is_active for share;
+  if not found or target_created_by_user_id is distinct from auth.uid() then
+    raise exception 'settle_card_bill: created_by is not the active caller'
+      using errcode = '22023', hint = 'card_bill_definitive_no_write_v1';
+  end if;
   month_start := to_date(target_bill_month || '-01', 'YYYY-MM-DD');
 
-  -- The composite household FKs (0013) enforce that both instruments belong
-  -- to target_household_id. The account is validated there, not re-queried.
   insert into transactions (
     household_id, kind, amount_cents, occurred_on, description,
-    account_id, credit_card_id,
-    responsibility_scope, responsible_user_id, created_by_user_id, bill_month
-  )
-  values (
-    target_household_id, 'transfer', target_amount_cents,
-    coalesce(target_paid_on, current_date),
+    account_id, credit_card_id, responsibility_scope, responsible_user_id,
+    created_by_user_id, bill_month, idempotency_key
+  ) values (
+    target_household_id, 'transfer', target_amount_cents, paid_on,
     'Fatura ' || card.name || ' — ' || to_char(month_start, 'MM/YYYY'),
-    target_account_id, target_credit_card_id,
-    'household', null,
-    auth.uid(),
-    target_bill_month
+    target_account_id, target_credit_card_id, 'household', null,
+    auth.uid(), target_bill_month, target_idempotency_key
   )
-  on conflict (credit_card_id, bill_month)
-    where kind = 'transfer' and bill_month is not null
-    do nothing
+  on conflict (household_id, idempotency_key)
+    where idempotency_key is not null do nothing
   returning * into inserted;
 
-  if inserted.id is null then
-    -- Unique index hit: this card+month is already settled. Idempotent no-op.
-    already_paid := true;
-    select * into existing
-    from transactions
-    where credit_card_id = target_credit_card_id
-      and bill_month = target_bill_month
-      and kind = 'transfer';
-    return jsonb_build_object(
-      'transaction', to_jsonb(existing),
-      'already_paid', already_paid
-    );
+  if inserted.id is not null then
+    return jsonb_build_object('transaction', to_jsonb(inserted), 'replayed', false);
   end if;
-
-  return jsonb_build_object(
-    'transaction', to_jsonb(inserted),
-    'already_paid', already_paid
-  );
+  select * into existing from transactions
+  where household_id = target_household_id and idempotency_key = target_idempotency_key;
+  if existing.kind is distinct from 'transfer'::transaction_kind
+     or existing.credit_card_id is distinct from target_credit_card_id
+     or existing.account_id is distinct from target_account_id
+     or existing.bill_month is distinct from target_bill_month
+     or existing.amount_cents is distinct from target_amount_cents
+     or existing.occurred_on is distinct from paid_on
+     or existing.created_by_user_id is distinct from auth.uid() then
+    raise exception 'settle_card_bill: idempotency key reused with a different payment'
+      using errcode = '22023';
+  end if;
+  return jsonb_build_object('transaction', to_jsonb(existing), 'replayed', true);
 end;
 $$;
+
+revoke all on function settle_card_bill(uuid, uuid, uuid, text, bigint, date, uuid, text) from public;
+do $$ begin
+  revoke all on function settle_card_bill(uuid, uuid, uuid, text, bigint, date, uuid, text) from anon;
+exception when undefined_object then null; end $$;
+do $$ begin
+  grant execute on function settle_card_bill(uuid, uuid, uuid, text, bigint, date, uuid, text)
+    to authenticated, service_role;
+exception when undefined_object then null; end $$;
+
+
+-- Legacy null-key drafts also need authoritative membership-gated recovery.
+-- RLS returning an empty set after deactivation must never permit a new key.
+create or replace function reconcile_legacy_card_bill_payment(
+  target_household_id uuid, target_credit_card_id uuid, target_account_id uuid,
+  target_bill_month text, target_amount_cents bigint, target_paid_on date,
+  target_created_by_user_id uuid
+)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  matches bigint;
+  exact_matches bigint;
+begin
+  if auth.uid() is null or coalesce(auth.role(), '') <> 'authenticated' then
+    raise exception 'legacy payment recovery: active member authentication required' using errcode = '42501';
+  end if;
+  perform 1 from household_members where household_id = target_household_id
+    and user_id = auth.uid() and is_active for share;
+  if not found or target_created_by_user_id is distinct from auth.uid() then
+    raise exception 'legacy payment recovery: active member authentication required' using errcode = '42501';
+  end if;
+  select count(*), count(*) filter (
+    where account_id = target_account_id and amount_cents = target_amount_cents
+      and occurred_on = target_paid_on and created_by_user_id = target_created_by_user_id
+  ) into matches, exact_matches
+  from transactions where household_id = target_household_id
+    and kind = 'transfer' and credit_card_id = target_credit_card_id
+    and bill_month = target_bill_month and idempotency_key is null;
+  if matches = 0 then return 'none'; end if;
+  if matches = 1 and exact_matches = 1 then return 'matched'; end if;
+  return 'ambiguous';
+end;
+$$;
+revoke all on function reconcile_legacy_card_bill_payment(uuid, uuid, uuid, text, bigint, date, uuid)
+  from public, anon;
+grant execute on function reconcile_legacy_card_bill_payment(uuid, uuid, uuid, text, bigint, date, uuid)
+  to authenticated, service_role;
 
 -- materialize_obligation_payment: a missing UID can no longer inherit service-role access.
 create or replace function materialize_obligation_payment(

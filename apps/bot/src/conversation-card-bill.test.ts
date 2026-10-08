@@ -9,8 +9,8 @@
  *  - a computed-zero bill with no override is a terminal no-write no-op
  *  - cf/cx callback parity with typed confirmar/cancelar; cd:<uuid> resolves
  *    the picked card; a typed card name while the picker is open also resolves
- *  - alreadyPaid is a friendly no-op; a settle failure cancels with an
- *    apology and never claims success
+ *  - replayed returns the same success; a settle failure keeps the same
+ *    draft retryable and never claims success
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -25,9 +25,235 @@ import {
   type ConversationDeps,
 } from "./conversation.js";
 import type { InterpretedIntent, MessageClassifier } from "./interpret.js";
-import { CARD_TOKEN_PREFIX, TOKENS } from "./keyboards.js";
+import {
+  CARD_TOKEN_PREFIX,
+  TOKENS,
+  installmentReconciliationKeyboard,
+} from "./keyboards.js";
 
 const TODAY = "2026-07-06";
+
+describe("Task 6: fatura defaults, remaining balance and extra payments", () => {
+  it.each(["2026-06", "2026-08"])(
+    "B5: resolves the named card's default month to %s before reading its balance",
+    async (month) => {
+      const resolveDefaultBillMonth = vi.fn(async () => month);
+      const { deps, getCardBillAmount } = buildDeps({
+        resolveDefaultBillMonth,
+      });
+      const started = await startConversation(
+        { text: "paguei a fatura Nubank", fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      expect(resolveDefaultBillMonth).toHaveBeenCalledWith("card-1");
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-1", month);
+      expect(started.state.cardBillDraft).toMatchObject({
+        month,
+        monthExplicit: false,
+      });
+    },
+  );
+
+  it.each(["callback", "typed"])(
+    "B5: waits for the picker (%s) before resolving the selected card's month",
+    async (selection) => {
+      const resolveDefaultBillMonth = vi.fn(async () => "2026-06");
+      const { deps, getCardBillAmount } = buildDeps({
+        resolveDefaultBillMonth,
+        listActiveCards: () => [
+          { id: "card-1", name: "Nubank" },
+          { id: "card-2", name: "Itaú" },
+        ],
+      });
+      const started = await startConversation(
+        { text: "paguei a fatura", fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      expect(resolveDefaultBillMonth).not.toHaveBeenCalled();
+      expect(getCardBillAmount).not.toHaveBeenCalled();
+      const picked =
+        selection === "callback"
+          ? await applyCallback(
+              started.state,
+              `${CARD_TOKEN_PREFIX}card-2`,
+              deps,
+              { today: TODAY },
+            )
+          : await applyMessage(started.state, "Itaú", deps, { today: TODAY });
+      expect(resolveDefaultBillMonth).toHaveBeenCalledWith("card-2");
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-2", "2026-06");
+      expect(picked.state.cardBillDraft?.month).toBe("2026-06");
+    },
+  );
+
+  it.each(["named", "picker"])(
+    "B5: explicit month wins for %s card resolution",
+    async (selection) => {
+      const resolveDefaultBillMonth = vi.fn(async () => "2026-06");
+      const { deps, getCardBillAmount } = buildDeps({
+        resolveDefaultBillMonth,
+        listActiveCards: () => [
+          { id: "card-1", name: "Nubank" },
+          { id: "card-2", name: "Itaú" },
+        ],
+      });
+      const started = await startConversation(
+        {
+          text:
+            selection === "named"
+              ? "paguei a fatura Nubank de 05/2026"
+              : "fatura 05/2026 paga",
+          fromUserId: "user-alvaro",
+        },
+        deps,
+        { today: TODAY },
+      );
+      const resolved =
+        selection === "named"
+          ? started
+          : await applyCallback(
+              started.state,
+              `${CARD_TOKEN_PREFIX}card-1`,
+              deps,
+              { today: TODAY },
+            );
+      expect(resolveDefaultBillMonth).not.toHaveBeenCalled();
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-05");
+      expect(resolved.state.cardBillDraft).toMatchObject({
+        month: "2026-05",
+        monthExplicit: true,
+      });
+    },
+  );
+
+  it("B1: prefills only the remaining balance of a partially paid bill", async () => {
+    const { deps } = buildDeps({
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 23000,
+        paidCents: 100000,
+        closed: true,
+      })),
+    });
+    const started = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(started.state.cardBillDraft?.amountCents).toBe(23000);
+    expect(started.reply).toContain("R$ 230,00");
+  });
+
+  it.each([
+    [true, "nubank pago"],
+    [false, "nubank pago"],
+    [true, "nubank pago 50"],
+  ] as const)(
+    "B2: a covered bill (closed=%s, message=%s) asks for an extra amount and saves it",
+    async (closed, text) => {
+      const { deps, settleCardBill } = buildDeps({
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 0,
+          paidCents: 123000,
+          closed,
+        })),
+      });
+      const started = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      expect(started.state.status).toBe("awaiting_card_bill_confirmation");
+      expect(started.state.cardBillDraft?.amountCents).toBeUndefined();
+      expect(started.reply).toBe(
+        'A fatura Nubank de 07/2026 já está paga (R$ 1.230,00). Quer registrar um pagamento extra? Envie "valor 50,00".',
+      );
+      expect(started.keyboard).toBeUndefined();
+      const premature = await applyMessage(started.state, "confirmar", deps, {
+        today: TODAY,
+      });
+      expect(premature.state.cardBillDraft?.amountCents).toBeUndefined();
+      expect(settleCardBill).not.toHaveBeenCalled();
+      const corrected = await applyMessage(
+        premature.state,
+        "valor 50,00",
+        deps,
+        { today: TODAY },
+      );
+      const confirmed = await applyMessage(corrected.state, "confirmar", deps, {
+        today: TODAY,
+      });
+      expect(settleCardBill).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 5000,
+          idempotencyKey: started.state.cardBillDraft?.idempotencyKey,
+        }),
+      );
+      expect(confirmed.state.status).toBe("saved");
+      expect(confirmed.reply).toBe(
+        "Fatura paga! ✅ Nubank — R$ 50,00 (jul/2026)",
+      );
+    },
+  );
+
+  it("B2: account and date corrections keep the extra amount unset", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 0,
+        paidCents: 123000,
+        closed: true,
+      })),
+    });
+    let outcome = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    for (const message of ["conta Itaú", "data 05/07/2026", "confirmar"]) {
+      outcome = await applyMessage(outcome.state, message, deps, {
+        today: TODAY,
+      });
+      expect(outcome.state.cardBillDraft?.amountCents).toBeUndefined();
+      expect(outcome.reply).not.toMatch(/NaN|undefined/);
+    }
+    expect(outcome.state.cardBillDraft).toMatchObject({
+      accountId: "acct-2",
+      paidOn: "2026-07-05",
+    });
+    expect(settleCardBill).not.toHaveBeenCalled();
+  });
+
+  it("B3: replaying the same draft uses its key and returns the same success without another payment", async () => {
+    const payments = new Set<string>();
+    const settleCardBill = vi.fn(async (draft: CardBillSettlementDraft) => {
+      const replayed = payments.has(draft.idempotencyKey);
+      payments.add(draft.idempotencyKey);
+      return { replayed };
+    });
+    const { deps } = buildDeps({ settleCardBill });
+    const started = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    expect(started.state.cardBillDraft?.idempotencyKey).toMatch(
+      /^[\da-f-]{36}$/,
+    );
+    const first = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    const replay = await applyCallback(started.state, TOKENS.confirm, deps, {
+      today: TODAY,
+    });
+    expect(replay.reply).toBe(first.reply);
+    expect(replay.state.status).toBe("saved");
+    expect(payments.size).toBe(1);
+    expect(settleCardBill.mock.calls[1]?.[0].idempotencyKey).toBe(
+      started.state.cardBillDraft?.idempotencyKey,
+    );
+  });
+});
 
 const CATALOG: CategoryCatalog = {
   householdId: "house-1",
@@ -47,8 +273,12 @@ function buildDeps(overrides: Partial<ConversationDeps> = {}): {
   settleCardBill: ReturnType<typeof vi.fn>;
   logInteraction: ReturnType<typeof vi.fn>;
 } {
-  const getCardBillAmount = vi.fn(async () => 123000);
-  const settleCardBill = vi.fn(async () => ({ alreadyPaid: false }));
+  const getCardBillAmount = vi.fn(async () => ({
+    remainingCents: 123000,
+    paidCents: 0,
+    closed: false,
+  }));
+  const settleCardBill = vi.fn(async () => ({ replayed: false }));
   const logInteraction = vi.fn(async () => undefined);
 
   const deps: ConversationDeps = {
@@ -366,7 +596,11 @@ describe("card-bill start: computed amount / override", () => {
     async (text, _classificationLabel, classified) => {
       const { deps, getCardBillAmount } = buildDeps({
         classifyMessage: classifierReturning(classified),
-        getCardBillAmount: vi.fn(async () => 123000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 123000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -393,7 +627,11 @@ describe("card-bill start: computed amount / override", () => {
         { id: "card-1", name: "Nubank" },
         { id: "card-2", name: "Itaú" },
       ],
-      getCardBillAmount: vi.fn(async () => 123000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 123000,
+        paidCents: 0,
+        closed: false,
+      })),
     });
 
     const started = await startConversation(
@@ -447,7 +685,11 @@ describe("card-bill start: computed amount / override", () => {
       const { deps, getCardBillAmount } = buildDeps({
         listActiveCards: () => [{ id: "card-aurea", name: "Áurea+ 2" }],
         classifyMessage: classifierReturning(classified),
-        getCardBillAmount: vi.fn(async () => 45000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 45000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -478,7 +720,11 @@ describe("card-bill start: computed amount / override", () => {
       const { deps, getCardBillAmount } = buildDeps({
         listActiveCards: () => [{ id: "card-aurea", name: "Áurea+2" }],
         classifyMessage: classifierReturning(classified),
-        getCardBillAmount: vi.fn(async () => 45000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 45000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -517,7 +763,11 @@ describe("card-bill start: computed amount / override", () => {
           name.toLowerCase() === "inter" ? "acct-inter" : undefined,
         accountNameById: (id) => (id === "acct-inter" ? "Inter" : undefined),
         classifyMessage: classifierReturning(classified),
-        getCardBillAmount: vi.fn(async () => 45000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 45000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -569,15 +819,17 @@ describe("card-bill start: computed amount / override", () => {
           { id: "card-nubank", name: "Nubank" },
           { id: "card-nubank-pj", name: "Nubank PJ" },
         ],
-        listActiveAccounts: () => [
-          { id: "account-nubank", name: "Nubank" },
-        ],
+        listActiveAccounts: () => [{ id: "account-nubank", name: "Nubank" }],
         resolveAccountIdByName: (name) =>
           name.toLowerCase() === "nubank" ? "account-nubank" : undefined,
         accountNameById: (id) =>
           id === "account-nubank" ? "Nubank" : undefined,
         classifyMessage: classifierReturning(classified),
-        getCardBillAmount: vi.fn(async () => 99_900),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 99_900,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -859,7 +1111,11 @@ describe("card-bill start: computed amount / override", () => {
       classifyMessage: classifierReturning(
         markPaidCardIntent({ keyword: "errado", amountCents: 2 }),
       ),
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
     });
 
     const started = await startConversation(
@@ -881,7 +1137,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("routes `Cartão Nubank pago` to computed bill settlement despite wrong plain AI", async () => {
     const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning({
         intent: "plain",
         expense: { description: "Cartão Nubank", amountCents: 99900 },
@@ -916,7 +1176,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("keeps an explicit R$ 500 override for `Cartão Nubank pago`", async () => {
     const { deps, getCardBillAmount } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning({
         intent: "plain",
         expense: { description: "Cartão Nubank", amountCents: 99900 },
@@ -947,7 +1211,11 @@ describe("card-bill start: computed amount / override", () => {
     "keeps `%s` on the Nubank bill path despite a wrong plain classification",
     async (text, expectedOverride, expectedAmount) => {
       const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-        getCardBillAmount: vi.fn(async () => 45000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 45000,
+          paidCents: 0,
+          closed: false,
+        })),
         classifyMessage: classifierReturning({
           intent: "plain",
           expense: { description: "Despesa comum", amountCents: 99900 },
@@ -983,7 +1251,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("shows the computed amount when no trailing amount is given", async () => {
     const { deps } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(markPaidCardIntent()),
     });
     const { state, reply } = await startConversation(
@@ -997,7 +1269,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("a trailing amount (override) wins over the computed amount", async () => {
     const { deps, getCardBillAmount } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(
         markPaidCardIntent({ amountCents: 235000 }),
       ),
@@ -1015,7 +1291,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("extracts a leading actual payment amount without AI and persists the override", async () => {
     const { deps, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 123000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 123000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -1170,7 +1450,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("extracts a card payment amount after the card name without AI", async () => {
     const { deps, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 123000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 123000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -1194,7 +1478,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("does not treat a bill reference month as the payment amount", async () => {
     const { deps, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(
         markPaidCardIntent({ amountCents: 202600 }),
       ),
@@ -1218,7 +1506,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("keeps an explicit amount alongside a bill reference month", async () => {
     const { deps, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(
         markPaidCardIntent({ amountCents: 202600 }),
       ),
@@ -1244,7 +1536,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("uses an explicit prior bill month through confirmation and settlement", async () => {
     const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 45000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 45000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -1269,7 +1565,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("recognizes `em MM/AAAA` as an explicit prior bill month", async () => {
     const { deps, getCardBillAmount } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 71000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 71000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -1288,7 +1588,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("uses an explicit Itaú settlement source through confirmation", async () => {
     const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 200000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 200000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -1404,7 +1708,11 @@ describe("card-bill start: computed amount / override", () => {
           name.trim().toLowerCase() === "inter" ? "acct-inter" : undefined,
         accountNameById: (id: string) =>
           id === "acct-inter" ? "Inter" : undefined,
-        getCardBillAmount: vi.fn(async () => 235000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 235000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -1500,9 +1808,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("expands a standalone short-year bill month through computation and settlement", async () => {
     const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async (_cardId, month) =>
-        month === "2026-07" ? 71000 : 82000,
-      ),
+      getCardBillAmount: vi.fn(async (_cardId, month) => ({
+        remainingCents: month === "2026-07" ? 71000 : 82000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -1556,9 +1866,11 @@ describe("card-bill start: computed amount / override", () => {
   );
 
   it("treats a full calendar date as occurrence context, not a prior bill month", async () => {
-    const getCardBillAmount = vi.fn(async (_cardId: string, month: string) =>
-      month === "2026-07" ? 71000 : 82000,
-    );
+    const getCardBillAmount = vi.fn(async (_cardId: string, month: string) => ({
+      remainingCents: month === "2026-07" ? 71000 : 82000,
+      paidCents: 0,
+      closed: false,
+    }));
     const { deps } = buildDeps({
       getCardBillAmount,
       classifyMessage: classifierReturning(null),
@@ -1591,7 +1903,11 @@ describe("card-bill start: computed amount / override", () => {
     "keeps the current bill month when `%s` contains only an occurrence date",
     async (text) => {
       const { deps, getCardBillAmount } = buildDeps({
-        getCardBillAmount: vi.fn(async () => 82000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 82000,
+          paidCents: 0,
+          closed: false,
+        })),
         classifyMessage: classifierReturning(null),
       });
 
@@ -1616,7 +1932,11 @@ describe("card-bill start: computed amount / override", () => {
     "treats the bare DD/MM in `%s` as the payment date for the current bill",
     async (text, expectedPaidOn) => {
       const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-        getCardBillAmount: vi.fn(async () => 82000),
+        getCardBillAmount: vi.fn(async () => ({
+          remainingCents: 82000,
+          paidCents: 0,
+          closed: false,
+        })),
         classifyMessage: classifierReturning(null),
       });
 
@@ -1958,7 +2278,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("keeps an explicit `de MM/AA` selector as the bill month, not paidOn", async () => {
     const { deps, getCardBillAmount } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 71000),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 71000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
 
@@ -1989,9 +2313,11 @@ describe("card-bill start: computed amount / override", () => {
         classifyMessage: classifierReturning(
           markPaidCardIntent({ keyword: "Inter", amountCents: 1507 }),
         ),
-        getCardBillAmount: vi.fn(async (_cardId, month) =>
-          month === "2026-07" ? 71000 : 82000,
-        ),
+        getCardBillAmount: vi.fn(async (_cardId, month) => ({
+          remainingCents: month === "2026-07" ? 71000 : 82000,
+          paidCents: 0,
+          closed: false,
+        })),
       });
 
       const started = await startConversation(
@@ -2011,9 +2337,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("uses an explicit short-year bill month alongside a separate occurrence date", async () => {
     const { deps, getCardBillAmount, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async (_cardId, month) =>
-        month === "2026-06" ? 61000 : 82000,
-      ),
+      getCardBillAmount: vi.fn(async (_cardId, month) => ({
+        remainingCents: month === "2026-06" ? 61000 : 82000,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(null),
     });
     const started = await startConversation(
@@ -2040,7 +2368,11 @@ describe("card-bill start: computed amount / override", () => {
 
   it("computed zero with no override -> terminal zero message, nothing written", async () => {
     const { deps, settleCardBill } = buildDeps({
-      getCardBillAmount: vi.fn(async () => 0),
+      getCardBillAmount: vi.fn(async () => ({
+        remainingCents: 0,
+        paidCents: 0,
+        closed: false,
+      })),
       classifyMessage: classifierReturning(markPaidCardIntent()),
     });
     const { state, reply } = await startConversation(
@@ -2621,6 +2953,7 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     });
     expect(settleCardBill).toHaveBeenCalledWith({
       householdId: "house-1",
+      idempotencyKey: started.state.cardBillDraft!.idempotencyKey!,
       creditCardId: "card-1",
       accountId: "acct-1",
       billMonth: "2026-07",
@@ -2635,9 +2968,9 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     );
   });
 
-  it("alreadyPaid: true -> friendly no-op, does not log a new interaction", async () => {
+  it("replayed: true -> same success reply, does not log a new interaction", async () => {
     const { deps, logInteraction } = buildDeps({
-      settleCardBill: vi.fn(async () => ({ alreadyPaid: true })),
+      settleCardBill: vi.fn(async () => ({ replayed: true })),
       classifyMessage: classifierReturning(markPaidCardIntent()),
     });
     const started = await startConversation(
@@ -2651,11 +2984,11 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     expect(outcome.state.status).toBe("saved");
     expect(logInteraction).not.toHaveBeenCalled();
     expect(outcome.reply).toBe(
-      "A fatura do Nubank de jul/2026 já estava paga — nada mudou. 👍",
+      "Fatura paga! ✅ Nubank — R$ 1.230,00 (jul/2026)",
     );
   });
 
-  it("settle throws -> failure message, state cancelled", async () => {
+  it("B3: settle throws -> same retryable draft with payment date pinned", async () => {
     const { deps } = buildDeps({
       settleCardBill: vi.fn(async () => {
         throw new Error("boom");
@@ -2670,10 +3003,135 @@ describe("card-bill confirm: persists via settleCardBill", () => {
     const outcome = await applyMessage(started.state, "confirmar", deps, {
       today: TODAY,
     });
-    expect(outcome.state.status).toBe("cancelled");
+    expect(outcome.state.status).toBe("card_bill_submission_started");
+    expect(outcome.state.cardBillDraft).toEqual({
+      ...started.state.cardBillDraft,
+      paidOn: TODAY,
+    });
+    expect(outcome.keyboard).toEqual(installmentReconciliationKeyboard());
     expect(outcome.reply).toBe(
-      "Não consegui registrar o pagamento da fatura do Nubank — tenta de novo em instantes.",
+      "Não consegui confirmar agora se o pagamento da fatura do Nubank foi registrado. Tente confirmar novamente — não vou duplicar o pagamento.",
     );
+  });
+
+  it("refuses typed edits and cancel buttons after an uncertain settlement", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      settleCardBill: vi.fn(async () => {
+        throw new Error("response lost");
+      }),
+      classifyMessage: classifierReturning(markPaidCardIntent()),
+    });
+    const started = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const uncertain = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    for (const message of ["cancelar", "valor 999,90"]) {
+      const refused = await applyMessage(uncertain.state, message, deps, {
+        today: TODAY,
+      });
+      expect(refused.state).toBe(uncertain.state);
+      expect(refused.reply).toBe(
+        "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; confirme novamente para concluir sem duplicar.",
+      );
+      expect(refused.keyboard).toEqual(installmentReconciliationKeyboard());
+    }
+    const refused = await applyCallback(uncertain.state, TOKENS.cancel, deps, {
+      today: TODAY,
+    });
+    expect(refused.state).toBe(uncertain.state);
+    expect(refused.reply).toBe(
+      "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; toque em verificar para concluir sem duplicar.",
+    );
+    expect(refused.keyboard).toEqual(installmentReconciliationKeyboard());
+    expect(refused.toast).toBe(
+      "Confirmação pendente — verifique para concluir.",
+    );
+    expect(settleCardBill).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "confirms a legacy draft without a key (initial failure=%s)",
+    async (failFirst) => {
+      const settleCardBill = vi.fn(async (_draft: CardBillSettlementDraft) => ({
+        replayed: true,
+      }));
+      if (failFirst)
+        settleCardBill.mockRejectedValueOnce(new Error("response lost"));
+      const { deps } = buildDeps({
+        settleCardBill,
+        classifyMessage: classifierReturning(markPaidCardIntent()),
+      });
+      const started = await startConversation(
+        { text: "nubank pago", fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      const legacy = {
+        ...started.state,
+        cardBillDraft: {
+          ...started.state.cardBillDraft!,
+          idempotencyKey: undefined,
+        },
+      };
+      const first = await applyMessage(legacy, "confirmar", deps, {
+        today: TODAY,
+      });
+      const key = settleCardBill.mock.calls[0]?.[0]?.idempotencyKey;
+      expect(key).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      if (failFirst) {
+        expect(first.state.cardBillDraft?.idempotencyKey).toBe(key);
+        const retry = await applyMessage(first.state, "confirmar", deps, {
+          today: "2026-07-07",
+        });
+        expect(settleCardBill.mock.calls[1]?.[0]).toEqual(
+          settleCardBill.mock.calls[0]?.[0],
+        );
+        expect(retry.state.status).toBe("saved");
+      } else {
+        expect(first.state.status).toBe("saved");
+      }
+    },
+  );
+
+  it("B3: retries on another day with the same payload and accepts a replay", async () => {
+    const settleCardBill = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({ replayed: true });
+    const { deps, logInteraction } = buildDeps({
+      settleCardBill,
+      classifyMessage: classifierReturning(markPaidCardIntent()),
+    });
+    const started = await startConversation(
+      { text: "nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const uncertain = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    const retried = await applyCallback(uncertain.state, TOKENS.confirm, deps, {
+      today: "2026-07-07",
+    });
+    expect(settleCardBill).toHaveBeenCalledTimes(2);
+    expect(settleCardBill.mock.calls[1]?.[0]).toEqual(
+      settleCardBill.mock.calls[0]?.[0],
+    );
+    expect(settleCardBill.mock.calls[1]?.[0]).toMatchObject({
+      idempotencyKey: started.state.cardBillDraft!.idempotencyKey,
+      paidOn: TODAY,
+    });
+    expect(retried.state.status).toBe("saved");
+    expect(retried.reply).toBe(
+      "Fatura paga! ✅ Nubank — R$ 1.230,00 (jul/2026)",
+    );
+    expect(logInteraction).not.toHaveBeenCalled();
   });
 
   it("deps.settleCardBill undefined -> unavailable terminal", async () => {
@@ -2744,5 +3202,64 @@ describe("card-bill callback parity: cf/cx", () => {
     });
     expect(outcome.silent).toBe(true);
     expect(outcome.toast).toBeDefined();
+  });
+});
+
+describe("legacy picker and payment date safeguards", () => {
+  it.each(["typed", "callback"])(
+    "preserves a legacy picker's stored month through %s card selection",
+    async (path) => {
+      const resolveDefaultBillMonth = vi.fn(async () => "2026-10");
+      const { deps, getCardBillAmount } = buildDeps({
+        resolveDefaultBillMonth,
+        listActiveCards: () => [
+          { id: "card-1", name: "Nubank" },
+          { id: "card-2", name: "Itaú" },
+        ],
+      });
+      const started = await startConversation(
+        { text: "paguei a fatura", fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      const legacy = {
+        ...started.state,
+        cardBillDraft: {
+          ...started.state.cardBillDraft!,
+          month: "2026-09",
+          monthExplicit: undefined,
+        },
+      };
+      const outcome =
+        path === "typed"
+          ? await applyMessage(legacy, "Nubank", deps, { today: TODAY })
+          : await applyCallback(legacy, `${CARD_TOKEN_PREFIX}card-1`, deps, {
+              today: TODAY,
+            });
+      expect(outcome.state.cardBillDraft?.month).toBe("2026-09");
+      expect(resolveDefaultBillMonth).not.toHaveBeenCalled();
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-09");
+    },
+  );
+
+  it("rejects a future date correction and keeps cancellation available", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      classifyMessage: classifierReturning(markPaidCardIntent()),
+    });
+    const started = await startConversation(
+      { text: "Nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyMessage(started.state, "data 01/12/2099", deps, {
+      today: TODAY,
+    });
+    expect(outcome.reply).toContain("futura");
+    expect(outcome.state).toBe(started.state);
+    expect(settleCardBill).not.toHaveBeenCalled();
+    const cancelled = await applyMessage(outcome.state, "cancelar", deps, {
+      today: TODAY,
+    });
+    expect(cancelled.state.status).toBe("cancelled");
   });
 });

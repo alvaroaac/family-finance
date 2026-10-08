@@ -63,3 +63,8 @@ export function monthNamePtBr(month: string): string {
   if (match === null) return month;
   return MONTH_NAMES_PT[Number.parseInt(match[2] as string, 10) - 1] ?? month;
 }
+
+/** Integer cents as an editable pt-BR money input value: 123456 -> "1234,56". */
+export function centsToInputValue(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}

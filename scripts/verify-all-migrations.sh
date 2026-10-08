@@ -2,17 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Keep synthetic test migrations after the latest real migration.
-fixture_max_version=0
-for fixture_path in "$repo_root"/supabase/migrations/*.sql; do
-  fixture_name="$(basename "$fixture_path")"
-  fixture_number="${fixture_name%%_*}"
-  if (( 10#$fixture_number > fixture_max_version )); then
-    fixture_max_version=$((10#$fixture_number))
-  fi
-done
-printf -v fixture_success_version '%04d' "$((fixture_max_version + 1))"
-printf -v fixture_next_version '%04d' "$((fixture_max_version + 2))"
+# Synthetic test migrations use far-future timestamp versions so they always
+# sort after the real history.
+fixture_success_version=999912310000
+fixture_next_version=999912310001
 
 scratch="$(mktemp -d)"
 container="family-finance-migrations-$(basename "$scratch")"
@@ -200,6 +193,11 @@ ledger_count="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   exit 1
 }
 
+# Simulate a ledger created before timestamp versions existed; apply must widen it.
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+  "alter table family_finance_migrations.schema_migrations
+     drop constraint schema_migrations_version_check,
+     add constraint schema_migrations_version_check check (version ~ '^[0-9]{4}$');" >/dev/null
 MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" apply >/dev/null
 # The compatibility migration must also be safe to reapply directly.
@@ -366,7 +364,7 @@ decoy_ledger="$(docker exec "$container" psql -X -U postgres -d "$decoy_db" -Atc
   exit 1
 }
 
-# Exercise 0029 against the three possible pre-upgrade household counts.
+# Exercise 202610080001 against the three possible pre-upgrade household counts.
 provision_template="family_finance_provision_template"
 docker exec "$container" createdb -U postgres "$provision_template"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$provision_template" -c \
@@ -375,7 +373,7 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$provision_t
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
-  [[ "$(basename "$migration")" < "0029_" ]] || continue
+  [[ "$(basename "$migration")" < "202610080001_" ]] || continue
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$provision_template" -f - \
     < "$migration" >/dev/null
 done
@@ -391,7 +389,7 @@ for scenario in empty single ambiguous; do
     docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c \
       "insert into households(id,name) values ('00000000-0000-0000-0000-000000000002','B');" >/dev/null
     if output="$(docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$db" -f - \
-      < "$repo_root/supabase/migrations/0029_multi_household_provisioning.sql" 2>&1)"; then
+      < "$repo_root/supabase/migrations/202610080001_multi_household_provisioning.sql" 2>&1)"; then
       echo "ambiguous allowlist backfill unexpectedly succeeded" >&2; exit 1
     fi
     [[ "$output" == *"ambiguous"* ]] || { echo "$output" >&2; exit 1; }
@@ -405,7 +403,7 @@ for scenario in empty single ambiguous; do
     continue
   fi
   output="$(docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$db" -f - \
-    < "$repo_root/supabase/migrations/0029_multi_household_provisioning.sql" 2>&1)"
+    < "$repo_root/supabase/migrations/202610080001_multi_household_provisioning.sql" 2>&1)"
   if [[ "$scenario" == empty ]]; then
     [[ "$output" == *"NOTICE:  allowed_emails: deleted 1 unassigned row(s)"* ]] || {
       echo "empty-household deletion did not name the count: $output" >&2; exit 1;
@@ -422,13 +420,13 @@ for scenario in empty single ambiguous; do
   before="$(docker exec "$container" pg_dump -U postgres -d "$db" | \
     sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$db" -f - \
-    < "$repo_root/supabase/migrations/0029_multi_household_provisioning.sql" >/dev/null
+    < "$repo_root/supabase/migrations/202610080001_multi_household_provisioning.sql" >/dev/null
   after="$(docker exec "$container" pg_dump -U postgres -d "$db" | \
     sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
-  [[ "$before" == "$after" ]] || { echo "0029 replay changed $scenario database" >&2; exit 1; }
+  [[ "$before" == "$after" ]] || { echo "202610080001 replay changed $scenario database" >&2; exit 1; }
 done
 
-# Exercise 0030 on buckets created under the old slug enum, then replay it.
+# Exercise 202610080002 on buckets created under the old slug enum, then replay it.
 buckets_db="family_finance_free_form_buckets"
 docker exec "$container" createdb -U postgres "$buckets_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db" -c \
@@ -437,7 +435,7 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db"
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
-  [[ "$(basename "$migration")" < "0030_" ]] || continue
+  [[ "$(basename "$migration")" < "202610080002_" ]] || continue
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$buckets_db" -f - \
     < "$migration" >/dev/null
 done
@@ -450,18 +448,18 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db"
      ('00000000-0000-0000-0000-000000000001','casa','Casa',200),
      ('00000000-0000-0000-0000-000000000001','independencia_financeira','Independência Financeira',300);" >/dev/null
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$buckets_db" -f - \
-  < "$repo_root/supabase/migrations/0030_free_form_investment_buckets.sql" >/dev/null
+  < "$repo_root/supabase/migrations/202610080002_free_form_investment_buckets.sql" >/dev/null
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$buckets_db" -f - \
   < "$repo_root/packages/db/test/free-form-investment-buckets-functional.sql" >/dev/null
 before="$(docker exec "$container" pg_dump -U postgres -d "$buckets_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$buckets_db" -f - \
-  < "$repo_root/supabase/migrations/0030_free_form_investment_buckets.sql" >/dev/null
+  < "$repo_root/supabase/migrations/202610080002_free_form_investment_buckets.sql" >/dev/null
 after="$(docker exec "$container" pg_dump -U postgres -d "$buckets_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
-[[ "$before" == "$after" ]] || { echo "0030 replay changed the buckets database" >&2; exit 1; }
+[[ "$before" == "$after" ]] || { echo "202610080002 replay changed the buckets database" >&2; exit 1; }
 
-# Exercise 0031 against an existing chat-only conversation, then replay it.
+# Exercise 202610080003 against an existing chat-only conversation, then replay it.
 bot_db="family_finance_bot_member_scope"
 docker exec "$container" createdb -U postgres "$bot_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -c \
@@ -470,25 +468,25 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -c 
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
-  [[ "$(basename "$migration")" < "0031_" ]] || continue
+  [[ "$(basename "$migration")" < "202610080003_" ]] || continue
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_db" -f - \
     < "$migration" >/dev/null
 done
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -c \
   "insert into bot_conversations(chat_id, state) values (9001, '{\"old\":true}');" >/dev/null
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_db" -f - \
-  < "$repo_root/supabase/migrations/0031_bot_member_scope.sql" >/dev/null
+  < "$repo_root/supabase/migrations/202610080003_bot_member_scope.sql" >/dev/null
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$bot_db" -f - \
   < "$repo_root/packages/db/test/bot-member-scope-functional.sql" >/dev/null
 before="$(docker exec "$container" pg_dump -U postgres -d "$bot_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$bot_db" -f - \
-  < "$repo_root/supabase/migrations/0031_bot_member_scope.sql" >/dev/null
+  < "$repo_root/supabase/migrations/202610080003_bot_member_scope.sql" >/dev/null
 after="$(docker exec "$container" pg_dump -U postgres -d "$bot_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
-[[ "$before" == "$after" ]] || { echo "0031 replay changed the bot database" >&2; exit 1; }
+[[ "$before" == "$after" ]] || { echo "202610080003 replay changed the bot database" >&2; exit 1; }
 
-# Exercise 0032 against confirmed and unconfirmed identities, then replay it.
+# Exercise 202610080004 against confirmed and unconfirmed identities, then replay it.
 identity_db="family_finance_verified_identity"
 docker exec "$container" createdb -U postgres "$identity_db"
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -c \
@@ -497,14 +495,14 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db
    create function auth.uid() returns uuid language sql stable as 'select null::uuid';
    create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
 for migration in "$repo_root"/supabase/migrations/*.sql; do
-  [[ "$(basename "$migration")" < "0032_" ]] || continue
+  [[ "$(basename "$migration")" < "202610080004_" ]] || continue
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$identity_db" -f - \
     < "$migration" >/dev/null
 done
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -c \
   "create schema if not exists extensions; alter extension pgcrypto set schema extensions;" >/dev/null
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$identity_db" -f - \
-  < "$repo_root/supabase/migrations/0032_verified_identity_binding.sql" >/dev/null
+  < "$repo_root/supabase/migrations/202610080004_verified_identity_binding.sql" >/dev/null
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -c \
   "create or replace function auth.uid() returns uuid language sql stable
    as \$\$select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid\$\$;" >/dev/null
@@ -515,9 +513,49 @@ docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity
 before="$(docker exec "$container" pg_dump -U postgres -d "$identity_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$identity_db" -f - \
-  < "$repo_root/supabase/migrations/0032_verified_identity_binding.sql" >/dev/null
+  < "$repo_root/supabase/migrations/202610080004_verified_identity_binding.sql" >/dev/null
 after="$(docker exec "$container" pg_dump -U postgres -d "$identity_db" | \
   sed '/^\\restrict /d; /^\\unrestrict /d' | shasum -a 256)"
-[[ "$before" == "$after" ]] || { echo "0032 replay changed the identity database" >&2; exit 1; }
+[[ "$before" == "$after" ]] || { echo "202610080004 replay changed the identity database" >&2; exit 1; }
+
+# Compare a fresh catalog with the deployed pre-multi-tenant snapshot (0001..0027
+# plus PR42). The real ledger must converge and repeated apply must be a no-op.
+snapshot_db="family_finance_card_bill_upgrade"
+docker exec "$container" createdb -U postgres "$snapshot_db"
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$snapshot_db" -c \
+  "create schema auth;
+   create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz);
+   create function auth.uid() returns uuid language sql stable as 'select null::uuid';
+   create function auth.role() returns text language sql stable as 'select ''authenticated''::text';" >/dev/null
+mkdir -p "$scratch/deployed-card-bill-migrations"
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "202610080001_" ]] || continue
+  cp "$migration" "$scratch/deployed-card-bill-migrations/"
+done
+MIGRATIONS_DIR="$scratch/deployed-card-bill-migrations" MIGRATION_DB_NAME="$snapshot_db" \
+  "$repo_root/deploy/migrate.sh" initialize >/dev/null
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$snapshot_db" -c \
+  "insert into households(name) values ('Existing Casa upgrade');" >/dev/null
+for _ in 1 2; do
+  MIGRATION_DB_NAME="$snapshot_db" "$repo_root/deploy/migrate.sh" apply >/dev/null
+done
+for database_name in "$fresh_db" "$snapshot_db"; do
+  docker exec "$container" pg_dump -U postgres -d "$database_name" --schema-only --schema public --schema auth | \
+    sed '/^\\restrict /d; /^\\unrestrict /d' > "$scratch/$database_name-catalog.sql"
+  docker exec "$container" psql -X -U postgres -d "$database_name" -Atc \
+    "select version || '|' || name || '|' || checksum from family_finance_migrations.schema_migrations order by version" \
+    > "$scratch/$database_name-ledger.txt"
+done
+diff -u "$scratch/$fresh_db-catalog.sql" "$scratch/$snapshot_db-catalog.sql"
+diff -u "$scratch/$fresh_db-ledger.txt" "$scratch/$snapshot_db-ledger.txt"
+# Replay all SQL definitions in order. Replaying PR42 alone would deliberately
+# restore its earlier gate; the later member-scoped definition must remain last.
+for migration in "$repo_root"/supabase/migrations/*.sql; do
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$snapshot_db" -f - \
+    < "$migration" >/dev/null
+done
+docker exec "$container" pg_dump -U postgres -d "$snapshot_db" --schema-only --schema public --schema auth | \
+  sed '/^\\restrict /d; /^\\unrestrict /d' > "$scratch/replayed-catalog.sql"
+diff -u "$scratch/$snapshot_db-catalog.sql" "$scratch/replayed-catalog.sql"
 
 echo "all migrations apply cleanly twice"

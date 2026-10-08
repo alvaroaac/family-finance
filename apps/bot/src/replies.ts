@@ -84,34 +84,30 @@ export type SummaryView = {
 
 /**
  * Build the editable confirmation summary shown BEFORE saving. It lists every
- * field and the commands to correct each one, then asks for confirmation.
+ * field at the bottom, immediately above the confirmation buttons.
  */
 export function confirmationMessage(view: SummaryView): string {
   const lines: string[] = [];
-  lines.push("Confirme o lançamento:");
-  lines.push("");
+  if (view.categoryExplanation) {
+    lines.push(`Sugestão: ${view.categoryExplanation}`);
+  }
   lines.push(
-    `• Valor: R$ ${view.amountCents !== undefined ? formatBrl(view.amountCents) : '— (informe com "valor 32,50")'}`,
+    'Para corrigir, use os botões ou envie "valor 45,90" ou "data 12/03".',
   );
+  lines.push('Você também pode responder "confirmar" ou "cancelar".');
+  lines.push("");
+  lines.push("Confirme o lançamento:");
   lines.push(`• Descrição: ${view.description || "—"}`);
-  lines.push(`• Data: ${formatIsoDate(view.occurredOn)}`);
+  lines.push(
+    `• Valor: R$ ${view.amountCents !== undefined ? formatBrl(view.amountCents) : '— (informe com "valor 32,50")'} · Data: ${formatIsoDate(view.occurredOn)}`,
+  );
+  lines.push(`• Pagamento: ${view.paymentLabel}`);
+  lines.push(`• Responsável: ${view.responsibleLabel}`);
   if (view.proposedNewCategory !== undefined) {
     lines.push(`• Categoria: "${view.proposedNewCategory}" (nova — sugerida)`);
   } else {
     lines.push(`• Categoria: ${view.categoryLabel}`);
   }
-  lines.push(`• Pagamento: ${view.paymentLabel}`);
-  lines.push(`• Responsável: ${view.responsibleLabel}`);
-  if (view.categoryExplanation) {
-    lines.push("");
-    lines.push(`Sugestão: ${view.categoryExplanation}`);
-  }
-  lines.push("");
-  lines.push("Responda *confirmar* para salvar, ou corrija:");
-  lines.push(
-    '"valor 45,90" · "data 12/03" · "categoria Alimentação" · "responsável Ana"',
-  );
-  lines.push("Para descartar, responda *cancelar*.");
   return lines.join("\n");
 }
 
@@ -227,19 +223,17 @@ export function obligationConfirmationMessage(
   const kind = view.termMonths !== null ? "Financiamento" : "Obrigação fixa";
 
   const lines: string[] = [];
-  lines.push("Confirme a obrigação:");
+  if (view.categoryExplanation) {
+    lines.push(`Sugestão: ${view.categoryExplanation}`);
+  }
+  lines.push('Para corrigir, envie "valor 710,44", "dia 5" ou "conta Nubank".');
+  lines.push('Você também pode responder "confirmar" ou "cancelar".');
   lines.push("");
+  lines.push("Confirme a obrigação:");
   lines.push(`• ${kind}: ${view.description} — ${amount}${term}`);
   lines.push(`• Vence dia ${view.dueDay}`);
   lines.push(`• Pago via: ${view.accountLabel}`);
   lines.push(`• Categoria: ${view.categoryLabel}`);
-  if (view.categoryExplanation) {
-    lines.push(`Sugestão: ${view.categoryExplanation}`);
-  }
-  lines.push("");
-  lines.push("Responda *confirmar* para salvar, ou corrija:");
-  lines.push('"valor 710,44" · "dia 5" · "conta Nubank"');
-  lines.push("Para descartar, responda *cancelar*.");
   return lines.join("\n");
 }
 
@@ -339,8 +333,15 @@ export function installmentConfirmationMessage(
   view: InstallmentSummaryView,
 ): string {
   const lines: string[] = [];
-  lines.push("Confirme a compra parcelada:");
+  if (view.categoryExplanation) {
+    lines.push(`Sugestão: ${view.categoryExplanation}`);
+  }
+  lines.push(
+    'Para corrigir, envie "valor 3.700", "parcelas 10", "cartão X" ou "data 12/06".',
+  );
+  lines.push('Você também pode responder "confirmar" ou "cancelar".');
   lines.push("");
+  lines.push("Confirme a compra parcelada:");
 
   lines.push(`• Descrição: ${view.description || "—"}`);
   lines.push(
@@ -361,20 +362,12 @@ export function installmentConfirmationMessage(
     `• 1ª parcela: ${view.firstDueMonth !== undefined ? monthAbbrPtBr(view.firstDueMonth) : "—"}`,
   );
 
+  lines.push(`• Responsável: ${view.responsibleLabel}`);
   if (view.proposedNewCategory !== undefined) {
     lines.push(`• Categoria: "${view.proposedNewCategory}" (nova — sugerida)`);
   } else {
     lines.push(`• Categoria: ${view.categoryLabel}`);
   }
-  lines.push(`• Responsável: ${view.responsibleLabel}`);
-  if (view.categoryExplanation) {
-    lines.push("");
-    lines.push(`Sugestão: ${view.categoryExplanation}`);
-  }
-  lines.push("");
-  lines.push(
-    'Confirma? Corrija com "valor 3.700", "parcelas 10", "cartão X", "categoria Y", "data 12/06", ou "cancelar".',
-  );
   return lines.join("\n");
 }
 
@@ -450,17 +443,19 @@ export function cardBillPaidMessage(view: {
   return `Fatura paga! ✅ ${view.cardName} — R$ ${formatBrl(view.amountCents)} (${monthAbbrPtBr(view.month)})`;
 }
 
-/** Friendly no-op when the bill month was already settled (idempotent repeat). */
-export function cardBillAlreadyPaidMessage(view: {
+/** A covered fatura can still receive an extra payment with an explicit amount. */
+export function cardBillExtraPaymentMessage(view: {
   cardName: string;
   month: string;
+  paidCents: number;
 }): string {
-  return `A fatura do ${view.cardName} de ${monthAbbrPtBr(view.month)} já estava paga — nada mudou. 👍`;
+  const monthLabel = `${view.month.slice(5, 7)}/${view.month.slice(0, 4)}`;
+  return `A fatura ${view.cardName} de ${monthLabel} já está paga (R$ ${formatBrl(view.paidCents)}). Quer registrar um pagamento extra? Envie "valor 50,00".`;
 }
 
-/** Settle failed (RPC threw) — mirrors `obligationSettleFailedMessage`. */
+/** The settlement may have committed; retry the same draft to reconcile it. */
 export function cardBillSettleFailedMessage(cardName: string): string {
-  return `Não consegui registrar o pagamento da fatura do ${cardName} — tenta de novo em instantes.`;
+  return `Não consegui confirmar agora se o pagamento da fatura do ${cardName} foi registrado. Tente confirmar novamente — não vou duplicar o pagamento.`;
 }
 
 /** Installment persist failed (RPC threw) — same recovery contract as above. */

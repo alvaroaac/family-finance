@@ -176,6 +176,79 @@ describe("real bot webhook across households", () => {
         }),
       ]);
 
+      // The real bot issues each household's member JWT for the 8-arg payment
+      // API. The same caller key in two households must produce separate rows;
+      // simulating a lost final-state save exercises a genuine database replay.
+      const paymentKey = randomUUID();
+      for (const [householdId, userId, sender, paymentChat] of [
+        [azul, ids.ana, telegram.ana, 7001],
+        [verde, ids.carla, telegram.carla, 7002],
+      ] as const) {
+        const insertedCard = await admin
+          .from("credit_cards")
+          .insert({
+            household_id: householdId,
+            name: "Nubank E2E payment",
+            closing_day: null,
+          })
+          .select("id")
+          .single();
+        if (insertedCard.error) throw insertedCard.error;
+        await send(sender, paymentChat, "nubank pago 123,45");
+        const pending = await admin
+          .from("bot_conversations")
+          .select("state")
+          .eq("chat_id", paymentChat)
+          .eq("telegram_user_id", sender)
+          .single();
+        if (pending.error) throw pending.error;
+        const pinnedState = {
+          ...pending.data.state,
+          cardBillDraft: {
+            ...pending.data.state.cardBillDraft,
+            idempotencyKey: paymentKey,
+          },
+        };
+        const pinned = await admin
+          .from("bot_conversations")
+          .update({ state: pinnedState })
+          .eq("chat_id", paymentChat)
+          .eq("telegram_user_id", sender);
+        if (pinned.error) throw pinned.error;
+        await send(sender, paymentChat, "confirmar");
+        const payments = await admin
+          .from("transactions")
+          .select("*")
+          .eq("household_id", householdId)
+          .eq("idempotency_key", paymentKey);
+        if (payments.error) throw payments.error;
+        expect(payments.data).toHaveLength(1);
+        expect(payments.data[0]).toMatchObject({
+          kind: "transfer",
+          amount_cents: 12345,
+          household_id: householdId,
+          created_by_user_id: userId,
+          credit_card_id: insertedCard.data.id,
+        });
+        const lostResponse = await admin
+          .from("bot_conversations")
+          .update({
+            state: { ...pinnedState, status: "card_bill_submission_started" },
+          })
+          .eq("chat_id", paymentChat)
+          .eq("telegram_user_id", sender);
+        if (lostResponse.error) throw lostResponse.error;
+        await send(sender, paymentChat, "confirmar");
+        const replay = await admin
+          .from("transactions")
+          .select("id")
+          .eq("household_id", householdId)
+          .eq("idempotency_key", paymentKey);
+        if (replay.error) throw replay.error;
+        expect(replay.data).toEqual([{ id: payments.data[0].id }]);
+        expect(latest(paymentChat).text).toContain("123,45");
+      }
+
       const chat = 4001;
       await send(telegram.ana, chat, "pizza azul 71");
       const anaPrompt = latest(chat);

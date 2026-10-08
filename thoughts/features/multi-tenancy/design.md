@@ -31,16 +31,16 @@ or configuration UI.
 
 ## Decisions
 
-| # | Decision | Rationale |
-|---|---|---|
-| D1 | Shared database, shared schema, isolation by `household_id` + RLS | Already built for every business table; schema-per-tenant or stack-per-tenant multiplies operations with no privacy gain |
-| D2 | One user belongs to exactly one household | Matches both known households; removes the need for a household switcher |
-| D3 | Authorization is an active `household_members` row | Replaces the `AUTHORIZED_EMAILS` env gate, which would require a redeploy per tenant |
-| D4 | One shared Telegram bot | No new infrastructure; sender identity already maps to a household |
-| D5 | Bot runs business queries under RLS as the resolved member | Turns cross-tenant bugs into database denials instead of relying on every call passing the right `household_id` |
-| D6 | Theme is a base theme plus token overrides stored on the household | Reuses the two existing themes; a tenant's color is a small override, not a new stylesheet |
-| D7 | Investment buckets are free-form per household | The `investment_bucket_slug` enum encodes one family's goals |
-| D8 | One deployment, several web hostnames; the Supabase API moves to a neutral hostname | The existing household keeps `alvaroekarol.com.br`; other households get a neutral URL and a neutral Google consent screen without a second deployment |
+| #   | Decision                                                                            | Rationale                                                                                                                                              |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D1  | Shared database, shared schema, isolation by `household_id` + RLS                   | Already built for every business table; schema-per-tenant or stack-per-tenant multiplies operations with no privacy gain                               |
+| D2  | One user belongs to exactly one household                                           | Matches both known households; removes the need for a household switcher                                                                               |
+| D3  | Authorization is an active `household_members` row                                  | Replaces the `AUTHORIZED_EMAILS` env gate, which would require a redeploy per tenant                                                                   |
+| D4  | One shared Telegram bot                                                             | No new infrastructure; sender identity already maps to a household                                                                                     |
+| D5  | Bot runs business queries under RLS as the resolved member                          | Turns cross-tenant bugs into database denials instead of relying on every call passing the right `household_id`                                        |
+| D6  | Theme is a base theme plus token overrides stored on the household                  | Reuses the two existing themes; a tenant's color is a small override, not a new stylesheet                                                             |
+| D7  | Investment buckets are free-form per household                                      | The `investment_bucket_slug` enum encodes one family's goals                                                                                           |
+| D8  | One deployment, several web hostnames; the Supabase API moves to a neutral hostname | The existing household keeps `alvaroekarol.com.br`; other households get a neutral URL and a neutral Google consent screen without a second deployment |
 
 ## 1. Tenancy core
 
@@ -77,13 +77,13 @@ or configuration UI.
 `scripts/create-household` is the only onboarding tool. One invocation, run by the
 operator against the production database, in one transaction:
 
-| Input | Effect |
-|---|---|
-| household name | `households` row |
-| base theme + token overrides | `households.theme` |
-| member emails | `allowed_emails` rows pointing at the new household |
-| (none) | default categories and subcategories |
-| (none) | no investment buckets; the household creates its own |
+| Input                        | Effect                                               |
+| ---------------------------- | ---------------------------------------------------- |
+| household name               | `households` row                                     |
+| base theme + token overrides | `households.theme`                                   |
+| member emails                | `allowed_emails` rows pointing at the new household  |
+| (none)                       | default categories and subcategories                 |
+| (none)                       | no investment buckets; the household creates its own |
 
 It is idempotent on household name + email set, and prints the new household id.
 Members appear in `household_members` on their first Google login, through the
@@ -106,7 +106,7 @@ existing trigger.
 
 - Resolution is by `telegram_user_id` only. The column is unique across all
   households, so one Telegram account maps to at most one member.
-- Amended after the pull request review (migration `0032`): a member links
+- Amended after the pull request review (migration `202610080004`): a member links
   Telegram with a one-time code generated in Settings and sent to the bot as
   `/vincular CODE`. Matching by `telegram_username` was removed, because a member
   could type another person's identity and take over their bot access.
@@ -186,12 +186,12 @@ One deployment serves several web hostnames. A hostname is an entry point, not a
 tenant: the household always comes from the logged-in user's membership, never from
 the host.
 
-| Service | Hostname | Change |
-|---|---|---|
-| Web | `alvaroekarol.com.br` (current host) | stays |
-| Web | `family-finance.ondemandly.dev` | added to the same Vercel project |
+| Service      | Hostname                                 | Change                                    |
+| ------------ | ---------------------------------------- | ----------------------------------------- |
+| Web          | `alvaroekarol.com.br` (current host)     | stays                                     |
+| Web          | `family-finance.ondemandly.dev`          | added to the same Vercel project          |
 | Supabase API | `supabase.family-finance.ondemandly.dev` | moved from `supabase.alvaroekarol.com.br` |
-| Bot | `bot.alvaroekarol.com.br` | stays; no user ever sees it |
+| Bot          | `bot.alvaroekarol.com.br`                | stays; no user ever sees it               |
 
 ### Web
 
@@ -241,20 +241,20 @@ it to the GoTrue redirect allowlist.
 
 ## 6. Verification
 
-| Check | Proves |
-|---|---|
-| `rls-proof` extended to two households, every table | A member of A reads and writes nothing of B |
-| `rls-proof` extended to every RPC | No RPC accepts another household's ids |
-| Provisioning test | A new allowlisted email joins the household named in `allowed_emails`, never another |
-| Bot test: two members, two households, same group chat | Separate drafts, separate writes, callback taps refused across users |
-| Bot test: unknown sender | Refusal, nothing written |
-| Bot test: business query with a forged `household_id` | Denied by the database |
-| Theme test | Overrides applied; invalid document falls back |
-| Search for "Alvaro", "Karol", "alvaroekarol" in `apps/` and `packages/` non-test code | No matches |
-| Login test per allowed host | The OAuth round trip returns to the host it started on |
-| Login test with an unknown host header | Redirect goes to the neutral hostname |
-| Manual: login on `alvaroekarol.com.br` | Existing household works as before |
-| Manual: tester login on the neutral hostname | Consent screen and URL show only `ondemandly.dev` |
+| Check                                                                                 | Proves                                                                               |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `rls-proof` extended to two households, every table                                   | A member of A reads and writes nothing of B                                          |
+| `rls-proof` extended to every RPC                                                     | No RPC accepts another household's ids                                               |
+| Provisioning test                                                                     | A new allowlisted email joins the household named in `allowed_emails`, never another |
+| Bot test: two members, two households, same group chat                                | Separate drafts, separate writes, callback taps refused across users                 |
+| Bot test: unknown sender                                                              | Refusal, nothing written                                                             |
+| Bot test: business query with a forged `household_id`                                 | Denied by the database                                                               |
+| Theme test                                                                            | Overrides applied; invalid document falls back                                       |
+| Search for "Alvaro", "Karol", "alvaroekarol" in `apps/` and `packages/` non-test code | No matches                                                                           |
+| Login test per allowed host                                                           | The OAuth round trip returns to the host it started on                               |
+| Login test with an unknown host header                                                | Redirect goes to the neutral hostname                                                |
+| Manual: login on `alvaroekarol.com.br`                                                | Existing household works as before                                                   |
+| Manual: tester login on the neutral hostname                                          | Consent screen and URL show only `ondemandly.dev`                                    |
 
 ## Onboarding sequence
 

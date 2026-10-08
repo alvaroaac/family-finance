@@ -10,6 +10,46 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 ## Open Debt
 
+## 2026-10-06: Imported card rows are attributed by purchase date, not statement month
+
+**Area:** supabase/migrations/202610070000_card_bill_closing_and_payments.sql (`transactions_set_invoice_month`), import RPCs
+
+**Impact:** The `invoice_month` trigger gives imported card rows the calendar
+month of the purchase date and never shifts them (spec D11: imports are
+authoritative). The bank statement, though, says which fatura each row belongs
+to. With an early closing day (e.g. day 1) nearly every imported purchase lands
+one fatura early, so `/cards` and the bot show the wrong fatura totals.
+Spending numbers are unaffected (D12).
+
+**Current workaround:** Close the fatura with a corrected total ("Ajustar
+total") when the imported sum disagrees with the bank's.
+
+**Revisit trigger:** First household card with an early closing day, or any
+import-vs-fatura mismatch report. Fix: carry the statement's `referenceMonth`
+through the import RPCs and let the trigger use it.
+
+**Status:** open
+
+## 2026-10-06: PR #40 card-bill migration reconciliation
+
+**Area:** supabase/migrations, PR #40 (`202610080001`–`202610080004`)
+
+**Resolution (2026-10-08):** The four undeployed multi-tenant migrations now sort
+strictly after PR #42's `202610070000`. Migration `202610080003` replaces its
+8-argument `settle_card_bill` and drops the legacy 7-argument overload. It keeps
+multiple payments, matching-key replay, invoice attribution and future-date
+validation, and requires the active caller's member JWT for every write.
+
+The settlement function locks membership and the household/key before checking
+for a previous commit. Only authoritative validation rejections with no prior
+keyed row carry the definitive-no-write hint. Legacy null-key recovery also
+uses a member-gated definer RPC, so RLS-hidden rows cannot authorize a new key.
+CI compares fresh and deployed-0001..0027-plus-PR42 catalogs and ledgers, applies
+the upgrade twice, and replays SQL definitions in order.
+
+**Status:** resolved in the integration branch; rollout still requires CI and
+real authenticated browser/bot/RLS verification.
+
 ## 2026-06-29: Migration 0001 shipped no table GRANTs (found via live Supabase)
 
 **Area:** supabase/migrations
@@ -391,7 +431,7 @@ wrong if a second household ever exists.
 **Revisit trigger:** Multi-household support — join `households` on the slug (needs a
 slug column on households) or drop the `household_slug` column.
 
-**Status:** resolved (2026-09-29) by migration `0029_multi_household_provisioning.sql` —
+**Status:** resolved (2026-09-29) by migration `202610080001_multi_household_provisioning.sql` —
 `allowed_emails.household_slug` was replaced by a required `household_id`, and
 both provisioning triggers use that household.
 
@@ -806,7 +846,7 @@ the same migration.
 
 ## 2026-09-29: `household_members.telegram_username` is unused
 
-**Area:** `supabase/migrations/0032_verified_identity_binding.sql`, `packages/db`
+**Area:** `supabase/migrations/202610080004_verified_identity_binding.sql`, `packages/db`
 
 **Impact:** Linking is by one-time code and resolution by numeric id. The
 column stays in the schema and types with no reader.
@@ -821,8 +861,8 @@ column stays in the schema and types with no reader.
 
 **Area:** `supabase/migrations/`, branch `codex/merchant-categorization-evidence`
 
-**Impact:** `main` goes from `0027` to `0029`. The unmerged branch holds
-`0028`. If it merges as is, its migration sorts before `0029`–`0032`, which
+**Impact:** The deployed migration history goes from `0027` to `202610070000`, then to `202610080001`. The unmerged branch holds
+`0028`. If it merges as is, its migration sorts before `202610080001`–`202610080004`, which
 production will already have applied, and it was written without the
 `household_id` rules.
 
@@ -835,10 +875,10 @@ rebase over `main` and renumber its migration to the next free number.
 
 ## 2026-09-29: A member can rename another member of the same household
 
-**Area:** `household_members_update` policy (`supabase/migrations/0010_*`), column grant in `0032`
+**Area:** `household_members_update` policy (`supabase/migrations/0010_*`), column grant in `202610080004`
 
 **Impact:** The policy allows updates on any row of the member's household,
-and `0032` limits the column to `display_name`. The display name feeds the
+and `202610080004` limits the column to `display_name`. The display name feeds the
 "<nome> comprou" routing and the AI prompts, so one member can change how
 another is addressed. Same household only; no effect on isolation.
 

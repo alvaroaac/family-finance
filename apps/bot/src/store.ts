@@ -9,9 +9,9 @@
  *
  * Staleness: an ordinary persisted row older than 24h is treated as absent on
  * load and deleted lazily — a half-finished draft from yesterday should never
- * be what a fresh "Uber 32 reais" message lands on. Post-write installment
- * uncertainty is retained until it is explicitly reconciled: its stable
- * idempotency key is the only safe way to retry without duplicating a purchase.
+ * be what a fresh "Uber 32 reais" message lands on. Post-write installment and
+ * card-bill uncertainty is retained until it is explicitly reconciled: its
+ * stable idempotency key is the only safe way to retry without duplicating a write.
  * The persisted jsonb is validated structurally on load; a malformed row is
  * treated as absent (never thrown).
  */
@@ -68,6 +68,7 @@ const CONVERSATION_STATUSES = [
   "installment_outcome_uncertain",
   "installment_recovery_required",
   "awaiting_card_bill_confirmation",
+  "card_bill_submission_started",
   "awaiting_mark_paid_choice",
   "awaiting_payment_choice",
   "awaiting_category_name",
@@ -103,6 +104,7 @@ function hasInstallmentIdentity(state: ConversationState): boolean {
 function isDurableConversationState(state: ConversationState): boolean {
   return (
     isDurableInstallmentStatus(state.status) ||
+    state.status === "card_bill_submission_started" ||
     (state.status === "awaiting_installment_confirmation" &&
       hasInstallmentIdentity(state))
   );
@@ -172,6 +174,7 @@ function isConversationState(value: unknown): value is ConversationState {
     status?: unknown;
     draft?: unknown;
     installmentDraft?: unknown;
+    cardBillDraft?: unknown;
   };
   if (!isConversationStatus(candidate.status)) {
     return false;
@@ -181,6 +184,26 @@ function isConversationState(value: unknown): value is ConversationState {
     typeof candidate.draft === "object" && candidate.draft !== null;
   if (!baseStateIsValid) {
     return false;
+  }
+  if (status === "card_bill_submission_started") {
+    if (
+      typeof candidate.cardBillDraft !== "object" ||
+      candidate.cardBillDraft === null
+    ) {
+      return false;
+    }
+    const draft = candidate.cardBillDraft as {
+      idempotencyKey?: unknown;
+      cardId?: unknown;
+      amountCents?: unknown;
+    };
+    return (
+      typeof draft.idempotencyKey === "string" &&
+      draft.idempotencyKey.length > 0 &&
+      typeof draft.cardId === "string" &&
+      draft.cardId.length > 0 &&
+      typeof draft.amountCents === "number"
+    );
   }
   if (!requiresInstallmentIdentity(status)) {
     return true;

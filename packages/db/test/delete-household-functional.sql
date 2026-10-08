@@ -1,4 +1,4 @@
--- Run after 0032 in the disposable migration database.
+-- Run after 202610080004 in the disposable migration database.
 begin;
 
 do $$

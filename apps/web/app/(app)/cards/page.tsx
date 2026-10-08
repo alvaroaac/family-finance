@@ -4,9 +4,11 @@ import {
   findInstallmentPurchasesFiltered,
   findCategoriesByHousehold,
   findSubcategoriesByCategory,
+  listAccounts,
   type CreditCardRow,
   type InstallmentPurchaseListItem,
 } from "@family-finance/db";
+import { currentHouseholdDate } from "@family-finance/domain";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import {
@@ -21,6 +23,8 @@ import {
   updateCardAction,
   deleteCardAction,
 } from "./actions";
+import { loadFaturasView, parseFaturaParam, type FaturasView } from "./faturas";
+import { FaturasSection } from "./faturas-section";
 import { CardPurchaseForm } from "./purchase-form";
 
 export const metadata = {
@@ -35,29 +39,40 @@ type CardsData = {
   purchases: InstallmentPurchaseListItem[];
   categories: { id: string; name: string }[];
   subcategories: { id: string; categoryId: string; name: string }[];
+  accounts: { id: string; name: string }[];
+  faturas: FaturasView;
+  todaySp: string;
   loadError: string | null;
 };
 
-async function loadData(): Promise<CardsData> {
+async function loadData(faturaMonth: string | null): Promise<CardsData> {
+  const todaySp = currentHouseholdDate();
+  const empty = {
+    cards: [],
+    purchases: [],
+    categories: [],
+    subcategories: [],
+    accounts: [],
+    faturas: { month: faturaMonth, cards: [] },
+    todaySp,
+  };
   try {
     const { createServerSupabaseClient } =
       await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
-      return {
-        cards: [],
-        purchases: [],
-        categories: [],
-        subcategories: [],
-        loadError: null,
-      };
+      return { ...empty, loadError: null };
     }
-    const [cards, categories, purchases] = await Promise.all([
-      listCreditCards(client, householdId),
-      findCategoriesByHousehold(client, householdId),
-      findInstallmentPurchasesFiltered(client, householdId),
-    ]);
+    const [cards, categories, purchases, accounts, faturas] = await Promise.all(
+      [
+        listCreditCards(client, householdId),
+        findCategoriesByHousehold(client, householdId),
+        findInstallmentPurchasesFiltered(client, householdId),
+        listAccounts(client, householdId),
+        loadFaturasView(client, householdId, faturaMonth, todaySp),
+      ],
+    );
     // Card purchases are expenses — income categories don't apply here.
     const expenseCategories = categories.filter((c) => c.kind === "expense");
     const subLists = await Promise.all(
@@ -75,14 +90,14 @@ async function loadData(): Promise<CardsData> {
         categoryId: s.category_id,
         name: s.name,
       })),
+      accounts: accounts.map((a) => ({ id: a.id, name: a.name })),
+      faturas,
+      todaySp,
       loadError: null,
     };
   } catch (error) {
     return {
-      cards: [],
-      purchases: [],
-      categories: [],
-      subcategories: [],
+      ...empty,
       loadError:
         error instanceof Error
           ? error.message
@@ -134,10 +149,23 @@ function purchaseInstallmentLabel(
   return `${purchase.installmentCount}x${perInstallment}${range}`;
 }
 
-export default async function CardsPage() {
+export default async function CardsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ fatura?: string | string[] }>;
+}) {
   await requireAuthorizedUser();
-  const { cards, purchases, categories, subcategories, loadError } =
-    await loadData();
+  const { fatura } = await searchParams;
+  const {
+    cards,
+    purchases,
+    categories,
+    subcategories,
+    accounts,
+    faturas,
+    todaySp,
+    loadError,
+  } = await loadData(parseFaturaParam(fatura));
   const cardNames = new Map(cards.map((card) => [card.id, card.name]));
   const categoryNames = new Map(
     categories.map((category) => [category.id, category.name]),
@@ -167,6 +195,10 @@ export default async function CardsPage() {
         >
           {loadError}
         </div>
+      ) : null}
+
+      {cards.length > 0 ? (
+        <FaturasSection view={faturas} accounts={accounts} todaySp={todaySp} />
       ) : null}
 
       {/* Registered cards */}

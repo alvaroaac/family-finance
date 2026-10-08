@@ -1,4 +1,4 @@
--- Run after 0029 on a database with household A and a migrated allowlist.
+-- Run after 202610080001 on a database with household A and a migrated allowlist.
 do $$
 declare
   a uuid := '00000000-0000-0000-0000-000000000001';

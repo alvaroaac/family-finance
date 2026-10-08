@@ -9,6 +9,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:migrations": "bash scripts/verify-all-migrations.sh",
+    "test:card-bill-migration": "bash scripts/verify-card-bill-migration.sh",
     "test:import-migration": "bash scripts/verify-import-migration.sh",
     "typecheck": "turbo run typecheck",
     "format": "prettier --check .",

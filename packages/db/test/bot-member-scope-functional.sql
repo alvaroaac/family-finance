@@ -1,4 +1,4 @@
--- Run after 0031 on an isolated database. These rows are test fixtures only.
+-- Run after 202610080003 on an isolated database. These rows are test fixtures only.
 create or replace function auth.uid() returns uuid language sql stable
 as 'select nullif(current_setting(''request.jwt.claim.sub'', true), '''')::uuid';
 create or replace function auth.role() returns text language sql stable
@@ -162,9 +162,9 @@ do $$ begin
       '54000000-0000-0000-0000-000000000001',
       '53000000-0000-0000-0000-000000000001',
       '2026-10', 100, date '2026-10-10',
-      '52000000-0000-0000-0000-000000000001');
+      '52000000-0000-0000-0000-000000000001', 'null-uid');
     raise exception 'null-UID card settlement passed';
-  exception when sqlstate '22023' then null;
+  exception when insufficient_privilege then null;
   end;
   begin
     perform materialize_obligation_payment(

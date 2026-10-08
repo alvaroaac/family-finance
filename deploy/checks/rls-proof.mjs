@@ -166,6 +166,7 @@ const TABLE_FIXTURES = {
   accounts: true,
   investment_buckets: true,
   credit_cards: true,
+  card_bill_closures: true,
   categories: true,
   subcategories: true,
   installment_groups: true,
@@ -192,6 +193,8 @@ const RPC_CASES = new Set([
   "confirm_import_with_replacements(jsonb,jsonb)",
   "create_installment_purchase(jsonb,jsonb)",
   "is_household_member(uuid)",
+  "card_bill_is_closed(uuid,text)",
+  "reconcile_legacy_card_bill_payment(uuid,uuid,uuid,text,bigint,date,uuid)",
   "materialize_obligation_payment(uuid,text,date)",
   "materialize_obligation_payment(uuid,text,date,bigint)",
   "materialize_obligation_payment(uuid,text,date,bigint,uuid)",
@@ -203,7 +206,7 @@ const RPC_CASES = new Set([
   "redeem_telegram_link_code(text,bigint)",
   "discard_telegram_link_code(text)",
   "unlink_telegram()",
-  "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)",
+  "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid,text)",
   "update_installment_group_category(uuid,uuid,jsonb)",
 ]);
 const TRIGGER_CASES = new Set([
@@ -419,6 +422,14 @@ async function setupHouseholdB() {
     name: `${MARKER} B card`,
     closing_day: 5,
     due_day: 12,
+  });
+  await fixture("card_bill_closures", {
+    household_id: householdId,
+    credit_card_id: card.id,
+    bill_month: "2026-01",
+    state: "closed",
+    total_override_cents: 100,
+    updated_by_user_id: created.memberBUserId,
   });
   const category = await fixture("categories", {
     household_id: householdId,
@@ -986,6 +997,7 @@ const UPDATE_COLUMNS = {
   accounts: "name",
   investment_buckets: "name",
   credit_cards: "name",
+  card_bill_closures: "total_override_cents",
   categories: "name",
   subcategories: "name",
   installment_groups: "description",
@@ -1376,7 +1388,7 @@ function rpcArguments(signature) {
     },
     "discard_telegram_link_code(text)": { p_code: "INVALID32" },
     "unlink_telegram()": {},
-    "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid)": {
+    "settle_card_bill(uuid,uuid,uuid,text,bigint,date,uuid,text)": {
       target_household_id: householdId,
       target_credit_card_id: b.credit_cards.id,
       target_account_id: b.accounts.id,
@@ -1384,7 +1396,22 @@ function rpcArguments(signature) {
       target_amount_cents: 100,
       target_paid_on: "2026-03-01",
       target_created_by_user_id: created.memberUserId,
+      target_idempotency_key: randomUUID(),
     },
+    "card_bill_is_closed(uuid,text)": {
+      target_credit_card_id: b.credit_cards.id,
+      target_month: "2026-01",
+    },
+    "reconcile_legacy_card_bill_payment(uuid,uuid,uuid,text,bigint,date,uuid)":
+      {
+        target_household_id: householdId,
+        target_credit_card_id: b.credit_cards.id,
+        target_account_id: b.accounts.id,
+        target_bill_month: "2026-01",
+        target_amount_cents: 100,
+        target_paid_on: "2026-01-01",
+        target_created_by_user_id: created.memberUserId,
+      },
     "update_installment_group_category(uuid,uuid,jsonb)": {
       target_household_id: householdId,
       target_group_id: b.installment_groups.id,
@@ -1983,6 +2010,7 @@ async function checkAnonCannotExecuteRpcs(householdId) {
         target_amount_cents: 100,
         target_paid_on: "2026-01-01",
         target_created_by_user_id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        target_idempotency_key: randomUUID(),
       },
     ],
   ];
@@ -2098,12 +2126,12 @@ async function checkObligationMaterialization(member, householdId) {
 
 /**
  * (g) Card-bill settlement RPC: member success and idempotency, null-uid
- * service-role denial under migration 0031, outsider denial, and instrument
+ * service-role denial under migration 202610080003, outsider denial, and instrument
  * constraints.
  */
 async function checkCardBillSettlement(member, householdId) {
   // (g1) member settles the bill for the fixture card+account.
-  const first = await member.rpc("settle_card_bill", {
+  const paymentArgs = {
     target_household_id: householdId,
     target_credit_card_id: created.creditCardId,
     target_account_id: created.accountId,
@@ -2111,13 +2139,13 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-04-10",
     target_created_by_user_id: created.memberUserId,
-  });
+    target_idempotency_key: randomUUID(),
+  };
+  const first = await member.rpc("settle_card_bill", paymentArgs);
   record(
-    "(g1) member settles a card bill (already_paid=false)",
-    !first.error && first.data && first.data.already_paid === false,
-    first.error
-      ? first.error.message
-      : `already_paid=${first.data?.already_paid}`,
+    "(g1) member settles a card bill (replayed=false)",
+    !first.error && first.data && first.data.replayed === false,
+    first.error ? first.error.message : `replayed=${first.data?.replayed}`,
   );
   record(
     "(g1b) settle row carries BOTH instruments + bill_month",
@@ -2129,7 +2157,18 @@ async function checkCardBillSettlement(member, householdId) {
   );
 
   // (g2) repeat is idempotent.
-  const repeat = await member.rpc("settle_card_bill", {
+  const repeat = await member.rpc("settle_card_bill", paymentArgs);
+  record(
+    "(g2) repeat settle is idempotent (replayed=true)",
+    !repeat.error &&
+      repeat.data?.replayed === true &&
+      Boolean(first.data?.transaction?.id) &&
+      repeat.data?.transaction?.id === first.data.transaction.id,
+    repeat.error ? repeat.error.message : `replayed=${repeat.data?.replayed}`,
+  );
+
+  // (g3) Business writes require a member JWT, including the bot.
+  const svc = await admin.rpc("settle_card_bill", {
     target_household_id: householdId,
     target_credit_card_id: created.creditCardId,
     target_account_id: created.accountId,
@@ -2137,24 +2176,7 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-04-10",
     target_created_by_user_id: created.memberUserId,
-  });
-  record(
-    "(g2) repeat settle is idempotent (already_paid=true)",
-    !repeat.error && repeat.data && repeat.data.already_paid === true,
-    repeat.error
-      ? repeat.error.message
-      : `already_paid=${repeat.data?.already_paid}`,
-  );
-
-  // (g3) migration 0031 requires a member even for service-role callers.
-  const svc = await admin.rpc("settle_card_bill", {
-    target_household_id: householdId,
-    target_credit_card_id: created.creditCardId,
-    target_account_id: created.accountId,
-    target_bill_month: "2026-05",
-    target_amount_cents: 123456,
-    target_paid_on: "2026-05-10",
-    target_created_by_user_id: created.memberUserId,
+    target_idempotency_key: randomUUID(),
   });
   record(
     "(g3) service-role null-uid settlement denied",
@@ -2172,6 +2194,7 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-06-10",
     target_created_by_user_id: created.memberUserId,
+    target_idempotency_key: randomUUID(),
   });
   const g4Ok =
     Boolean(foreign.error) && /not found/i.test(foreign.error.message);

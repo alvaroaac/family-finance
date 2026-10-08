@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { currentMemberName } from "../../../lib/member";
+import { faturaBadgeTone, faturaMonthNumber } from "../../../lib/fatura";
 import { formatBrlCents } from "../../../lib/format";
 import { RecentTransactions } from "../../../components/recent-transactions";
 import {
@@ -13,6 +14,7 @@ import {
   Kicker,
 } from "../../../components/ui";
 import {
+  type FaturaView,
   loadResumoData,
   monthLabelPtBr,
   spendingComparisonLabel,
@@ -25,6 +27,13 @@ export const metadata = {
 
 // Per-request, RLS-scoped data; never statically prerender.
 export const dynamic = "force-dynamic";
+
+/** "Fatura 09 · fechada" — the short label on a Resumo fatura block. */
+function faturaLabel(prefix: string, fatura: FaturaView): string {
+  return `${prefix} ${faturaMonthNumber(fatura.month)} · ${
+    fatura.closed ? "fechada" : "aberta"
+  }`;
+}
 
 /** Split "R$ 4.812,90" into ["R$ 4.812", ",90"] for the hero's smaller cents. */
 function splitCents(value: string): [string, string] {
@@ -160,24 +169,43 @@ export default async function ResumoPage() {
               <p className="ff-muted">Nenhum cartão cadastrado.</p>
             ) : (
               <div className="ff-cards-grid">
-                {cards.map((card) => (
-                  <Card key={card.id} hoverable className="ff-icard">
-                    <div className="ff-icard__head">
-                      <span className="ff-bubble">
-                        <IconCard size={17} />
-                      </span>
-                      <div className="ff-icard__name">
-                        {card.name}
-                        {card.settled ? (
-                          <Badge tone="positive">paga ✅</Badge>
-                        ) : null}
+                {cards.map((card) => {
+                  // Pair rule: a pending closed fatura leads; the open one
+                  // drops to a small "Próxima" row below it (P1/P3).
+                  const main = card.pending ?? card.open;
+                  return (
+                    <Card key={card.id} hoverable className="ff-icard">
+                      <div className="ff-icard__head">
+                        <span className="ff-bubble">
+                          <IconCard size={17} />
+                        </span>
+                        <div className="ff-icard__name">{card.name}</div>
                       </div>
-                    </div>
-                    <div className="ff-icard__value ff-serif ff-num">
-                      {formatBrlCents(card.projectedCents)}
-                    </div>
-                  </Card>
-                ))}
+                      <div className="ff-icard__label">
+                        {faturaLabel("Fatura", main)}
+                      </div>
+                      <div className="ff-icard__value ff-serif ff-num">
+                        {formatBrlCents(main.totalCents)}
+                      </div>
+                      {/* The label already says "aberta"; no echo badge. */}
+                      {main.status === "open" ? null : (
+                        <div className="ff-icard__badge">
+                          <Badge tone={faturaBadgeTone(main.status)}>
+                            {main.badge}
+                          </Badge>
+                        </div>
+                      )}
+                      {card.pending === null ? null : (
+                        <div className="ff-icard__next">
+                          <span>{faturaLabel("Próxima", card.open)}</span>
+                          <span className="ff-num">
+                            {formatBrlCents(card.open.totalCents)}
+                          </span>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </div>

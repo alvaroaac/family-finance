@@ -1309,7 +1309,11 @@ it("keeps business repository calls on the member path", () => {
     "restoreCategory as dbRestoreCategory",
     "restoreSubcategory as dbRestoreSubcategory",
     "createCategorizationMemory",
-    "getCardPressureForCard",
+    "getCardBillOverview",
+    "getCardFaturaPairs",
+    "planWithOpenFaturas",
+    "findInstallmentPurchaseFirstDueMonth",
+    "reconcileLegacyCardBillPayment",
     "settleCardBill as dbSettleCardBill",
   ];
   expect(importedNames.sort()).toEqual(
@@ -1322,6 +1326,7 @@ it("keeps business repository calls on the member path", () => {
       "discardTelegramLinkCode",
       "type AppSupabaseClient",
       "type BotMemberIdentity",
+      "type CardBillOverview",
     ].sort(),
   );
   const helperEnd = source.indexOf("export type WebhookResult");
@@ -1847,6 +1852,59 @@ describe("conversation stores", () => {
     const loaded = await store.load("555", "777", "house-1");
     expect(loaded?.status).toBe("awaiting_confirmation");
     expect(loaded?.draft.createdByUserId).toBe("user-alvaro");
+  });
+
+  it("round-trips a durable card-bill submission and retains it past the TTL", async () => {
+    const state: ConversationState = {
+      ...sampleState(),
+      status: "card_bill_submission_started",
+      cardBillDraft: {
+        idempotencyKey: "stable-payment-key",
+        cardId: "card-1",
+        amountCents: 123000,
+        paidOn: TODAY,
+        month: TODAY.slice(0, 7),
+        monthExplicit: false,
+        accountId: "acct-1",
+        createdByUserId: "user-alvaro",
+      },
+    };
+    const { client, tables } = fakeSupabase();
+    const store = createDbConversationStore(client);
+    await store.save("555", "777", "house-1", state);
+    expect(await store.load("555", "777", "house-1")).toEqual(state);
+    tables.bot_conversations![0]!.updated_at = new Date(
+      Date.now() - 25 * 60 * 60 * 1000,
+    ).toISOString();
+    expect(await store.load("555", "777", "house-1")).toEqual(state);
+    expect(tables.bot_conversations).toHaveLength(1);
+  });
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { cardId: "card-1", amountCents: 123000 },
+    { idempotencyKey: "", cardId: "card-1", amountCents: 123000 },
+    { idempotencyKey: "key", cardId: "", amountCents: 123000 },
+    { idempotencyKey: "key", cardId: "card-1", amountCents: "123000" },
+  ])("drops an invalid durable card-bill draft: %j", async (cardBillDraft) => {
+    const { client } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: {
+            ...sampleState(),
+            status: "card_bill_submission_started",
+            cardBillDraft,
+          },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+    expect(
+      await createDbConversationStore(client).load("555", "777", "house-1"),
+    ).toBeUndefined();
   });
 
   it("treats a stale (>24h) row as absent and deletes it lazily", async () => {

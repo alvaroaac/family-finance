@@ -1,4 +1,4 @@
--- Run after 0032 with auth.users.email_confirmed_at in the migration harness.
+-- Run after 202610080004 with auth.users.email_confirmed_at in the migration harness.
 do $$
 declare
   home uuid := '00000000-0000-0000-0000-000000000001';

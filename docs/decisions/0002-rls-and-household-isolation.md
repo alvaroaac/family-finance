@@ -91,7 +91,7 @@ The "second household" revisit trigger fired. Design:
 - The isolation model is unchanged: shared database, RLS by `household_id`,
   `is_household_member()` as the single rule. No per-tenant schema or database.
 - One user belongs to one household (`household_members_user_id_key`, migration
-  `0029`). `allowed_emails.household_id` is required and decides which household
+  `202610080001`). `allowed_emails.household_id` is required and decides which household
   a sign-up joins; the provisioning triggers no longer pick the first household.
 - Web access is an active membership row. The `AUTHORIZED_EMAILS` env gate is
   gone. The household is always derived from the member, never from the
@@ -100,11 +100,11 @@ The "second household" revisit trigger fired. Design:
   the Telegram sender with `resolve_telegram_member` (service role), then acts
   as that member through a short-lived HS256 JWT, so RLS applies to the bot too.
   Service role remains for the resolver, the conversation store and the import
-  nonce/quota RPCs (migration `0031`).
+  nonce/quota RPCs (migration `202610080003`).
 - `create_installment_purchase`, `settle_card_bill` and
   `materialize_obligation_payment` require an authenticated member.
 - Investment bucket slugs are free text, unique per household (migration
-  `0030`).
+  `202610080002`).
 - `deploy/checks/rls-proof.mjs` discovers household-scoped tables and
   `SECURITY DEFINER` functions from the catalog and fails by name on anything it
   does not cover, so a new table cannot ship without an isolation check.

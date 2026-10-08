@@ -87,6 +87,21 @@ export {
 // Household theme document: base theme plus validated color overrides.
 export type { HouseholdTheme, ThemeToken } from "./theme.js";
 export { THEME_TOKENS, parseHouseholdTheme, themeStyle } from "./theme.js";
+// Card bills (faturas) — closed/open, totals, status and badge rules.
+export type {
+  CardBillOverrideState,
+  CardBillStatus,
+  CardBillSummary,
+} from "./card-bills.js";
+export {
+  isCardBillClosed,
+  cardBillClosingDate,
+  summarizeCardBill,
+  cardBillBadge,
+  firstOpenInvoiceMonth,
+  cardFaturaPair,
+  shiftInstallmentPlan,
+} from "./card-bills.js";
 
 // Household-local calendar semantics shared by server and browser entry points.
 export {

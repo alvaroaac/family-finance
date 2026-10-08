@@ -45,6 +45,12 @@ its own transaction:
 reused, a recorded file disappeared, or an existing database has no ledger.
 Never apply `supabase/migrations/*.sql` directly in production again.
 
+New migration files are named `YYYYMMDDHHMM_short_name.sql` (UTC short
+timestamp), so branches developed in parallel never claim the same version. The
+4-digit files (`0001`–`0027`, plus any 4-digit file already in flight) are
+legacy and must never be renamed — their names and checksums are recorded in
+the ledger. `apply` widens older ledgers to accept both formats.
+
 For a brand-new empty database, initialize the ledger and apply the complete
 history with:
 
@@ -108,7 +114,7 @@ starts.**
 ## 3. Households, members + allowlist
 
 Membership is provisioned automatically on first login, driven by the
-`allowed_emails` table. Since migration `0029` every allowlist row names its
+`allowed_emails` table. Since migration `202610080001` every allowlist row names its
 household (`household_id`, required) and a user belongs to one household.
 
 Create a household with its allowlisted members (and optional theme):

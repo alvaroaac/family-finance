@@ -44,6 +44,9 @@ jobs:
       - name: Verify migration controller and idempotency
         run: pnpm test:migrations
 
+      - name: Verify card bill closing and payments migration
+        run: pnpm test:card-bill-migration
+
       - name: Build web
         run: pnpm --filter @family-finance/web build
 

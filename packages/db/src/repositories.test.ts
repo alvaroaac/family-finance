@@ -45,7 +45,6 @@ import {
   createSubcategory,
   restoreSubcategory,
   settleCardBill,
-  findCardBillSettlements,
   confirmImportV2,
   type AppSupabaseClient,
 } from "./repositories.js";
@@ -134,6 +133,8 @@ describe("mapTransactionRow", () => {
       obligation_id: null,
       obligation_month: null,
       bill_month: null,
+      invoice_month: null,
+      idempotency_key: null,
       created_at: "2026-06-01T00:00:00Z",
       updated_at: "2026-06-01T00:00:00Z",
     };
@@ -924,6 +925,8 @@ function fakeClientWithRow(rowData: Partial<TransactionRow> = {}) {
     obligation_id: null,
     obligation_month: null,
     bill_month: null,
+    invoice_month: null,
+    idempotency_key: null,
     created_at: "2026-07-01T00:00:00Z",
     updated_at: "2026-07-01T00:00:00Z",
   };
@@ -1103,7 +1106,7 @@ describe("settleCardBill", () => {
   it("calls the RPC with snake_case target args and returns the result", async () => {
     const result = {
       transaction: { id: "tx-1", bill_month: "2026-07" },
-      already_paid: false,
+      replayed: false,
     };
     const calls: Array<{ name: string; args: unknown }> = [];
     const client = {
@@ -1121,6 +1124,7 @@ describe("settleCardBill", () => {
       amountCents: 235000,
       paidOn: "2026-07-06",
       createdByUserId: "user-1",
+      idempotencyKey: "payment-key",
     });
     expect(out).toEqual(result);
     expect(calls[0]).toEqual({
@@ -1133,6 +1137,7 @@ describe("settleCardBill", () => {
         target_amount_cents: 235000,
         target_paid_on: "2026-07-06",
         target_created_by_user_id: "user-1",
+        target_idempotency_key: "payment-key",
       },
     });
   });
@@ -1150,6 +1155,7 @@ describe("settleCardBill", () => {
         amountCents: 235000,
         paidOn: "2026-07-06",
         createdByUserId: "user-1",
+        idempotencyKey: "payment-key",
       }),
     ).rejects.toThrow("settleCardBill failed: boom");
   });
@@ -1194,6 +1200,8 @@ describe("confirmImportV2", () => {
         obligation_id: null,
         obligation_month: null,
         bill_month: null,
+        invoice_month: null,
+        idempotency_key: null,
       },
     },
   ];
@@ -1280,38 +1288,6 @@ describe("confirmImportV2", () => {
     await expect(confirmImportV2(client, batch, items)).rejects.toThrow(
       "confirmImportV2 failed: claim failed",
     );
-  });
-});
-
-describe("findCardBillSettlements", () => {
-  it("queries transfer rows for the household + month and maps the result", async () => {
-    const { client, calls } = createRecordingClient({
-      data: [
-        {
-          credit_card_id: "card-1",
-          amount_cents: 235000,
-          occurred_on: "2026-07-06",
-        },
-      ],
-    });
-    const out = await findCardBillSettlements(client, HOUSEHOLD, "2026-07");
-    expect(calls.table).toBe("transactions");
-    expect(calls.select).toBe("credit_card_id, amount_cents, occurred_on");
-    expect(calls.eq).toEqual([
-      ["household_id", HOUSEHOLD],
-      ["kind", "transfer"],
-      ["bill_month", "2026-07"],
-    ]);
-    expect(out).toEqual([
-      { creditCardId: "card-1", amountCents: 235000, paidOn: "2026-07-06" },
-    ]);
-  });
-
-  it("throws on a database error", async () => {
-    const { client } = createRecordingClient({ error: { message: "boom" } });
-    await expect(
-      findCardBillSettlements(client, HOUSEHOLD, "2026-07"),
-    ).rejects.toThrow("findCardBillSettlements failed: boom");
   });
 });
 

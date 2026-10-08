@@ -42,7 +42,7 @@ describe("confirmationMessage with an AI category proposal", () => {
   it("keeps today's plain category label when there is no proposal", () => {
     const text = confirmationMessage(BASE_VIEW);
     expect(text).toContain("Categoria: Sem categoria (a definir)");
-    expect(text).toContain('"responsável Ana"');
+    expect(text).toContain("Para corrigir, use os botões");
   });
 });
 

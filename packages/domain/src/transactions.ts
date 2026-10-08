@@ -220,6 +220,7 @@ const cardBillSettlementSchema = z.object({
   amountCents: z.number().int().positive(),
   paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   createdByUserId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
 });
 
 export type CardBillSettlementInput = z.input<typeof cardBillSettlementSchema>;
