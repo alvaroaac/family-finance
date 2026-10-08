@@ -431,8 +431,19 @@ describe("Unified structured classifier", () => {
     },
   );
 
-  it("persists top-3 existing choices in state, skips second AI, and clears them on tap", async () => {
-    const unified = classifier(VALID);
+  it("hides the prefilled choice and applies an alternative after a state round-trip", async () => {
+    const unified = classifier({
+      ...VALID,
+      category_candidates: [
+        ...VALID.category_candidates,
+        {
+          category: "Alimentação",
+          subcategory: null,
+          confidence: 0.5,
+          explanation: "Categoria geral.",
+        },
+      ],
+    });
     const suggestCategory = vi.fn(async () => ({
       status: "uncategorized" as const,
       suggestion: null,
@@ -468,17 +479,29 @@ describe("Unified structured classifier", () => {
         confidence: 0.98,
         explanation: "Giassi é supermercado.",
       },
+      {
+        categoryId: "cat-food",
+        categoryName: "Alimentação",
+        confidence: 0.5,
+        explanation: "Categoria geral.",
+      },
     ]);
+    expect(started.state.draft.subcategoryId).toBe("sub-market");
+    expect(
+      started.keyboard?.inline_keyboard
+        .flat()
+        .some((button) => button.callback_data === "cs:0"),
+    ).toBe(false);
     expect(started.keyboard?.inline_keyboard.flat()).toContainEqual({
-      text: "📂 Alimentação › Mercado",
-      callback_data: "cs:0",
+      text: "📂 Alimentação",
+      callback_data: "cs:1",
     });
 
     // DB state is JSONB; this round-trip exercises restart persistence.
     const restartedState = JSON.parse(JSON.stringify(started.state));
-    const selected = await applyCallback(restartedState, "cs:0", deps);
+    const selected = await applyCallback(restartedState, "cs:1", deps);
     expect(selected.state.draft.categoryId).toBe("cat-food");
-    expect(selected.state.draft.subcategoryId).toBe("sub-market");
+    expect(selected.state.draft.subcategoryId).toBeUndefined();
     expect(selected.state.categoryCandidates).toBeUndefined();
   });
 });
