@@ -3062,6 +3062,81 @@ export async function materializeObligationPayment(
   return data as MaterializeObligationPaymentResult;
 }
 
+/** A validation rejection is editable only after ruling out an earlier keyed commit. */
+export class CardBillSettlementError extends Error {
+  readonly code: string | undefined;
+  readonly details: string | undefined;
+  readonly hint: string | undefined;
+  constructor(
+    error: { message: string; code?: string; details?: string; hint?: string },
+    readonly definitiveNoWrite: boolean,
+  ) {
+    super(`settleCardBill failed: ${error.message}`, { cause: error });
+    this.name = "CardBillSettlementError";
+    this.code = error.code;
+    this.details = error.details;
+    this.hint = error.hint;
+  }
+}
+
+/** Recover the first persisted parcel without changing the RPC's identity checks. */
+export async function findInstallmentPurchaseFirstDueMonth(
+  client: AppSupabaseClient,
+  householdId: string,
+  idempotencyKey: string,
+): Promise<string | null> {
+  const { data: group, error } = await client
+    .from("installment_groups")
+    .select("id")
+    .eq("household_id", householdId)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+  if (error !== null)
+    throw new Error(`Installment recovery lookup failed: ${error.message}`);
+  if (group === null) return null;
+  const { data: parcel, error: parcelError } = await client
+    .from("installments")
+    .select("due_month")
+    .eq("household_id", householdId)
+    .eq("installment_group_id", group.id)
+    .eq("number", 1)
+    .single();
+  if (parcelError !== null)
+    throw new Error(
+      `Installment schedule recovery failed: ${parcelError.message}`,
+    );
+  if (parcel === null || !/^\d{4}-(0[1-9]|1[0-2])$/.test(parcel.due_month))
+    throw new Error("Installment schedule recovery: invalid first parcel");
+  return parcel.due_month;
+}
+
+/** Old drafts have no key; only an exact historical payment can be reconciled automatically. */
+export async function reconcileLegacyCardBillPayment(
+  client: AppSupabaseClient,
+  draft: Omit<CardBillSettlementDraft, "idempotencyKey">,
+): Promise<"none" | "matched" | "ambiguous"> {
+  const { data, error } = await client
+    .from("transactions")
+    .select("*")
+    .eq("household_id", draft.householdId)
+    .eq("kind", "transfer")
+    .eq("credit_card_id", draft.creditCardId)
+    .eq("bill_month", draft.billMonth)
+    .is("idempotency_key", null);
+  if (error !== null)
+    throw new Error(`Legacy payment recovery failed: ${error.message}`);
+  if (data === null || data.length === 0) return "none";
+  if (
+    data.length === 1 &&
+    data[0]!.account_id === draft.accountId &&
+    data[0]!.amount_cents === draft.amountCents &&
+    data[0]!.occurred_on === draft.paidOn &&
+    data[0]!.created_by_user_id === draft.createdByUserId
+  )
+    return "matched";
+  return "ambiguous";
+}
+
 /** Register or replay a payment via the key-idempotent settlement RPC. */
 export async function settleCardBill(
   client: AppSupabaseClient,
@@ -3078,7 +3153,22 @@ export async function settleCardBill(
     target_created_by_user_id: draft.createdByUserId,
   });
   if (error !== null) {
-    throw new Error(`settleCardBill failed: ${error.message}`);
+    let definitiveNoWrite = false;
+    if (error.code === "22023") {
+      // SQL rolls back this invocation, but an earlier response may have been lost.
+      try {
+        const existing = await client
+          .from("transactions")
+          .select("id")
+          .eq("household_id", draft.householdId)
+          .eq("idempotency_key", draft.idempotencyKey)
+          .maybeSingle();
+        definitiveNoWrite = existing.error === null && existing.data === null;
+      } catch {
+        /* A failed reconciliation read leaves the outcome uncertain. */
+      }
+    }
+    throw new CardBillSettlementError(error, definitiveNoWrite);
   }
   return data as SettleCardBillResult;
 }

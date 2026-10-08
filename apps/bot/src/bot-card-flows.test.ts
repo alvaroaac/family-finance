@@ -93,6 +93,10 @@ function fakeQueryBuilder(rows: FakeRow[]) {
       filtered = filtered.filter((r) => r[column] === value);
       return api;
     },
+    is(column: string, value: unknown) {
+      filtered = filtered.filter((r) => (r[column] ?? null) === value);
+      return api;
+    },
     in(column: string, values: unknown[]) {
       filtered = filtered.filter((r) => values.includes(r[column]));
       return api;
@@ -2060,8 +2064,21 @@ describe("durable confirmation preparation", () => {
       save.mockClear();
       const resolve = vi
         .spyOn(db, "planWithOpenFaturas")
-        .mockRejectedValue(new Error("resolver unavailable"));
-      const create = vi.spyOn(db, "createInstallmentPurchase");
+        .mockRejectedValueOnce(new Error("resolver unavailable"));
+      const originalCreate = db.createInstallmentPurchase;
+      const create = vi
+        .spyOn(db, "createInstallmentPurchase")
+        .mockImplementation(async (...params) => {
+          const persisted = await store.load("555");
+          expect(persisted?.status).toBe("installment_submission_started");
+          expect(persisted?.installmentDraft?.firstOpenMonth).toMatch(
+            /^\d{4}-\d{2}$/,
+          );
+          expect(params[1].installments[0]?.dueMonth).toBe(
+            persisted?.installmentDraft?.firstOpenMonth,
+          );
+          return originalCreate(...params);
+        });
       try {
         await handleWebhook({
           ...args,
@@ -2076,10 +2093,13 @@ describe("durable confirmation preparation", () => {
           ),
         ).toBe(false);
         expect(create).not.toHaveBeenCalled();
-        expect(resolve).toHaveBeenCalledTimes(2);
+        expect(resolve).toHaveBeenCalledTimes(1);
         expect((await store.load("555"))?.status).toBe(
-          "installment_outcome_uncertain",
+          "awaiting_installment_confirmation",
         );
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+        expect(create).toHaveBeenCalledTimes(1);
+        expect((await store.load("555"))?.status).toBe("saved");
       } finally {
         create.mockRestore();
         resolve.mockRestore();
@@ -2219,4 +2239,467 @@ describe("durable confirmation preparation", () => {
       }
     },
   );
+});
+
+describe("confirmation recovery regressions", () => {
+  it.each(["typed", "callback"])(
+    "rejects a future payment before the durable %s boundary",
+    async (path) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram, sent } = fakeTelegram();
+      const store = createInMemoryConversationStore();
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "nubank pago 50"),
+      });
+      const state = (await store.load("555"))!;
+      await store.save("555", {
+        ...state,
+        cardBillDraft: { ...state.cardBillDraft!, paidOn: "2099-12-01" },
+      });
+      const settle = vi.spyOn(db, "settleCardBill");
+      try {
+        await handleWebhook({
+          ...args,
+          rawBody:
+            path === "typed"
+              ? textUpdate(777, "confirmar")
+              : callbackUpdate(777, TOKENS.confirm),
+        });
+        expect(settle).not.toHaveBeenCalled();
+        expect((await store.load("555"))?.status).toBe(
+          "awaiting_card_bill_confirmation",
+        );
+        expect(sent.at(-1)?.text).toContain("futura");
+        await handleWebhook({
+          ...args,
+          rawBody: textUpdate(
+            777,
+            `data ${currentHouseholdDate().split("-").reverse().join("/")}`,
+          ),
+        });
+        expect((await store.load("555"))?.cardBillDraft?.paidOn).toBe(
+          currentHouseholdDate(),
+        );
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "cancelar") });
+        expect((await store.load("555"))?.status).toBe("cancelled");
+        expect(tables.transactions).toHaveLength(0);
+      } finally {
+        settle.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    "installment_submission_started",
+    "installment_outcome_uncertain",
+  ] as const)(
+    "replays a pre-upgrade committed purchase from %s after its bill closes",
+    async (status) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createDbConversationStore(client);
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(
+          777,
+          "notebook 300 em 3x no nubank data 04/10/2026",
+        ),
+      });
+      const originalState = (await store.load("555"))!;
+      const originalPlan = db.planWithOpenFaturas;
+      const resolve = vi
+        .spyOn(db, "planWithOpenFaturas")
+        .mockImplementationOnce(async (_client, _household, plan) => ({
+          plan,
+          shiftedFrom: null,
+        }));
+      try {
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+        expect(tables.installments![0]?.due_month).toBe("2026-10");
+        await store.save("555", { ...originalState, status });
+        resolve.mockImplementation(async (...params) =>
+          originalPlan(...params),
+        );
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+        expect((await store.load("555"))?.status).toBe("saved");
+        expect(tables.installment_groups).toHaveLength(1);
+        expect(tables.installments!.map((row) => row.due_month)).toEqual([
+          "2026-10",
+          "2026-11",
+          "2026-12",
+        ]);
+        expect(resolve.mock.calls.at(-1)?.[4]).toBe("2026-10");
+      } finally {
+        resolve.mockRestore();
+      }
+    },
+  );
+});
+
+describe("legacy settlements and submission safety", () => {
+  it.each(["typed", "callback"])(
+    "reconciles an exact historical null-key payment through %s without inserting again",
+    async (path) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createDbConversationStore(client);
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "nubank pago 50"),
+      });
+      const state = (await store.load("555"))!;
+      const draft = state.cardBillDraft!;
+      tables.transactions!.push({
+        id: "legacy-payment",
+        household_id: "house-1",
+        kind: "transfer",
+        credit_card_id: draft.cardId,
+        account_id: draft.accountId,
+        bill_month: draft.month,
+        amount_cents: draft.amountCents,
+        occurred_on: currentHouseholdDate(),
+        created_by_user_id: "user-alvaro",
+        idempotency_key: null,
+      });
+      await store.save("555", {
+        ...state,
+        cardBillDraft: { ...draft, idempotencyKey: undefined },
+      });
+      const settle = vi.spyOn(db, "settleCardBill");
+      try {
+        await handleWebhook({
+          ...args,
+          rawBody:
+            path === "typed"
+              ? textUpdate(777, "confirmar")
+              : callbackUpdate(777, TOKENS.confirm),
+        });
+        expect(settle).not.toHaveBeenCalled();
+        expect(tables.transactions).toHaveLength(1);
+        expect((await store.load("555"))?.status).toBe("saved");
+        // A fresh explicit payment still gets its own key and can add to the same bill.
+        await handleWebhook({
+          ...args,
+          rawBody: textUpdate(777, "nubank pago 25"),
+        });
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "valor 25") });
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+        expect(tables.transactions).toHaveLength(2);
+      } finally {
+        settle.mockRestore();
+      }
+    },
+  );
+
+  it.each(["different amount", "multiple matches"])(
+    "requires explicit recovery for a legacy payment with %s",
+    async (ambiguity) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram, sent } = fakeTelegram();
+      const store = createDbConversationStore(client);
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "nubank pago 50"),
+      });
+      const state = (await store.load("555"))!;
+      const draft = state.cardBillDraft!;
+      const old = {
+        id: "legacy-payment",
+        household_id: "house-1",
+        kind: "transfer",
+        credit_card_id: draft.cardId,
+        account_id: draft.accountId,
+        bill_month: draft.month,
+        amount_cents:
+          ambiguity === "different amount" ? 2500 : draft.amountCents,
+        occurred_on: currentHouseholdDate(),
+        created_by_user_id: "user-alvaro",
+        idempotency_key: null,
+      };
+      tables.transactions!.push(old);
+      if (ambiguity === "multiple matches")
+        tables.transactions!.push({ ...old, id: "legacy-payment-2" });
+      await store.save("555", {
+        ...state,
+        cardBillDraft: { ...draft, idempotencyKey: undefined },
+      });
+      const count = tables.transactions!.length;
+      await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+      await handleWebhook({
+        ...args,
+        rawBody: callbackUpdate(777, TOKENS.confirm),
+      });
+      expect(tables.transactions).toHaveLength(count);
+      expect(
+        (await store.load("555"))?.cardBillDraft?.idempotencyKey,
+      ).toBeUndefined();
+      expect((await store.load("555"))?.status).toBe(
+        "awaiting_card_bill_confirmation",
+      );
+      expect(sent.at(-1)?.text).toContain("pagamento antigo");
+      await handleWebhook({ ...args, rawBody: textUpdate(777, "cancelar") });
+      expect((await store.load("555"))?.status).toBe("cancelled");
+    },
+  );
+
+  it.each(["typed", "callback"])(
+    "keeps a definitively rejected SQL payment editable through %s",
+    async (path) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const store = createDbConversationStore(client);
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "nubank pago 50"),
+      });
+      const rpcClient = client as unknown as {
+        rpc(name: string, args: Record<string, unknown>): Promise<unknown>;
+      };
+      const rpc = rpcClient.rpc.bind(rpcClient);
+      const reject = vi
+        .spyOn(rpcClient, "rpc")
+        .mockImplementationOnce(async () => ({
+          data: null,
+          error: {
+            code: "22023",
+            message: "settle_card_bill: account missing",
+            details: "validation",
+            hint: "check account",
+            name: "PostgrestError",
+          },
+        }))
+        .mockImplementation(rpc);
+      try {
+        await handleWebhook({
+          ...args,
+          rawBody:
+            path === "typed"
+              ? textUpdate(777, "confirmar")
+              : callbackUpdate(777, TOKENS.confirm),
+        });
+        expect(tables.transactions).toHaveLength(0);
+        expect((await store.load("555"))?.status).toBe(
+          "awaiting_card_bill_confirmation",
+        );
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "valor 25") });
+        await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+        expect(tables.transactions).toHaveLength(1);
+        expect(tables.transactions![0]?.amount_cents).toBe(2500);
+      } finally {
+        reject.mockRestore();
+      }
+    },
+  );
+
+  it("does not unlock a prior committed payment when its retry gets a SQL validation rejection", async () => {
+    const { client, tables } = fakeSupabase({
+      credit_cards: [{ ...CARD_SEED }],
+    });
+    const { telegram } = fakeTelegram();
+    const store = createDbConversationStore(client);
+    const args = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage: classifierReturning(null),
+    };
+    await handleWebhook({
+      ...args,
+      rawBody: textUpdate(777, "nubank pago 50"),
+    });
+    const rpcClient = client as unknown as {
+      rpc(name: string, args: Record<string, unknown>): Promise<unknown>;
+    };
+    const rpc = rpcClient.rpc.bind(rpcClient);
+    const reject = vi
+      .spyOn(rpcClient, "rpc")
+      .mockImplementationOnce(async (...params) => {
+        await rpc(...params);
+        throw new Error("lost response after commit");
+      })
+      .mockImplementationOnce(async () => ({
+        data: null,
+        error: {
+          code: "22023",
+          message:
+            "settle_card_bill: idempotency key reused with a different payment",
+          details: "",
+          hint: "",
+          name: "PostgrestError",
+        },
+      }))
+      .mockImplementation(rpc);
+    try {
+      await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+      const key = (await store.load("555"))?.cardBillDraft?.idempotencyKey;
+      await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+      await handleWebhook({ ...args, rawBody: textUpdate(777, "cancelar") });
+      expect((await store.load("555"))?.status).toBe(
+        "card_bill_submission_started",
+      );
+      expect((await store.load("555"))?.cardBillDraft?.idempotencyKey).toBe(
+        key,
+      );
+      await handleWebhook({ ...args, rawBody: textUpdate(777, "confirmar") });
+      expect(tables.transactions).toHaveLength(1);
+      expect((await store.load("555"))?.status).toBe("saved");
+    } finally {
+      reject.mockRestore();
+    }
+  });
+
+  it.each(["typed", "callback"])(
+    "never calls the purchase RPC after the durable pre-save fails (%s)",
+    async (path) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram } = fakeTelegram();
+      const memory = createDbConversationStore(client);
+      const store: ConversationStore = {
+        load: (id) => memory.load(id),
+        save: async (id, state) => {
+          if (state.status === "installment_submission_started")
+            throw new Error("durable save unavailable");
+          await memory.save(id, state);
+        },
+      };
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(777, "notebook 300 em 3x no nubank"),
+      });
+      await expect(
+        handleWebhook({
+          ...args,
+          rawBody:
+            path === "typed"
+              ? textUpdate(777, "confirmar")
+              : callbackUpdate(777, TOKENS.confirm),
+        }),
+      ).rejects.toThrow("durable save unavailable");
+      expect(tables.installment_groups).toHaveLength(0);
+      expect((await store.load("555"))?.status).toBe(
+        "awaiting_installment_confirmation",
+      );
+    },
+  );
+
+  it.each([
+    "installment_submission_started",
+    "installment_outcome_uncertain",
+    "card_bill_submission_started",
+  ] as const)("does not replace %s with a voice draft", async (status) => {
+    const { client } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
+    const { telegram } = fakeTelegram();
+    const store = createDbConversationStore(client);
+    const args = {
+      secretHeader: SECRET,
+      configuredSecret: SECRET,
+      client,
+      telegram,
+      resolveMember: resolveMemberFake,
+      store,
+      classifyMessage: classifierReturning(null),
+    };
+    await handleWebhook({
+      ...args,
+      rawBody: textUpdate(
+        777,
+        status.startsWith("installment")
+          ? "notebook 300 em 3x no nubank"
+          : "nubank pago 50",
+      ),
+    });
+    await store.save("555", { ...(await store.load("555"))!, status });
+    const before = await store.load("555");
+    const transcribe = vi.fn(async () => "Uber 50");
+    await handleWebhook({
+      ...args,
+      rawBody: {
+        update_id: 3,
+        message: {
+          message_id: 2,
+          chat: { id: 555 },
+          from: { id: 777 },
+          voice: { file_id: "voice-1", duration: 1, mime_type: "audio/ogg" },
+        },
+      },
+      transcribe: {
+        downloader: {
+          download: async () => new Uint8Array(),
+        },
+        provider: { transcribe },
+      },
+    });
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(await store.load("555")).toEqual(before);
+  });
 });

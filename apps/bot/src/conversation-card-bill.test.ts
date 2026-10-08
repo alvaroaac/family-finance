@@ -3204,3 +3204,62 @@ describe("card-bill callback parity: cf/cx", () => {
     expect(outcome.toast).toBeDefined();
   });
 });
+
+describe("legacy picker and payment date safeguards", () => {
+  it.each(["typed", "callback"])(
+    "preserves a legacy picker's stored month through %s card selection",
+    async (path) => {
+      const resolveDefaultBillMonth = vi.fn(async () => "2026-10");
+      const { deps, getCardBillAmount } = buildDeps({
+        resolveDefaultBillMonth,
+        listActiveCards: () => [
+          { id: "card-1", name: "Nubank" },
+          { id: "card-2", name: "Itaú" },
+        ],
+      });
+      const started = await startConversation(
+        { text: "paguei a fatura", fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+      const legacy = {
+        ...started.state,
+        cardBillDraft: {
+          ...started.state.cardBillDraft!,
+          month: "2026-09",
+          monthExplicit: undefined,
+        },
+      };
+      const outcome =
+        path === "typed"
+          ? await applyMessage(legacy, "Nubank", deps, { today: TODAY })
+          : await applyCallback(legacy, `${CARD_TOKEN_PREFIX}card-1`, deps, {
+              today: TODAY,
+            });
+      expect(outcome.state.cardBillDraft?.month).toBe("2026-09");
+      expect(resolveDefaultBillMonth).not.toHaveBeenCalled();
+      expect(getCardBillAmount).toHaveBeenCalledWith("card-1", "2026-09");
+    },
+  );
+
+  it("rejects a future date correction and keeps cancellation available", async () => {
+    const { deps, settleCardBill } = buildDeps({
+      classifyMessage: classifierReturning(markPaidCardIntent()),
+    });
+    const started = await startConversation(
+      { text: "Nubank pago", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const outcome = await applyMessage(started.state, "data 01/12/2099", deps, {
+      today: TODAY,
+    });
+    expect(outcome.reply).toContain("futura");
+    expect(outcome.state).toBe(started.state);
+    expect(settleCardBill).not.toHaveBeenCalled();
+    const cancelled = await applyMessage(outcome.state, "cancelar", deps, {
+      today: TODAY,
+    });
+    expect(cancelled.state.status).toBe("cancelled");
+  });
+});

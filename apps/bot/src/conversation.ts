@@ -37,6 +37,7 @@ import type {
   CategoryCatalog,
 } from "@family-finance/categorization";
 import { randomUUID } from "node:crypto";
+import { CardBillSettlementError } from "@family-finance/db";
 
 import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
 import {
@@ -230,7 +231,9 @@ export type CardBillDraftInProgress = {
   amountCents?: number; // resolved (override ?? computed) once the card is known
   accountId: string;
   month: string; // YYYY-MM once the card is resolved; empty while picking
-  monthExplicit: boolean;
+  /** Absent on older picker drafts, whose populated month must be preserved. */
+  monthExplicit?: boolean;
+  legacyPaymentStatus?: "matched" | "ambiguous";
   /** Explicit payment occurrence date; defaults to confirmation day. */
   paidOn?: string;
   createdByUserId: string;
@@ -463,7 +466,13 @@ export type ConversationDeps = {
     firstDueMonth: string;
   }>;
   /** First open fatura month for the plan's first installment. */
-  resolveInstallmentOpenMonth?: (plan: InstallmentPlan) => Promise<string>;
+  resolveInstallmentOpenMonth?: (
+    plan: InstallmentPlan,
+    idempotencyKey: string,
+  ) => Promise<string>;
+  reconcileLegacyCardBillPayment?: (
+    draft: Omit<CardBillSettlementDraft, "idempotencyKey">,
+  ) => Promise<"none" | "matched" | "ambiguous">;
   /** Remaining balance and payments for one card/month. */
   getCardBillAmount?: (
     creditCardId: string,
@@ -2053,7 +2062,11 @@ function cardBillConfirmationOutcome(
   ballast: DraftInProgress,
   deps: ConversationDeps,
 ): ConversationOutcome {
-  const next: CardBillDraftInProgress = { ...draft, amountCents: amount };
+  const next: CardBillDraftInProgress = {
+    ...draft,
+    amountCents: amount,
+    legacyPaymentStatus: undefined,
+  };
   const state: ConversationState = {
     status: "awaiting_card_bill_confirmation",
     draft: ballast,
@@ -2098,10 +2111,11 @@ async function resolveBillCard(
       reply: obligationUnavailableMessage(),
     };
   }
-  const month = draft.monthExplicit
-    ? draft.month
-    : ((await deps.resolveDefaultBillMonth?.(cardId)) ??
-      ballast.occurredOn.slice(0, 7));
+  const month =
+    (draft.monthExplicit ?? draft.month.length > 0)
+      ? draft.month
+      : ((await deps.resolveDefaultBillMonth?.(cardId)) ??
+        ballast.occurredOn.slice(0, 7));
   const computed = await deps.getCardBillAmount(cardId, month);
   const next: CardBillDraftInProgress = { ...draft, cardId, month };
   if (computed.remainingCents === 0 && computed.paidCents > 0) {
@@ -3854,7 +3868,10 @@ export async function prepareInstallmentSubmission(
     draft.cardClosingDay,
   );
   if (built === undefined || !built.ok) return next;
-  const firstOpenMonth = await deps.resolveInstallmentOpenMonth(built.value);
+  const firstOpenMonth = await deps.resolveInstallmentOpenMonth(
+    built.value,
+    draft.idempotencyKey,
+  );
   return { ...next, installmentDraft: { ...draft, firstOpenMonth } };
 }
 
@@ -3935,6 +3952,7 @@ async function confirmInstallment(
     ) {
       const firstOpenMonth = await deps.resolveInstallmentOpenMonth(
         built.value,
+        draft.idempotencyKey,
       );
       draft = { ...draft, firstOpenMonth };
       workingState = { ...workingState, installmentDraft: draft };
@@ -4129,17 +4147,44 @@ async function applyInstallmentMessage(
 }
 
 /** Pin the settlement identity and date before its durable submission. */
-export function prepareCardBillSubmission(
+export async function prepareCardBillSubmission(
   state: ConversationState,
   today: string,
-): ConversationState {
+  deps: ConversationDeps,
+): Promise<ConversationState> {
   const draft = state.cardBillDraft!;
+  const paidOn = draft.paidOn ?? today;
+  if (paidOn > today) return state;
+  if (
+    draft.idempotencyKey === undefined &&
+    deps.reconcileLegacyCardBillPayment === undefined
+  ) {
+    throw new Error("Legacy payment reconciliation is unavailable");
+  }
+  if (
+    draft.idempotencyKey === undefined &&
+    deps.reconcileLegacyCardBillPayment !== undefined &&
+    draft.cardId !== undefined &&
+    draft.amountCents !== undefined
+  ) {
+    const legacyPaymentStatus = await deps.reconcileLegacyCardBillPayment({
+      householdId: deps.householdId,
+      creditCardId: draft.cardId,
+      accountId: draft.accountId,
+      billMonth: draft.month,
+      amountCents: draft.amountCents,
+      paidOn,
+      createdByUserId: draft.createdByUserId,
+    });
+    if (legacyPaymentStatus !== "none")
+      return { ...state, cardBillDraft: { ...draft, legacyPaymentStatus } };
+  }
   return {
     ...state,
     status: "card_bill_submission_started",
     cardBillDraft: {
       ...draft,
-      paidOn: draft.paidOn ?? today,
+      paidOn,
       idempotencyKey: draft.idempotencyKey ?? randomUUID(),
     },
   };
@@ -4160,6 +4205,30 @@ async function confirmCardBill(
   if (originalDraft === undefined || originalDraft.cardId === undefined) {
     // Defensive: the picker must resolve the card before confirmation.
     return { state, reply: notUnderstoodMessage() };
+  }
+  if ((originalDraft.paidOn ?? today) > today) {
+    return {
+      state: { ...state, status: "awaiting_card_bill_confirmation" },
+      reply:
+        'A data de pagamento não pode ser futura. Corrija com "data DD/MM/AAAA" ou envie "cancelar".',
+    };
+  }
+  if (originalDraft.legacyPaymentStatus === "ambiguous") {
+    return {
+      state,
+      reply:
+        'Encontrei um pagamento antigo dessa fatura, mas não consegui confirmar se é este pagamento. Confira em Cartões. Para registrar outro pagamento, envie "cancelar" e comece um novo lançamento.',
+    };
+  }
+  if (originalDraft.legacyPaymentStatus === "matched") {
+    return {
+      state: { status: "saved", draft: state.draft },
+      reply: cardBillPaidMessage({
+        cardName: findActiveCard(deps, originalDraft.cardId)?.name ?? "cartão",
+        amountCents: originalDraft.amountCents!,
+        month: originalDraft.month,
+      }),
+    };
   }
   const draft = {
     ...originalDraft,
@@ -4212,6 +4281,14 @@ async function confirmCardBill(
       `[bot] settleCardBill failed for ${draft.cardId}/${draft.month}:`,
       error,
     );
+    if (error instanceof CardBillSettlementError && error.definitiveNoWrite) {
+      return {
+        state: { ...workingState, status: "awaiting_card_bill_confirmation" },
+        reply:
+          'O pagamento não foi registrado. Confira o valor, a conta e a data antes de confirmar novamente, ou envie "cancelar".',
+        keyboard: confirmCancelKeyboard(),
+      };
+    }
     return {
       state: {
         ...workingState,
@@ -4361,6 +4438,12 @@ async function applyCardBillMessage(
         reply: `A data de pagamento “${raw}” é inválida. Envie no formato DD/MM ou DD/MM/AAAA.`,
       };
     }
+    if (parsedDate.iso > today)
+      return {
+        state,
+        reply:
+          "A data de pagamento não pode ser futura. Envie uma data de hoje ou anterior.",
+      };
     const next: CardBillDraftInProgress = {
       ...draft,
       paidOn: parsedDate.iso,

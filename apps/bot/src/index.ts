@@ -50,6 +50,8 @@ import {
   getCardBillOverview,
   getCardFaturaPairs,
   planWithOpenFaturas,
+  findInstallmentPurchaseFirstDueMonth,
+  reconcileLegacyCardBillPayment,
   settleCardBill as dbSettleCardBill,
   type AppSupabaseClient,
   type BotMemberIdentity,
@@ -114,7 +116,7 @@ import {
   DRAFT_NOT_YOURS_TOAST,
   ALREADY_SAVED_TOAST,
 } from "./replies.js";
-import { TOKENS } from "./keyboards.js";
+import { TOKENS, installmentReconciliationKeyboard } from "./keyboards.js";
 
 /**
  * GPT extracts financial fields under a four-second deadline. Categorization
@@ -134,7 +136,10 @@ function todayIso(): string {
 
 function canSubmitInstallment(state: ConversationState): boolean {
   return (
-    state.status === "awaiting_installment_confirmation" &&
+    (state.status === "awaiting_installment_confirmation" ||
+      ((state.status === "installment_submission_started" ||
+        state.status === "installment_outcome_uncertain") &&
+        state.installmentDraft?.firstOpenMonth === undefined)) &&
     state.installmentDraft?.totalCents !== undefined &&
     state.installmentDraft.installmentCount !== undefined &&
     state.installmentDraft.cardId !== undefined
@@ -451,7 +456,13 @@ async function buildDeps(
             ? card.closing_day
             : undefined,
       })),
-    resolveInstallmentOpenMonth: async (plan) => {
+    resolveInstallmentOpenMonth: async (plan, idempotencyKey) => {
+      const existingMonth = await findInstallmentPurchaseFirstDueMonth(
+        client,
+        householdId,
+        idempotencyKey,
+      );
+      if (existingMonth !== null) return existingMonth;
       const result = await planWithOpenFaturas(
         client,
         householdId,
@@ -516,6 +527,8 @@ async function buildDeps(
       const { remainingCents, paidCents, closed } = overview.summary;
       return { remainingCents, paidCents, closed };
     },
+    reconcileLegacyCardBillPayment: async (draft) =>
+      reconcileLegacyCardBillPayment(client, draft),
     settleCardBill: async (draft) => {
       const result = await dbSettleCardBill(client, draft);
       return { replayed: result.replayed };
@@ -651,9 +664,19 @@ export async function handleWebhook(args: {
             );
           } catch (error) {
             console.warn("[bot] prepareInstallmentSubmission failed:", error);
+            await args.telegram.answerCallbackQuery(callbackQueryId);
+            await args.telegram.sendMessage(
+              chatId,
+              "Não consegui preparar o lançamento. Tente confirmar novamente.",
+            );
+            return { status: 200, body: { ok: true } };
           }
         } else if (canSubmitCardBill(existing)) {
-          callbackState = prepareCardBillSubmission(existing, todayIso());
+          callbackState = await prepareCardBillSubmission(
+            existing,
+            todayIso(),
+            await getDeps(),
+          );
         }
       }
       if (callbackState !== existing) {
@@ -750,6 +773,20 @@ export async function handleWebhook(args: {
     // Serialized per chat (same rule as callbacks/text): a concurrent voice +
     // text confirm must not race load/save on the conversation store.
     return withChatQueue(voice.chatId, async (): Promise<WebhookResult> => {
+      const existing = await args.store.load(voice.chatId);
+      if (
+        existing !== undefined &&
+        (existing.status === "installment_submission_started" ||
+          existing.status === "installment_outcome_uncertain" ||
+          existing.status === "card_bill_submission_started")
+      ) {
+        await args.telegram.sendMessage(
+          voice.chatId,
+          'O lançamento anterior ainda precisa ser confirmado. Envie "confirmar" antes de começar outro lançamento.',
+          { replyMarkup: installmentReconciliationKeyboard() },
+        );
+        return { status: 200, body: { ok: true } };
+      }
       let outcome;
       try {
         outcome = await startConversationFromAudio(
@@ -860,9 +897,18 @@ export async function handleWebhook(args: {
             messageState = await prepareInstallmentSubmission(existing, deps);
           } catch (error) {
             console.warn("[bot] prepareInstallmentSubmission failed:", error);
+            await args.telegram.sendMessage(
+              message.chatId,
+              "Não consegui preparar o lançamento. Tente confirmar novamente.",
+            );
+            return { status: 200, body: { ok: true } };
           }
         } else if (canSubmitCardBill(existing)) {
-          messageState = prepareCardBillSubmission(existing, todayIso());
+          messageState = await prepareCardBillSubmission(
+            existing,
+            todayIso(),
+            deps,
+          );
         }
       }
       if (messageState !== existing) {

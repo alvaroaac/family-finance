@@ -2120,6 +2120,7 @@ describe("card installment confirm: persistence", () => {
     expect(resolveInstallmentOpenMonth).toHaveBeenCalledTimes(1);
     expect(resolveInstallmentOpenMonth).toHaveBeenCalledWith(
       createInstallmentPurchase.mock.calls[0]?.[0],
+      started.state.installmentDraft?.idempotencyKey,
     );
     expect(createInstallmentPurchase).toHaveBeenCalledTimes(2);
     expect(createInstallmentPurchase.mock.calls[1]).toEqual(
