@@ -508,6 +508,7 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db
    as \$\$select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid\$\$;" >/dev/null
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -f - \
   < "$repo_root/packages/db/test/verified-identity-binding-functional.sql" >/dev/null
+node "$repo_root/scripts/verify-identity-provisioning-race.mjs" "$container" "$identity_db"
 docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$identity_db" -f - \
   < "$repo_root/packages/db/test/delete-household-functional.sql" >/dev/null
 before="$(docker exec "$container" pg_dump -U postgres -d "$identity_db" | \

@@ -8,7 +8,7 @@ as $$
 declare
   target_household_id uuid;
 begin
-  if new.email_confirmed_at is null then
+  if new.email is null or new.email_confirmed_at is null then
     return new;
   end if;
   if tg_op = 'UPDATE' then
@@ -16,6 +16,10 @@ begin
       return new;
     end if;
   end if;
+  -- Serialize both provisioning paths before either reads the other table.
+  -- Transaction locks cover invisible concurrent INSERTs as well as confirmation.
+  perform pg_advisory_xact_lock(hashtextextended(
+    'household-provision-email:' || lower(new.email), 0));
   select a.household_id into target_household_id
   from allowed_emails a where lower(a.email) = lower(new.email);
   if target_household_id is not null then
@@ -45,6 +49,8 @@ as $$
 declare
   existing_user record;
 begin
+  perform pg_advisory_xact_lock(hashtextextended(
+    'household-provision-email:' || lower(new.email), 0));
   for existing_user in
     select u.id from auth.users u
     where lower(u.email) = lower(new.email) and u.email_confirmed_at is not null
