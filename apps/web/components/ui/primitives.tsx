@@ -23,7 +23,7 @@ export function PageTitle({
   lead,
   actions,
 }: {
-  kicker: string;
+  kicker?: string;
   title: string;
   lead?: string;
   actions?: ReactNode;
@@ -31,7 +31,7 @@ export function PageTitle({
   return (
     <header className="ff-page-title">
       <div>
-        <Kicker>{kicker}</Kicker>
+        {kicker ? <Kicker>{kicker}</Kicker> : null}
         <h1 className="ff-page-title__heading">{title}</h1>
         {lead ? <p className="ff-page-title__lead">{lead}</p> : null}
       </div>

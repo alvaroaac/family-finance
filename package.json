@@ -14,10 +14,16 @@
     "typecheck": "turbo run typecheck",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "test:category-migration": "bash scripts/verify-category-migration.sh"
+    "test:category-migration": "bash scripts/verify-category-migration.sh",
+    "e2e:up": "bash e2e/stack.sh up",
+    "e2e:down": "bash e2e/stack.sh down",
+    "e2e:env": "bash e2e/stack.sh env",
+    "e2e:bot": "bash e2e/stack.sh bot",
+    "e2e:web": "bash e2e/stack.sh web"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "pg": "^8.23.0",
     "prettier": "^3.4.2",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",

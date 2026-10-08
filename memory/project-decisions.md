@@ -71,6 +71,9 @@ never validates/throws at import, so `next build` compiles without real secrets
 (placeholders are used). Google login is initiated by a server action calling Supabase
 `signInWithOAuth({ provider: "google" })`.
 
+**Update 2026-09-29:** the `AUTHORIZED_EMAILS` gate was replaced by an active
+`household_members` row (multi-tenancy, ADR 0002 dated section).
+
 **Why:** Every feature must land on a real protected surface from day one; keeping the
 policy pure prevents auth logic leaking into components and makes it testable. Build must
 stay green in CI without secrets.
@@ -120,23 +123,24 @@ catalog grows large enough that linear name resolution matters; or merges need a
 ## 2026-06-22: Import Pipeline Contracts
 
 **Decision:** `packages/importers` is a PURE adapter layer (imports `@family-finance/domain`
-+ `zod` only — never web/bot/db). A source file is TRANSIENT text passed to an
-`ImportAdapter.parse(fileText)`, which returns `NormalizedImportRow[]` + reviewable
-`ImportRowError[]` (an unmapped/unparseable row NEVER fails the whole import). CSV parsing is
-hand-rolled (`parseCsv`, quoted fields, `;`/`,` auto-detect) with no new dependency.
-Normalization covers date (→ ISO `YYYY-MM-DD`, accepts `DD/MM/YYYY`), description (trimmed),
-value (BRL integer cents via domain `brl`; BR `3.000,00` and dot-decimal both supported), and
-type (sign → `expense`/`income`, with an explicit Tipo column overriding when present). Each
-`NormalizedImportRow.amount.cents` is a POSITIVE magnitude; direction is in `kind` (matches the
-schema CHECK `amount_cents > 0`). `buildImportPreview` assembles rows + errors + probable
-`DuplicateCandidate[]` (same date + amount + normalized description, conservative) + counts;
-the importer's `ImportSource` (`minhas-financas` | `nubank`) is kept independent of the DB
-`import_source` enum, mapped in the web action. The web Importação flow is two-step: a preview
-server action reads the file IN-MEMORY and discards it (only normalized rows reach the browser),
-then an explicit confirm action books one transaction per kept row against a UI-chosen target
-account and persists ONLY an `import_batch` summary (source/status/counts) — never the file.
-Category mapping is per-row in the web layer (optional/uncategorized allowed), never inside the
-importer. `packages/db` gained RLS-scoped `findAccountsByHousehold` + `createImportBatch`.
+
+- `zod` only — never web/bot/db). A source file is TRANSIENT text passed to an
+  `ImportAdapter.parse(fileText)`, which returns `NormalizedImportRow[]` + reviewable
+  `ImportRowError[]` (an unmapped/unparseable row NEVER fails the whole import). CSV parsing is
+  hand-rolled (`parseCsv`, quoted fields, `;`/`,` auto-detect) with no new dependency.
+  Normalization covers date (→ ISO `YYYY-MM-DD`, accepts `DD/MM/YYYY`), description (trimmed),
+  value (BRL integer cents via domain `brl`; BR `3.000,00` and dot-decimal both supported), and
+  type (sign → `expense`/`income`, with an explicit Tipo column overriding when present). Each
+  `NormalizedImportRow.amount.cents` is a POSITIVE magnitude; direction is in `kind` (matches the
+  schema CHECK `amount_cents > 0`). `buildImportPreview` assembles rows + errors + probable
+  `DuplicateCandidate[]` (same date + amount + normalized description, conservative) + counts;
+  the importer's `ImportSource` (`minhas-financas` | `nubank`) is kept independent of the DB
+  `import_source` enum, mapped in the web action. The web Importação flow is two-step: a preview
+  server action reads the file IN-MEMORY and discards it (only normalized rows reach the browser),
+  then an explicit confirm action books one transaction per kept row against a UI-chosen target
+  account and persists ONLY an `import_batch` summary (source/status/counts) — never the file.
+  Category mapping is per-row in the web layer (optional/uncategorized allowed), never inside the
+  importer. `packages/db` gained RLS-scoped `findAccountsByHousehold` + `createImportBatch`.
 
 **Why:** Adapters behind one contract make new sources (XLSX, other banks) additive, not
 rewrites. Keeping the importer pure preserves the package boundary and lets both the importer
@@ -310,3 +314,22 @@ browser path.
 **Revisit if:** A real local Supabase run replaces the fake (then the browser
 spec can fully assert numbers); new repository query shapes need fake support;
 or the bot gets an HTTP entry point that the browser/online E2E should exercise.
+
+## 2026-09-29: Multi-tenancy (several households, one deployment)
+
+**Decision:** Shared database with RLS by `household_id`; one user belongs to
+one household; households and allowlists are created by the operator with
+`scripts/create-household.mjs`; the Telegram bot is shared and acts as the
+resolved member through a short-lived JWT; per-household look and feel is a
+validated `households.theme` document; one Vercel deployment answers several
+hostnames and the household never derives from the hostname. Encryption of
+amounts and descriptions is a separate spec
+(`thoughts/features/multi-tenancy/spec-2-privacy-research.md`).
+
+**Why:** A few households do not justify per-tenant databases or deployments.
+RLS was already enforced on every table, so the work was closing the paths that
+bypassed it (service-role bot, env allowlist, first-household provisioning).
+
+**Revisit if:** A user needs two households; households need self-service
+creation or an admin role; tenant count makes a shared bot or shared Google
+OAuth client a limit.

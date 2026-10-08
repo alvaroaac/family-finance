@@ -50,10 +50,9 @@ export type IncomingTextMessage = {
   updateId: number;
   /** Telegram chat id, as a string (chat ids can exceed 32-bit ints). */
   chatId: string;
+  chatType: string;
   /** Telegram user id of the sender, as a string. */
   fromId: string;
-  /** Telegram @username of the sender (without "@"), when they have one. */
-  fromUsername?: string;
   /** The message text. */
   text: string;
 };
@@ -68,11 +67,13 @@ const telegramUpdateSchema = z.object({
   message: z
     .object({
       message_id: z.number().optional(),
-      chat: z.object({ id: z.union([z.number(), z.string()]) }),
+      chat: z.object({
+        id: z.union([z.number(), z.string()]),
+        type: z.string().optional(),
+      }),
       from: z
         .object({
           id: z.union([z.number(), z.string()]),
-          username: z.string().optional(),
         })
         .optional(),
       text: z.string().optional(),
@@ -105,8 +106,8 @@ export function parseTelegramUpdate(raw: unknown): IncomingTextMessage | null {
   return {
     updateId: update.update_id,
     chatId: String(message.chat.id),
+    chatType: message.chat.type ?? "",
     fromId: String(message.from.id),
-    fromUsername: message.from.username,
     text: message.text,
   };
 }
@@ -116,8 +117,6 @@ export type IncomingVoiceMessage = {
   updateId: number;
   chatId: string;
   fromId: string;
-  /** Telegram @username of the sender (without "@"), when they have one. */
-  fromUsername?: string;
   /** Telegram file_id of the voice/audio attachment. */
   fileId: string;
   /** Optional MIME type (e.g. "audio/ogg"). */
@@ -146,7 +145,6 @@ export function parseTelegramVoice(raw: unknown): IncomingVoiceMessage | null {
     updateId: result.data.update_id,
     chatId: String(message.chat.id),
     fromId: String(message.from.id),
-    fromUsername: message.from.username,
     fileId: file.file_id,
     mimeType: file.mime_type,
   };
@@ -160,14 +158,15 @@ export function parseTelegramVoice(raw: unknown): IncomingVoiceMessage | null {
 export type InlineKeyboardButton = { text: string; callback_data: string };
 
 /** Telegram `reply_markup` payload for an inline keyboard. */
-export type InlineKeyboardMarkup = { inline_keyboard: InlineKeyboardButton[][] };
+export type InlineKeyboardMarkup = {
+  inline_keyboard: InlineKeyboardButton[][];
+};
 
 /** A normalized inbound callback (inline-button tap) from a Telegram update. */
 export type IncomingCallbackQuery = {
   updateId: number;
   callbackQueryId: string;
   fromId: string;
-  fromUsername?: string;
   /** Absent when Telegram omitted the origin message (e.g. too old). */
   chatId?: string;
   messageId?: number;
@@ -181,7 +180,6 @@ const telegramCallbackSchema = z.object({
     id: z.string(),
     from: z.object({
       id: z.union([z.number(), z.string()]),
-      username: z.string().optional(),
     }),
     message: z
       .object({
@@ -211,7 +209,6 @@ export function parseTelegramCallback(
     updateId: result.data.update_id,
     callbackQueryId: cb.id,
     fromId: String(cb.from.id),
-    fromUsername: cb.from.username,
     chatId: cb.message !== undefined ? String(cb.message.chat.id) : undefined,
     messageId: cb.message?.message_id,
     data: cb.data,
@@ -243,8 +240,11 @@ export type TelegramClient = {
  * Real Bot API client. Constructed only when a token is configured; never used
  * by unit tests (which pass a mock). Uses the global `fetch` (Node 22).
  */
-export function createHttpTelegramClient(botToken: string): TelegramClient {
-  const base = `https://api.telegram.org/bot${botToken}`;
+export function createHttpTelegramClient(
+  botToken: string,
+  apiBaseUrl: string,
+): TelegramClient {
+  const base = `${apiBaseUrl}/bot${botToken}`;
 
   async function call(
     method: string,
@@ -337,11 +337,10 @@ export function webhookMissesCallbacks(
 /** GET getWebhookInfo and return its allowed_updates (undefined on any failure). */
 export async function fetchWebhookAllowedUpdates(
   botToken: string,
+  apiBaseUrl: string,
 ): Promise<string[] | undefined> {
   try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
-    );
+    const response = await fetch(`${apiBaseUrl}/bot${botToken}/getWebhookInfo`);
     if (!response.ok) {
       return undefined;
     }

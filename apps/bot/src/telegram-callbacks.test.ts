@@ -28,7 +28,6 @@ describe("parseTelegramCallback", () => {
       updateId: 10,
       callbackQueryId: "cbq-1",
       fromId: "777",
-      fromUsername: "alvaro",
       chatId: "555",
       messageId: 42,
       data: "cf",
@@ -72,13 +71,17 @@ describe("createHttpTelegramClient", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = createHttpTelegramClient("tok");
-    const keyboard = { inline_keyboard: [[{ text: "✅", callback_data: "cf" }]] };
-    const sent = await client.sendMessage("555", "oi", { replyMarkup: keyboard });
+    const client = createHttpTelegramClient("tok", "http://127.0.0.1:4010");
+    const keyboard = {
+      inline_keyboard: [[{ text: "✅", callback_data: "cf" }]],
+    };
+    const sent = await client.sendMessage("555", "oi", {
+      replyMarkup: keyboard,
+    });
 
     expect(sent.messageId).toBe(99);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/sendMessage");
+    expect(url).toBe("http://127.0.0.1:4010/bottok/sendMessage");
     const body = JSON.parse(String(init.body));
     expect(body.reply_markup).toEqual(keyboard);
   });
@@ -90,7 +93,7 @@ describe("createHttpTelegramClient", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = createHttpTelegramClient("tok");
+    const client = createHttpTelegramClient("tok", "https://api.telegram.org");
     await client.answerCallbackQuery("cbq-1", "Sessão expirada");
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -107,7 +110,7 @@ describe("createHttpTelegramClient", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = createHttpTelegramClient("tok");
+    const client = createHttpTelegramClient("tok", "https://api.telegram.org");
     await client.editMessageReplyMarkup("555", 42);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -124,7 +127,9 @@ describe("noop client + allowed_updates check", () => {
     const client = createNoopTelegramClient();
     await expect(client.sendMessage("1", "x")).resolves.toEqual({});
     await expect(client.answerCallbackQuery("cbq")).resolves.toBeUndefined();
-    await expect(client.editMessageReplyMarkup("1", 2)).resolves.toBeUndefined();
+    await expect(
+      client.editMessageReplyMarkup("1", 2),
+    ).resolves.toBeUndefined();
   });
 
   it("webhookMissesCallbacks flags a list without callback_query", () => {
@@ -137,14 +142,15 @@ describe("noop client + allowed_updates check", () => {
   it("fetchWebhookAllowedUpdates returns allowed_updates on the happy path", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ result: { allowed_updates: ["message", "callback_query"] } }),
+      json: async () => ({
+        result: { allowed_updates: ["message", "callback_query"] },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toEqual([
-      "message",
-      "callback_query",
-    ]);
+    await expect(
+      fetchWebhookAllowedUpdates("tok", "https://api.telegram.org"),
+    ).resolves.toEqual(["message", "callback_query"]);
   });
 
   it("fetchWebhookAllowedUpdates falls back to undefined when result is missing", async () => {
@@ -156,7 +162,9 @@ describe("noop client + allowed_updates check", () => {
       }),
     );
 
-    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toBeUndefined();
+    await expect(
+      fetchWebhookAllowedUpdates("tok", "https://api.telegram.org"),
+    ).resolves.toBeUndefined();
   });
 
   it("fetchWebhookAllowedUpdates falls back to undefined on non-OK responses", async () => {
@@ -168,7 +176,9 @@ describe("noop client + allowed_updates check", () => {
       }),
     );
 
-    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toBeUndefined();
+    await expect(
+      fetchWebhookAllowedUpdates("tok", "https://api.telegram.org"),
+    ).resolves.toBeUndefined();
   });
 
   it("fetchWebhookAllowedUpdates falls back to undefined on network errors", async () => {
@@ -177,6 +187,8 @@ describe("noop client + allowed_updates check", () => {
       vi.fn().mockRejectedValue(new Error("network down")),
     );
 
-    await expect(fetchWebhookAllowedUpdates("tok")).resolves.toBeUndefined();
+    await expect(
+      fetchWebhookAllowedUpdates("tok", "https://api.telegram.org"),
+    ).resolves.toBeUndefined();
   });
 });

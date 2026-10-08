@@ -73,7 +73,7 @@ export default async function ResumoPage() {
 
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
-      <Kicker>Nossa casa · {monthLabelPtBr(month)}</Kicker>
+      <Kicker>{monthLabelPtBr(month)}</Kicker>
       <h1 className="ff-hello">Oi, {name}</h1>
       <p className="ff-hello-lead">Como estão as contas da casa?</p>
 

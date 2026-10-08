@@ -95,7 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(requireAuthorizedUser)
     .mockReset()
-    .mockResolvedValue({ email: "test@example.com" });
+    .mockResolvedValue({ email: "test@example.com", householdId: HOUSEHOLD });
   vi.useFakeTimers();
   // UTC has already advanced to the next day; São Paulo is still October 6.
   vi.setSystemTime(new Date("2026-10-07T01:30:00Z"));

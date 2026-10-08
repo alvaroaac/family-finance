@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CardBillSettlementError,
   findInstallmentPurchaseFirstDueMonth,
@@ -17,18 +17,6 @@ const draft = {
   amountCents: 5000,
   createdByUserId: "user-1",
   idempotencyKey: "payment-key",
-};
-const payment = {
-  id: "payment-1",
-  household_id: "house-1",
-  credit_card_id: "card-1",
-  kind: "transfer",
-  account_id: "account-1",
-  bill_month: "2026-09",
-  occurred_on: "2026-10-08",
-  amount_cents: 5000,
-  created_by_user_id: "user-1",
-  idempotency_key: null,
 };
 function clientFor(
   tables: Record<string, Row[]>,
@@ -80,62 +68,72 @@ function clientFor(
 
 describe("settlement outcome classification", () => {
   it.each([
-    ["no prior payment", [], false, "22023", true],
     [
-      "prior payment under this key",
-      [{ ...payment, idempotency_key: draft.idempotencyKey }],
-      false,
+      "authoritative absence",
       "22023",
-      false,
-    ],
-    ["failed reconciliation read", [], true, "22023", false],
-    ["unknown/transport error", [], false, "", false],
-    [
-      "same key in another household",
-      [
-        {
-          ...payment,
-          household_id: "other-house",
-          idempotency_key: draft.idempotencyKey,
-        },
-      ],
-      false,
-      "22023",
+      "card_bill_definitive_no_write_v1",
       true,
     ],
+    ["prior-key mismatch", "22023", undefined, false],
+    ["inactive member with hidden rows", "42501", undefined, false],
+    ["unmarked validation even when RLS is empty", "22023", undefined, false],
+    ["unknown transport error", "", "card_bill_definitive_no_write_v1", false],
   ] as const)(
-    "classifies %s without losing SQL details",
-    async (_label, rows, failRead, code, safe) => {
-      const error = await settleCardBill(
-        clientFor({ transactions: [...rows] }, failRead, code),
-        draft,
-      ).catch((error) => error);
+    "classifies %s without an RLS absence lookup",
+    async (_label, code, hint, safe) => {
+      const from = vi.fn(() => {
+        throw new Error("RLS read must not classify a write");
+      });
+      const client = {
+        rpc: async () => ({
+          data: null,
+          error: { code, hint, details: "details", message: "SQL validation" },
+        }),
+        from,
+      } as unknown as AppSupabaseClient;
+      const error = await settleCardBill(client, draft).catch((error) => error);
       expect(error).toBeInstanceOf(CardBillSettlementError);
       expect(error).toMatchObject({
         code,
+        hint,
         details: "details",
-        hint: "hint",
         definitiveNoWrite: safe,
       });
+      expect(from).not.toHaveBeenCalled();
     },
   );
 });
 
 describe("legacy household-scoped recovery", () => {
-  it("does not reconcile another household's null-key payment", async () => {
-    expect(
-      await reconcileLegacyCardBillPayment(
-        clientFor({
-          transactions: [{ ...payment, household_id: "other-house" }],
-        }),
-        draft,
-      ),
-    ).toBe("none");
-  });
-  it("fails closed when legacy payment lookup is unavailable", async () => {
+  it.each(["none", "matched", "ambiguous"] as const)(
+    "uses the authoritative %s outcome",
+    async (outcome) => {
+      const rpc = vi.fn(async () => ({ data: outcome, error: null }));
+      const client = { rpc } as unknown as AppSupabaseClient;
+      expect(await reconcileLegacyCardBillPayment(client, draft)).toBe(outcome);
+      expect(rpc).toHaveBeenCalledWith("reconcile_legacy_card_bill_payment", {
+        target_household_id: draft.householdId,
+        target_credit_card_id: draft.creditCardId,
+        target_account_id: draft.accountId,
+        target_bill_month: draft.billMonth,
+        target_amount_cents: draft.amountCents,
+        target_paid_on: draft.paidOn,
+        target_created_by_user_id: draft.createdByUserId,
+      });
+    },
+  );
+  it("fails closed after deactivation even if RLS would hide the prior payment", async () => {
     await expect(
-      reconcileLegacyCardBillPayment(clientFor({}, true), draft),
-    ).rejects.toThrow("read failed");
+      reconcileLegacyCardBillPayment(clientFor({}, false, "42501"), draft),
+    ).rejects.toThrow("SQL validation");
+  });
+  it("rejects malformed recovery responses", async () => {
+    const client = {
+      rpc: async () => ({ data: null, error: null }),
+    } as unknown as AppSupabaseClient;
+    await expect(reconcileLegacyCardBillPayment(client, draft)).rejects.toThrow(
+      "invalid outcome",
+    );
   });
   it("recovers the original first month for the household's matching purchase key", async () => {
     const tables = {

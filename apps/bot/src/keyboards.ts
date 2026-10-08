@@ -10,6 +10,36 @@
 
 import type { InlineKeyboardButton, InlineKeyboardMarkup } from "./telegram.js";
 
+/** Bind every button to a persisted prompt identity (UUID actions stay under 64 bytes). */
+export function bindPromptKeyboard(
+  keyboard: InlineKeyboardMarkup,
+  promptToken: string,
+): InlineKeyboardMarkup {
+  if (!/^[a-f0-9]{16}$/.test(promptToken)) {
+    throw new Error("Invalid prompt token");
+  }
+  return {
+    inline_keyboard: keyboard.inline_keyboard.map((row) =>
+      row.map((button) => {
+        const callbackData = `p:${promptToken}:${button.callback_data}`;
+        if (new TextEncoder().encode(callbackData).length > 64) {
+          throw new Error("Prompt callback exceeds Telegram's 64-byte limit");
+        }
+        return { ...button, callback_data: callbackData };
+      }),
+    ),
+  };
+}
+
+/** Legacy actions need a saved message id; bound actions can recover without it. */
+export function parsePromptCallbackData(
+  data: string,
+): { action: string; promptToken?: string } | null {
+  if (!data.startsWith("p:")) return { action: data };
+  const match = /^p:([a-f0-9]{16}):(.+)$/.exec(data);
+  return match === null ? null : { promptToken: match[1]!, action: match[2]! };
+}
+
 /** Fixed callback tokens (spec §1's table). */
 export const TOKENS = {
   confirm: "cf",

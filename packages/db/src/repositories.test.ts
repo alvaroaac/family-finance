@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createTransactionDraft,
   createInstallmentPlan,
@@ -10,6 +10,9 @@ import {
   summarizeMonth,
   accountInsert,
   investmentBucketInsert,
+  createInvestmentBucket,
+  renameInvestmentBucket,
+  deleteInvestmentBucket,
   creditCardInsert,
   installmentGroupInsertFromPlan,
   installmentInsertsFromPlan,
@@ -25,8 +28,10 @@ import {
   updateTransaction,
   updateInstallmentGroup,
   deleteTransaction,
-  findMemberByTelegramUserId,
   resolveTelegramMember,
+  createTelegramLinkCode,
+  redeemTelegramLinkCode,
+  unlinkTelegram,
   getMonthlySummary,
   loadBotConversation,
   saveBotConversation,
@@ -220,18 +225,165 @@ describe("accountInsert", () => {
 });
 
 describe("investmentBucketInsert", () => {
-  it("builds a caixinha insert payload keyed by slug", () => {
+  it("derives the slug from the trimmed name", () => {
     expect(
       investmentBucketInsert({
         householdId: HOUSEHOLD,
-        slug: "independencia_financeira",
-        name: "Aposentadoria",
+        name: "  Independência Financeira ",
       }),
     ).toEqual({
       household_id: HOUSEHOLD,
       slug: "independencia_financeira",
-      name: "Aposentadoria",
+      name: "Independência Financeira",
     });
+  });
+});
+
+/**
+ * Chainable stand-in for the PostgREST builder used by the bucket
+ * repositories: records every call and resolves every query to `result`.
+ */
+function createBucketClient(result: {
+  data?: unknown;
+  error?: { message: string; code?: string } | null;
+}) {
+  const calls: Array<[string, unknown[]]> = [];
+  const resolved: {
+    data: unknown;
+    error: { message: string; code?: string } | null;
+  } = { data: result.data ?? null, error: null };
+  const builder: Record<string, unknown> = {
+    then(resolve: (value: typeof resolved) => unknown) {
+      return Promise.resolve({
+        ...resolved,
+        error: calls.some(([method]) =>
+          ["insert", "update", "delete"].includes(method),
+        )
+          ? (result.error ?? null)
+          : null,
+      }).then(resolve);
+    },
+  };
+  for (const method of [
+    "insert",
+    "update",
+    "delete",
+    "select",
+    "eq",
+    "single",
+    "maybeSingle",
+    "order",
+  ]) {
+    builder[method] = (...args: unknown[]) => {
+      calls.push([method, args]);
+      return builder;
+    };
+  }
+  const client = {
+    from(table: string) {
+      calls.push(["from", [table]]);
+      return builder;
+    },
+  } as unknown as AppSupabaseClient;
+  return { client, calls };
+}
+
+describe("investment bucket repositories", () => {
+  it("rejects a name without letters or digits before touching the database", async () => {
+    await expect(
+      createInvestmentBucket(explodingClient, {
+        householdId: HOUSEHOLD,
+        name: " !!! ",
+      }),
+    ).rejects.toThrow("Informe um nome para o objetivo.");
+    await expect(
+      renameInvestmentBucket(explodingClient, {
+        householdId: HOUSEHOLD,
+        bucketId: "bucket-1",
+        name: "   ",
+      }),
+    ).rejects.toThrow("Informe um nome para o objetivo.");
+  });
+
+  it("reports a visible name already used in the household in Portuguese", async () => {
+    const { client } = createBucketClient({
+      data: [{ id: "bucket-1", name: "Casa", slug: "casa" }],
+    });
+    await expect(
+      createInvestmentBucket(client, { householdId: HOUSEHOLD, name: "cAsA" }),
+    ).rejects.toThrow("Já existe um objetivo com esse nome.");
+  });
+
+  it("refuses to rename to another bucket's visible name even when its slug differs", async () => {
+    const { client, calls } = createBucketClient({
+      data: [
+        { id: "bucket-1", name: "Viagem", slug: "viagem" },
+        { id: "bucket-2", name: "Casa", slug: "legacy_goal" },
+      ],
+    });
+    await expect(
+      renameInvestmentBucket(client, {
+        householdId: HOUSEHOLD,
+        bucketId: "bucket-1",
+        name: "cAsA",
+      }),
+    ).rejects.toThrow("Já existe um objetivo com esse nome.");
+    expect(calls.some(([method]) => method === "update")).toBe(false);
+  });
+
+  it("allows changing only the case of a bucket's own name", async () => {
+    const { client, calls } = createBucketClient({
+      data: [{ id: "bucket-1", name: "Casa", slug: "casa" }],
+    });
+    await renameInvestmentBucket(client, {
+      householdId: HOUSEHOLD,
+      bucketId: "bucket-1",
+      name: "CASA",
+    });
+    expect(calls).toContainEqual(["update", [{ name: "CASA", slug: "casa" }]]);
+  });
+
+  it("renames the name and slug, scoped to the household", async () => {
+    const { client, calls } = createBucketClient({
+      data: [{ id: "bucket-1", name: "Old", slug: "old" }],
+    });
+    await renameInvestmentBucket(client, {
+      householdId: HOUSEHOLD,
+      bucketId: "bucket-1",
+      name: " Viagem ",
+    });
+    expect(calls).toContainEqual([
+      "update",
+      [{ name: "Viagem", slug: "viagem" }],
+    ]);
+    expect(calls).toContainEqual(["eq", ["household_id", HOUSEHOLD]]);
+    expect(calls).toContainEqual(["eq", ["id", "bucket-1"]]);
+  });
+
+  it("reports a rename onto a taken slug in Portuguese", async () => {
+    const { client } = createBucketClient({
+      error: { message: "duplicate key", code: "23505" },
+    });
+    await expect(
+      renameInvestmentBucket(client, {
+        householdId: HOUSEHOLD,
+        bucketId: "bucket-1",
+        name: "Casa",
+      }),
+    ).rejects.toThrow("Já existe um objetivo com esse nome.");
+  });
+
+  it("deletes only a zero-balance bucket of the household", async () => {
+    const { client, calls } = createBucketClient({
+      data: [{ id: "bucket-1" }],
+    });
+    await deleteInvestmentBucket(client, {
+      householdId: HOUSEHOLD,
+      bucketId: "bucket-1",
+    });
+    expect(calls).toContainEqual(["delete", []]);
+    expect(calls).toContainEqual(["eq", ["household_id", HOUSEHOLD]]);
+    expect(calls).toContainEqual(["eq", ["balance_cents", 0]]);
   });
 });
 
@@ -1139,92 +1291,74 @@ describe("confirmImportV2", () => {
   });
 });
 
-describe("findMemberByTelegramUserId", () => {
-  it("maps an active member row to the bot identity shape", async () => {
-    const { client, calls } = createRecordingClient({
-      data: {
-        household_id: HOUSEHOLD,
-        user_id: USER,
-        display_name: "Karol",
-      },
-    });
-    const identity = await findMemberByTelegramUserId(client, 987654321);
-    expect(identity).toEqual({
-      householdId: HOUSEHOLD,
-      userId: USER,
-      displayName: "Karol",
-    });
-    expect(calls.table).toBe("household_members");
-    expect(calls.eq).toContainEqual(["telegram_user_id", 987654321]);
-    expect(calls.eq).toContainEqual(["is_active", true]);
-  });
-
-  it("returns null when no member is linked to the telegram id", async () => {
-    const { client } = createRecordingClient({ data: null });
-    await expect(findMemberByTelegramUserId(client, 42)).resolves.toBeNull();
-  });
-
-  it("throws on a database error", async () => {
-    const { client } = createRecordingClient({ error: { message: "boom" } });
-    await expect(findMemberByTelegramUserId(client, 42)).rejects.toThrow(
-      /findMemberByTelegramUserId failed: boom/,
-    );
-  });
-});
-
 describe("bot conversation store repositories", () => {
-  it("loadBotConversation returns the stored state and timestamp", async () => {
+  it("loadBotConversation scopes the draft to both chat and sender", async () => {
     const { client, calls } = createRecordingClient({
       data: {
         chat_id: 555,
+        telegram_user_id: 42,
+        household_id: HOUSEHOLD,
         state: { status: "awaiting_confirmation" },
         updated_at: "2026-07-01T12:00:00.000Z",
       },
     });
-    await expect(loadBotConversation(client, 555)).resolves.toEqual({
+    await expect(loadBotConversation(client, 555, 42)).resolves.toEqual({
       state: { status: "awaiting_confirmation" },
       updatedAt: "2026-07-01T12:00:00.000Z",
+      householdId: HOUSEHOLD,
     });
     expect(calls.table).toBe("bot_conversations");
-    expect(calls.eq).toContainEqual(["chat_id", 555]);
+    expect(calls.eq).toEqual([
+      ["chat_id", 555],
+      ["telegram_user_id", 42],
+    ]);
   });
 
   it("loadBotConversation returns null when there is no row", async () => {
     const { client } = createRecordingClient({ data: null });
-    await expect(loadBotConversation(client, 555)).resolves.toBeNull();
+    await expect(loadBotConversation(client, 555, 42)).resolves.toBeNull();
   });
 
-  it("saveBotConversation upserts the state keyed by chat id with a fresh updated_at", async () => {
+  it("saveBotConversation upserts a sender-scoped draft with its household", async () => {
     const { client, calls } = createRecordingClient({});
     const before = Date.now();
-    await saveBotConversation(client, 555, { status: "drafting" });
+    await saveBotConversation(client, 555, 42, HOUSEHOLD, {
+      status: "drafting",
+    });
     expect(calls.table).toBe("bot_conversations");
     const payload = calls.upsert as {
       chat_id: number;
+      telegram_user_id: number;
+      household_id: string;
       state: unknown;
       updated_at: string;
     };
     expect(payload.chat_id).toBe(555);
+    expect(payload.telegram_user_id).toBe(42);
+    expect(payload.household_id).toBe(HOUSEHOLD);
     expect(payload.state).toEqual({ status: "drafting" });
     expect(Date.parse(payload.updated_at)).toBeGreaterThanOrEqual(before);
   });
 
-  it("deleteBotConversation deletes by chat id", async () => {
+  it("deleteBotConversation deletes only the sender's draft in the chat", async () => {
     const { client, calls } = createRecordingClient({});
-    await deleteBotConversation(client, 555);
+    await deleteBotConversation(client, 555, 42);
     expect(calls.table).toBe("bot_conversations");
     expect(calls.deleted).toBe(true);
-    expect(calls.eq).toContainEqual(["chat_id", 555]);
+    expect(calls.eq).toEqual([
+      ["chat_id", 555],
+      ["telegram_user_id", 42],
+    ]);
   });
 
   it("save and delete surface database errors", async () => {
     const failing = createRecordingClient({ error: { message: "nope" } });
-    await expect(saveBotConversation(failing.client, 1, {})).rejects.toThrow(
-      /saveBotConversation failed: nope/,
-    );
+    await expect(
+      saveBotConversation(failing.client, 1, 42, HOUSEHOLD, {}),
+    ).rejects.toThrow(/saveBotConversation failed: nope/);
     const failingDelete = createRecordingClient({ error: { message: "nope" } });
     await expect(
-      deleteBotConversation(failingDelete.client, 1),
+      deleteBotConversation(failingDelete.client, 1, 42),
     ).rejects.toThrow(/deleteBotConversation failed: nope/);
   });
 });
@@ -1556,72 +1690,90 @@ describe("restoreSubcategory", () => {
   });
 });
 
-describe("resolveTelegramMember (review: id back-fill clears username)", () => {
-  /** Recording client: null on the id lookup, a member on the username lookup,
-   * capturing the back-fill update payload. */
-  function client() {
-    const updates: Array<{
-      payload: Record<string, unknown>;
-      eq: Array<[string, unknown]>;
-    }> = [];
-    let call = 0;
-    const build = () => {
-      const eqs: Array<[string, unknown]> = [];
-      let updatePayload: Record<string, unknown> | undefined;
-      const b: Record<string, unknown> = {
-        select() {
-          return b;
+describe("resolveTelegramMember", () => {
+  it("calls the restricted resolver RPC by numeric id only", async () => {
+    const rpc = vi.fn(async () => ({
+      data: [
+        {
+          household_id: HOUSEHOLD,
+          user_id: USER,
+          display_name: "Karol",
         },
-        update(payload: Record<string, unknown>) {
-          updatePayload = payload;
-          return b;
-        },
-        eq(col: string, val: unknown) {
-          eqs.push([col, val]);
-          if (updatePayload !== undefined) {
-            updates.push({ payload: updatePayload, eq: eqs.slice() });
-            return Promise.resolve({ data: null, error: null });
-          }
-          return b;
-        },
-        maybeSingle() {
-          call += 1;
-          // 1st select = by telegram_user_id (miss); 2nd = by username (hit).
-          if (call === 1) return Promise.resolve({ data: null, error: null });
-          return Promise.resolve({
-            data: {
-              id: "member-1",
-              household_id: HOUSEHOLD,
-              user_id: USER,
-              display_name: "Karol",
-            },
-            error: null,
-          });
-        },
-      };
-      return b;
-    };
-    const c = { from: () => build() } as unknown as AppSupabaseClient;
-    return { c, updates };
-  }
-
-  it("clears telegram_username when back-filling the numeric id", async () => {
-    const { c, updates } = client();
-    const identity = await resolveTelegramMember(c, {
+      ],
+      error: null,
+    }));
+    const client = { rpc } as unknown as AppSupabaseClient;
+    const identity = await resolveTelegramMember(client, {
       telegramUserId: 555,
-      telegramUsername: "karol",
     });
     expect(identity).toEqual({
       householdId: HOUSEHOLD,
       userId: USER,
       displayName: "Karol",
     });
-    expect(updates).toHaveLength(1);
-    expect(updates[0]?.payload).toEqual({
-      telegram_user_id: 555,
-      telegram_username: null,
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("resolve_telegram_member", {
+      p_telegram_user_id: 555,
     });
-    expect(updates[0]?.eq).toContainEqual(["id", "member-1"]);
+  });
+
+  it("returns null for an unknown sender", async () => {
+    const client = {
+      rpc: async () => ({ data: [], error: null }),
+    } as unknown as AppSupabaseClient;
+    await expect(
+      resolveTelegramMember(client, {
+        telegramUserId: 999,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("surfaces resolver RPC errors", async () => {
+    const client = {
+      rpc: async () => ({
+        data: null,
+        error: { message: "permission denied" },
+      }),
+    } as unknown as AppSupabaseClient;
+    await expect(
+      resolveTelegramMember(client, {
+        telegramUserId: 999,
+      }),
+    ).rejects.toThrow("resolveTelegramMember failed: permission denied");
+  });
+});
+
+describe("verified Telegram linking RPCs", () => {
+  it("returns a generated code and redeems to the member identity", async () => {
+    const rpc = vi.fn(async (name: string) => ({
+      data:
+        name === "create_telegram_link_code"
+          ? "ABCD2345"
+          : [{ household_id: HOUSEHOLD, user_id: USER, display_name: "Karol" }],
+      error: null,
+    }));
+    const client = { rpc } as unknown as AppSupabaseClient;
+    expect(await createTelegramLinkCode(client)).toBe("ABCD2345");
+    expect(await redeemTelegramLinkCode(client, " abcd2345 ", 987)).toEqual({
+      householdId: HOUSEHOLD,
+      userId: USER,
+      displayName: "Karol",
+    });
+    expect(rpc).toHaveBeenCalledWith("redeem_telegram_link_code", {
+      p_code: " abcd2345 ",
+      p_telegram_user_id: 987,
+    });
+    await unlinkTelegram(client);
+    expect(rpc).toHaveBeenCalledWith("unlink_telegram");
+  });
+
+  it("returns null when no code can be redeemed", async () => {
+    const client = {
+      rpc: async () => ({ data: [], error: null }),
+    } as unknown as AppSupabaseClient;
+    await expect(
+      redeemTelegramLinkCode(client, "expired", 987),
+    ).resolves.toBeNull();
   });
 });
 

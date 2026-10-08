@@ -85,9 +85,9 @@ We recommend updating regularly for new features and bug fixes: https://supabase
 [WebServer]  We detected multiple lockfiles and selected the directory of /Users/alvarocarvalho/desenv/personal/alvaro-e-karol/family-finance/pnpm-lock.yaml as the root directory.
 [WebServer]  To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
 [WebServer]    See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
-[WebServer]  Detected additional lockfiles: 
+[WebServer]  Detected additional lockfiles:
 [WebServer]    * /Users/alvarocarvalho/desenv/personal/alvaro-e-karol/family-finance/.claude/worktrees/card-bill-payments/pnpm-lock.yaml
-[WebServer] 
+[WebServer]
 
 Running 2 tests using 1 worker
 

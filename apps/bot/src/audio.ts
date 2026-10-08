@@ -179,9 +179,12 @@ export async function transcribeVoiceMessage(
  * downloads the bytes from the file endpoint. Uses the global `fetch` (Node 22).
  * Constructed only when a real bot token is configured.
  */
-export function createHttpAudioDownloader(botToken: string): AudioDownloader {
-  const apiBase = `https://api.telegram.org/bot${botToken}`;
-  const fileBase = `https://api.telegram.org/file/bot${botToken}`;
+export function createHttpAudioDownloader(
+  botToken: string,
+  base: string,
+): AudioDownloader {
+  const apiBase = `${base}/bot${botToken}`;
+  const fileBase = `${base}/file/bot${botToken}`;
   return {
     async download(fileId: string): Promise<Uint8Array> {
       const meta = await fetch(`${apiBase}/getFile`, {

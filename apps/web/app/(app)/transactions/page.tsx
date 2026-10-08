@@ -206,7 +206,7 @@ export default async function TransactionsPage({
   return (
     <section>
       <PageTitle
-        kicker={`Nossa casa · ${formatMonthLabel(month)}`}
+        kicker={formatMonthLabel(month)}
         title="Transações"
         lead="Tudo que entrou e saiu — dá pra ajustar categoria, descrição e responsável direto na lista."
       />

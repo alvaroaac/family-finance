@@ -6,6 +6,8 @@ import { cookies } from "next/headers";
 import {
   findHouseholdIdForCurrentUser,
   updateHouseholdMember,
+  createTelegramLinkCode,
+  unlinkTelegram,
 } from "@family-finance/db";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
@@ -43,16 +45,14 @@ export async function setThemeAction(theme: ThemeId): Promise<void> {
   revalidatePath("/", "layout");
 }
 
-/**
- * Update a member's display name and/or linked Telegram id. Blank fields
- * clear the value; the Telegram id must be a positive integer.
- */
+/** Update a member's display name. */
 export async function updateMemberAction(
   formData: FormData,
 ): Promise<SettingsActionResult> {
+  await requireAuthorizedUser();
   try {
-    await requireAuthorizedUser();
-    const { createServerSupabaseClient } = await import("../../../lib/supabase");
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
     const client = await createServerSupabaseClient();
     const householdId = await findHouseholdIdForCurrentUser(client);
     if (householdId === null) {
@@ -69,12 +69,47 @@ export async function updateMemberAction(
     revalidatePath("/settings");
     return { ok: true };
   } catch (error) {
+    console.error("updateMemberAction failed:", error);
     return {
       ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar o perfil.",
+      error: "Não deu pra salvar o perfil agora. Tenta de novo em instantes.",
+    };
+  }
+}
+
+export async function createTelegramLinkCodeAction(): Promise<
+  SettingsActionResult & { code?: string }
+> {
+  await requireAuthorizedUser();
+  try {
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
+    const code = await createTelegramLinkCode(
+      await createServerSupabaseClient(),
+    );
+    return { ok: true, code };
+  } catch (error) {
+    console.error("createTelegramLinkCodeAction failed:", error);
+    return {
+      ok: false,
+      error: "Não deu pra gerar o código agora. Tenta de novo em instantes.",
+    };
+  }
+}
+
+export async function unlinkTelegramAction(): Promise<SettingsActionResult> {
+  await requireAuthorizedUser();
+  try {
+    const { createServerSupabaseClient } =
+      await import("../../../lib/supabase");
+    await unlinkTelegram(await createServerSupabaseClient());
+    revalidatePath("/settings");
+    return { ok: true };
+  } catch (error) {
+    console.error("unlinkTelegramAction failed:", error);
+    return {
+      ok: false,
+      error: "Não deu pra desvincular agora. Tenta de novo em instantes.",
     };
   }
 }

@@ -200,6 +200,7 @@ const cases: CorpusCase[] = [
 ];
 
 const context = {
+  memberNames: ["Karol"],
   knownCards: [
     { id: "nubank-card", name: "Nubank" },
     { id: "inter-card", name: "Inter" },
@@ -213,6 +214,44 @@ const context = {
 };
 
 describe("deterministic Telegram financial routing corpus", () => {
+  it.each(["Ana", "aNA", "ÁNA", "João", "JOAO"])(
+    "routes a household member purchase for %s",
+    (name) => {
+      const memberNames = ["Ana", "João"];
+      expect(
+        detectFinancialRoute(
+          `${name} comprou um celular 2400 em 12x no Nubank`,
+          {
+            ...context,
+            memberNames,
+          },
+        ),
+      ).toMatchObject({ route: "installment", description: "Celular" });
+    },
+  );
+
+  it("does not treat another household's member name as a local member", () => {
+    const message = "Bruno comprou um celular 2400 em 12x no Nubank";
+    expect(
+      detectFinancialRoute(message, { ...context, memberNames: ["Ana"] })
+        .description,
+    ).not.toBe("Celular");
+    expect(
+      detectFinancialRoute(message, { ...context, memberNames: ["Bruno"] }),
+    ).toMatchObject({
+      route: "installment",
+      description: "Celular",
+    });
+  });
+
+  it("ignores an empty member display name", () => {
+    expect(() =>
+      detectFinancialRoute("Ana comprou um celular 2400 em 12x no Nubank", {
+        ...context,
+        memberNames: ["", "  "],
+      }),
+    ).not.toThrow();
+  });
   it("contains exactly the approved 100 hand-labelled messages", () => {
     expect(cases).toHaveLength(100);
     expect(new Set(cases.map((item) => item.id)).size).toBe(100);

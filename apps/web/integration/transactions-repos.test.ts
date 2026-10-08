@@ -311,9 +311,7 @@ describe("updateTransaction / deleteTransaction", () => {
       responsibility: { scope: "user", userId: KAROL },
       occurredOn: "2026-06-11",
     });
-    const row = store
-      .table("transactions")
-      .find((r) => r.id === "tx-farmacia");
+    const row = store.table("transactions").find((r) => r.id === "tx-farmacia");
     expect(row).toMatchObject({
       category_id: "cat-saude",
       description: "Farmácia São João",
@@ -341,9 +339,9 @@ describe("updateTransaction / deleteTransaction", () => {
     await expect(
       deleteTransaction(client, HOUSEHOLD, "tx-parcela"),
     ).rejects.toThrow(/grupo do parcelamento/);
-    expect(
-      store.table("transactions").some((r) => r.id === "tx-parcela"),
-    ).toBe(true);
+    expect(store.table("transactions").some((r) => r.id === "tx-parcela")).toBe(
+      true,
+    );
   });
 });
 
@@ -373,27 +371,17 @@ describe("household members", () => {
   it("updates profile fields, storing a blank display name as null", async () => {
     await updateHouseholdMember(client, HOUSEHOLD, "member-karol", {
       displayName: "  Karol  ",
-      telegramUserId: 654321,
     });
     expect(
       store.table("household_members").find((r) => r.id === "member-karol"),
-    ).toMatchObject({ display_name: "Karol", telegram_user_id: 654321 });
+    ).toMatchObject({ display_name: "Karol", telegram_user_id: null });
 
     await updateHouseholdMember(client, HOUSEHOLD, "member-karol", {
       displayName: "   ",
-      telegramUserId: null,
     });
     expect(
       store.table("household_members").find((r) => r.id === "member-karol"),
     ).toMatchObject({ display_name: null, telegram_user_id: null });
-  });
-
-  it("rejects a non-integer telegram id before writing", async () => {
-    await expect(
-      updateHouseholdMember(client, HOUSEHOLD, "member-karol", {
-        telegramUserId: 1.5,
-      }),
-    ).rejects.toThrow(/Telegram/);
   });
 });
 

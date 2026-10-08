@@ -157,7 +157,7 @@ export function notUnderstoodMessage(): string {
   return [
     "Não entendi. Você pode:",
     "• confirmar · cancelar",
-    '• corrigir: "valor 32,50", "data 12/03", "categoria X", "responsável Karol"',
+    '• corrigir: "valor 32,50", "data 12/03", "categoria X", "responsável Bruno"',
   ].join("\n");
 }
 

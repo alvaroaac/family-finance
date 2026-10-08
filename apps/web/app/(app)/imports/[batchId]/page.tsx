@@ -40,7 +40,7 @@ export default async function ImportBatchPage({
   return (
     <section>
       <header>
-        <div className="ff-kicker">Nossa casa · Importação</div>
+        <div className="ff-kicker">Importação</div>
         <h1 className="ff-page-title__heading">Detalhes do lote</h1>
         <p className="ff-page-title__lead">
           {batch.imported_rows} importado(s) · {batch.duplicate_rows}{" "}

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 
 import {
   TOKENS,
+  bindPromptKeyboard,
+  parsePromptCallbackData,
   CATEGORY_TOKEN_PREFIX,
   CARD_TOKEN_PREFIX,
   confirmationKeyboard,
@@ -120,7 +122,9 @@ describe("installmentConfirmationKeyboard", () => {
       ],
     });
     const flat = keyboard.inline_keyboard.flat();
-    expect(flat.some((b) => b.callback_data === TOKENS.responsible)).toBe(false);
+    expect(flat.some((b) => b.callback_data === TOKENS.responsible)).toBe(
+      false,
+    );
   });
 
   it("with a proposal: accept-with-create / other / no-category / cancel, no responsável", () => {
@@ -138,7 +142,9 @@ describe("installmentConfirmationKeyboard", () => {
       ],
     });
     const flat = keyboard.inline_keyboard.flat();
-    expect(flat.some((b) => b.callback_data === TOKENS.responsible)).toBe(false);
+    expect(flat.some((b) => b.callback_data === TOKENS.responsible)).toBe(
+      false,
+    );
   });
 });
 
@@ -163,11 +169,16 @@ describe("categoryGridKeyboard", () => {
 
   it("never embeds names in callback_data (64-byte cap)", () => {
     const grid = categoryGridKeyboard([
-      { id: "11111111-2222-3333-4444-555555555555", name: "Nome enorme de categoria" },
+      {
+        id: "11111111-2222-3333-4444-555555555555",
+        name: "Nome enorme de categoria",
+      },
     ]);
     for (const row of grid.inline_keyboard) {
       for (const button of row) {
-        expect(Buffer.byteLength(button.callback_data, "utf8")).toBeLessThanOrEqual(64);
+        expect(
+          Buffer.byteLength(button.callback_data, "utf8"),
+        ).toBeLessThanOrEqual(64);
       }
     }
     expect(grid.inline_keyboard[0]?.[0]?.callback_data).toBe(
@@ -184,7 +195,9 @@ describe("categoryGridKeyboard", () => {
       false,
     );
     const flat = grid.inline_keyboard.flat();
-    expect(flat.some((b) => b.callback_data === TOKENS.newCategory)).toBe(false);
+    expect(flat.some((b) => b.callback_data === TOKENS.newCategory)).toBe(
+      false,
+    );
   });
 
   it("keeps nova categoria by default", () => {
@@ -233,11 +246,16 @@ describe("cardGridKeyboard", () => {
 
   it("never embeds names in callback_data (64-byte cap)", () => {
     const grid = cardGridKeyboard([
-      { id: "11111111-2222-3333-4444-555555555555", name: "Nome enorme de cartão" },
+      {
+        id: "11111111-2222-3333-4444-555555555555",
+        name: "Nome enorme de cartão",
+      },
     ]);
     for (const row of grid.inline_keyboard) {
       for (const button of row) {
-        expect(Buffer.byteLength(button.callback_data, "utf8")).toBeLessThanOrEqual(64);
+        expect(
+          Buffer.byteLength(button.callback_data, "utf8"),
+        ).toBeLessThanOrEqual(64);
       }
     }
     expect(grid.inline_keyboard[0]?.[0]?.callback_data).toBe(
@@ -249,7 +267,75 @@ describe("cardGridKeyboard", () => {
 describe("cancelOnlyKeyboard", () => {
   it("is a single cancel button", () => {
     expect(cancelOnlyKeyboard()).toEqual({
-      inline_keyboard: [[{ text: "❌ Cancelar", callback_data: TOKENS.cancel }]],
+      inline_keyboard: [
+        [{ text: "❌ Cancelar", callback_data: TOKENS.cancel }],
+      ],
     });
+  });
+});
+
+describe("prompt-bound callback data", () => {
+  const promptToken = "0123456789abcdef";
+  const uuid = "12345678-1234-1234-1234-123456789abc";
+
+  it("binds UUID actions within Telegram's 64-byte limit and preserves each action", () => {
+    const keyboards = [
+      confirmationKeyboard(),
+      categoryGridKeyboard([{ id: uuid, name: "Categoria" }]),
+      responsibleGridKeyboard([{ userId: uuid, displayName: "Pessoa" }]),
+      cardGridKeyboard([{ id: uuid, name: "Cartão" }]),
+    ];
+    for (const keyboard of keyboards) {
+      const bound = bindPromptKeyboard(keyboard, promptToken);
+      const originals = keyboard.inline_keyboard.flat();
+      bound.inline_keyboard.flat().forEach((button, index) => {
+        expect(
+          new TextEncoder().encode(button.callback_data).length,
+        ).toBeLessThanOrEqual(64);
+        expect(parsePromptCallbackData(button.callback_data)).toEqual({
+          action: originals[index]!.callback_data,
+          promptToken,
+        });
+        expect(button.text).toBe(originals[index]!.text);
+      });
+    }
+  });
+
+  it("keeps legacy tokens parseable and rejects malformed prompt wrappers", () => {
+    expect(parsePromptCallbackData("cf")).toEqual({ action: "cf" });
+    expect(parsePromptCallbackData(`ct:${uuid}`)).toEqual({
+      action: `ct:${uuid}`,
+    });
+    for (const data of [
+      "p:bad:cf",
+      `p:${promptToken}:`,
+      `p:${promptToken.toUpperCase()}:cf`,
+    ]) {
+      expect(parsePromptCallbackData(data)).toBeNull();
+    }
+  });
+
+  it("rejects invalid identities and oversized payloads before they can be sent", () => {
+    expect(() => bindPromptKeyboard(confirmationKeyboard(), "bad")).toThrow(
+      "Invalid prompt token",
+    );
+    expect(() =>
+      bindPromptKeyboard(
+        {
+          inline_keyboard: [[{ text: "Long", callback_data: "x".repeat(46) }]],
+        },
+        promptToken,
+      ),
+    ).toThrow("64-byte limit");
+    expect(() =>
+      bindPromptKeyboard(
+        {
+          inline_keyboard: [
+            [{ text: "Unicode", callback_data: "á".repeat(23) }],
+          ],
+        },
+        promptToken,
+      ),
+    ).toThrow("64-byte limit");
   });
 });

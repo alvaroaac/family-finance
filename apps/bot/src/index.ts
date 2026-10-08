@@ -19,6 +19,8 @@
  * no household to scope a row to.
  */
 
+import { randomBytes } from "node:crypto";
+
 import {
   getBotServerEnv,
   DEFAULT_OPENAI_MODEL,
@@ -26,6 +28,7 @@ import {
 } from "@family-finance/config";
 import {
   createServiceRoleClient,
+  createMemberClient,
   createTransaction as dbCreateTransaction,
   createBotInteraction,
   createObligation as dbCreateObligation,
@@ -35,6 +38,8 @@ import {
   findAccountsByHousehold,
   findLatestExpenses,
   resolveTelegramMember,
+  redeemTelegramLinkCode,
+  discardTelegramLinkCode,
   listCreditCards,
   listHouseholdMembers,
   listActiveCategorizationMemory,
@@ -116,7 +121,21 @@ import {
   DRAFT_NOT_YOURS_TOAST,
   ALREADY_SAVED_TOAST,
 } from "./replies.js";
-import { TOKENS, installmentReconciliationKeyboard } from "./keyboards.js";
+import {
+  TOKENS,
+  installmentReconciliationKeyboard,
+  bindPromptKeyboard,
+  parsePromptCallbackData,
+} from "./keyboards.js";
+
+/** Call before the durable save, so Telegram never sees an unbound new prompt. */
+function preparePromptKeyboard(
+  state: ConversationState,
+  keyboard: InlineKeyboardMarkup,
+): InlineKeyboardMarkup {
+  state.promptToken = randomBytes(8).toString("hex");
+  return bindPromptKeyboard(keyboard, state.promptToken);
+}
 
 /**
  * GPT extracts financial fields under a four-second deadline. Categorization
@@ -128,7 +147,32 @@ const CLASSIFIER_PRIMARY_TIMEOUT_MS = 4_000;
 
 /** pt-BR refusal for a Telegram user no household member is linked to. */
 const UNKNOWN_USER_REPLY =
-  "Oi! Eu ainda não conheço você por aqui — peça pro Alvaro vincular seu Telegram nas Configurações.";
+  "Oi! Eu ainda não conheço você por aqui. Abra Configurações no Family Finance, toque em Vincular Telegram e me envie o código que aparecer.";
+const LINK_FAILURE_REPLY =
+  "Não consegui vincular. O código é inválido, expirou ou este Telegram já está vinculado a outra pessoa. Gere um código novo em Configurações.";
+const LINK_PRIVATE_ONLY_REPLY =
+  "Por segurança, a vinculação só funciona no chat privado comigo. Gere um código novo em Configurações e me envie por lá.";
+
+/**
+ * The code carried by "/vincular CODE" or Telegram's deep-link "/start CODE"
+ * ("" for a bare "/vincular"), or null when the text is not a link command.
+ * A bare "/start" is not a link command: it is what Telegram sends when a
+ * chat is opened.
+ */
+export function parseLinkCommand(text: string): string | null {
+  const match = /^\/(vincular|start)(?:@\w+)?(?:\s+(.*))?$/i.exec(text.trim());
+  if (match === null) {
+    return null;
+  }
+  const code = match[2]?.trim() ?? "";
+  return code === "" && match[1]!.toLowerCase() === "start" ? null : code;
+}
+
+function linkSuccessReply(member: BotMemberIdentity): string {
+  const greeting =
+    member.displayName === null ? "Pronto!" : `Pronto, ${member.displayName}!`;
+  return `${greeting} Seu Telegram está vinculado. Pode mandar seus lançamentos por aqui.`;
+}
 
 function todayIso(): string {
   return currentHouseholdDate();
@@ -244,6 +288,10 @@ async function buildDeps(
   const checking = accounts.find((a) => a.kind === "checking") ?? accounts[0];
   const cards = await listCreditCards(client, householdId);
   const members = await listHouseholdMembers(client, householdId);
+  const memberNames = members
+    .filter((member) => member.isActive)
+    .map((member) => member.displayName?.trim() ?? "")
+    .filter((name) => name.length > 0);
   const memoryStore = memoryStoreFor(client);
   const cardBillSummaries = new Map<string, CardBillOverview["summary"]>();
 
@@ -257,7 +305,7 @@ async function buildDeps(
     defaultAccountId: checking?.id,
     resolveCardId: () => cards[0]?.id,
     resolveAccountId: () => checking?.id,
-    // Map a spoken name ("responsável Karol") to an active member by
+    // Map a spoken name ("responsável Ana") to an active member by
     // display_name, case- and accent-insensitively. No match — or an ambiguous
     // one — keeps the responsibility with the house (undefined).
     resolveResponsibleUserId: (name: string) => {
@@ -438,11 +486,12 @@ async function buildDeps(
     },
     listActiveMembers: () =>
       members
-        .filter((m) => m.isActive && m.displayName !== null)
+        .filter((m) => m.isActive && m.displayName?.trim())
         .map((m) => ({
           userId: m.userId,
           displayName: m.displayName as string,
         })),
+    memberNames,
     // Card installments (PR-2): cards are already loaded above for the
     // resolveCardId hint; expose them + closingDay for the installment flow.
     listActiveCards: () =>
@@ -552,13 +601,17 @@ export async function handleWebhook(args: {
   rawBody: unknown;
   secretHeader: string | undefined;
   configuredSecret: string | undefined;
-  client: AppSupabaseClient;
+  memberClient: (identity: BotMemberIdentity) => AppSupabaseClient;
   telegram: TelegramClient;
-  /** Map a Telegram sender (id + optional @username) to a linked member. */
+  /** Map a Telegram sender's numeric id to a linked member. */
   resolveMember: (sender: {
     telegramUserId: string;
-    telegramUsername?: string;
   }) => Promise<BotMemberIdentity | null>;
+  redeemLinkCode: (
+    code: string,
+    telegramUserId: number,
+  ) => Promise<BotMemberIdentity | null>;
+  discardLinkCode: (code: string) => Promise<void>;
   /** Per-chat conversation persistence (DB-backed in production). */
   store: ConversationStore;
   /** Optional AI categorizer (categorization fallback). Omitted = none. */
@@ -599,7 +652,6 @@ export async function handleWebhook(args: {
 
     const identity = await args.resolveMember({
       telegramUserId: callback.fromId,
-      telegramUsername: callback.fromUsername,
     });
     if (identity === null) {
       console.warn(
@@ -609,28 +661,73 @@ export async function handleWebhook(args: {
       return { status: 200, body: { ok: true } };
     }
 
-    const { chatId, messageId, data, callbackQueryId } = callback;
+    const { chatId, messageId, callbackQueryId } = callback;
+    const parsedData = parsePromptCallbackData(callback.data);
+    if (parsedData === null) {
+      await args.telegram.answerCallbackQuery(
+        callbackQueryId,
+        SESSION_EXPIRED_TOAST,
+      );
+      return { status: 200, body: { ok: true } };
+    }
+    const data = parsedData.action;
 
     // Serialized per chat: two concurrent deliveries (physical double-tap)
     // must not both load the same awaiting_confirmation state.
     return withChatQueue(chatId, async (): Promise<WebhookResult> => {
-      const existing = await args.store.load(chatId);
+      const existing = await args.store.load(
+        chatId,
+        callback.fromId,
+        identity.householdId,
+      );
+      // Check known ownership even when our own prompt ID was not saved.
+      // A failed post-send save must not let another sender's button confirm us.
+      if (await args.store.hasOtherPrompt(chatId, callback.fromId, messageId)) {
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          DRAFT_NOT_YOURS_TOAST,
+        );
+        return { status: 200, body: { ok: true } };
+      }
       if (existing === undefined) {
         // Draft expired past the 24h TTL (or never existed on this chat).
         await args.telegram.answerCallbackQuery(
           callbackQueryId,
           SESSION_EXPIRED_TOAST,
         );
-        await strip(chatId, messageId);
+        // An absent draft cannot prove who owned this message. Keep its controls.
+        return { status: 200, body: { ok: true } };
+      }
+      if (
+        parsedData.promptToken !== undefined
+          ? parsedData.promptToken !== existing.promptToken
+          : existing.promptMessageId === undefined
+      ) {
+        // A token proves the sender's exact prompt even after a failed ID save.
+        // Unbound legacy prompts can only be used with an exact persisted ID;
+        // typed confirmation remains available when legacy ownership is unknown.
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          parsedData.promptToken === undefined
+            ? SESSION_EXPIRED_TOAST
+            : DRAFT_NOT_YOURS_TOAST,
+        );
+        return { status: 200, body: { ok: true } };
+      }
+      if (
+        existing.promptMessageId !== undefined &&
+        existing.promptMessageId !== messageId
+      ) {
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          SESSION_EXPIRED_TOAST,
+        );
         return { status: 200, body: { ok: true } };
       }
 
-      // Same ownership rule as the typed path's belongsToSender: in a group
-      // chat the store is keyed by chat id, so without this check another
-      // member's tap on ✅ would confirm the creator's lançamento (or worse,
-      // a member of a DIFFERENT household would run the draft against their
-      // own catalog/household). Refuse the tap; keep the keyboard — the
-      // creator still needs it.
+      // Confirm that the stored draft belongs to this member. Conversation
+      // state is scoped by chat, Telegram user and household; the draft's
+      // creator must also match before a callback can confirm it.
       if (existing.draft.createdByUserId !== identity.userId) {
         await args.telegram.answerCallbackQuery(
           callbackQueryId,
@@ -642,7 +739,7 @@ export async function handleWebhook(args: {
       let deps: ConversationDeps | undefined;
       const getDeps = async (): Promise<ConversationDeps> => {
         deps ??= await buildDeps(
-          args.client,
+          args.memberClient(identity),
           identity.householdId,
           args.ai,
           args.interpretText,
@@ -680,7 +777,12 @@ export async function handleWebhook(args: {
         }
       }
       if (callbackState !== existing) {
-        await args.store.save(chatId, callbackState);
+        await args.store.save(
+          chatId,
+          callback.fromId,
+          identity.householdId,
+          callbackState,
+        );
       }
       const outcome = await applyCallback(callbackState, data, getDeps, {
         today: todayIso(),
@@ -692,18 +794,37 @@ export async function handleWebhook(args: {
       // so the state MUST already be saved — otherwise a re-tap on a
       // still-"awaiting_confirmation" state with an unstripped keyboard would
       // insert a second transaction.
-      await args.store.save(chatId, outcome.state);
+      const willReply = outcome.silent !== true && outcome.reply.length > 0;
+      let replyKeyboard = outcome.keyboard;
+      // Retain the identity for harmless repeated taps when no new prompt is sent.
+      outcome.state.promptToken = existing.promptToken;
+      if (willReply) {
+        replyKeyboard =
+          outcome.keyboard === undefined
+            ? undefined
+            : preparePromptKeyboard(outcome.state, outcome.keyboard);
+        // The tapped prompt is superseded by the reply below. Clear its id now
+        // so a failed re-save can't leave it stored, which would refuse taps
+        // on the new keyboard as "session expired".
+        outcome.state.promptMessageId = undefined;
+      }
+      await args.store.save(
+        chatId,
+        callback.fromId,
+        identity.householdId,
+        outcome.state,
+      );
 
       await args.telegram.answerCallbackQuery(callbackQueryId, outcome.toast);
       // The tapped message's buttons are spent either way (acted on or stale).
       await strip(chatId, messageId);
 
-      if (outcome.silent !== true && outcome.reply.length > 0) {
+      if (willReply) {
         const sent = await args.telegram.sendMessage(
           chatId,
           outcome.reply,
-          outcome.keyboard !== undefined
-            ? { replyMarkup: outcome.keyboard }
+          replyKeyboard !== undefined
+            ? { replyMarkup: replyKeyboard }
             : undefined,
         );
         // Only record promptMessageId when a keyboard was actually attached —
@@ -716,10 +837,15 @@ export async function handleWebhook(args: {
           outcome.state.promptMessageId = undefined;
         }
         try {
-          await args.store.save(chatId, outcome.state);
+          await args.store.save(
+            chatId,
+            callback.fromId,
+            identity.householdId,
+            outcome.state,
+          );
         } catch (error) {
-          // Best-effort only: losing promptMessageId just means a future stale
-          // tap won't get its keyboard stripped, which is already handled.
+          // Best-effort only: the pre-send token still proves prompt ownership
+          // and supports creator recovery without the Telegram message id.
           console.warn("[bot] re-save after send failed:", error);
         }
       }
@@ -736,12 +862,35 @@ export async function handleWebhook(args: {
     return { status: 200, body: { ok: true } };
   }
 
+  const linkCode = message === null ? null : parseLinkCommand(message.text);
+  if (message !== null && linkCode !== null) {
+    if (message.chatType !== "private") {
+      if (linkCode !== "") {
+        try {
+          await args.discardLinkCode(linkCode);
+        } catch (error) {
+          console.warn("[bot] discardLinkCode failed:", error);
+        }
+      }
+      await args.telegram.sendMessage(message.chatId, LINK_PRIVATE_ONLY_REPLY);
+      return { status: 200, body: { ok: true } };
+    }
+    const linked =
+      linkCode !== ""
+        ? await args.redeemLinkCode(linkCode, Number(message.fromId))
+        : null;
+    await args.telegram.sendMessage(
+      message.chatId,
+      linked === null ? LINK_FAILURE_REPLY : linkSuccessReply(linked),
+    );
+    return { status: 200, body: { ok: true } };
+  }
+
   // Identity first: the sender's Telegram id must map to a household member.
   // Unmatched → one polite refusal; NOTHING is written (there is no household
   // to scope a bot_interactions row to), so we only log to the console.
   const identity = await args.resolveMember({
     telegramUserId: incoming.fromId,
-    telegramUsername: incoming.fromUsername,
   });
   if (identity === null) {
     console.warn(
@@ -752,7 +901,7 @@ export async function handleWebhook(args: {
   }
 
   const deps = await buildDeps(
-    args.client,
+    args.memberClient(identity),
     identity.householdId,
     args.ai,
     args.interpretText,
@@ -773,18 +922,49 @@ export async function handleWebhook(args: {
     // Serialized per chat (same rule as callbacks/text): a concurrent voice +
     // text confirm must not race load/save on the conversation store.
     return withChatQueue(voice.chatId, async (): Promise<WebhookResult> => {
-      const existing = await args.store.load(voice.chatId);
+      const existing = await args.store.load(
+        voice.chatId,
+        voice.fromId,
+        identity.householdId,
+      );
       if (
         existing !== undefined &&
         (existing.status === "installment_submission_started" ||
           existing.status === "installment_outcome_uncertain" ||
+          existing.status === "installment_recovery_required" ||
           existing.status === "card_bill_submission_started")
       ) {
-        await args.telegram.sendMessage(
+        // Retain the exact durable draft/key, clearing only a stale prompt ID
+        // before sending so a failed post-send save still permits recovery.
+        const recoveryState = { ...existing, promptMessageId: undefined };
+        const recoveryKeyboard = preparePromptKeyboard(
+          recoveryState,
+          installmentReconciliationKeyboard(),
+        );
+        await args.store.save(
+          voice.chatId,
+          voice.fromId,
+          identity.householdId,
+          recoveryState,
+        );
+        const sentRecovery = await args.telegram.sendMessage(
           voice.chatId,
           'O lançamento anterior ainda precisa ser confirmado. Envie "confirmar" antes de começar outro lançamento.',
-          { replyMarkup: installmentReconciliationKeyboard() },
+          { replyMarkup: recoveryKeyboard },
         );
+        try {
+          await args.store.save(
+            voice.chatId,
+            voice.fromId,
+            identity.householdId,
+            { ...recoveryState, promptMessageId: sentRecovery?.messageId },
+          );
+        } catch (error) {
+          console.warn(
+            "[bot] recovery prompt re-save after send failed:",
+            error,
+          );
+        }
         return { status: 200, body: { ok: true } };
       }
       let outcome;
@@ -811,13 +991,26 @@ export async function handleWebhook(args: {
       // Persist FIRST: startConversationFromAudio may already have inserted a
       // transaction (auto-confirm paths). If sendMessage below throws, the
       // state must already reflect that so a retry/re-send can't double-insert.
-      await args.store.save(voice.chatId, outcome.state);
+      // No prompt id until the reply is sent: a stale one would refuse taps on
+      // the new keyboard if the re-save below fails.
+      outcome.state.promptMessageId = undefined;
+      outcome.state.promptToken = undefined;
+      const voiceKeyboard =
+        outcome.keyboard === undefined
+          ? undefined
+          : preparePromptKeyboard(outcome.state, outcome.keyboard);
+      await args.store.save(
+        voice.chatId,
+        voice.fromId,
+        identity.householdId,
+        outcome.state,
+      );
 
       const sentVoice = await args.telegram.sendMessage(
         voice.chatId,
         outcome.reply,
-        outcome.keyboard !== undefined
-          ? { replyMarkup: outcome.keyboard }
+        voiceKeyboard !== undefined
+          ? { replyMarkup: voiceKeyboard }
           : undefined,
       );
       // Only record promptMessageId when a keyboard was actually attached.
@@ -827,7 +1020,12 @@ export async function handleWebhook(args: {
         outcome.state.promptMessageId = undefined;
       }
       try {
-        await args.store.save(voice.chatId, outcome.state);
+        await args.store.save(
+          voice.chatId,
+          voice.fromId,
+          identity.householdId,
+          outcome.state,
+        );
       } catch (error) {
         console.warn("[bot] re-save after send failed:", error);
       }
@@ -844,13 +1042,14 @@ export async function handleWebhook(args: {
   // flight at once must not both load the same awaiting_confirmation state
   // and both insert.
   return withChatQueue(message.chatId, async (): Promise<WebhookResult> => {
-    const existing = await args.store.load(message.chatId);
+    const existing = await args.store.load(
+      message.chatId,
+      message.fromId,
+      identity.householdId,
+    );
 
-    // In a group chat the store is keyed by chat id, so a pending draft belongs
-    // to whoever started it. If a DIFFERENT member now writes, do NOT feed their
-    // message into the first member's draft — that would let B's "sim" confirm
-    // A's lançamento (saved with A as responsável) or misread B's expense as a
-    // correction to A's. Treat it as a fresh conversation for the new sender.
+    // Conversation state is scoped by chat, Telegram user and household.
+    // Check the draft creator too before using an existing conversation.
     const belongsToSender =
       existing !== undefined &&
       existing.draft.createdByUserId === identity.userId;
@@ -912,7 +1111,12 @@ export async function handleWebhook(args: {
         }
       }
       if (messageState !== existing) {
-        await args.store.save(message.chatId, messageState);
+        await args.store.save(
+          message.chatId,
+          message.fromId,
+          identity.householdId,
+          messageState,
+        );
       }
       const outcome = await applyMessage(messageState, message.text, deps, {
         today: todayIso(),
@@ -922,26 +1126,50 @@ export async function handleWebhook(args: {
       keyboard = outcome.keyboard;
     }
 
-    // Persist FIRST: applyMessage/startConversation may already have inserted a
-    // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
-    // the state must already be saved so a re-send/retry can't double-insert.
-    await args.store.save(message.chatId, nextState);
-
-    const shouldStripPreviousPrompt =
+    // nextState may be the same object as existing; read the old id first.
+    const previousPromptId = existing?.promptMessageId;
+    const supersedesPreviousPrompt =
       existing !== undefined &&
       existing.status !== "saved" &&
       existing.status !== "cancelled" &&
-      existing.promptMessageId !== undefined &&
       (keyboard !== undefined ||
         nextState.status === "saved" ||
         nextState.status === "cancelled" ||
         nextState !== existing);
+    const shouldStripPreviousPrompt =
+      supersedesPreviousPrompt && previousPromptId !== undefined;
+    if (keyboard !== undefined || supersedesPreviousPrompt) {
+      // The previous prompt is superseded. Clear its id before the first save
+      // so a failed re-save can't leave it stored, which would refuse taps on
+      // the new keyboard as "session expired".
+      nextState.promptMessageId = undefined;
+    }
+    // Keep an unchanged keyboard bound; rotate the token for every replacement.
+    nextState.promptToken =
+      belongsToSender &&
+      existing.status !== "saved" &&
+      existing.status !== "cancelled"
+        ? existing.promptToken
+        : undefined;
+    if (keyboard !== undefined) {
+      keyboard = preparePromptKeyboard(nextState, keyboard);
+    }
 
-    if (shouldStripPreviousPrompt && existing?.promptMessageId !== undefined) {
+    // Persist FIRST: applyMessage/startConversation may already have inserted a
+    // transaction (e.g. typed "confirmar"). If a Telegram call below throws,
+    // the state must already be saved so a re-send/retry can't double-insert.
+    await args.store.save(
+      message.chatId,
+      message.fromId,
+      identity.householdId,
+      nextState,
+    );
+
+    if (shouldStripPreviousPrompt && previousPromptId !== undefined) {
       try {
         await args.telegram.editMessageReplyMarkup(
           message.chatId,
-          existing.promptMessageId,
+          previousPromptId,
         );
       } catch (error) {
         console.warn("[bot] editMessageReplyMarkup failed:", error);
@@ -961,13 +1189,18 @@ export async function handleWebhook(args: {
       nextState.promptMessageId = sent?.messageId;
     } else if (shouldStripPreviousPrompt) {
       nextState.promptMessageId = undefined;
-    } else if (existing?.promptMessageId !== undefined) {
-      nextState.promptMessageId = existing.promptMessageId;
+    } else if (previousPromptId !== undefined) {
+      nextState.promptMessageId = previousPromptId;
     } else {
       nextState.promptMessageId = undefined;
     }
     try {
-      await args.store.save(message.chatId, nextState);
+      await args.store.save(
+        message.chatId,
+        message.fromId,
+        identity.householdId,
+        nextState,
+      );
     } catch (error) {
       console.warn("[bot] re-save after send failed:", error);
     }
@@ -986,9 +1219,12 @@ export async function startBot(): Promise<{
     secretHeader: string | undefined,
   ) => Promise<WebhookResult>;
   client: AppSupabaseClient;
+  memberClient: (
+    identity: Pick<BotMemberIdentity, "userId">,
+  ) => AppSupabaseClient;
 }> {
   // Bot-scoped env parse: the container carries only the spec §3.5 vars, so
-  // web-only settings (NEXT_PUBLIC_*, AUTHORIZED_EMAILS) must not be required.
+  // web-only NEXT_PUBLIC_* settings must not be required.
   const env = getBotServerEnv();
   if (!env.TELEGRAM_WEBHOOK_SECRET) {
     throw new Error("TELEGRAM_WEBHOOK_SECRET is required to run the bot.");
@@ -996,37 +1232,59 @@ export async function startBot(): Promise<{
   if (!env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is required to run the bot.");
   }
+  if (!env.SUPABASE_JWT_SECRET) {
+    throw new Error("SUPABASE_JWT_SECRET is required to run the bot.");
+  }
+  const jwtSecret = env.SUPABASE_JWT_SECRET;
+  const anonKey = env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!anonKey) {
+    throw new Error(
+      "SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY is required to run the bot.",
+    );
+  }
   const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL;
   if (!supabaseUrl) {
     throw new Error("SUPABASE_URL is required to run the bot.");
   }
-  // Service-role client: bot_conversations and the pre-session member lookup
-  // are unreachable through anon/RLS. Every repo call still passes an explicit
-  // household_id, so the bot never queries unscoped.
+  // Service role is confined to member resolution, conversation state, and
+  // the import nonce/quota RPCs. Business data uses memberClient under RLS.
   const client: AppSupabaseClient = createServiceRoleClient({
     supabaseUrl,
     serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
   });
 
   const store = createDbConversationStore(client);
-  const resolveMember = (sender: {
-    telegramUserId: string;
-    telegramUsername?: string;
-  }) =>
+  const memberClient = (identity: Pick<BotMemberIdentity, "userId">) =>
+    createMemberClient({
+      supabaseUrl,
+      anonKey,
+      jwtSecret,
+      userId: identity.userId,
+    });
+  const resolveMember = (sender: { telegramUserId: string }) =>
     resolveTelegramMember(client, {
       telegramUserId: Number(sender.telegramUserId),
-      telegramUsername: sender.telegramUsername ?? null,
     });
+  const redeemLinkCode = (code: string, telegramUserId: number) =>
+    redeemTelegramLinkCode(client, code, telegramUserId);
+  const discardLinkCode = (code: string) =>
+    discardTelegramLinkCode(client, code);
 
   const telegram: TelegramClient = env.TELEGRAM_BOT_TOKEN
-    ? createHttpTelegramClient(env.TELEGRAM_BOT_TOKEN)
+    ? createHttpTelegramClient(
+        env.TELEGRAM_BOT_TOKEN,
+        env.TELEGRAM_API_BASE_URL,
+      )
     : createNoopTelegramClient();
 
   // Spec §1: the webhook registration must deliver callback_query, or every
   // button tap silently vanishes. Warn loudly — the fix is a one-line curl
   // (see deploy/README.md).
   if (env.TELEGRAM_BOT_TOKEN) {
-    void fetchWebhookAllowedUpdates(env.TELEGRAM_BOT_TOKEN).then((allowed) => {
+    void fetchWebhookAllowedUpdates(
+      env.TELEGRAM_BOT_TOKEN,
+      env.TELEGRAM_API_BASE_URL,
+    ).then((allowed) => {
       if (webhookMissesCallbacks(allowed)) {
         console.warn(
           '[bot] webhook allowed_updates does not include "callback_query" — ' +
@@ -1074,6 +1332,7 @@ export async function startBot(): Promise<{
   ) {
     const downloader: AudioDownloader = createHttpAudioDownloader(
       env.TELEGRAM_BOT_TOKEN,
+      env.TELEGRAM_API_BASE_URL,
     );
     const provider: TranscriptionProvider = createOpenAiTranscriptionProvider({
       apiKey: transcription.apiKey,
@@ -1084,14 +1343,17 @@ export async function startBot(): Promise<{
 
   return {
     client,
+    memberClient,
     handle: (rawBody, secretHeader) =>
       handleWebhook({
         rawBody,
         secretHeader,
         configuredSecret: env.TELEGRAM_WEBHOOK_SECRET,
-        client,
+        memberClient,
         telegram,
         resolveMember,
+        redeemLinkCode,
+        discardLinkCode,
         store,
         ai,
         interpretText,

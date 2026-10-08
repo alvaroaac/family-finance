@@ -24,12 +24,14 @@ import {
   type CardBillSummary,
   currentHouseholdMonth,
   paidKey,
+  parseHouseholdTheme,
   projectObligations,
+  type HouseholdTheme,
   type MoneyAmount,
   type TransactionDraft,
   type TransactionKind,
   type AccountKind,
-  type InvestmentBucketSlug,
+  slugifyBucketName,
   type InstallmentPlan,
   type ObligationDraft,
   type ProjectableObligation,
@@ -855,10 +857,8 @@ export async function listImportRowsByBatchId(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the single household the authenticated caller belongs to. RLS limits
- * `household_members` to the caller's own active memberships, so this returns
- * the first active membership's `household_id`. The MVP has exactly one
- * household ("Casa"); this avoids hardcoding the seed id in the app.
+ * Resolve the household from the authenticated caller's active membership.
+ * A user has at most one active membership; RLS limits this query to it.
  */
 export async function findHouseholdIdForCurrentUser(
   client: AppSupabaseClient,
@@ -873,6 +873,35 @@ export async function findHouseholdIdForCurrentUser(
     throw new Error(`findHouseholdIdForCurrentUser failed: ${error.message}`);
   }
   return data?.household_id ?? null;
+}
+
+export type CurrentHousehold = {
+  id: string;
+  name: string;
+  theme: HouseholdTheme;
+};
+
+/**
+ * The caller's household with its validated theme. RLS shows exactly the one
+ * household of the caller's membership. An invalid theme document falls back
+ * to Esmeralda and logs a warning naming the household.
+ */
+export async function getCurrentHousehold(
+  client: AppSupabaseClient,
+): Promise<CurrentHousehold> {
+  const { data, error } = await client
+    .from("households")
+    .select("id, name, theme")
+    .limit(1)
+    .single();
+  if (error !== null) {
+    throw new Error(`getCurrentHousehold failed: ${error.message}`);
+  }
+  const { theme, valid } = parseHouseholdTheme(data.theme);
+  if (!valid) {
+    console.warn(`household ${data.id} has an invalid theme document`);
+  }
+  return { id: data.id, name: data.name, theme };
 }
 
 /** List ALL macro categories for a household (active and archived), by name. */
@@ -1197,16 +1226,19 @@ export function accountInsert(input: {
   };
 }
 
-/** Pure: build a household-scoped investment bucket (caixinha) insert payload. */
+/**
+ * Pure: build a household-scoped investment bucket (caixinha) insert payload.
+ * The slug is derived from the trimmed name.
+ */
 export function investmentBucketInsert(input: {
   householdId: string;
-  slug: InvestmentBucketSlug;
   name: string;
 }): Pick<InvestmentBucketRow, "household_id" | "slug" | "name"> {
+  const name = input.name.trim();
   return {
     household_id: input.householdId,
-    slug: input.slug,
-    name: input.name.trim(),
+    slug: slugifyBucketName(name),
+    name,
   };
 }
 
@@ -1420,56 +1452,131 @@ export async function listInvestmentBuckets(
   return (data ?? []) as InvestmentBucketRow[];
 }
 
-/**
- * Create an investment bucket. The `(household_id, slug)` unique constraint means
- * each caixinha kind (filhos / casa / independencia_financeira) exists once per
- * household; RLS scopes the insert.
- */
+// pt-BR because the investments page shows them to the household directly.
+const BUCKET_NAME_REQUIRED = "Informe um nome para o objetivo.";
+const BUCKET_SLUG_TAKEN = "Já existe um objetivo com esse nome.";
+const BUCKET_BALANCE_NOT_ZERO =
+  "Só é possível excluir um objetivo com saldo zerado.";
+
+/** Bucket errors written for the household; callers may show them as they are. */
+export const BUCKET_USER_ERRORS: readonly string[] = [
+  BUCKET_NAME_REQUIRED,
+  BUCKET_SLUG_TAKEN,
+  BUCKET_BALANCE_NOT_ZERO,
+];
+
+/** Postgres `unique_violation`, surfaced by PostgREST as the error code. */
+const UNIQUE_VIOLATION = "23505";
+
+/** A bucket name must contain a letter or digit, so it yields a slug. */
+function requireBucketName(name: string): string {
+  const trimmed = name.trim();
+  if (slugifyBucketName(trimmed) === "") {
+    throw new Error(BUCKET_NAME_REQUIRED);
+  }
+  return trimmed;
+}
+
+async function requireAvailableBucketName(
+  client: AppSupabaseClient,
+  householdId: string,
+  name: string,
+  exceptBucketId?: string,
+): Promise<void> {
+  const existing = await listInvestmentBuckets(client, householdId);
+  if (
+    existing.some(
+      (bucket) =>
+        bucket.id !== exceptBucketId &&
+        bucket.name.toLocaleLowerCase("pt-BR") ===
+          name.toLocaleLowerCase("pt-BR"),
+    )
+  ) {
+    throw new Error(BUCKET_SLUG_TAKEN);
+  }
+}
+
+/** Create a named goal with a household-unique name and slug. */
 export async function createInvestmentBucket(
   client: AppSupabaseClient,
-  input: { householdId: string; slug: InvestmentBucketSlug; name: string },
+  input: { householdId: string; name: string },
 ): Promise<InvestmentBucketRow> {
+  const name = requireBucketName(input.name);
+  await requireAvailableBucketName(client, input.householdId, name);
   const { data, error } = await client
     .from("investment_buckets")
-    .insert(investmentBucketInsert(input))
+    .insert(investmentBucketInsert({ householdId: input.householdId, name }))
     .select("*")
     .single();
   if (error !== null) {
-    throw new Error(`createInvestmentBucket failed: ${error.message}`);
+    throw new Error(
+      error.code === UNIQUE_VIOLATION
+        ? BUCKET_SLUG_TAKEN
+        : `createInvestmentBucket failed: ${error.message}`,
+    );
   }
   return data as InvestmentBucketRow;
 }
 
-/** Rename an investment bucket. RLS scopes the update to the household. */
-export async function updateInvestmentBucket(
+/** Rename a bucket and its derived slug; RLS scopes the update. */
+export async function renameInvestmentBucket(
   client: AppSupabaseClient,
-  householdId: string,
-  bucketId: string,
-  changes: { name: string },
+  input: { householdId: string; bucketId: string; name: string },
 ): Promise<void> {
+  const name = requireBucketName(input.name);
+  await requireAvailableBucketName(
+    client,
+    input.householdId,
+    name,
+    input.bucketId,
+  );
   const { error } = await client
     .from("investment_buckets")
-    .update({ name: changes.name.trim() })
-    .eq("household_id", householdId)
-    .eq("id", bucketId);
+    .update({ name, slug: slugifyBucketName(name) })
+    .eq("household_id", input.householdId)
+    .eq("id", input.bucketId);
   if (error !== null) {
-    throw new Error(`updateInvestmentBucket failed: ${error.message}`);
+    throw new Error(
+      error.code === UNIQUE_VIOLATION
+        ? BUCKET_SLUG_TAKEN
+        : `renameInvestmentBucket failed: ${error.message}`,
+    );
   }
 }
 
-/** Delete an investment bucket. RLS scopes the delete to the household. */
+/**
+ * Delete an investment bucket whose balance is zero. The balance guard is part
+ * of the delete itself; when nothing was deleted, a bucket that still exists
+ * had money in it. RLS scopes both statements.
+ */
 export async function deleteInvestmentBucket(
   client: AppSupabaseClient,
-  householdId: string,
-  bucketId: string,
+  input: { householdId: string; bucketId: string },
 ): Promise<void> {
-  const { error } = await client
+  const { data: deleted, error } = await client
     .from("investment_buckets")
     .delete()
-    .eq("household_id", householdId)
-    .eq("id", bucketId);
+    .eq("household_id", input.householdId)
+    .eq("id", input.bucketId)
+    .eq("balance_cents", 0)
+    .select("id");
   if (error !== null) {
     throw new Error(`deleteInvestmentBucket failed: ${error.message}`);
+  }
+  if ((deleted ?? []).length > 0) {
+    return;
+  }
+  const { data: remaining, error: readError } = await client
+    .from("investment_buckets")
+    .select("id")
+    .eq("household_id", input.householdId)
+    .eq("id", input.bucketId)
+    .maybeSingle();
+  if (readError !== null) {
+    throw new Error(`deleteInvestmentBucket failed: ${readError.message}`);
+  }
+  if (remaining !== null) {
+    throw new Error(BUCKET_BALANCE_NOT_ZERO);
   }
 }
 
@@ -2510,7 +2617,6 @@ export type HouseholdMemberProfile = {
   isActive: boolean;
   displayName: string | null;
   telegramUserId: number | null;
-  telegramUsername: string | null;
 };
 
 /** List a household's members (active first, then by creation time). */
@@ -2533,53 +2639,20 @@ export async function listHouseholdMembers(
     isActive: row.is_active,
     displayName: row.display_name,
     telegramUserId: row.telegram_user_id,
-    telegramUsername: row.telegram_username,
   }));
 }
 
-/**
- * Normalize a user-typed Telegram @username: strips the "@", trims and
- * lowercases (Telegram usernames are case-insensitive). Returns null for
- * blank input. Pure.
- */
-export function normalizeTelegramUsername(value: string | null): string | null {
-  const cleaned = (value ?? "").trim().replace(/^@/, "").toLowerCase();
-  return cleaned === "" ? null : cleaned;
-}
-
-/**
- * Update a member's profile fields (display name and/or Telegram user id).
- * A blank display name is stored as null; the Telegram id must be an integer
- * (or null to unlink). Absent keys are left untouched.
- */
+/** Update a member's display name. A blank name is stored as null. */
 export async function updateHouseholdMember(
   client: AppSupabaseClient,
   householdId: string,
   memberId: string,
-  changes: {
-    displayName?: string | null;
-    telegramUserId?: number | null;
-    telegramUsername?: string | null;
-  },
+  changes: { displayName?: string | null },
 ): Promise<void> {
   const update: Partial<HouseholdMemberRow> = {};
   if (changes.displayName !== undefined) {
     const name = changes.displayName?.trim() ?? "";
     update.display_name = name === "" ? null : name;
-  }
-  if (changes.telegramUserId !== undefined) {
-    if (
-      changes.telegramUserId !== null &&
-      !Number.isSafeInteger(changes.telegramUserId)
-    ) {
-      throw new Error("O ID do Telegram precisa ser um número inteiro.");
-    }
-    update.telegram_user_id = changes.telegramUserId;
-  }
-  if (changes.telegramUsername !== undefined) {
-    update.telegram_username = normalizeTelegramUsername(
-      changes.telegramUsername,
-    );
   }
   if (Object.keys(update).length === 0) {
     return;
@@ -2679,89 +2752,71 @@ export type BotMemberIdentity = {
   displayName: string | null;
 };
 
-/**
- * Resolve a Telegram user id to an active household member. Returns null when
- * no active member is linked to that Telegram id — the bot then politely
- * refuses instead of writing anything.
- */
-export async function findMemberByTelegramUserId(
+export async function createTelegramLinkCode(
   client: AppSupabaseClient,
-  telegramUserId: number,
-): Promise<BotMemberIdentity | null> {
-  const { data, error } = await client
-    .from("household_members")
-    .select("household_id, user_id, display_name")
-    .eq("telegram_user_id", telegramUserId)
-    .eq("is_active", true)
-    .maybeSingle();
+): Promise<string> {
+  const { data, error } = await client.rpc("create_telegram_link_code");
   if (error !== null) {
-    throw new Error(`findMemberByTelegramUserId failed: ${error.message}`);
+    throw new Error(`createTelegramLinkCode failed: ${error.message}`);
   }
-  if (data === null) {
-    return null;
-  }
-  const row = data as Pick<
-    HouseholdMemberRow,
-    "household_id" | "user_id" | "display_name"
-  >;
-  return {
-    householdId: row.household_id,
-    userId: row.user_id,
-    displayName: row.display_name,
-  };
+  return data;
 }
 
-/**
- * Resolve a Telegram sender to an active member: by the stable numeric id
- * first, then by @username (Telegram sends both in every update; usernames
- * are optional and changeable, ids are forever). On a username match the
- * numeric id is back-filled so future updates take the stable path even if
- * the username later changes. Service-role client only.
- */
+export async function unlinkTelegram(client: AppSupabaseClient): Promise<void> {
+  const { error } = await client.rpc("unlink_telegram");
+  if (error !== null) {
+    throw new Error(`unlinkTelegram failed: ${error.message}`);
+  }
+}
+
+export async function redeemTelegramLinkCode(
+  client: AppSupabaseClient,
+  code: string,
+  telegramUserId: number,
+): Promise<BotMemberIdentity | null> {
+  const { data, error } = await client.rpc("redeem_telegram_link_code", {
+    p_code: code,
+    p_telegram_user_id: telegramUserId,
+  });
+  if (error !== null) {
+    throw new Error(`redeemTelegramLinkCode failed: ${error.message}`);
+  }
+  const row = data?.[0];
+  return row === undefined
+    ? null
+    : {
+        householdId: row.household_id,
+        userId: row.user_id,
+        displayName: row.display_name,
+      };
+}
+
+export async function discardTelegramLinkCode(
+  client: AppSupabaseClient,
+  code: string,
+): Promise<void> {
+  const { error } = await client.rpc("discard_telegram_link_code", {
+    p_code: code,
+  });
+  if (error !== null) {
+    throw new Error(`discardTelegramLinkCode failed: ${error.message}`);
+  }
+}
+
+/** Resolve a Telegram sender by the linked numeric id. Service-role only. */
 export async function resolveTelegramMember(
   client: AppSupabaseClient,
-  sender: { telegramUserId: number; telegramUsername?: string | null },
+  sender: { telegramUserId: number },
 ): Promise<BotMemberIdentity | null> {
-  const byId = await findMemberByTelegramUserId(client, sender.telegramUserId);
-  if (byId !== null) {
-    return byId;
-  }
-  const username = normalizeTelegramUsername(sender.telegramUsername ?? null);
-  if (username === null) {
-    return null;
-  }
-  const { data, error } = await client
-    .from("household_members")
-    .select("id, household_id, user_id, display_name")
-    .eq("telegram_username", username)
-    .eq("is_active", true)
-    .maybeSingle();
+  const { data, error } = await client.rpc("resolve_telegram_member", {
+    p_telegram_user_id: sender.telegramUserId,
+  });
   if (error !== null) {
     throw new Error(`resolveTelegramMember failed: ${error.message}`);
   }
-  if (data === null) {
+  const row = data?.[0];
+  if (row === undefined) {
     return null;
-  }
-  const row = data as Pick<
-    HouseholdMemberRow,
-    "id" | "household_id" | "user_id" | "display_name"
-  >;
-  // Back-fill the stable numeric id AND clear the username in the same write.
-  // Telegram @usernames are releasable and re-claimable by strangers; once the
-  // numeric id is bound, leaving the username on the row would let whoever
-  // later grabs that handle resolve as this member. Clearing it makes the
-  // link id-only going forward. Best-effort: a failure must not block the
-  // lançamento (the id was still resolved for THIS message).
-  try {
-    await client
-      .from("household_members")
-      .update({
-        telegram_user_id: sender.telegramUserId,
-        telegram_username: null,
-      })
-      .eq("id", row.id);
-  } catch {
-    // ignored — resolution by username keeps working
   }
   return {
     householdId: row.household_id,
@@ -2778,11 +2833,13 @@ export async function resolveTelegramMember(
 export async function loadBotConversation(
   client: AppSupabaseClient,
   chatId: number,
-): Promise<{ state: unknown; updatedAt: string } | null> {
+  telegramUserId: number,
+): Promise<{ state: unknown; updatedAt: string; householdId: string } | null> {
   const { data, error } = await client
     .from("bot_conversations")
-    .select("state, updated_at")
+    .select("state, updated_at, household_id")
     .eq("chat_id", chatId)
+    .eq("telegram_user_id", telegramUserId)
     .maybeSingle();
   if (error !== null) {
     throw new Error(`loadBotConversation failed: ${error.message}`);
@@ -2790,18 +2847,29 @@ export async function loadBotConversation(
   if (data === null) {
     return null;
   }
-  const row = data as Pick<BotConversationRow, "state" | "updated_at">;
-  return { state: row.state, updatedAt: row.updated_at };
+  const row = data as Pick<
+    BotConversationRow,
+    "state" | "updated_at" | "household_id"
+  >;
+  return {
+    state: row.state,
+    updatedAt: row.updated_at,
+    householdId: row.household_id,
+  };
 }
 
 /** Upsert a chat's conversation state, refreshing `updated_at` to now. */
 export async function saveBotConversation(
   client: AppSupabaseClient,
   chatId: number,
+  telegramUserId: number,
+  householdId: string,
   state: unknown,
 ): Promise<void> {
   const { error } = await client.from("bot_conversations").upsert({
     chat_id: chatId,
+    telegram_user_id: telegramUserId,
+    household_id: householdId,
     state,
     updated_at: new Date().toISOString(),
   });
@@ -2814,11 +2882,13 @@ export async function saveBotConversation(
 export async function deleteBotConversation(
   client: AppSupabaseClient,
   chatId: number,
+  telegramUserId: number,
 ): Promise<void> {
   const { error } = await client
     .from("bot_conversations")
     .delete()
-    .eq("chat_id", chatId);
+    .eq("chat_id", chatId)
+    .eq("telegram_user_id", telegramUserId);
   if (error !== null) {
     throw new Error(`deleteBotConversation failed: ${error.message}`);
   }
@@ -3115,26 +3185,23 @@ export async function reconcileLegacyCardBillPayment(
   client: AppSupabaseClient,
   draft: Omit<CardBillSettlementDraft, "idempotencyKey">,
 ): Promise<"none" | "matched" | "ambiguous"> {
-  const { data, error } = await client
-    .from("transactions")
-    .select("*")
-    .eq("household_id", draft.householdId)
-    .eq("kind", "transfer")
-    .eq("credit_card_id", draft.creditCardId)
-    .eq("bill_month", draft.billMonth)
-    .is("idempotency_key", null);
+  const { data, error } = await client.rpc(
+    "reconcile_legacy_card_bill_payment",
+    {
+      target_household_id: draft.householdId,
+      target_credit_card_id: draft.creditCardId,
+      target_account_id: draft.accountId,
+      target_bill_month: draft.billMonth,
+      target_amount_cents: draft.amountCents,
+      target_paid_on: draft.paidOn,
+      target_created_by_user_id: draft.createdByUserId,
+    },
+  );
   if (error !== null)
     throw new Error(`Legacy payment recovery failed: ${error.message}`);
-  if (data === null || data.length === 0) return "none";
-  if (
-    data.length === 1 &&
-    data[0]!.account_id === draft.accountId &&
-    data[0]!.amount_cents === draft.amountCents &&
-    data[0]!.occurred_on === draft.paidOn &&
-    data[0]!.created_by_user_id === draft.createdByUserId
-  )
-    return "matched";
-  return "ambiguous";
+  if (data !== "none" && data !== "matched" && data !== "ambiguous")
+    throw new Error("Legacy payment recovery returned an invalid outcome");
+  return data;
 }
 
 /** Register or replay a payment via the key-idempotent settlement RPC. */
@@ -3153,21 +3220,11 @@ export async function settleCardBill(
     target_created_by_user_id: draft.createdByUserId,
   });
   if (error !== null) {
-    let definitiveNoWrite = false;
-    if (error.code === "22023") {
-      // SQL rolls back this invocation, but an earlier response may have been lost.
-      try {
-        const existing = await client
-          .from("transactions")
-          .select("id")
-          .eq("household_id", draft.householdId)
-          .eq("idempotency_key", draft.idempotencyKey)
-          .maybeSingle();
-        definitiveNoWrite = existing.error === null && existing.data === null;
-      } catch {
-        /* A failed reconciliation read leaves the outcome uncertain. */
-      }
-    }
+    // Only SQL can distinguish absent writes from rows hidden by RLS. Its
+    // marker is issued after authentication, a key lock and a definer lookup.
+    const definitiveNoWrite =
+      error.code === "22023" &&
+      error.hint === "card_bill_definitive_no_write_v1";
     throw new CardBillSettlementError(error, definitiveNoWrite);
   }
   return data as SettleCardBillResult;

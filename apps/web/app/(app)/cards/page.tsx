@@ -174,7 +174,6 @@ export default async function CardsPage({
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
       <PageTitle
-        kicker="Nossa casa"
         title="Cartões"
         lead="Faturas, fechamentos e as compras parceladas."
         actions={

@@ -124,7 +124,6 @@ export default async function CategoriesPage() {
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
       <PageTitle
-        kicker="Nossa casa"
         title="Categorias"
         lead="Como a gente organiza os gastos — mexer aqui reorganiza tudo."
       />

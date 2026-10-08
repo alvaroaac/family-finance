@@ -84,19 +84,17 @@ const draft = {
 describe("card bill repositories against the web fake", () => {
   it("reads seeded closures, attribution, and payments without changing spending (D12)", async () => {
     const { client, store } = fixture();
-    store
-      .table("transactions")
-      .push({
-        id: "payment-seed",
-        household_id: "house-1",
-        kind: "transfer",
-        credit_card_id: "card-1",
-        account_id: "account-1",
-        amount_cents: 200,
-        bill_month: "2026-10",
-        invoice_month: null,
-        occurred_on: "2026-10-06",
-      });
+    store.table("transactions").push({
+      id: "payment-seed",
+      household_id: "house-1",
+      kind: "transfer",
+      credit_card_id: "card-1",
+      account_id: "account-1",
+      amount_cents: 200,
+      bill_month: "2026-10",
+      invoice_month: null,
+      occurred_on: "2026-10-06",
+    });
     const pairs = await getCardFaturaPairs(client, "house-1", "2026-10-06");
     expect(pairs[0]).toMatchObject({
       pending: {

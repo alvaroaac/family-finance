@@ -41,19 +41,19 @@ same payment rules.
 
 ## Decisions
 
-| # | Decision | Rationale |
-|---|---|---|
-| D1 | A payment stays ONE `transactions` row: `kind='transfer'`, `account_id` = source, `credit_card_id` = destination, `bill_month` = fatura month. | Reuses 0015's model; transfers are already excluded from spending and card totals. |
-| D2 | Many payments per card+month are allowed. | User decision: partial now, rest later. |
-| D3 | Payment status is computed from sums, never stored. | Nothing to drift out of sync. |
-| D4 | Duplicate protection is an idempotency key per submission (0019 pattern). | Double-click / Telegram retry must never create a second row once multiples are legal. |
-| D5 | Undo a payment = delete its row. | Simplest reversible action; RLS already scopes deletes. |
-| D6 | Month is a page-level selector on `/cards` (`?fatura=YYYY-MM`), any past or future month. | One server render, one month for all cards. |
-| D7 | The old 7-arg `settle_card_bill` is dropped in the same migration. | No silently callable legacy overload (2026-07-25 tech-debt lesson). |
-| D8 | Every card charge stores which fatura it belongs to (`transactions.invoice_month`), set by a DB trigger at write time. | "Frozen" needs attribution decided when the charge is written, not recomputed at read time; a trigger covers every write path (web, bot, imports, edits). |
-| D9 | A fatura is closed automatically once the São Paulo date is past the card's closing day in that month, or manually via "Fechar fatura". A per-card+month override row can close early or reopen (manual or auto). | Matches how cards work; one override row explains every non-default state. |
-| D10 | A closed fatura's total = corrected total if the user set one, else the live sum of charges attributed to it. | User decision: correct the total instead of forcing "paga". Freezing comes from attribution (D8), so no snapshot is needed. |
-| D11 | Imported rows are authoritative: never bumped to another fatura. | User decision: the bank statement *is* that fatura. |
+| #   | Decision                                                                                                                                                                                                                                                                                          | Rationale                                                                                                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D1  | A payment stays ONE `transactions` row: `kind='transfer'`, `account_id` = source, `credit_card_id` = destination, `bill_month` = fatura month.                                                                                                                                                    | Reuses 0015's model; transfers are already excluded from spending and card totals.                                                                                                   |
+| D2  | Many payments per card+month are allowed.                                                                                                                                                                                                                                                         | User decision: partial now, rest later.                                                                                                                                              |
+| D3  | Payment status is computed from sums, never stored.                                                                                                                                                                                                                                               | Nothing to drift out of sync.                                                                                                                                                        |
+| D4  | Duplicate protection is an idempotency key per submission (0019 pattern).                                                                                                                                                                                                                         | Double-click / Telegram retry must never create a second row once multiples are legal.                                                                                               |
+| D5  | Undo a payment = delete its row.                                                                                                                                                                                                                                                                  | Simplest reversible action; RLS already scopes deletes.                                                                                                                              |
+| D6  | Month is a page-level selector on `/cards` (`?fatura=YYYY-MM`), any past or future month.                                                                                                                                                                                                         | One server render, one month for all cards.                                                                                                                                          |
+| D7  | The old 7-arg `settle_card_bill` is dropped in the same migration.                                                                                                                                                                                                                                | No silently callable legacy overload (2026-07-25 tech-debt lesson).                                                                                                                  |
+| D8  | Every card charge stores which fatura it belongs to (`transactions.invoice_month`), set by a DB trigger at write time.                                                                                                                                                                            | "Frozen" needs attribution decided when the charge is written, not recomputed at read time; a trigger covers every write path (web, bot, imports, edits).                            |
+| D9  | A fatura is closed automatically once the São Paulo date is past the card's closing day in that month, or manually via "Fechar fatura". A per-card+month override row can close early or reopen (manual or auto).                                                                                 | Matches how cards work; one override row explains every non-default state.                                                                                                           |
+| D10 | A closed fatura's total = corrected total if the user set one, else the live sum of charges attributed to it.                                                                                                                                                                                     | User decision: correct the total instead of forcing "paga". Freezing comes from attribution (D8), so no snapshot is needed.                                                          |
+| D11 | Imported rows are authoritative: never bumped to another fatura.                                                                                                                                                                                                                                  | User decision: the bank statement _is_ that fatura.                                                                                                                                  |
 | D12 | **Spending ≠ fatura.** Spending numbers (Resumo headline conta/cartão, dashboard, categories) stay by purchase date (`occurred_on`; parcelas by `due_month`, as today). Fatura numbers (fatura blocks, status, pay amount, bot) use `invoice_month`. A fatura is named by the month it closes in. | User decision (option A). Closing/reopening never moves spending between months; Resumo and dashboard keep matching; early closing days (e.g. day 1) don't lag the headline a month. |
 
 ## Fatura rules (contractual)
@@ -93,11 +93,11 @@ Effect: with auto-close, a purchase on day 29 of a card closing on day 28
 lands in next month's fatura — the real-card behaviour, achieved without a
 separate rule. Worked example (closes day 28, due ~day 5):
 
-| Purchase | Fatura | Closes | Paid | Counts as spending in |
-|---|---|---|---|---|
-| 29/09 | 10 | 28/10 | ~05/11 | September |
-| 20/10 | 10 | 28/10 | ~05/11 | October |
-| 30/10 | 11 | 28/11 | ~05/12 | October |
+| Purchase | Fatura | Closes | Paid   | Counts as spending in |
+| -------- | ------ | ------ | ------ | --------------------- |
+| 29/09    | 10     | 28/10  | ~05/11 | September             |
+| 20/10    | 10     | 28/10  | ~05/11 | October               |
+| 30/10    | 11     | 28/11  | ~05/12 | October               |
 
 A card closing on day 1: purchases 02/10–01/11 form fatura 11 (closes 01/11);
 they still count as October/November spending by their own dates.
@@ -106,7 +106,7 @@ they still count as October/November spending by their own dates.
 the manual web/bot path shifts the **whole plan** forward by N months, where N
 is the smallest shift that puts parcel 1 in a fatura that is not closed. The
 shift happens in `packages/db` `planWithOpenFaturas` (shared by web and bot)
-*before* calling the unchanged `create_installment_purchase` RPC. The bot
+_before_ calling the unchanged `create_installment_purchase` RPC. The bot
 resolves the first open month once (`firstOpenMonth`), persists it with the
 draft and pins it, so a retry sends the same schedule and the idempotent replay
 payload stays identical. Import RPCs are not shifted (D11).
@@ -123,15 +123,15 @@ The `/cards` parcel preview uses the same helper, so preview = what is saved.
 
 Status and badge copy (contractual, same text on `/cards` and `/resumo`):
 
-| closed | condition | status | badge |
-|---|---|---|---|
-| no | paid = 0 | `open` | `aberta` |
-| no | 0 < paid < total | `open_partial` | `aberta · R$ X pago` |
-| no | paid > 0 and paid ≥ total | `open_covered` | `aberta · paga até agora` |
-| yes | total = 0 and paid = 0 | `nothing_due` | `nada a pagar` |
-| yes | paid = 0, total > 0 | `closed_unpaid` | `fechada · a pagar R$ X` |
-| yes | 0 < paid < total | `closed_partial` | `fechada · parcial, falta R$ X` |
-| yes | paid > 0 and paid ≥ total | `paid` | `paga ✅` (+ ` · R$ X a mais` when overpaid) |
+| closed | condition                 | status           | badge                                        |
+| ------ | ------------------------- | ---------------- | -------------------------------------------- |
+| no     | paid = 0                  | `open`           | `aberta`                                     |
+| no     | 0 < paid < total          | `open_partial`   | `aberta · R$ X pago`                         |
+| no     | paid > 0 and paid ≥ total | `open_covered`   | `aberta · paga até agora`                    |
+| yes    | total = 0 and paid = 0    | `nothing_due`    | `nada a pagar`                               |
+| yes    | paid = 0, total > 0       | `closed_unpaid`  | `fechada · a pagar R$ X`                     |
+| yes    | 0 < paid < total          | `closed_partial` | `fechada · parcial, falta R$ X`              |
+| yes    | paid > 0 and paid ≥ total | `paid`           | `paga ✅` (+ ` · R$ X a mais` when overpaid) |
 
 An open fatura with total 0 and nothing paid is `open` / `aberta`.
 
@@ -152,14 +152,15 @@ Used by the Resumo card blocks, the default `/cards` view and the bot's default 
 
 ## Data model — migration `202610070000_card_bill_closing_and_payments.sql`
 
-Named with a short UTC timestamp (new convention; 4-digit files are legacy and
-`deploy/migrate.sh` accepts both). Legacy `0028` (local) and PR #40's
-`0029`–`0032` still sort before it. PR #40's `0031` re-creates the 7-arg `settle_card_bill` and
-`create_installment_purchase` with a stricter gate; whichever PR merges second
-must reconcile (noted in this PR and in tech-debt). Every statement
-re-runnable (0015 style).
+Named with a short UTC timestamp (`deploy/migrate.sh` accepts timestamps and
+legacy 4-digit versions). The later multi-tenant migrations are
+`202610080001`–`202610080004`; `202610080003` replaces the 8-argument payment
+function with the active-member JWT gate. Both fresh and upgrade paths end on
+that definition. Applied migrations remain unchanged; definitions are replayed
+in chronological order.
 
 **Payments**
+
 1. Drop index `transactions_card_bill_month_uniq`.
 2. `transactions.idempotency_key text` + unique index
    `(household_id, idempotency_key) where idempotency_key is not null`.
@@ -167,33 +168,27 @@ re-runnable (0015 style).
    8-arg version (`…, target_idempotency_key text`) returning
    `{ "transaction": <row>, "replayed": boolean }`:
    - validation as 0015 plus: key non-empty; `target_paid_on <= today_SP`; account in household;
-   - gate: 0019 pattern (`auth.role() = 'service_role'` bypasses membership, others must be members; missing card and non-member raise the same "not found");
+   - final gate after multi-tenant integration: authenticated active member JWT, with the caller recorded as creator; service-role, outsiders and inactive members are denied. Membership and household/key locks protect replay and definitive validation classification.
    - `on conflict (household_id, idempotency_key) do nothing`; on conflict, same card/account/month/amount/date → return existing with `replayed = true`, else raise 22023 "idempotency key reused with a different payment";
    - paying is allowed whether the fatura is open or closed.
 
-**Closing**
-4. Table `card_bill_closures`: `id`, `household_id`, `credit_card_id`,
-   `bill_month text` (YYYY-MM check), `state text check in ('closed','open')`,
-   `total_override_cents bigint null check (>= 0)`, `updated_by_user_id`,
-   `created_at`, `updated_at`. Unique `(credit_card_id, bill_month)`. Composite
-   household FKs as in 0013. `total_override_cents` must be null when
-   `state = 'open'`. RLS: household members select/insert/update/delete (same
-   policy shape as the other household tables). Card delete is blocked by FK
-   restrict as for transactions.
-5. SQL function `card_bill_is_closed(card_id uuid, month text) returns boolean`
-   implementing the rule above (stable, SECURITY DEFINER so the attribution
-   trigger can read closures). Membership gate: an authenticated/anon caller
-   who is not a member of the card's household gets 42501; service_role and
-   migration contexts pass; an unknown card returns false.
-6. **Attribution:** `transactions.invoice_month text` (YYYY-MM check) + check
-   `invoice_month is null` unless `credit_card_id is not null and kind <> 'transfer'`;
-   BEFORE INSERT/UPDATE trigger implementing the rule above; backfill existing
-   card rows; index `(household_id, credit_card_id, invoice_month)`.
-7. `create_installment_purchase` is **not** modified (shift lives in `packages/db`, see Parcelados).
-8. Grants: as 0015/0019 for the RPCs; table grants like the other household tables.
-9. New `scripts/verify-card-bill-migration.sh` (+ `pnpm test:card-bill-migration`,
-   wired into CI) applies all migrations, re-applies the migration, and runs
-   `packages/db/test/card-bill-functional.sql` assertions.
+**Closing** 4. Table `card_bill_closures`: `id`, `household_id`, `credit_card_id`,
+`bill_month text` (YYYY-MM check), `state text check in ('closed','open')`,
+`total_override_cents bigint null check (>= 0)`, `updated_by_user_id`,
+`created_at`, `updated_at`. Unique `(credit_card_id, bill_month)`. Composite
+household FKs as in 0013. `total_override_cents` must be null when
+`state = 'open'`. RLS: household members select/insert/update/delete (same
+policy shape as the other household tables). Card delete is blocked by FK
+restrict as for transactions. 5. SQL function `card_bill_is_closed(card_id uuid, month text) returns boolean`
+implementing the rule above (stable, SECURITY DEFINER so the attribution
+trigger can read closures). Membership gate: an authenticated/anon caller
+who is not a member of the card's household gets 42501; service_role and
+migration contexts pass; an unknown card returns false. 6. **Attribution:** `transactions.invoice_month text` (YYYY-MM check) + check
+`invoice_month is null` unless `credit_card_id is not null and kind <> 'transfer'`;
+BEFORE INSERT/UPDATE trigger implementing the rule above; backfill existing
+card rows; index `(household_id, credit_card_id, invoice_month)`. 7. `create_installment_purchase` is **not** modified (shift lives in `packages/db`, see Parcelados). 8. Grants: as 0015/0019 for the RPCs; table grants like the other household tables. 9. New `scripts/verify-card-bill-migration.sh` (+ `pnpm test:card-bill-migration`,
+wired into CI) applies all migrations, re-applies the migration, and runs
+`packages/db/test/card-bill-functional.sql` assertions.
 
 ## Domain — `packages/domain`
 
@@ -267,15 +262,15 @@ New "Faturas" section above the cards grid.
 
 Error copy (contractual):
 
-| Case | Message |
-|---|---|
-| amount missing / ≤ 0 / unparsable | `Informe um valor maior que zero.` |
-| no account chosen | `Escolha a conta de onde saiu o pagamento.` |
-| paid-on in the future | `A data do pagamento não pode ser no futuro.` |
-| invalid month | `Mês da fatura inválido.` |
-| corrected total negative / unparsable | `Informe um total válido (zero ou mais).` |
-| payment RPC/other failure | `Não foi possível registrar o pagamento.` |
-| close/reopen/adjust failure | `Não foi possível atualizar a fatura.` |
+| Case                                  | Message                                       |
+| ------------------------------------- | --------------------------------------------- |
+| amount missing / ≤ 0 / unparsable     | `Informe um valor maior que zero.`            |
+| no account chosen                     | `Escolha a conta de onde saiu o pagamento.`   |
+| paid-on in the future                 | `A data do pagamento não pode ser no futuro.` |
+| invalid month                         | `Mês da fatura inválido.`                     |
+| corrected total negative / unparsable | `Informe um total válido (zero ou mais).`     |
+| payment RPC/other failure             | `Não foi possível registrar o pagamento.`     |
+| close/reopen/adjust failure           | `Não foi possível atualizar a fatura.`        |
 
 ## Web — `/resumo`
 
@@ -325,85 +320,85 @@ Layers: **D** domain unit · **M** migration SQL assertions · **R** db repo/fak
 
 **Payments**
 
-| # | Case | Expected | Layer |
-|---|---|---|---|
-| E1 | Closed fatura, pay full total | `paid`, `paga ✅` | D, E |
-| E2 | Closed fatura, pay less | `closed_partial`, `fechada · parcial, falta R$ X`; form prefilled with remaining | D, E |
-| E3 | Second payment completes it | `paid` | D, E |
-| E4 | Overpay | `paid`, `· R$ X a mais` | D, R |
-| E5 | Future month payment | allowed, stored with that `bill_month` | R, E |
-| E6 | Past month payment | allowed | R |
-| E7 | Amount 0 / negative / garbage | error copy, no row | A, E |
-| E8 | Paid-on in the future | error copy, no row; RPC also rejects | A, M |
-| E9 | No account chosen | error copy | A |
-| E10 | Household without accounts | form replaced by hint + link | R |
-| E11 | Same idempotency key twice (double click) | one row, second `replayed` | M, E |
-| E12 | Same key, different payload | RPC error | M |
-| E13 | Undo payment | row deleted, status recomputed | R, E |
-| E14 | Undo non-bill transaction / other household's payment | throws, nothing deleted | R, M |
-| E15 | Card or account from another household | RPC rejects | M |
-| E16 | Paid in October for September's fatura | counts toward September; `occurred_on` = October date | R |
-| E17 | Payments never counted as spending | Resumo totals and card totals unchanged by a payment | R |
+| #   | Case                                                  | Expected                                                                         | Layer |
+| --- | ----------------------------------------------------- | -------------------------------------------------------------------------------- | ----- |
+| E1  | Closed fatura, pay full total                         | `paid`, `paga ✅`                                                                | D, E  |
+| E2  | Closed fatura, pay less                               | `closed_partial`, `fechada · parcial, falta R$ X`; form prefilled with remaining | D, E  |
+| E3  | Second payment completes it                           | `paid`                                                                           | D, E  |
+| E4  | Overpay                                               | `paid`, `· R$ X a mais`                                                          | D, R  |
+| E5  | Future month payment                                  | allowed, stored with that `bill_month`                                           | R, E  |
+| E6  | Past month payment                                    | allowed                                                                          | R     |
+| E7  | Amount 0 / negative / garbage                         | error copy, no row                                                               | A, E  |
+| E8  | Paid-on in the future                                 | error copy, no row; RPC also rejects                                             | A, M  |
+| E9  | No account chosen                                     | error copy                                                                       | A     |
+| E10 | Household without accounts                            | form replaced by hint + link                                                     | R     |
+| E11 | Same idempotency key twice (double click)             | one row, second `replayed`                                                       | M, E  |
+| E12 | Same key, different payload                           | RPC error                                                                        | M     |
+| E13 | Undo payment                                          | row deleted, status recomputed                                                   | R, E  |
+| E14 | Undo non-bill transaction / other household's payment | throws, nothing deleted                                                          | R, M  |
+| E15 | Card or account from another household                | RPC rejects                                                                      | M     |
+| E16 | Paid in October for September's fatura                | counts toward September; `occurred_on` = October date                            | R     |
+| E17 | Payments never counted as spending                    | Resumo totals and card totals unchanged by a payment                             | R     |
 
 **Open vs closed, attribution**
 
-| # | Case | Expected | Layer |
-|---|---|---|---|
-| C1 | Card closes day 28, purchase on day 28 | stays in that month | D, M |
-| C2 | Purchase on day 29, today past closing | `invoice_month` = next month | M |
-| C3 | Closing day 31 in a 30-day month (and Feb) | closes on the last day | D, M |
-| C4 | Card without closing day | never auto-closes; only manual | D, M |
-| C5 | Today = closing day | still open | D |
-| C6 | Manual close before closing day | closed; new purchase dated in that month → next month | M, E |
-| C7 | Reopen a manually closed fatura | open; new purchases land in it again | M, R |
-| C8 | Reopen an auto-closed fatura | `override='open'` beats auto; backdated purchase lands in it | M |
-| C9 | Two consecutive closed faturas | new purchase skips both, lands in first open | D, M |
-| C10 | Backdated manual purchase (date in a closed month, entered later) | goes to first open fatura | M |
-| C11 | Imported row dated in a closed month | keeps calendar month (authoritative), closed total grows unless overridden | M, R |
-| C12 | Edit amount of a charge in a closed fatura | stays put; closed total follows unless overridden | M, R |
-| C13 | Edit date/card of a charge | re-attributed with the insert rule | M |
-| C14 | Delete a charge in a closed fatura | total drops (unless overridden); paid may become overpaid | R |
-| C15 | Parcelado whose first parcel would land in a closed fatura | whole plan shifts; preview shows the shift + note; import path not shifted | D, R, E |
-| C16 | Parcelado idempotent replay (same payload) | returns originally stored parcels | R |
-| C17 | Closing with the unchanged total | no override stored | R |
-| C18 | Closing with a corrected total | override used for status; `total ajustado` hint shown | R, E |
-| C19 | Clear corrected total | back to live sum | R |
-| C20 | Reopen clears corrected total | override null | M |
-| C21 | Corrected total 0, nothing paid | `nada a pagar` | D |
-| C22 | Corrected total negative / garbage | error copy | A |
-| C23 | Open fatura fully covered early | `aberta · paga até agora`; becomes `paga ✅` once closed if total unchanged | D, R |
-| C24 | Open fatura covered, then a new purchase arrives before closing | `aberta · R$ X pago` | D, R |
-| C25 | Closed fatura paid, then a new purchase | purchase goes to next fatura; closed one stays `paga ✅` | M, E |
-| C26 | Closed unpaid (`fechada · a pagar R$ X`) then partial then full | badge walks closed_unpaid → closed_partial → paid | D, E |
-| C27 | Backfill | every existing card row gets calendar-month `invoice_month`; card totals per month identical before/after | M |
-| C28 | Card purchase 30/10 on a card closing day 28 | October spending (Resumo + dashboard) includes it; fatura 11 block includes it, fatura 10 does not | R |
-| C29 | `card_bill_closures` RLS | non-member cannot read/write; member can | M |
-| C30 | Invalid `?fatura=` | falls back to default (pair) view | R |
+| #   | Case                                                              | Expected                                                                                                  | Layer   |
+| --- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| C1  | Card closes day 28, purchase on day 28                            | stays in that month                                                                                       | D, M    |
+| C2  | Purchase on day 29, today past closing                            | `invoice_month` = next month                                                                              | M       |
+| C3  | Closing day 31 in a 30-day month (and Feb)                        | closes on the last day                                                                                    | D, M    |
+| C4  | Card without closing day                                          | never auto-closes; only manual                                                                            | D, M    |
+| C5  | Today = closing day                                               | still open                                                                                                | D       |
+| C6  | Manual close before closing day                                   | closed; new purchase dated in that month → next month                                                     | M, E    |
+| C7  | Reopen a manually closed fatura                                   | open; new purchases land in it again                                                                      | M, R    |
+| C8  | Reopen an auto-closed fatura                                      | `override='open'` beats auto; backdated purchase lands in it                                              | M       |
+| C9  | Two consecutive closed faturas                                    | new purchase skips both, lands in first open                                                              | D, M    |
+| C10 | Backdated manual purchase (date in a closed month, entered later) | goes to first open fatura                                                                                 | M       |
+| C11 | Imported row dated in a closed month                              | keeps calendar month (authoritative), closed total grows unless overridden                                | M, R    |
+| C12 | Edit amount of a charge in a closed fatura                        | stays put; closed total follows unless overridden                                                         | M, R    |
+| C13 | Edit date/card of a charge                                        | re-attributed with the insert rule                                                                        | M       |
+| C14 | Delete a charge in a closed fatura                                | total drops (unless overridden); paid may become overpaid                                                 | R       |
+| C15 | Parcelado whose first parcel would land in a closed fatura        | whole plan shifts; preview shows the shift + note; import path not shifted                                | D, R, E |
+| C16 | Parcelado idempotent replay (same payload)                        | returns originally stored parcels                                                                         | R       |
+| C17 | Closing with the unchanged total                                  | no override stored                                                                                        | R       |
+| C18 | Closing with a corrected total                                    | override used for status; `total ajustado` hint shown                                                     | R, E    |
+| C19 | Clear corrected total                                             | back to live sum                                                                                          | R       |
+| C20 | Reopen clears corrected total                                     | override null                                                                                             | M       |
+| C21 | Corrected total 0, nothing paid                                   | `nada a pagar`                                                                                            | D       |
+| C22 | Corrected total negative / garbage                                | error copy                                                                                                | A       |
+| C23 | Open fatura fully covered early                                   | `aberta · paga até agora`; becomes `paga ✅` once closed if total unchanged                               | D, R    |
+| C24 | Open fatura covered, then a new purchase arrives before closing   | `aberta · R$ X pago`                                                                                      | D, R    |
+| C25 | Closed fatura paid, then a new purchase                           | purchase goes to next fatura; closed one stays `paga ✅`                                                  | M, E    |
+| C26 | Closed unpaid (`fechada · a pagar R$ X`) then partial then full   | badge walks closed_unpaid → closed_partial → paid                                                         | D, E    |
+| C27 | Backfill                                                          | every existing card row gets calendar-month `invoice_month`; card totals per month identical before/after | M       |
+| C28 | Card purchase 30/10 on a card closing day 28                      | October spending (Resumo + dashboard) includes it; fatura 11 block includes it, fatura 10 does not        | R       |
+| C29 | `card_bill_closures` RLS                                          | non-member cannot read/write; member can                                                                  | M       |
+| C30 | Invalid `?fatura=`                                                | falls back to default (pair) view                                                                         | R       |
 
 **Fatura pair (Resumo + `/cards` default)**
 
-| # | Case | Expected | Layer |
-|---|---|---|---|
-| P1 | Previous fatura closed + partial, new purchases after close | two rows: main `Fatura 09 · fechada` with `fechada · parcial, falta R$ X`; `Próxima 10 · aberta` with only the new purchases | D, R, E |
-| P2 | Previous fatura closed + unpaid | main row `fechada · a pagar R$ X` + próxima row | D, R |
-| P3 | Pending fatura gets fully paid | collapses to single open block | D, R, E |
-| P4 | Previous fatura closed with total 0 (`nada a pagar`) or overpaid | no pending row | D |
-| P5 | Current month closed manually early | pending = current month, open = next month | D, M |
-| P6 | Card without closing day, nothing closed | single open block, current month | D |
-| P7 | Two months back closed and unpaid | not surfaced; only one month back | D |
-| P8 | Closing, reopening or correcting a fatura | Resumo headline + dashboard spending identical before/after; only fatura blocks change | R |
-| P10 | Card closing day 1 | purchase 15/10 → fatura 11, counts as October spending | D, M, R |
-| P9 | `/cards` default view | pending + open blocks per card, each with its own pay/close/reopen actions; `?fatura=` shows one month | R, E |
+| #   | Case                                                             | Expected                                                                                                                     | Layer   |
+| --- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------- |
+| P1  | Previous fatura closed + partial, new purchases after close      | two rows: main `Fatura 09 · fechada` with `fechada · parcial, falta R$ X`; `Próxima 10 · aberta` with only the new purchases | D, R, E |
+| P2  | Previous fatura closed + unpaid                                  | main row `fechada · a pagar R$ X` + próxima row                                                                              | D, R    |
+| P3  | Pending fatura gets fully paid                                   | collapses to single open block                                                                                               | D, R, E |
+| P4  | Previous fatura closed with total 0 (`nada a pagar`) or overpaid | no pending row                                                                                                               | D       |
+| P5  | Current month closed manually early                              | pending = current month, open = next month                                                                                   | D, M    |
+| P6  | Card without closing day, nothing closed                         | single open block, current month                                                                                             | D       |
+| P7  | Two months back closed and unpaid                                | not surfaced; only one month back                                                                                            | D       |
+| P8  | Closing, reopening or correcting a fatura                        | Resumo headline + dashboard spending identical before/after; only fatura blocks change                                       | R       |
+| P10 | Card closing day 1                                               | purchase 15/10 → fatura 11, counts as October spending                                                                       | D, M, R |
+| P9  | `/cards` default view                                            | pending + open blocks per card, each with its own pay/close/reopen actions; `?fatura=` shows one month                       | R, E    |
 
 **Bot**
 
-| # | Case | Expected | Layer |
-|---|---|---|---|
-| B1 | Partially paid month | prefilled with remaining | B |
-| B2 | Fully paid month | "já está paga" + asks amount; extra payment saved on confirm | B |
-| B3 | Confirm replayed (same key) | success message, one row | B |
-| B4 | Card purchase via bot after manual close | lands in next fatura (trigger) | M |
-| B5 | "paguei a fatura" without month while previous fatura is pending | defaults to the pending month; with none pending, to the open month | B |
+| #   | Case                                                             | Expected                                                            | Layer |
+| --- | ---------------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
+| B1  | Partially paid month                                             | prefilled with remaining                                            | B     |
+| B2  | Fully paid month                                                 | "já está paga" + asks amount; extra payment saved on confirm        | B     |
+| B3  | Confirm replayed (same key)                                      | success message, one row                                            | B     |
+| B4  | Card purchase via bot after manual close                         | lands in next fatura (trigger)                                      | M     |
+| B5  | "paguei a fatura" without month while previous fatura is pending | defaults to the pending month; with none pending, to the open month | B     |
 
 ## Verification and evidence
 

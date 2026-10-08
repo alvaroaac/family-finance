@@ -1,5 +1,14 @@
 -- The harness uses this same file to seed legacy rows before the new migration.
 \if :{?prepare_backfill}
+-- This disposable fixture creates two houses before multi-tenancy. Remove
+-- only the bootstrap allowlist seed; assigning an unknown legacy email to
+-- either fixture house would violate the real ambiguity guard.
+delete from allowed_emails where email='alvaro.a.a.a.c@gmail.com';
+do $$ begin
+  if exists(select 1 from allowed_emails) then
+    raise exception 'card fixture has unexpected legacy allowlist rows';
+  end if;
+end $$;
 insert into auth.users(id,email) values
   ('81000000-0000-0000-0000-000000000001','bill-member@example.test'),
   ('81000000-0000-0000-0000-000000000002','bill-outsider@example.test');
@@ -189,10 +198,11 @@ select pg_temp.expect_bill_error($q$update card_bill_closures set state='invalid
 select pg_temp.expect_bill_error($q$update card_bill_closures set household_id='82000000-0000-0000-0000-000000000002' where bill_month='2090-12'$q$,'23503','foreign key');
 select pg_temp.expect_bill_error($q$delete from credit_cards where id='84000000-0000-0000-0000-000000000001'$q$,'23503','foreign key');
 
--- E3/E11/E12/E16: real service-role caller, null uid, same-key replay, partials.
-select set_config('request.jwt.claim.sub','',true);
-select set_config('request.jwt.claim.role','service_role',true);
-set role service_role;
+-- E3/E11/E12/E16: authenticated member, same-key replay and partials.
+grant usage on schema auth to authenticated, service_role;
+select set_config('request.jwt.claim.sub','81000000-0000-0000-0000-000000000001',true);
+select set_config('request.jwt.claim.role','authenticated',true);
+set role authenticated;
 do $$ declare first jsonb; replay jsonb; begin
   first := pg_temp.pay_bill('same-key');
   replay := pg_temp.pay_bill('same-key');
@@ -213,7 +223,7 @@ select pg_temp.assert_bill((select count(*)=2 from transactions where bill_month
 select pg_temp.assert_bill((select count(*)=1 from transactions where idempotency_key='open-key' and bill_month='2091-02')
   and (select count(*)=1 from transactions where idempotency_key='past-key' and bill_month='2000-04' and occurred_on='2000-05-01'),
   'Open/past fatura payments not persisted');
-set role service_role;
+set role authenticated;
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('same-key',amount=>101)$q$,'22023','idempotency key reused with a different payment');
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('same-key',account=>'83000000-0000-0000-0000-000000000002')$q$,'22023','idempotency key reused with a different payment');
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('same-key',month=>'2090-11')$q$,'22023','idempotency key reused with a different payment');
@@ -227,7 +237,7 @@ select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('zero',amount=>0)$q$
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('negative',amount=>-1)$q$,'22023','invalid amount');
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('bad-month',month=>'2090-13')$q$,'22023','invalid month');
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('foreign-card',card=>'84000000-0000-0000-0000-000000000003')$q$,'22023','not found');
-select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('foreign-account',account=>'83000000-0000-0000-0000-000000000003')$q$,'22023','not found');
+select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('foreign-account',account=>'83000000-0000-0000-0000-000000000003')$q$,'22023','account 83000000-0000-0000-0000-000000000003 not found');
 reset role;
 select pg_temp.assert_bill((select count(*)=4 from transactions where idempotency_key is not null), 'Rejected payments wrote transactions');
 
@@ -256,16 +266,74 @@ select pg_temp.expect_bill_error($q$insert into card_bill_closures(household_id,
 values ('82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000001','2095-01','closed','81000000-0000-0000-0000-000000000002')$q$,'42501','row-level security');
 update card_bill_closures set state='open' where bill_month='2090-12';
 delete from card_bill_closures where bill_month='2090-12';
-select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('non-member')$q$,'22023','card 84000000-0000-0000-0000-000000000001 not found');
+select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('non-member')$q$,'42501','active member authentication required');
 reset role;
 select pg_temp.assert_bill((select state='closed' from card_bill_closures where bill_month='2090-12'), 'C29 non-member modified closure');
 select set_config('request.jwt.claim.sub','',true);
 set role authenticated;
-select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('null-uid')$q$,'22023','not found');
+select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('null-uid')$q$,'42501','active member authentication required');
 reset role;
 select set_config('request.jwt.claim.role','',true);
 set role authenticated;
-select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('null-role')$q$,'22023','not found');
+select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('null-role')$q$,'42501','active member authentication required');
+reset role;
+
+-- Integration: authorization loss must never turn a committed key into a
+-- definitive-no-write result or grant a legacy draft a replacement key.
+reset role;
+select set_config('request.jwt.claim.sub','81000000-0000-0000-0000-000000000001',true);
+select set_config('request.jwt.claim.role','authenticated',true);
+set role authenticated;
+do $$ declare rejected_hint text; begin
+  begin
+    perform pg_temp.pay_bill('hint-fresh',amount=>0);
+    raise exception 'invalid amount accepted';
+  exception when sqlstate '22023' then
+    get stacked diagnostics rejected_hint = pg_exception_hint;
+    perform pg_temp.assert_bill(rejected_hint='card_bill_definitive_no_write_v1', 'Authoritative absence hint missing');
+  end;
+  begin
+    perform pg_temp.pay_bill('same-key',amount=>0);
+    raise exception 'key mismatch accepted';
+  exception when sqlstate '22023' then
+    get stacked diagnostics rejected_hint = pg_exception_hint;
+    perform pg_temp.assert_bill(coalesce(rejected_hint,'')='', 'Key mismatch was marked safe to rekey');
+  end;
+  perform pg_temp.assert_bill(reconcile_legacy_card_bill_payment(
+    '82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000002',
+    '83000000-0000-0000-0000-000000000001','2000-04',30,'2000-05-01',
+    '81000000-0000-0000-0000-000000000001')='matched','Exact legacy recovery failed');
+  perform pg_temp.assert_bill(reconcile_legacy_card_bill_payment(
+    '82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000002',
+    '83000000-0000-0000-0000-000000000001','2000-04',31,'2000-05-01',
+    '81000000-0000-0000-0000-000000000001')='ambiguous','Legacy mismatch was not ambiguous');
+end $$;
+reset role;
+update household_members set is_active=false where user_id='81000000-0000-0000-0000-000000000001';
+set role authenticated;
+select pg_temp.assert_bill(not exists(select 1 from transactions where idempotency_key='same-key'), 'Inactive member still sees payment');
+do $$ declare rejected_hint text; begin
+  begin
+    perform pg_temp.pay_bill('same-key',amount=>0);
+    raise exception 'inactive member payment passed';
+  exception when insufficient_privilege then
+    get stacked diagnostics rejected_hint = pg_exception_hint;
+    perform pg_temp.assert_bill(coalesce(rejected_hint,'')='', 'Inactive member received a no-write marker');
+  end;
+  begin
+    perform reconcile_legacy_card_bill_payment(
+      '82000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000002',
+      '83000000-0000-0000-0000-000000000001','2000-04',30,'2000-05-01',
+      '81000000-0000-0000-0000-000000000001');
+    raise exception 'Inactive legacy recovery allowed a new key';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+update household_members set is_active=true where user_id='81000000-0000-0000-0000-000000000001';
+select set_config('request.jwt.claim.sub','',true);
+select set_config('request.jwt.claim.role','service_role',true);
+set role service_role;
+select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('service-denied')$q$,'42501','active member authentication required');
 reset role;
 rollback;
 \endif

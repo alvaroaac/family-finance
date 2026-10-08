@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-import { E2E_EMAIL, LOCAL_STORAGE_STATE } from "./e2e/local-env";
+import { LOCAL_STORAGE_STATE } from "./e2e/local-env";
 
 /**
  * Playwright config for the browser-level MVP flow (Task 11, part B).
@@ -22,24 +22,28 @@ import { E2E_EMAIL, LOCAL_STORAGE_STATE } from "./e2e/local-env";
  * starts on :3100 pointed at that stack.
  */
 
+const harness = process.env.E2E_HARNESS === "1";
 const local = process.env.E2E_LOCAL_SUPABASE === "1";
 const baseURL =
   process.env.E2E_BASE_URL ??
-  (local ? "http://localhost:3100" : "http://localhost:3000");
+  (harness || local ? "http://localhost:3100" : "http://localhost:3000");
 
 const localServerEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.E2E_SUPABASE_URL ?? "",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.E2E_SUPABASE_ANON_KEY ?? "",
   SUPABASE_SERVICE_ROLE_KEY: process.env.E2E_SUPABASE_SERVICE_ROLE_KEY ?? "",
   NEXT_PUBLIC_SITE_URL: baseURL,
-  AUTHORIZED_EMAILS: E2E_EMAIL,
+  ALLOWED_WEB_HOSTS: new URL(baseURL).host,
 };
 
 export default defineConfig({
   testDir: "./e2e",
   // Only the Playwright specs; the offline vitest integration test lives under
   // integration/ and must never be picked up here.
-  testMatch: /.*\.spec\.ts/,
+  testMatch: harness
+    ? /(?:harness-smoke|multi-tenant)\.spec\.ts/
+    : /.*\.spec\.ts/,
+  globalSetup: harness ? "./e2e/global-setup.ts" : undefined,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -78,10 +82,14 @@ export default defineConfig({
   webServer: process.env.E2E_NO_SERVER
     ? undefined
     : {
-        command: local ? "pnpm dev --port 3100" : "pnpm dev",
+        command: harness
+          ? "pnpm exec next start --port 3100 --hostname 0.0.0.0"
+          : local
+            ? "pnpm dev --port 3100"
+            : "pnpm dev",
         url: baseURL,
         // Never reuse a server that may point at another database.
-        reuseExistingServer: !process.env.CI && !local,
+        reuseExistingServer: !process.env.CI && !local && !harness,
         timeout: 120_000,
         env: local ? localServerEnv : undefined,
       },
