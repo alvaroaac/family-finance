@@ -2438,7 +2438,7 @@ describe("card installment category suggestions", () => {
     expect(createInstallmentPurchase).not.toHaveBeenCalled();
   });
 
-  it("prefills the top existing subcategory suggestion while keeping suggestion buttons", async () => {
+  it("prefills the top subcategory and only offers alternatives with stable callbacks", async () => {
     const suggestCategory = vi.fn(async () => ({
       status: "uncategorized" as const,
       suggestion: null,
@@ -2463,6 +2463,11 @@ describe("card installment category suggestions", () => {
               confidence: 0.94,
               explanation: "Notebook é eletrônico.",
             },
+            {
+              categoryName: "Eletrônicos",
+              confidence: 0.5,
+              explanation: "Categoria geral.",
+            },
           ],
         }),
       ),
@@ -2479,9 +2484,19 @@ describe("card installment category suggestions", () => {
     expect(outcome.state.installmentDraft?.subcategoryId).toBe("sub-notebook");
     expect(outcome.reply).toContain("Categoria: Eletrônicos > Notebook");
     expect(outcome.keyboard?.inline_keyboard.flat()).toContainEqual({
-      text: "📂 Eletrônicos › Notebook",
-      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}0`,
+      text: "📂 Eletrônicos",
+      callback_data: `${CATEGORY_SUGGESTION_TOKEN_PREFIX}1`,
     });
+    expect(
+      outcome.keyboard?.inline_keyboard
+        .flat()
+        .some((button) => button.callback_data === "cs:0"),
+    ).toBe(false);
+    const selected = await applyCallback(outcome.state, "cs:1", deps, {
+      today: TODAY,
+    });
+    expect(selected.state.installmentDraft?.categoryId).toBe("cat-tech");
+    expect(selected.state.installmentDraft?.subcategoryId).toBeUndefined();
     expect(suggestCategory).not.toHaveBeenCalled();
   });
 

@@ -669,6 +669,7 @@ function keyboardForState(
     return confirmationKeyboard(
       taxonomyProposalLabel(state),
       state.categoryCandidates ?? [],
+      state.draft,
     );
   }
   if (state.status === "awaiting_category_name") {
@@ -681,6 +682,7 @@ function keyboardForState(
     return obligationConfirmationKeyboard(
       taxonomyProposalLabel(state),
       state.categoryCandidates ?? [],
+      state.obligationDraft,
     );
   }
   return undefined;
@@ -2032,7 +2034,11 @@ async function startInstallmentIntent(
       ? cardGridKeyboard(cards)
       : taxonomyProposalLabel(state) !== undefined
         ? installmentConfirmationKeyboard(taxonomyProposalLabel(state))
-        : installmentConfirmationKeyboard(undefined, categoryCandidates);
+        : installmentConfirmationKeyboard(
+            undefined,
+            categoryCandidates,
+            installmentDraft,
+          );
   return { state, reply, keyboard };
 }
 
@@ -2452,6 +2458,7 @@ async function startClassifiedIntent(
     keyboard: obligationConfirmationKeyboard(
       taxonomyProposalLabel(state),
       unifiedCandidates,
+      obligationDraft,
     ),
   };
 }
@@ -5117,6 +5124,7 @@ export async function applyCallback(
             : installmentConfirmationKeyboard(
                 undefined,
                 state.categoryCandidates,
+                next,
               ),
       };
     }
@@ -5388,6 +5396,7 @@ export async function applyCallback(
         keyboard: obligationConfirmationKeyboard(
           undefined,
           state.categoryCandidates,
+          obligationDraft,
         ),
       };
     }

@@ -6,11 +6,74 @@ import {
   CARD_TOKEN_PREFIX,
   confirmationKeyboard,
   installmentConfirmationKeyboard,
+  obligationConfirmationKeyboard,
   categoryGridKeyboard,
   responsibleGridKeyboard,
   cancelOnlyKeyboard,
   cardGridKeyboard,
 } from "./keyboards.js";
+
+describe.each([
+  ["expense", confirmationKeyboard],
+  ["installment", installmentConfirmationKeyboard],
+  ["obligation", obligationConfirmationKeyboard],
+] as const)("%s category alternatives", (_name, buildKeyboard) => {
+  const candidates = [
+    {
+      categoryId: "food",
+      categoryName: "Alimentação",
+      subcategoryId: "market",
+      subcategoryName: "Mercado",
+    },
+    {
+      categoryId: "food",
+      categoryName: "Alimentação",
+      subcategoryId: "restaurant",
+      subcategoryName: "Restaurante",
+    },
+    { categoryId: "food", categoryName: "Alimentação" },
+  ] as const;
+
+  it("puts confirm first and keeps same-category alternatives with their original indexes", () => {
+    const keyboard = buildKeyboard(undefined, candidates, candidates[0]);
+    expect(
+      keyboard.inline_keyboard[0]?.map((button) => button.callback_data),
+    ).toEqual(["cf", "cx"]);
+    expect(
+      keyboard.inline_keyboard
+        .flat()
+        .filter((button) => button.callback_data.startsWith("cs:")),
+    ).toEqual([
+      { text: "📂 Alimentação › Restaurante", callback_data: "cs:1" },
+      { text: "📂 Alimentação", callback_data: "cs:2" },
+    ]);
+  });
+
+  it("omits the redundant row when the only suggestion is already selected", () => {
+    const keyboard = buildKeyboard(undefined, [candidates[2]], candidates[2]);
+    expect(keyboard.inline_keyboard).toHaveLength(2);
+    expect(
+      keyboard.inline_keyboard
+        .flat()
+        .some((button) => button.callback_data.startsWith("cs:")),
+    ).toBe(false);
+  });
+
+  it("keeps suggestions when there is no selection, or another category has the same name", () => {
+    for (const selected of [undefined, { categoryId: "other-food" }]) {
+      const buttons = buildKeyboard(
+        undefined,
+        candidates,
+        selected,
+      ).inline_keyboard.flat();
+      expect(
+        buttons
+          .filter((button) => button.callback_data.startsWith("cs:"))
+          .map((button) => button.callback_data),
+      ).toEqual(["cs:0", "cs:1", "cs:2"]);
+    }
+  });
+});
 
 describe("confirmationKeyboard", () => {
   it("without a proposal: confirm/cancel + category/responsável rows", () => {
@@ -21,7 +84,7 @@ describe("confirmationKeyboard", () => {
           { text: "❌ Cancelar", callback_data: "cx" },
         ],
         [
-          { text: "📂 Categoria", callback_data: "cats" },
+          { text: "📂 Alterar categoria", callback_data: "cats" },
           { text: "👤 Responsável", callback_data: "resp" },
         ],
       ],
@@ -53,7 +116,7 @@ describe("installmentConfirmationKeyboard", () => {
           { text: "✅ Confirmar", callback_data: "cf" },
           { text: "❌ Cancelar", callback_data: "cx" },
         ],
-        [{ text: "📂 Categoria", callback_data: "cats" }],
+        [{ text: "📂 Alterar categoria", callback_data: "cats" }],
       ],
     });
     const flat = keyboard.inline_keyboard.flat();
