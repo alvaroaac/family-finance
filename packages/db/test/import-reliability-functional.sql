@@ -130,13 +130,13 @@ begin
   );
 
   custom_result := materialize_obligation_payment(
-    '25000000-0000-0000-0000-000000000001','2026-07','2026-07-11',92735
+    '25000000-0000-0000-0000-000000000001','2026-07','2026-07-11',92735,null::uuid
   );
   replay_result := materialize_obligation_payment(
-    '25000000-0000-0000-0000-000000000001','2026-07','2026-07-12',99999
+    '25000000-0000-0000-0000-000000000001','2026-07','2026-07-12',99999,null::uuid
   );
   default_result := materialize_obligation_payment(
-    '25000000-0000-0000-0000-000000000001','2026-08','2026-08-11',null
+    '25000000-0000-0000-0000-000000000001','2026-08','2026-08-11',null::bigint,null::uuid
   );
 
   if (custom_result #>> '{transaction,amount_cents}')::bigint <> 92735
@@ -149,6 +149,34 @@ begin
   end if;
 end;
 $$;
+
+-- The old overload must stay absent after migration replay. The compatibility
+-- 3-arg wrapper delegates to the current member-gated 5-arg implementation.
+do $$ begin
+  if to_regprocedure('materialize_obligation_payment(uuid,text,date,bigint)') is not null then
+    raise exception 'replay revived the obsolete obligation payment gate';
+  end if;
+end $$;
+create or replace function auth.uid() returns uuid language sql stable
+as 'select null::uuid';
+create or replace function auth.role() returns text language sql stable
+as 'select ''service_role''::text';
+set role service_role;
+do $$ begin
+  begin
+    perform materialize_obligation_payment(
+      '25000000-0000-0000-0000-000000000001','2026-09','2026-09-10',null::bigint,null::uuid);
+    raise exception 'service-role null UID bypassed obligation membership';
+  exception when invalid_parameter_value then null; end;
+  begin
+    perform materialize_obligation_payment(
+      '25000000-0000-0000-0000-000000000001','2026-09','2026-09-10');
+    raise exception 'compatibility wrapper bypassed obligation membership';
+  exception when invalid_parameter_value then null; end;
+end $$;
+reset role;
+create or replace function auth.uid() returns uuid language sql stable
+as 'select ''00000000-0000-0000-0000-000000000001''::uuid';
 
 create or replace function auth.role() returns text language sql stable
 as 'select ''service_role''::text';

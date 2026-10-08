@@ -26,12 +26,12 @@ docker exec "$name" psql -v ON_ERROR_STOP=1 -U postgres -c \
 for file in supabase/migrations/*.sql; do
   docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - < "$file" >/dev/null
 done
-docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
-  < supabase/migrations/0016_import_reliability.sql >/dev/null
-docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
-  < supabase/migrations/0017_obligation_actual_amount.sql >/dev/null
-docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
-  < supabase/migrations/0027_import_purchase_descriptions.sql >/dev/null
+# Replay from the import migration through the final schema in order. Replaying
+# 0017 alone revives its obsolete 4-arg obligation API and earlier null-UID gate.
+for file in supabase/migrations/*.sql; do
+  [[ "$(basename "$file")" < "0016_" ]] && continue
+  docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - < "$file" >/dev/null
+done
 docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \
   < packages/db/test/import-reliability-functional.sql >/dev/null
 docker exec -i "$name" psql -v ON_ERROR_STOP=1 -U postgres -f - \

@@ -1,12 +1,12 @@
--- Executable probe for migration 0019. The import reliability fixture loaded
--- immediately before this file provides household/card/user rows.
+-- Executable probe for keyed installment replay under the final member gate.
+-- The preceding import reliability fixture provides household/card/user rows.
 
 create or replace function auth.uid() returns uuid language sql stable
-as 'select null::uuid';
+as 'select ''00000000-0000-0000-0000-000000000001''::uuid';
 create or replace function auth.role() returns text language sql stable
-as 'select ''service_role''::text';
+as 'select ''authenticated''::text';
 
-set role service_role;
+set role authenticated;
 do $$
 declare
   group_payload jsonb := jsonb_build_object(
@@ -21,7 +21,7 @@ declare
     'responsibility_scope','household',
     'responsible_user_id',null,
     'created_by_user_id','00000000-0000-0000-0000-000000000001',
-    'idempotency_key','service-role-lost-response-probe'
+    'idempotency_key','member-lost-response-probe'
   );
   installments_payload jsonb := jsonb_build_array(
     jsonb_build_object(
@@ -52,7 +52,7 @@ begin
 
   if first_result -> 'group' ->> 'id' is distinct from replay_result -> 'group' ->> 'id'
      or jsonb_array_length(replay_result -> 'installments') <> 2 then
-    raise exception 'service-role replay did not return the persisted purchase';
+    raise exception 'member replay did not return the persisted purchase';
   end if;
 
   begin
@@ -74,14 +74,42 @@ do $$ begin
     select count(*)
     from installment_groups
     where household_id = '10000000-0000-0000-0000-000000000001'
-      and idempotency_key = 'service-role-lost-response-probe'
+      and idempotency_key = 'member-lost-response-probe'
   ) <> 1 then
     raise exception 'idempotent replay created a duplicate group';
   end if;
 end $$;
 
--- An authenticated caller with the same null UID must not inherit the bot's
--- service-role bypass.
+-- Service-role setup access cannot bypass the final business-write gate.
+create or replace function auth.uid() returns uuid language sql stable
+as 'select null::uuid';
+create or replace function auth.role() returns text language sql stable
+as 'select ''service_role''::text';
+set role service_role;
+do $$ begin
+  begin
+    perform create_installment_purchase(
+      jsonb_build_object(
+        'household_id','10000000-0000-0000-0000-000000000001',
+        'credit_card_id','21000000-0000-0000-0000-000000000001',
+        'description','Service role forbidden','total_amount_cents',100,
+        'installment_count',1,'purchased_on','2026-07-10',
+        'responsibility_scope','household',
+        'created_by_user_id','00000000-0000-0000-0000-000000000001',
+        'idempotency_key','service-role-forbidden-probe'
+      ), '[]'::jsonb
+    );
+    raise exception 'service-role null UID bypassed the member gate';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+do $$ begin
+  if exists(select 1 from installment_groups where idempotency_key='service-role-forbidden-probe') then
+    raise exception 'denied service-role call wrote a purchase';
+  end if;
+end $$;
+
+-- An authenticated caller with a null UID also cannot write.
 create or replace function auth.role() returns text language sql stable
 as 'select ''authenticated''::text';
 
