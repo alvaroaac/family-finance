@@ -124,7 +124,7 @@ describe("real bot webhook across households", () => {
       from: number,
       chat: number,
       messageId: number,
-      data = "cf",
+      data: string,
     ) {
       const response = await fetch(`${bot.url}/webhook`, {
         method: "POST",
@@ -150,6 +150,47 @@ describe("real bot webhook across households", () => {
         .find((sent) => sent.method === "sendMessage" && sent.chatId === chat);
       if (!message) throw new Error(`No Telegram reply in ${chat}`);
       return message;
+    }
+    function buttonData(prompt: SentMessage, action: string): string {
+      const payload = prompt.payload as {
+        reply_markup?: {
+          inline_keyboard: Array<Array<{ callback_data: string }>>;
+        };
+      };
+      const data = payload.reply_markup?.inline_keyboard
+        .flat()
+        .find((button) =>
+          button.callback_data.endsWith(`:${action}`),
+        )?.callback_data;
+      if (data === undefined)
+        throw new Error(`No ${action} button in Telegram prompt`);
+      expect(data).toMatch(/^p:[a-f0-9]{16}:/);
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      return data;
+    }
+    async function draftState(sender: number, chat: number) {
+      const result = await admin
+        .from("bot_conversations")
+        .select("state")
+        .eq("chat_id", chat)
+        .eq("telegram_user_id", sender)
+        .single();
+      if (result.error) throw result.error;
+      return result.data.state;
+    }
+    async function forgetPromptId(sender: number, chat: number, data: string) {
+      const state = await draftState(sender, chat);
+      expect(state.promptToken).toBe(data.split(":")[1]);
+      expect(state.promptMessageId).toBeTypeOf("number");
+      // Model a failed post-send ID save while retaining its earlier durable token.
+      const { promptMessageId: _discarded, ...withoutPromptId } = state;
+      const result = await admin
+        .from("bot_conversations")
+        .update({ state: withoutPromptId })
+        .eq("chat_id", chat)
+        .eq("telegram_user_id", sender);
+      if (result.error) throw result.error;
+      return withoutPromptId;
     }
     try {
       await send(telegram.ana, 3001, "mercado 50");
@@ -209,7 +250,7 @@ describe("real bot webhook across households", () => {
           sender,
           paymentChat,
           fake.sent.indexOf(cardPrompt) + 1,
-          `cd:${insertedCard.data.id}`,
+          buttonData(cardPrompt, `cd:${insertedCard.data.id}`),
         );
         const pending = await admin
           .from("bot_conversations")
@@ -273,8 +314,40 @@ describe("real bot webhook across households", () => {
       await send(telegram.ana, chat, "pizza azul 71");
       const anaPrompt = latest(chat);
       const promptMessageId = fake.sent.indexOf(anaPrompt) + 1;
+      const anaConfirm = buttonData(anaPrompt, "cf");
+      const anaDraft = await forgetPromptId(telegram.ana, chat, anaConfirm);
+      const beforeUnownedTap = await writeCounts();
+      const beforeUnownedRequests = fake.sent.length;
+      // A member with no draft must preserve Ana's prompt even without its saved ID.
+      await tap(telegram.carla, chat, promptMessageId, anaConfirm);
+      expect(
+        fake.sent.slice(beforeUnownedRequests).map((request) => request.method),
+      ).toEqual(["answerCallbackQuery"]);
+      expect(await writeCounts()).toEqual(beforeUnownedTap);
+      expect(await draftState(telegram.ana, chat)).toEqual(anaDraft);
+
       await send(telegram.carla, chat, "pizza verde 93");
-      await tap(telegram.carla, chat, promptMessageId);
+      const carlaPrompt = latest(chat);
+      const carlaConfirm = buttonData(carlaPrompt, "cf");
+      const carlaPromptId = fake.sent.indexOf(carlaPrompt) + 1;
+      const carlaDraft = await forgetPromptId(
+        telegram.carla,
+        chat,
+        carlaConfirm,
+      );
+      const beforeOtherDraftTap = await writeCounts();
+      const beforeOtherDraftRequests = fake.sent.length;
+      // Even when neither prompt ID was saved, Carla cannot confirm her own
+      // expense by tapping Ana's button or remove Ana's confirmation controls.
+      await tap(telegram.carla, chat, promptMessageId, anaConfirm);
+      expect(
+        fake.sent
+          .slice(beforeOtherDraftRequests)
+          .map((request) => request.method),
+      ).toEqual(["answerCallbackQuery"]);
+      expect(await writeCounts()).toEqual(beforeOtherDraftTap);
+      expect(await draftState(telegram.ana, chat)).toEqual(anaDraft);
+      expect(await draftState(telegram.carla, chat)).toEqual(carlaDraft);
       expect(fake.sent.at(-1)?.method).toBe("answerCallbackQuery");
       expect(fake.sent.at(-1)?.text).toContain("só quem criou");
       expect(
@@ -287,8 +360,8 @@ describe("real bot webhook across households", () => {
           row.description.includes("pizza verde"),
         ),
       ).toBe(false);
-      await send(telegram.carla, chat, "confirmar");
-      await send(telegram.ana, chat, "confirmar");
+      await tap(telegram.carla, chat, carlaPromptId, carlaConfirm);
+      await tap(telegram.ana, chat, promptMessageId, anaConfirm);
       expect(
         (await rows(azul)).filter(
           (row) =>
