@@ -15,6 +15,7 @@ declare
   a_batch uuid := 'a0000000-0000-0000-0000-000000000007';
   a_imported uuid := 'a0000000-0000-0000-0000-000000000008';
   a_replaced uuid := 'a0000000-0000-0000-0000-000000000009';
+  previous_sub text := current_setting('request.jwt.claim.sub', true);
 begin
   insert into households (id, name) values (a, 'To delete'), (b, 'To keep');
   insert into allowed_emails (email, household_id) values
@@ -28,12 +29,26 @@ begin
     (b_account, b, 'checking', 'Account B');
   insert into credit_cards (id, household_id, name) values
     (a_card, a, 'Card A');
+  -- Fixture setup runs as the database owner, but the attribution trigger
+  -- must still see the member identity for the card's household.
+  perform set_config('request.jwt.claim.sub', a_user::text, true);
+  if not is_household_member(a) then
+    raise exception 'household A fixture identity is not an active member';
+  end if;
   insert into transactions
     (household_id, kind, amount_cents, occurred_on, description,
      account_id, credit_card_id, created_by_user_id) values
     (a, 'expense', 100, '2026-09-01', 'Account purchase', a_account, null, a_user),
-    (a, 'expense', 200, '2026-09-02', 'Card purchase', null, a_card, a_user),
+    (a, 'expense', 200, '2026-09-02', 'Card purchase', null, a_card, a_user);
+  perform set_config('request.jwt.claim.sub', b_user::text, true);
+  if not is_household_member(b) then
+    raise exception 'household B fixture identity is not an active member';
+  end if;
+  insert into transactions
+    (household_id, kind, amount_cents, occurred_on, description,
+     account_id, credit_card_id, created_by_user_id) values
     (b, 'expense', 300, '2026-09-03', 'Kept purchase', b_account, null, b_user);
+  perform set_config('request.jwt.claim.sub', a_user::text, true);
   insert into installment_groups
     (id, household_id, credit_card_id, description, total_amount_cents,
      installment_count, purchased_on, created_by_user_id)
@@ -77,6 +92,7 @@ begin
     (original_transaction_id, household_id, import_batch_id,
      installment_group_id, original_record, replaced_by)
     values (a_replaced, a, a_batch, a_group, '{}'::jsonb, a_user);
+  perform set_config('request.jwt.claim.sub', coalesce(previous_sub, ''), true);
 end $$;
 
 create temporary table counts_before on commit drop as
