@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { handleWebhook } from "./index.js";
-import { createInMemoryConversationStore } from "./store.js";
+import {
+  createInMemoryConversationStore,
+  type ConversationStore,
+} from "./store.js";
 import type { TelegramClient, InlineKeyboardMarkup } from "./telegram.js";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 import type { AiCategorizer } from "@family-finance/categorization";
@@ -870,6 +873,59 @@ describe("callback ownership + concurrency (review findings F1-F3)", () => {
       "awaiting_confirmation",
     );
     expect(stripped).toHaveLength(0);
+  });
+
+  it("rejects another sender's prompt when our post-send prompt-ID save failed", async () => {
+    const { base, tables, answered, stripped } = harness();
+    const memory = base.store;
+    const store: ConversationStore = {
+      ...memory,
+      async load(chat, sender, household) {
+        const state = await memory.load(chat, sender, household);
+        return state === undefined ? undefined : structuredClone(state);
+      },
+      async save(chat, sender, household, state) {
+        if (sender === "777" && state.promptMessageId === 1001) {
+          throw new Error("post-send ID save failed");
+        }
+        await memory.save(chat, sender, household, structuredClone(state));
+      },
+    };
+    const args = { ...base, store };
+    await handleWebhook({
+      ...args,
+      rawBody: textUpdate(777, "Uber 32 reais ontem"),
+    });
+    await handleWebhook({
+      ...args,
+      rawBody: textUpdate(888, "Mercado 42 reais hoje"),
+    });
+    expect(
+      (await store.load("555", "777", "house-1"))?.promptMessageId,
+    ).toBeUndefined();
+    expect((await store.load("555", "888", "house-1"))?.promptMessageId).toBe(
+      1002,
+    );
+    await handleWebhook({
+      ...args,
+      rawBody: callbackUpdate(777, "cf", 555, 1002),
+    });
+    expect(answered.at(-1)?.text).toContain("outra pessoa");
+    expect(tables.transactions).toHaveLength(0);
+    expect(stripped).toHaveLength(0);
+    expect((await store.load("555", "777", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+    expect((await store.load("555", "888", "house-1"))?.status).toBe(
+      "awaiting_confirmation",
+    );
+    // Missing-ID recovery still accepts the creator's actual original prompt.
+    await handleWebhook({
+      ...args,
+      rawBody: callbackUpdate(777, "cf", 555, 1001),
+    });
+    expect(tables.transactions).toHaveLength(1);
+    expect(tables.transactions?.[0]?.created_by_user_id).toBe("user-alvaro");
   });
 
   it("another member's tap cannot cancel or re-categorize the creator's draft", async () => {

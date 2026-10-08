@@ -655,16 +655,16 @@ export async function handleWebhook(args: {
         callback.fromId,
         identity.householdId,
       );
+      // Check known ownership even when our own prompt ID was not saved.
+      // A failed post-send save must not let another sender's button confirm us.
+      if (await args.store.hasOtherPrompt(chatId, callback.fromId, messageId)) {
+        await args.telegram.answerCallbackQuery(
+          callbackQueryId,
+          DRAFT_NOT_YOURS_TOAST,
+        );
+        return { status: 200, body: { ok: true } };
+      }
       if (existing === undefined) {
-        if (
-          await args.store.hasOtherPrompt(chatId, callback.fromId, messageId)
-        ) {
-          await args.telegram.answerCallbackQuery(
-            callbackQueryId,
-            DRAFT_NOT_YOURS_TOAST,
-          );
-          return { status: 200, body: { ok: true } };
-        }
         // Draft expired past the 24h TTL (or never existed on this chat).
         await args.telegram.answerCallbackQuery(
           callbackQueryId,
@@ -677,14 +677,9 @@ export async function handleWebhook(args: {
         existing.promptMessageId !== undefined &&
         existing.promptMessageId !== messageId
       ) {
-        const belongsToOther = await args.store.hasOtherPrompt(
-          chatId,
-          callback.fromId,
-          messageId,
-        );
         await args.telegram.answerCallbackQuery(
           callbackQueryId,
-          belongsToOther ? DRAFT_NOT_YOURS_TOAST : SESSION_EXPIRED_TOAST,
+          SESSION_EXPIRED_TOAST,
         );
         return { status: 200, body: { ok: true } };
       }
@@ -892,11 +887,33 @@ export async function handleWebhook(args: {
           existing.status === "installment_recovery_required" ||
           existing.status === "card_bill_submission_started")
       ) {
-        await args.telegram.sendMessage(
+        // Retain the exact durable draft/key, clearing only a stale prompt ID
+        // before sending so a failed post-send save still permits recovery.
+        const recoveryState = { ...existing, promptMessageId: undefined };
+        await args.store.save(
+          voice.chatId,
+          voice.fromId,
+          identity.householdId,
+          recoveryState,
+        );
+        const sentRecovery = await args.telegram.sendMessage(
           voice.chatId,
           'O lançamento anterior ainda precisa ser confirmado. Envie "confirmar" antes de começar outro lançamento.',
           { replyMarkup: installmentReconciliationKeyboard() },
         );
+        try {
+          await args.store.save(
+            voice.chatId,
+            voice.fromId,
+            identity.householdId,
+            { ...recoveryState, promptMessageId: sentRecovery?.messageId },
+          );
+        } catch (error) {
+          console.warn(
+            "[bot] recovery prompt re-save after send failed:",
+            error,
+          );
+        }
         return { status: 200, body: { ok: true } };
       }
       let outcome;

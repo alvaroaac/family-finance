@@ -2813,62 +2813,112 @@ describe("legacy settlements and submission safety", () => {
     },
   );
 
-  it.each([
-    "installment_submission_started",
-    "installment_outcome_uncertain",
-    "installment_recovery_required",
-    "card_bill_submission_started",
-  ] as const)("does not replace %s with a voice draft", async (status) => {
-    const { client } = fakeSupabase({ credit_cards: [{ ...CARD_SEED }] });
-    const { telegram } = fakeTelegram();
-    const store = createDbConversationStore(client);
-    const args = {
-      secretHeader: SECRET,
-      configuredSecret: SECRET,
-      memberClient: () => client,
-      telegram,
-      resolveMember: resolveMemberFake,
-      redeemLinkCode: vi.fn(),
-      discardLinkCode: vi.fn(),
-      store,
-      classifyMessage: classifierReturning(null),
-    };
-    await handleWebhook({
-      ...args,
-      rawBody: textUpdate(
-        777,
-        status.startsWith("installment")
-          ? "notebook 300 em 3x no nubank"
-          : "nubank pago 50",
-      ),
-    });
-    await store.save("555", "777", "house-1", {
-      ...(await store.load("555", "777", "house-1"))!,
-      status,
-    });
-    const before = await store.load("555", "777", "house-1");
-    const transcribe = vi.fn(async () => "Uber 50");
-    await handleWebhook({
-      ...args,
-      rawBody: {
-        update_id: 3,
-        message: {
-          message_id: 2,
-          chat: { id: 555 },
-          from: { id: 777 },
-          voice: { file_id: "voice-1", duration: 1, mime_type: "audio/ogg" },
+  it.each(
+    (
+      [
+        "installment_submission_started",
+        "installment_outcome_uncertain",
+        "installment_recovery_required",
+        "card_bill_submission_started",
+      ] as const
+    ).flatMap((status) =>
+      [false, true].map((failPromptSave) => ({ status, failPromptSave })),
+    ),
+  )(
+    "voice recovery preserves $status and its new button (save failure=$failPromptSave)",
+    async ({ status, failPromptSave }) => {
+      const { client, tables } = fakeSupabase({
+        credit_cards: [{ ...CARD_SEED }],
+      });
+      const { telegram, answered } = fakeTelegram();
+      const durable = createDbConversationStore(client);
+      const store: ConversationStore = {
+        ...durable,
+        async load(chat, sender, household) {
+          const state = await durable.load(chat, sender, household);
+          return state === undefined ? undefined : structuredClone(state);
         },
-      },
-      transcribe: {
-        downloader: {
-          download: async () => new Uint8Array(),
+        async save(chat, sender, household, state) {
+          if (failPromptSave && state.promptMessageId === 1002) {
+            throw new Error("recovery post-send save failed");
+          }
+          await durable.save(chat, sender, household, structuredClone(state));
         },
-        provider: { transcribe },
-      },
-    });
-    expect(transcribe).not.toHaveBeenCalled();
-    expect(await store.load("555", "777", "house-1")).toEqual(before);
-  });
+      };
+      const args = {
+        secretHeader: SECRET,
+        configuredSecret: SECRET,
+        memberClient: () => client,
+        telegram,
+        resolveMember: resolveMemberFake,
+        redeemLinkCode: vi.fn(),
+        discardLinkCode: vi.fn(),
+        store,
+        classifyMessage: classifierReturning(null),
+      };
+      await handleWebhook({
+        ...args,
+        rawBody: textUpdate(
+          777,
+          status.startsWith("installment")
+            ? "notebook 300 em 3x no nubank"
+            : "paguei a fatura Nubank 50",
+        ),
+      });
+      await store.save("555", "777", "house-1", {
+        ...(await store.load("555", "777", "house-1"))!,
+        status,
+      });
+      const before = await store.load("555", "777", "house-1");
+      const transcribe = vi.fn(async () => "Uber 50");
+      await handleWebhook({
+        ...args,
+        rawBody: {
+          update_id: 3,
+          message: {
+            message_id: 2,
+            chat: { id: 555 },
+            from: { id: 777 },
+            voice: { file_id: "voice-1", duration: 1, mime_type: "audio/ogg" },
+          },
+        },
+        transcribe: {
+          downloader: {
+            download: async () => new Uint8Array(),
+          },
+          provider: { transcribe },
+        },
+      });
+      expect(transcribe).not.toHaveBeenCalled();
+      const after = await store.load("555", "777", "house-1");
+      expect(after).toEqual({
+        ...before,
+        promptMessageId: failPromptSave ? undefined : 1002,
+      });
+      await handleWebhook({
+        ...args,
+        rawBody: callbackUpdate(777, TOKENS.confirm, 555, 1002),
+      });
+      expect(answered.at(-1)?.text ?? "").not.toContain("expirada");
+      expect((await store.load("555", "777", "house-1"))?.status).toBe(
+        status === "installment_recovery_required" ? "cancelled" : "saved",
+      );
+      const written = status.startsWith("installment")
+        ? tables.installment_groups
+        : tables.transactions?.filter((row) => row.kind === "transfer");
+      if (status === "installment_recovery_required") {
+        // Keyless historical recovery remains a refusal; the new button must
+        // reach that safety decision rather than being dismissed as expired.
+        expect(written).toHaveLength(0);
+      } else {
+        expect(written).toHaveLength(1);
+        expect(written?.[0]?.idempotency_key).toBe(
+          before?.installmentDraft?.idempotencyKey ??
+            before?.cardBillDraft?.idempotencyKey,
+        );
+      }
+    },
+  );
 });
 
 describe("historical payment undo during legacy recovery", () => {
