@@ -75,7 +75,7 @@ async function createFromPages(page: Page, origin: string, prefix: string) {
   await cardSaved;
   await page.reload();
   await expect(
-    page.locator(".ff-name--lg").filter({ hasText: card }),
+    page.getByLabel("Faturas de agora").getByText(card, { exact: true }),
   ).toBeVisible();
 
   await page.goto(`${origin}/investments`);
