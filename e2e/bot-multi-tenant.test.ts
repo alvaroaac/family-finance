@@ -246,12 +246,9 @@ describe("real bot webhook across households", () => {
         if (insertedCard.error) throw insertedCard.error;
         await send(sender, paymentChat, "paguei a fatura Nubank 123,45");
         const cardPrompt = latest(paymentChat);
-        await tap(
-          sender,
-          paymentChat,
-          fake.sent.indexOf(cardPrompt) + 1,
-          buttonData(cardPrompt, `cd:${insertedCard.data.id}`),
-        );
+        // The only card is resolved automatically; tap its real confirmation.
+        const cardConfirm = buttonData(cardPrompt, "cf");
+        const cardPromptId = fake.sent.indexOf(cardPrompt) + 1;
         const pending = await admin
           .from("bot_conversations")
           .select("state")
@@ -276,7 +273,7 @@ describe("real bot webhook across households", () => {
           .eq("chat_id", paymentChat)
           .eq("telegram_user_id", sender);
         if (pinned.error) throw pinned.error;
-        await send(sender, paymentChat, "confirmar");
+        await tap(sender, paymentChat, cardPromptId, cardConfirm);
         const payments = await admin
           .from("transactions")
           .select("*")
@@ -299,7 +296,7 @@ describe("real bot webhook across households", () => {
           .eq("chat_id", paymentChat)
           .eq("telegram_user_id", sender);
         if (lostResponse.error) throw lostResponse.error;
-        await send(sender, paymentChat, "confirmar");
+        await tap(sender, paymentChat, cardPromptId, cardConfirm);
         const replay = await admin
           .from("transactions")
           .select("id")

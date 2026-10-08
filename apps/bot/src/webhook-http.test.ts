@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import { handleWebhook } from "./index.js";
 import { createBotServer } from "./server.js";
 import { createInMemoryConversationStore } from "./store.js";
+import { parsePromptCallbackData } from "./keyboards.js";
 import type { TelegramClient, InlineKeyboardMarkup } from "./telegram.js";
 import type { AppSupabaseClient, BotMemberIdentity } from "@family-finance/db";
 
@@ -270,13 +271,24 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
     const promptId = 1000 + tg.sent.length;
 
     // open category list
-    expect((await post(tap("cats", promptId))).status).toBe(200);
+    const categoriesButton = draft?.replyMarkup?.inline_keyboard
+      .flat()
+      .find(
+        (button) =>
+          parsePromptCallbackData(button.callback_data)?.action === "cats",
+      );
+    expect(
+      (await post(tap(categoriesButton!.callback_data, promptId))).status,
+    ).toBe(200);
     const catMsg = tg.sent.at(-1);
     const catButtons = catMsg?.replyMarkup?.inline_keyboard.flat() ?? [];
     const transportBtn = catButtons.find((b) =>
-      b.callback_data?.startsWith("ct:"),
+      parsePromptCallbackData(b.callback_data)?.action.startsWith("ct:"),
     );
-    expect(transportBtn?.callback_data).toBe("ct:cat-transport");
+    expect(parsePromptCallbackData(transportBtn!.callback_data)).toMatchObject({
+      action: "ct:cat-transport",
+      promptToken: expect.stringMatching(/^[a-f0-9]{16}$/),
+    });
     const catsMsgId = 1000 + tg.sent.length;
 
     // pick Transporte
@@ -285,13 +297,24 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
     ).toBe(200);
     const updatedId = 1000 + tg.sent.length;
 
-    // confirm
-    expect((await post(tap("cf", updatedId))).status).toBe(200);
+    // confirm using the exact scoped payload Telegram received.
+    const confirmButton = tg.sent
+      .at(-1)
+      ?.replyMarkup?.inline_keyboard.flat()
+      .find(
+        (button) =>
+          parsePromptCallbackData(button.callback_data)?.action === "cf",
+      );
+    expect(
+      (await post(tap(confirmButton!.callback_data, updatedId))).status,
+    ).toBe(200);
     expect(tables.transactions).toHaveLength(1);
     expect(tg.sent.at(-1)?.text).toContain("salvo");
 
     // double-tap confirm on the SAME message: no second insert
-    expect((await post(tap("cf", updatedId))).status).toBe(200);
+    expect(
+      (await post(tap(confirmButton!.callback_data, updatedId))).status,
+    ).toBe(200);
     expect(tables.transactions).toHaveLength(1);
     const lastToast = tg.answered.at(-1)?.text ?? "";
     expect(lastToast.toLowerCase()).toContain("salvo");
@@ -323,11 +346,11 @@ describe("HTTP e2e smoke: buttons over the wire", () => {
     expect(tables.transactions![0]?.category_id).toBe(created?.id);
   });
 
-  it("stale token after restart (empty store) → Sessão expirada toast + strip", async () => {
+  it("stale token after restart (empty store) → Sessão expirada toast and preserved controls", async () => {
     const { post, tg, tables } = await boot();
     await post(tap("cf", 4242));
     expect(tg.answered.at(-1)?.text).toContain("Sessão expirada");
-    expect(tg.stripped).toContainEqual({ chatId: "555", messageId: 4242 });
+    expect(tg.stripped).toHaveLength(0);
     expect(tables.transactions).toHaveLength(0);
   });
 
