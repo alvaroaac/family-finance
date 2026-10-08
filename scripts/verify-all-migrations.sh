@@ -548,9 +548,11 @@ for database_name in "$fresh_db" "$snapshot_db"; do
 done
 diff -u "$scratch/$fresh_db-catalog.sql" "$scratch/$snapshot_db-catalog.sql"
 diff -u "$scratch/$fresh_db-ledger.txt" "$scratch/$snapshot_db-ledger.txt"
-# Replay all SQL definitions in order. Replaying PR42 alone would deliberately
-# restore its earlier gate; the later member-scoped definition must remain last.
+# Replay release SQL in order against the final schema. The ledger already
+# checks repeated history apply; old bootstrap seeds are not forward-compatible
+# with later constraints. PR42 must precede the final member-scoped definition.
 for migration in "$repo_root"/supabase/migrations/*.sql; do
+  [[ "$(basename "$migration")" < "202610070000_" ]] && continue
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -1 -U postgres -d "$snapshot_db" -f - \
     < "$migration" >/dev/null
 done
