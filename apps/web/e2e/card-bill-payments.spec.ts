@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
-import { localAdminClient, localSupabaseConfig } from "./local-db";
+import {
+  localAdminClient,
+  localMemberClient,
+  localSupabaseConfig,
+} from "./local-db";
 import {
   E2E_ACCOUNT,
   E2E_CARD,
@@ -149,7 +153,8 @@ test.beforeEach(async () => {
       .eq("household_id", card.household_id);
     if (error !== null) throw new Error(`${table}: ${error.message}`);
   }
-  const { error } = await admin.from("transactions").insert({
+  const memberClient = await localMemberClient(E2E_EMAIL, E2E_PASSWORD);
+  const { error } = await memberClient.from("transactions").insert({
     household_id: card.household_id,
     kind: "expense",
     amount_cents: E2E_SEED_PURCHASE.cents,
@@ -158,6 +163,7 @@ test.beforeEach(async () => {
     credit_card_id: card.id,
     created_by_user_id: member.user_id,
   });
+  await memberClient.auth.signOut();
   if (error !== null) throw error;
 });
 

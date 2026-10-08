@@ -67,15 +67,6 @@ setup("seed local household and sign in", async ({ baseURL }) => {
     closing_day: 28,
     due_day: 5,
   });
-  await insert("transactions", {
-    household_id: household.id,
-    kind: "expense",
-    amount_cents: E2E_SEED_PURCHASE.cents,
-    occurred_on: todaySp(),
-    description: E2E_SEED_PURCHASE.description,
-    credit_card_id: card.id,
-    created_by_user_id: userId,
-  });
 
   // Let @supabase/ssr write its own cookie format so the app reads it as-is.
   let jar: { name: string; value: string }[] = [];
@@ -96,6 +87,16 @@ setup("seed local household and sign in", async ({ baseURL }) => {
     password: E2E_PASSWORD,
   });
   if (signInError !== null) throw signInError;
+  const { error: purchaseError } = await ssr.from("transactions").insert({
+    household_id: household.id,
+    kind: "expense",
+    amount_cents: E2E_SEED_PURCHASE.cents,
+    occurred_on: todaySp(),
+    description: E2E_SEED_PURCHASE.description,
+    credit_card_id: card.id,
+    created_by_user_id: userId,
+  });
+  if (purchaseError !== null) throw purchaseError;
   if (jar.length === 0) throw new Error("Sign-in produced no session cookies.");
 
   const domain = new URL(baseURL ?? "http://localhost:3100").hostname;

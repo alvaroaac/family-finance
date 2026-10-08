@@ -116,7 +116,12 @@ describe("real bot webhook across households", () => {
       });
       expect(response.status).toBe(200);
     }
-    async function tap(from: number, chat: number, messageId: number) {
+    async function tap(
+      from: number,
+      chat: number,
+      messageId: number,
+      data = "cf",
+    ) {
       const response = await fetch(`${bot.url}/webhook`, {
         method: "POST",
         headers: {
@@ -128,7 +133,7 @@ describe("real bot webhook across households", () => {
           callback_query: {
             id: randomUUID(),
             from: { id: from },
-            data: "cf",
+            data,
             message: { message_id: messageId, chat: { id: chat } },
           },
         }),
@@ -188,13 +193,20 @@ describe("real bot webhook across households", () => {
           .from("credit_cards")
           .insert({
             household_id: householdId,
-            name: "Nubank E2E payment",
+            name: `Nubank E2E payment ${paymentKey}`,
             closing_day: null,
           })
           .select("id")
           .single();
         if (insertedCard.error) throw insertedCard.error;
-        await send(sender, paymentChat, "nubank pago 123,45");
+        await send(sender, paymentChat, "paguei a fatura Nubank 123,45");
+        const cardPrompt = latest(paymentChat);
+        await tap(
+          sender,
+          paymentChat,
+          fake.sent.indexOf(cardPrompt) + 1,
+          `cd:${insertedCard.data.id}`,
+        );
         const pending = await admin
           .from("bot_conversations")
           .select("state")
@@ -202,6 +214,10 @@ describe("real bot webhook across households", () => {
           .eq("telegram_user_id", sender)
           .single();
         if (pending.error) throw pending.error;
+        expect(pending.data.state, latest(paymentChat).text).toMatchObject({
+          status: "awaiting_card_bill_confirmation",
+          cardBillDraft: { cardId: insertedCard.data.id, amountCents: 12345 },
+        });
         const pinnedState = {
           ...pending.data.state,
           cardBillDraft: {

@@ -21,3 +21,13 @@ export function localAdminClient() {
     auth: { persistSession: false },
   });
 }
+
+export async function localMemberClient(email: string, password: string) {
+  const { url, anonKey } = localSupabaseConfig();
+  const client = createClient(url, anonKey, {
+    auth: { persistSession: false },
+  });
+  const { error } = await client.auth.signInWithPassword({ email, password });
+  if (error !== null) throw error;
+  return client;
+}

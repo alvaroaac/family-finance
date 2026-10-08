@@ -673,6 +673,12 @@ async function teardown() {
       admin.from("categories").delete().eq("id", created.categoryId),
     () =>
       created.creditCardId &&
+      admin
+        .from("card_bill_closures")
+        .delete()
+        .eq("credit_card_id", created.creditCardId),
+    () =>
+      created.creditCardId &&
       admin.from("credit_cards").delete().eq("id", created.creditCardId),
     () =>
       created.accountId &&
@@ -721,6 +727,7 @@ const RECOVERY_B_TABLES = [
   "import_batches",
   "subcategories",
   "categories",
+  "card_bill_closures",
   "credit_cards",
   "investment_buckets",
   "accounts",
@@ -792,7 +799,10 @@ async function recover(marker) {
         [aUserId, `${marker}%`],
       );
     }
-    if (cardId) await del("transactions", "credit_card_id = $1", [cardId]);
+    if (cardId) {
+      await del("transactions", "credit_card_id = $1", [cardId]);
+      await del("card_bill_closures", "credit_card_id = $1", [cardId]);
+    }
     await del("categories", "name = $1", [`${marker} category`]);
     await del("credit_cards", "name = $1", [`${marker} card`]);
     await del("accounts", "name = $1", [`${marker} account`]);
@@ -1289,9 +1299,19 @@ async function checkCompositeForeignKeys(member) {
     const result = await member
       .from("transactions")
       .insert({ ...base, ...refs });
+    const remaining = await admin
+      .from("transactions")
+      .select("id")
+      .eq("household_id", created.householdAId)
+      .eq("description", base.description);
+    const expectedDenial =
+      result.error?.code === "23503" ||
+      (name === "card" &&
+        result.error?.code === "42501" &&
+        /not accessible/i.test(result.error.message));
     record(
       `composite FK ${name} rejects B reference`,
-      Boolean(result.error) && /foreign key|23503/i.test(result.error.message),
+      expectedDenial && !remaining.error && remaining.data.length === 0,
       result.error?.message ?? "insert unexpectedly succeeded",
     );
   }
@@ -2184,7 +2204,8 @@ async function checkCardBillSettlement(member, householdId) {
     svc.error ? svc.error.message : "",
   );
 
-  // (g4) outsider gets 'not found' (0011-style probe resistance).
+  // (g4) outsider fails the member gate before any resource lookup/write.
+  const outsiderPaymentKey = randomUUID();
   const outsider = await signIn(OUTSIDER_EMAIL, OUTSIDER_PASSWORD);
   const foreign = await outsider.rpc("settle_card_bill", {
     target_household_id: householdId,
@@ -2194,12 +2215,20 @@ async function checkCardBillSettlement(member, householdId) {
     target_amount_cents: 123456,
     target_paid_on: "2026-06-10",
     target_created_by_user_id: created.memberUserId,
-    target_idempotency_key: randomUUID(),
+    target_idempotency_key: outsiderPaymentKey,
   });
+  const outsiderWrites = await admin
+    .from("transactions")
+    .select("id")
+    .eq("household_id", householdId)
+    .eq("idempotency_key", outsiderPaymentKey);
   const g4Ok =
-    Boolean(foreign.error) && /not found/i.test(foreign.error.message);
+    foreign.error?.code === "42501" &&
+    /active member authentication required/i.test(foreign.error.message) &&
+    !outsiderWrites.error &&
+    outsiderWrites.data.length === 0;
   record(
-    "(g4) outsider settle rejected as not-found",
+    "(g4) outsider settle rejected by member gate without writes",
     g4Ok,
     foreign.error ? foreign.error.message : "rpc unexpectedly succeeded",
   );
