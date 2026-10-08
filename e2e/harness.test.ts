@@ -1,11 +1,43 @@
-import { execFileSync } from "node:child_process";
+import {
+  execFileSync,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
+import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { createTestUser } from "./lib/users.js";
 import { startFakeTelegram } from "./lib/fake-telegram.js";
 import { startBot } from "./lib/bot-process.js";
+
+const childProbe = vi.hoisted(() => ({
+  child: undefined as ChildProcess | undefined,
+  env: undefined as NodeJS.ProcessEnv | undefined,
+  ignoreTerm: false,
+}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn(command: string, args: readonly string[], options: SpawnOptions) {
+      const actualArgs = childProbe.ignoreTerm
+        ? [
+            "-e",
+            `
+        process.on('SIGTERM', () => {});
+        require('node:http').createServer((req, res) => res.end('healthy'))
+          .listen(Number(process.env.PORT), '127.0.0.1');
+      `,
+          ]
+        : args;
+      childProbe.child = actual.spawn(command, actualArgs, options);
+      childProbe.env = options.env;
+      return childProbe.child;
+    },
+  };
+});
 
 const api = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -159,4 +191,78 @@ describe("isolated end-to-end harness", () => {
       await fake.stop();
     }
   }, 30_000);
+});
+
+// These process regressions require no database or Docker stack.
+describe("bot process lifecycle", () => {
+  const testEnv = {
+    SUPABASE_URL: "http://127.0.0.1:65534",
+    NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:65534",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
+    SUPABASE_ANON_KEY: "test-anon-key",
+    SUPABASE_SERVICE_ROLE_KEY: "test-service-key",
+    SUPABASE_JWT_SECRET: "test-jwt-secret",
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_WEBHOOK_SECRET: secret,
+  };
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    childProbe.ignoreTerm = false;
+    const child = childProbe.child;
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exit = once(child, "exit");
+      child.kill("SIGKILL");
+      await exit;
+    }
+    childProbe.child = undefined;
+    childProbe.env = undefined;
+  });
+
+  it("starts with inherited paid fallback enabled while isolating provider keys", async () => {
+    vi.stubEnv("IMPORT_PAID_FALLBACK_ENABLED", "true");
+    vi.stubEnv("OPENAI_API_KEY", "test-parent-key");
+    const fake = await startFakeTelegram();
+    let bot: Awaited<ReturnType<typeof startBot>> | undefined;
+    try {
+      bot = await startBot({ ...testEnv, TELEGRAM_API_BASE_URL: fake.baseUrl });
+      expect((await fetch(`${bot.url}/health`)).ok).toBe(true);
+      expect(childProbe.env?.IMPORT_PAID_FALLBACK_ENABLED).toBe("false");
+      expect(childProbe.env?.OPENAI_API_KEY).toBeUndefined();
+      await Promise.all([bot.stop(), bot.stop()]);
+    } finally {
+      await bot?.stop();
+      await fake.stop();
+    }
+  });
+
+  it("returns promptly when the real child terminated before stop", async () => {
+    const fake = await startFakeTelegram();
+    try {
+      const bot = await startBot({
+        ...testEnv,
+        TELEGRAM_API_BASE_URL: fake.baseUrl,
+      });
+      const child = childProbe.child!;
+      const exit = once(child, "exit");
+      child.kill("SIGKILL");
+      await exit;
+      const started = Date.now();
+      await bot.stop();
+      await bot.stop();
+      expect(Date.now() - started).toBeLessThan(500);
+    } finally {
+      await fake.stop();
+    }
+  }, 10_000);
+
+  it("escalates a live child that ignores SIGTERM and shares concurrent stops", async () => {
+    childProbe.ignoreTerm = true;
+    const bot = await startBot(testEnv);
+    const child = childProbe.child!;
+    const started = Date.now();
+    await Promise.all([bot.stop(), bot.stop()]);
+    expect(child.signalCode).toBe("SIGKILL");
+    expect(Date.now() - started).toBeLessThan(5000);
+    await bot.stop();
+  }, 10_000);
 });
