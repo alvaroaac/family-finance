@@ -4357,3 +4357,155 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
     justify-self: start;
   }
 }
+
+/* ── Faturas (/cards) and Resumo fatura blocks ─────────────────────────── */
+.ff-faturas {
+  margin-top: 26px;
+}
+
+.ff-faturas__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ff-faturas__head .ff-h2 {
+  margin: 0;
+}
+
+.ff-faturas__picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ff-faturas__picker .ff-input {
+  width: auto;
+}
+
+/* One fatura inside a card; stacked blocks get a divider. */
+.ff-fatura {
+  margin-top: 14px;
+}
+
+.ff-fatura + .ff-fatura {
+  border-top: 1px solid var(--ff-border);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.ff-fatura__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ff-fatura__title {
+  margin: 0;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ff-ink);
+}
+
+.ff-fatura__figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.ff-fatura__figure dt {
+  font-size: 12px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-fatura__figure dd {
+  margin: 2px 0 0;
+  font-size: 15px;
+  color: var(--ff-ink);
+}
+
+.ff-fatura__payments {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-fatura__payment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  padding: 4px 0;
+}
+
+.ff-fatura__undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Buttons sit in one wrapping row; a revealed form takes the full width. */
+.ff-fatura__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ff-fatura__form,
+.ff-fatura__hint {
+  flex-basis: 100%;
+}
+
+.ff-fatura__hint {
+  margin: 0;
+}
+
+.ff-fatura__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ff-fatura__error {
+  flex-basis: 100%;
+  margin-top: 8px;
+}
+
+.ff-icard__label {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-icard__label + .ff-icard__value {
+  margin-top: 4px;
+}
+
+.ff-icard__badge {
+  margin-top: 8px;
+}
+
+.ff-icard__next {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ff-border);
+  font-size: 13px;
+  color: var(--ff-ink-soft);
+}

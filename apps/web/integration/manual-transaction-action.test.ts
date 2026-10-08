@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppSupabaseClient } from "@family-finance/db";
 
@@ -97,7 +97,14 @@ function formData(): FormData {
 }
 
 describe("manual transaction server action: parcelado card expense", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("persists installments and the dashboard reads them as card pressure", async () => {
+    // July's fatura must still be open, or the save shifts the parcels.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-15T12:00:00Z"));
     const store = new FakeSupabaseStore(seed());
     mockedSupabase.client = {
       ...createFakeSupabaseClient(store),

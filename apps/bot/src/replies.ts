@@ -443,17 +443,19 @@ export function cardBillPaidMessage(view: {
   return `Fatura paga! ✅ ${view.cardName} — R$ ${formatBrl(view.amountCents)} (${monthAbbrPtBr(view.month)})`;
 }
 
-/** Friendly no-op when the bill month was already settled (idempotent repeat). */
-export function cardBillAlreadyPaidMessage(view: {
+/** A covered fatura can still receive an extra payment with an explicit amount. */
+export function cardBillExtraPaymentMessage(view: {
   cardName: string;
   month: string;
+  paidCents: number;
 }): string {
-  return `A fatura do ${view.cardName} de ${monthAbbrPtBr(view.month)} já estava paga — nada mudou. 👍`;
+  const monthLabel = `${view.month.slice(5, 7)}/${view.month.slice(0, 4)}`;
+  return `A fatura ${view.cardName} de ${monthLabel} já está paga (R$ ${formatBrl(view.paidCents)}). Quer registrar um pagamento extra? Envie "valor 50,00".`;
 }
 
-/** Settle failed (RPC threw) — mirrors `obligationSettleFailedMessage`. */
+/** The settlement may have committed; retry the same draft to reconcile it. */
 export function cardBillSettleFailedMessage(cardName: string): string {
-  return `Não consegui registrar o pagamento da fatura do ${cardName} — tenta de novo em instantes.`;
+  return `Não consegui confirmar agora se o pagamento da fatura do ${cardName} foi registrado. Tente confirmar novamente — não vou duplicar o pagamento.`;
 }
 
 /** Installment persist failed (RPC threw) — same recovery contract as above. */

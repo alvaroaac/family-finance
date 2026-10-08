@@ -2,17 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Keep synthetic test migrations after the latest real migration.
-fixture_max_version=0
-for fixture_path in "$repo_root"/supabase/migrations/*.sql; do
-  fixture_name="$(basename "$fixture_path")"
-  fixture_number="${fixture_name%%_*}"
-  if (( 10#$fixture_number > fixture_max_version )); then
-    fixture_max_version=$((10#$fixture_number))
-  fi
-done
-printf -v fixture_success_version '%04d' "$((fixture_max_version + 1))"
-printf -v fixture_next_version '%04d' "$((fixture_max_version + 2))"
+# Synthetic test migrations use far-future timestamp versions so they always
+# sort after the real history.
+fixture_success_version=999912310000
+fixture_next_version=999912310001
 
 scratch="$(mktemp -d)"
 container="family-finance-migrations-$(basename "$scratch")"
@@ -200,6 +193,11 @@ ledger_count="$(docker exec "$container" psql -X -U postgres -d postgres -Atc \
   exit 1
 }
 
+# Simulate a ledger created before timestamp versions existed; apply must widen it.
+docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c \
+  "alter table family_finance_migrations.schema_migrations
+     drop constraint schema_migrations_version_check,
+     add constraint schema_migrations_version_check check (version ~ '^[0-9]{4}$');" >/dev/null
 MIGRATIONS_DIR="$scratch/pending-migrations" \
   "$repo_root/deploy/migrate.sh" apply >/dev/null
 # The compatibility migration must also be safe to reapply directly.

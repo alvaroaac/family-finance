@@ -37,6 +37,7 @@ import type {
   CategoryCatalog,
 } from "@family-finance/categorization";
 import { randomUUID } from "node:crypto";
+import { CardBillSettlementError } from "@family-finance/db";
 
 import { parseExpenseText, stripEdgePunctuation } from "./parser.js";
 import {
@@ -60,7 +61,7 @@ import {
 import {
   askCategoryNameMessage,
   cancelledMessage,
-  cardBillAlreadyPaidMessage,
+  cardBillExtraPaymentMessage,
   cardBillConfirmationMessage,
   cardBillNoMatchMessage,
   cardBillPaidMessage,
@@ -144,6 +145,8 @@ export type ConversationStatus =
   | "installment_recovery_required"
   /** A card-bill payment draft awaits its "confirmar" (PR-2, "nubank pago"). */
   | "awaiting_card_bill_confirmation"
+  /** Settlement may have reached the database; only same-key, same-payload retry is safe. */
+  | "card_bill_submission_started"
   /** A mark-paid keyword matched 2+ obligations; the user must pick one. */
   | "awaiting_mark_paid_choice"
   /** A provider name matched both an account and a card. */
@@ -210,6 +213,8 @@ export type InstallmentDraftInProgress = {
   cardId?: string;
   /** Closing-day snapshot used to rebuild the same plan on every retry. */
   cardClosingDay?: number;
+  /** YYYY-MM of the first open fatura, resolved once before the first save so retries send the same schedule. */
+  firstOpenMonth?: string;
   categoryId?: string;
   subcategoryId?: string;
   categoryExplanation?: string;
@@ -219,11 +224,16 @@ export type InstallmentDraftInProgress = {
 
 /** The editable, in-progress CARD-BILL payment draft ("nubank pago", PR-2). */
 export type CardBillDraftInProgress = {
+  /** Older persisted drafts may not yet have a settlement identity. */
+  idempotencyKey?: string;
   cardId?: string; // undefined while the picker is open
   overrideAmountCents?: number; // classifier trailing amount or `valor` correction
   amountCents?: number; // resolved (override ?? computed) once the card is known
   accountId: string;
-  month: string; // YYYY-MM, calendar month of the message
+  month: string; // YYYY-MM once the card is resolved; empty while picking
+  /** Absent on older picker drafts, whose populated month must be preserved. */
+  monthExplicit?: boolean;
+  legacyPaymentStatus?: "matched" | "ambiguous";
   /** Explicit payment occurrence date; defaults to confirmation day. */
   paidOn?: string;
   createdByUserId: string;
@@ -256,7 +266,7 @@ export type ConversationState = {
   obligationDraft?: ObligationDraftInProgress;
   /** Set while status = awaiting_installment_confirmation. */
   installmentDraft?: InstallmentDraftInProgress;
-  /** Set while status = awaiting_card_bill_confirmation. */
+  /** Set while a card-bill payment is awaiting confirmation or reconciliation. */
   cardBillDraft?: CardBillDraftInProgress;
   /** Set while status = awaiting_mark_paid_choice. */
   markPaidCandidates?: MarkPaidCandidate[];
@@ -446,6 +456,7 @@ export type ConversationDeps = {
   createInstallmentPurchase?: (
     plan: InstallmentPlan,
     idempotencyKey: string,
+    firstOpenMonth?: string,
   ) => Promise<{
     groupId: string;
     creditCardId: string;
@@ -454,12 +465,29 @@ export type ConversationDeps = {
     installmentCount: number;
     firstDueMonth: string;
   }>;
-  /** Computed bill amount (cents) for one card/month (card-bill flow, PR-2). */
-  getCardBillAmount?: (creditCardId: string, month: string) => Promise<number>;
+  /** First open fatura month for the plan's first installment. */
+  resolveInstallmentOpenMonth?: (
+    plan: InstallmentPlan,
+    idempotencyKey: string,
+  ) => Promise<string>;
+  reconcileLegacyCardBillPayment?: (
+    draft: Omit<CardBillSettlementDraft, "idempotencyKey">,
+  ) => Promise<"none" | "matched" | "ambiguous">;
+  /** Remaining balance and payments for one card/month. */
+  getCardBillAmount?: (
+    creditCardId: string,
+    month: string,
+  ) => Promise<{
+    remainingCents: number;
+    paidCents: number;
+    closed: boolean;
+  }>;
+  /** Pending fatura's month, or the open fatura's month when none is pending. */
+  resolveDefaultBillMonth?: (creditCardId: string) => Promise<string>;
   /** Persist a validated card-bill settlement (db settleCardBill). */
   settleCardBill?: (
     draft: CardBillSettlementDraft,
-  ) => Promise<{ alreadyPaid: boolean }>;
+  ) => Promise<{ replayed: boolean }>;
 };
 
 export type StartInput = {
@@ -1698,16 +1726,12 @@ function findActiveCard(
   return deps.listActiveCards?.().find((c) => c.id === cardId);
 }
 
-/**
- * Resolve the first parcel's due month via the pure domain generator — only
- * when the draft is complete enough (total, count, purchase date, card). A
- * validation failure (e.g. an amount of 0 mid-correction) simply omits the
- * parenthetical rather than surfacing a domain error in the summary.
- */
-function firstDueMonthFor(
+/** Build the domain plan for a complete installment draft; undefined while incomplete. */
+function buildInstallmentPlan(
   draft: InstallmentDraftInProgress,
-  deps: ConversationDeps,
-): string | undefined {
+  householdId: string,
+  closingDay: number | undefined,
+): ReturnType<typeof createInstallmentPlan> | undefined {
   if (
     draft.totalCents === undefined ||
     draft.installmentCount === undefined ||
@@ -1715,9 +1739,8 @@ function firstDueMonthFor(
   ) {
     return undefined;
   }
-  const card = findActiveCard(deps, draft.cardId);
-  const built = createInstallmentPlan({
-    householdId: deps.householdId,
+  return createInstallmentPlan({
+    householdId,
     creditCardId: draft.cardId,
     description: draft.description,
     totalAmount: { currency: "BRL", cents: draft.totalCents },
@@ -1729,9 +1752,24 @@ function firstDueMonthFor(
       draft.categoryId !== undefined
         ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
         : undefined,
-    closingDay: card?.closingDay,
+    closingDay,
   });
-  return built.ok ? built.value.installments[0]?.dueMonth : undefined;
+}
+
+/**
+ * Resolve the first parcel's due month via the pure domain generator — only
+ * when the draft is complete enough (total, count, purchase date, card). A
+ * validation failure (e.g. an amount of 0 mid-correction) simply omits the
+ * parenthetical rather than surfacing a domain error in the summary.
+ */
+function firstDueMonthFor(
+  draft: InstallmentDraftInProgress,
+  deps: ConversationDeps,
+): string | undefined {
+  const card =
+    draft.cardId === undefined ? undefined : findActiveCard(deps, draft.cardId);
+  const built = buildInstallmentPlan(draft, deps.householdId, card?.closingDay);
+  return built?.ok ? built.value.installments[0]?.dueMonth : undefined;
 }
 
 function installmentSummaryView(
@@ -2014,24 +2052,32 @@ async function startInstallmentIntent(
 }
 
 /**
- * Build the confirmation outcome for a card-bill draft whose card AND amount
- * are both resolved (flow requirement 2). `amount` is `overrideAmountCents
- * ?? computed`; a resolved zero (no override) is terminal — nothing gets
- * written.
+ * Build the confirmation outcome, asking for an extra payment's amount when
+ * the fatura is already covered. Nothing is written until confirmation.
  */
 function cardBillConfirmationOutcome(
   draft: CardBillDraftInProgress,
-  amount: number,
+  amount: number | undefined,
   cardName: string,
   ballast: DraftInProgress,
   deps: ConversationDeps,
 ): ConversationOutcome {
-  const next: CardBillDraftInProgress = { ...draft, amountCents: amount };
+  const next: CardBillDraftInProgress = {
+    ...draft,
+    amountCents: amount,
+    legacyPaymentStatus: undefined,
+  };
   const state: ConversationState = {
     status: "awaiting_card_bill_confirmation",
     draft: ballast,
     cardBillDraft: next,
   };
+  if (amount === undefined) {
+    return {
+      state,
+      reply: needsAmountMessage(`pagamento extra da fatura ${cardName}`),
+    };
+  }
   return {
     state,
     reply: cardBillConfirmationMessage({
@@ -2065,9 +2111,28 @@ async function resolveBillCard(
       reply: obligationUnavailableMessage(),
     };
   }
-  const computed = await deps.getCardBillAmount(cardId, draft.month);
-  const amount = draft.overrideAmountCents ?? computed;
-  const next: CardBillDraftInProgress = { ...draft, cardId };
+  const month =
+    (draft.monthExplicit ?? draft.month.length > 0)
+      ? draft.month
+      : ((await deps.resolveDefaultBillMonth?.(cardId)) ??
+        ballast.occurredOn.slice(0, 7));
+  const computed = await deps.getCardBillAmount(cardId, month);
+  const next: CardBillDraftInProgress = { ...draft, cardId, month };
+  if (computed.remainingCents === 0 && computed.paidCents > 0) {
+    return {
+      state: {
+        status: "awaiting_card_bill_confirmation",
+        draft: ballast,
+        cardBillDraft: { ...next, amountCents: undefined },
+      },
+      reply: cardBillExtraPaymentMessage({
+        cardName: card?.name ?? "cartão",
+        month,
+        paidCents: computed.paidCents,
+      }),
+    };
+  }
+  const amount = draft.overrideAmountCents ?? computed.remainingCents;
   if (amount === undefined || amount <= 0) {
     return {
       state: { status: "cancelled", draft: ballast },
@@ -2131,11 +2196,12 @@ async function startCardBillIntent(
     };
   }
 
-  const month = billMonth ?? options.today.slice(0, 7);
   const draft: CardBillDraftInProgress = {
+    idempotencyKey: randomUUID(),
     overrideAmountCents,
     accountId: settlementAccountId,
-    month,
+    month: billMonth ?? "",
+    monthExplicit: billMonth !== undefined,
     paidOn: paidOn ?? options.today,
     createdByUserId: input.fromUserId,
   };
@@ -3779,6 +3845,36 @@ async function applyObligationMessage(
   };
 }
 
+/** Pin the first open fatura before the webhook persists the submission boundary. */
+export async function prepareInstallmentSubmission(
+  state: ConversationState,
+  deps: ConversationDeps,
+): Promise<ConversationState> {
+  const next: ConversationState = {
+    ...state,
+    status: "installment_submission_started",
+  };
+  const draft = state.installmentDraft;
+  if (
+    draft === undefined ||
+    draft.firstOpenMonth !== undefined ||
+    deps.resolveInstallmentOpenMonth === undefined
+  ) {
+    return next;
+  }
+  const built = buildInstallmentPlan(
+    draft,
+    deps.householdId,
+    draft.cardClosingDay,
+  );
+  if (built === undefined || !built.ok) return next;
+  const firstOpenMonth = await deps.resolveInstallmentOpenMonth(
+    built.value,
+    draft.idempotencyKey,
+  );
+  return { ...next, installmentDraft: { ...draft, firstOpenMonth } };
+}
+
 /**
  * Confirm a card-installment draft: build the plan via the pure domain
  * generator and persist it. Shared by BOTH the typed "confirmar" and the
@@ -3827,36 +3923,18 @@ async function confirmInstallment(
     workingState = resolved.state;
     draft = resolved.draft;
   }
-  const cardId = draft.cardId;
-  const totalCents = draft.totalCents;
-  const installmentCount = draft.installmentCount;
-  if (
-    cardId === undefined ||
-    totalCents === undefined ||
-    installmentCount === undefined
-  ) {
-    return { state, reply: notUnderstoodMessage() };
-  }
   if (deps.createInstallmentPurchase === undefined) {
     return { state, reply: obligationUnavailableMessage() };
   }
 
-  const card = findActiveCard(deps, cardId);
-  const built = createInstallmentPlan({
-    householdId: deps.householdId,
-    creditCardId: cardId,
-    description: draft.description,
-    totalAmount: { currency: "BRL", cents: totalCents },
-    installmentCount,
-    purchasedOn: draft.purchasedOn,
-    createdByUserId: draft.createdByUserId,
-    responsibleUserId: draft.responsibleUserId,
-    category:
-      draft.categoryId !== undefined
-        ? { categoryId: draft.categoryId, subcategoryId: draft.subcategoryId }
-        : undefined,
-    closingDay: draft.cardClosingDay,
-  });
+  const built = buildInstallmentPlan(
+    draft,
+    deps.householdId,
+    draft.cardClosingDay,
+  );
+  if (built === undefined) {
+    return { state, reply: notUnderstoodMessage() };
+  }
   if (!built.ok) {
     return {
       state,
@@ -3868,9 +3946,21 @@ async function confirmInstallment(
   // any later failure (interaction log, conversation save, Telegram) return the
   // original group instead of inserting a second purchase.
   try {
+    if (
+      draft.firstOpenMonth === undefined &&
+      deps.resolveInstallmentOpenMonth !== undefined
+    ) {
+      const firstOpenMonth = await deps.resolveInstallmentOpenMonth(
+        built.value,
+        draft.idempotencyKey,
+      );
+      draft = { ...draft, firstOpenMonth };
+      workingState = { ...workingState, installmentDraft: draft };
+    }
     const persisted = await deps.createInstallmentPurchase(
       built.value,
       draft.idempotencyKey,
+      draft.firstOpenMonth,
     );
     await deps.logInteraction({
       fromUserId: draft.createdByUserId,
@@ -3886,9 +3976,7 @@ async function confirmInstallment(
         totalCents: persisted.totalCents,
         installmentCount: persisted.installmentCount,
         cardName:
-          findActiveCard(deps, persisted.creditCardId)?.name ??
-          card?.name ??
-          "cartão",
+          findActiveCard(deps, persisted.creditCardId)?.name ?? "cartão",
         firstDueMonth: persisted.firstDueMonth,
       }),
     };
@@ -3949,6 +4037,7 @@ async function applyInstallmentMessage(
       return { state, reply: notUnderstoodMessage() };
     }
     next.totalCents = parsed.amountCents;
+    delete next.firstOpenMonth;
     fieldLabel = `o valor para R$ ${formatBrl(parsed.amountCents)}`;
   }
 
@@ -3963,6 +4052,7 @@ async function applyInstallmentMessage(
       };
     }
     next.installmentCount = count;
+    delete next.firstOpenMonth;
     fieldLabel = `o número de parcelas para ${count}`;
   }
 
@@ -3987,6 +4077,7 @@ async function applyInstallmentMessage(
     const card = matches[0];
     next.cardId = card?.id;
     next.cardClosingDay = card?.closingDay;
+    delete next.firstOpenMonth;
     next.description = stripSelectedInstrumentFromDescription(
       next.description,
       card?.name,
@@ -4025,6 +4116,7 @@ async function applyInstallmentMessage(
       };
     }
     next.purchasedOn = validatedPurchaseDate.iso;
+    delete next.firstOpenMonth;
     fieldLabel = "a data";
   }
 
@@ -4054,42 +4146,124 @@ async function applyInstallmentMessage(
   };
 }
 
+/** Pin the settlement identity and date before its durable submission. */
+export async function prepareCardBillSubmission(
+  state: ConversationState,
+  today: string,
+  deps: ConversationDeps,
+): Promise<ConversationState> {
+  const draft = state.cardBillDraft!;
+  const paidOn = draft.paidOn ?? today;
+  if (paidOn > today) return state;
+  if (
+    draft.idempotencyKey === undefined &&
+    deps.reconcileLegacyCardBillPayment === undefined
+  ) {
+    throw new Error("Legacy payment reconciliation is unavailable");
+  }
+  if (
+    draft.idempotencyKey === undefined &&
+    deps.reconcileLegacyCardBillPayment !== undefined &&
+    draft.cardId !== undefined &&
+    draft.amountCents !== undefined
+  ) {
+    const legacyPaymentStatus = await deps.reconcileLegacyCardBillPayment({
+      householdId: deps.householdId,
+      creditCardId: draft.cardId,
+      accountId: draft.accountId,
+      billMonth: draft.month,
+      amountCents: draft.amountCents,
+      paidOn,
+      createdByUserId: draft.createdByUserId,
+    });
+    if (legacyPaymentStatus !== "none")
+      return { ...state, cardBillDraft: { ...draft, legacyPaymentStatus } };
+  }
+  return {
+    ...state,
+    status: "card_bill_submission_started",
+    cardBillDraft: {
+      ...draft,
+      paidOn,
+      // A fresh authoritative lookup supersedes any earlier recovery decision.
+      legacyPaymentStatus: undefined,
+      idempotencyKey: draft.idempotencyKey ?? randomUUID(),
+    },
+  };
+}
+
 /**
  * Confirm a card-bill draft: build the settlement via the pure domain
  * validator and settle it. Shared by BOTH the typed "confirmar" and the `cf`
- * callback (flow requirement 4) — no separate save path exists. Idempotent:
- * an already-paid month is a friendly no-op.
+ * callback (flow requirement 4) — no separate save path exists. Replaying
+ * the same key returns the same success reply without a second payment.
  */
 async function confirmCardBill(
   state: ConversationState,
   deps: ConversationDeps,
   today: string,
 ): Promise<ConversationOutcome> {
-  const draft = state.cardBillDraft;
-  if (
-    draft === undefined ||
-    draft.cardId === undefined ||
-    draft.amountCents === undefined
-  ) {
-    // Defensive: the CONFIRM_RE branch in applyCardBillMessage already guards
-    // both fields before reaching here (the picker stays open otherwise).
+  const originalDraft = state.cardBillDraft;
+  if (originalDraft === undefined || originalDraft.cardId === undefined) {
+    // Defensive: the picker must resolve the card before confirmation.
     return { state, reply: notUnderstoodMessage() };
   }
+  if ((originalDraft.paidOn ?? today) > today) {
+    return {
+      state: { ...state, status: "awaiting_card_bill_confirmation" },
+      reply:
+        'A data de pagamento não pode ser futura. Corrija com "data DD/MM/AAAA" ou envie "cancelar".',
+    };
+  }
+  if (originalDraft.legacyPaymentStatus === "ambiguous") {
+    return {
+      state,
+      reply:
+        'Encontrei um pagamento antigo dessa fatura, mas não consegui confirmar se é este pagamento. Confira em Cartões. Para registrar outro pagamento, envie "cancelar" e comece um novo lançamento.',
+    };
+  }
+  if (originalDraft.legacyPaymentStatus === "matched") {
+    return {
+      state: { status: "saved", draft: state.draft },
+      reply: cardBillPaidMessage({
+        cardName: findActiveCard(deps, originalDraft.cardId)?.name ?? "cartão",
+        amountCents: originalDraft.amountCents!,
+        month: originalDraft.month,
+      }),
+    };
+  }
+  const draft = {
+    ...originalDraft,
+    cardId: originalDraft.cardId,
+    paidOn: originalDraft.paidOn ?? today,
+    idempotencyKey: originalDraft.idempotencyKey ?? randomUUID(),
+  };
+  const workingState = { ...state, cardBillDraft: draft };
   const card = findActiveCard(deps, draft.cardId);
   const cardName = card?.name ?? "cartão";
+  if (draft.amountCents === undefined) {
+    return cardBillConfirmationOutcome(
+      draft,
+      undefined,
+      cardName,
+      state.draft,
+      deps,
+    );
+  }
 
   const built = createCardBillSettlement({
     householdId: deps.householdId,
+    idempotencyKey: draft.idempotencyKey,
     creditCardId: draft.cardId,
     accountId: draft.accountId,
     billMonth: draft.month,
     amountCents: draft.amountCents,
-    paidOn: draft.paidOn ?? today,
+    paidOn: draft.paidOn,
     createdByUserId: draft.createdByUserId,
   });
   if (!built.ok) {
     return {
-      state,
+      state: workingState,
       reply: `Não consegui salvar: ${describeValidationError(built.errors[0])}.`,
     };
   }
@@ -4101,32 +4275,39 @@ async function confirmCardBill(
     };
   }
 
-  let alreadyPaid: boolean;
+  let replayed: boolean;
   try {
-    ({ alreadyPaid } = await deps.settleCardBill(built.value));
+    ({ replayed } = await deps.settleCardBill(built.value));
   } catch (error) {
     console.warn(
       `[bot] settleCardBill failed for ${draft.cardId}/${draft.month}:`,
       error,
     );
+    if (error instanceof CardBillSettlementError && error.definitiveNoWrite) {
+      return {
+        state: { ...workingState, status: "awaiting_card_bill_confirmation" },
+        reply:
+          'O pagamento não foi registrado. Confira o valor, a conta e a data antes de confirmar novamente, ou envie "cancelar".',
+        keyboard: confirmCancelKeyboard(),
+      };
+    }
     return {
-      state: { status: "cancelled", draft: state.draft },
+      state: {
+        ...workingState,
+        status: "card_bill_submission_started",
+      },
       reply: cardBillSettleFailedMessage(cardName),
+      keyboard: installmentReconciliationKeyboard(),
     };
   }
 
-  if (alreadyPaid) {
-    return {
-      state: { status: "saved", draft: state.draft },
-      reply: cardBillAlreadyPaidMessage({ cardName, month: draft.month }),
-    };
+  if (!replayed) {
+    await deps.logInteraction({
+      fromUserId: draft.createdByUserId,
+      inputKind: state.draft.inputKind,
+      messageText: "confirmar (fatura)",
+    });
   }
-
-  await deps.logInteraction({
-    fromUserId: draft.createdByUserId,
-    inputKind: state.draft.inputKind,
-    messageText: "confirmar (fatura)",
-  });
   return {
     state: { status: "saved", draft: state.draft },
     reply: cardBillPaidMessage({
@@ -4239,7 +4420,7 @@ async function applyCardBillMessage(
     const next: CardBillDraftInProgress = { ...draft, accountId };
     return cardBillConfirmationOutcome(
       next,
-      draft.amountCents as number,
+      draft.amountCents,
       cardName,
       state.draft,
       deps,
@@ -4259,30 +4440,32 @@ async function applyCardBillMessage(
         reply: `A data de pagamento “${raw}” é inválida. Envie no formato DD/MM ou DD/MM/AAAA.`,
       };
     }
+    if (parsedDate.iso > today)
+      return {
+        state,
+        reply:
+          "A data de pagamento não pode ser futura. Envie uma data de hoje ou anterior.",
+      };
     const next: CardBillDraftInProgress = {
       ...draft,
       paidOn: parsedDate.iso,
     };
     return cardBillConfirmationOutcome(
       next,
-      draft.amountCents as number,
+      draft.amountCents,
       cardName,
       state.draft,
       deps,
     );
   }
 
-  return {
-    state,
-    reply: cardBillConfirmationMessage({
-      cardName,
-      month: draft.month,
-      amountCents: draft.amountCents as number,
-      accountLabel: deps.accountNameById?.(draft.accountId) ?? "Conta",
-      paidOn: draft.paidOn ?? today,
-    }),
-    keyboard: confirmCancelKeyboard(),
-  };
+  return cardBillConfirmationOutcome(
+    draft,
+    draft.amountCents,
+    cardName,
+    state.draft,
+    deps,
+  );
 }
 
 export async function applyMessage(
@@ -4325,6 +4508,18 @@ export async function applyMessage(
   }
 
   const today = options.today ?? state.draft.occurredOn;
+
+  if (state.status === "card_bill_submission_started") {
+    if (CONFIRM_RE.test(message)) {
+      return confirmCardBill(state, deps, today);
+    }
+    return {
+      state,
+      reply:
+        "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; confirme novamente para concluir sem duplicar.",
+      keyboard: installmentReconciliationKeyboard(),
+    };
+  }
 
   if (state.status === "awaiting_category_name") {
     return applyCategoryName(state, message, deps);
@@ -4900,6 +5095,19 @@ export async function applyCallback(
     };
   }
 
+  if (state.status === "card_bill_submission_started") {
+    if (token === TOKENS.confirm) {
+      return confirmCardBill(state, await getDeps(), today);
+    }
+    return {
+      state,
+      reply:
+        "Ainda estou verificando se esse pagamento da fatura já foi registrado. Não posso editar nem cancelar agora; toque em verificar para concluir sem duplicar.",
+      keyboard: installmentReconciliationKeyboard(),
+      toast: "Confirmação pendente — verifique para concluir.",
+    };
+  }
+
   if (state.status === "awaiting_payment_choice") {
     const candidates = state.paymentCandidates ?? [];
     const requestedType = token.startsWith(PAYMENT_ACCOUNT_TOKEN_PREFIX)
@@ -4983,6 +5191,7 @@ export async function applyCallback(
         ...draft,
         cardId,
         cardClosingDay: card.closingDay,
+        firstOpenMonth: undefined,
         description: stripSelectedInstrumentFromDescription(
           draft.description,
           card.name,

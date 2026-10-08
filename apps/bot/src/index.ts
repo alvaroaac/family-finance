@@ -47,10 +47,15 @@ import {
   restoreCategory as dbRestoreCategory,
   restoreSubcategory as dbRestoreSubcategory,
   createCategorizationMemory,
-  getCardPressureForCard,
+  getCardBillOverview,
+  getCardFaturaPairs,
+  planWithOpenFaturas,
+  findInstallmentPurchaseFirstDueMonth,
+  reconcileLegacyCardBillPayment,
   settleCardBill as dbSettleCardBill,
   type AppSupabaseClient,
   type BotMemberIdentity,
+  type CardBillOverview,
 } from "@family-finance/db";
 import {
   suggestCategory,
@@ -82,6 +87,8 @@ import {
   applyMessage,
   isBareConfirmation,
   isConfirmationCommand,
+  prepareInstallmentSubmission,
+  prepareCardBillSubmission,
   type ConversationDeps,
   type ConversationState,
 } from "./conversation.js";
@@ -109,7 +116,7 @@ import {
   DRAFT_NOT_YOURS_TOAST,
   ALREADY_SAVED_TOAST,
 } from "./replies.js";
-import { TOKENS } from "./keyboards.js";
+import { TOKENS, installmentReconciliationKeyboard } from "./keyboards.js";
 
 /**
  * GPT extracts financial fields under a four-second deadline. Categorization
@@ -129,10 +136,21 @@ function todayIso(): string {
 
 function canSubmitInstallment(state: ConversationState): boolean {
   return (
-    state.status === "awaiting_installment_confirmation" &&
+    (state.status === "awaiting_installment_confirmation" ||
+      ((state.status === "installment_submission_started" ||
+        state.status === "installment_outcome_uncertain") &&
+        state.installmentDraft?.firstOpenMonth === undefined)) &&
     state.installmentDraft?.totalCents !== undefined &&
     state.installmentDraft.installmentCount !== undefined &&
     state.installmentDraft.cardId !== undefined
+  );
+}
+
+function canSubmitCardBill(state: ConversationState): boolean {
+  return (
+    state.status === "awaiting_card_bill_confirmation" &&
+    state.cardBillDraft?.cardId !== undefined &&
+    state.cardBillDraft.amountCents !== undefined
   );
 }
 
@@ -227,6 +245,7 @@ async function buildDeps(
   const cards = await listCreditCards(client, householdId);
   const members = await listHouseholdMembers(client, householdId);
   const memoryStore = memoryStoreFor(client);
+  const cardBillSummaries = new Map<string, CardBillOverview["summary"]>();
 
   return {
     householdId,
@@ -437,8 +456,30 @@ async function buildDeps(
             ? card.closing_day
             : undefined,
       })),
-    createInstallmentPurchase: async (plan, idempotencyKey) => {
-      const result = await dbCreateInstallmentPurchase(client, plan, {
+    resolveInstallmentOpenMonth: async (plan, idempotencyKey) => {
+      const existingMonth = await findInstallmentPurchaseFirstDueMonth(
+        client,
+        householdId,
+        idempotencyKey,
+      );
+      if (existingMonth !== null) return existingMonth;
+      const result = await planWithOpenFaturas(
+        client,
+        householdId,
+        plan,
+        currentHouseholdDate(),
+      );
+      return result.plan.installments[0]!.dueMonth;
+    },
+    createInstallmentPurchase: async (plan, idempotencyKey, firstOpenMonth) => {
+      const shifted = await planWithOpenFaturas(
+        client,
+        householdId,
+        plan,
+        currentHouseholdDate(),
+        firstOpenMonth,
+      );
+      const result = await dbCreateInstallmentPurchase(client, shifted.plan, {
         idempotencyKey,
       });
       return {
@@ -452,20 +493,45 @@ async function buildDeps(
           result.group.purchased_on.slice(0, 7),
       };
     },
-    // Card-bill payment (PR-2 / Task 6): computed monthly pressure + the
-    // settle_card_bill RPC (ONE transfer row, idempotent per card/month).
-    getCardBillAmount: async (creditCardId, month) => {
-      const pressure = await getCardPressureForCard(
+    // Shared fatura read models keep defaults and remaining balances in sync
+    // with /cards and /resumo; settlements are idempotent per draft key.
+    resolveDefaultBillMonth: async (creditCardId) => {
+      const pairs = await getCardFaturaPairs(
         client,
         householdId,
-        creditCardId,
-        month,
+        currentHouseholdDate(),
       );
-      return pressure.totalCents;
+      const pair = pairs.find((entry) => entry.card.id === creditCardId);
+      if (pair === undefined) throw new Error("Card fatura pair not found");
+      const chosen = pair.pending ?? pair.open;
+      cardBillSummaries.set(`${creditCardId}:${chosen.month}`, chosen.summary);
+      return chosen.month;
     },
+    getCardBillAmount: async (creditCardId, month) => {
+      const cached = cardBillSummaries.get(`${creditCardId}:${month}`);
+      if (cached !== undefined) {
+        const { remainingCents, paidCents, closed } = cached;
+        return { remainingCents, paidCents, closed };
+      }
+      const overviews = await getCardBillOverview(
+        client,
+        householdId,
+        month,
+        currentHouseholdDate(),
+      );
+      const overview = overviews.find(
+        (entry) => entry.card.id === creditCardId,
+      );
+      if (overview === undefined)
+        throw new Error("Card bill overview not found");
+      const { remainingCents, paidCents, closed } = overview.summary;
+      return { remainingCents, paidCents, closed };
+    },
+    reconcileLegacyCardBillPayment: async (draft) =>
+      reconcileLegacyCardBillPayment(client, draft),
     settleCardBill: async (draft) => {
       const result = await dbSettleCardBill(client, draft);
-      return { alreadyPaid: result.already_paid };
+      return { replayed: result.replayed };
     },
   };
 }
@@ -584,17 +650,35 @@ export async function handleWebhook(args: {
         );
         return deps;
       };
-      // Cross the durable submission boundary before the purchase RPC. If the
-      // RPC commits and saving the final `saved` state fails, a reload retains
+      // Cross the durable submission boundary before the purchase/settlement
+      // RPC. If it commits and saving the final `saved` state fails, a reload retains
       // this exact draft/key and permits reconciliation only — never edit,
       // cancel, or a fresh purchase identity.
-      const callbackState =
-        canSubmitInstallment(existing) && data === TOKENS.confirm
-          ? ({
-              ...existing,
-              status: "installment_submission_started",
-            } satisfies ConversationState)
-          : existing;
+      let callbackState = existing;
+      if (data === TOKENS.confirm) {
+        if (canSubmitInstallment(existing)) {
+          try {
+            callbackState = await prepareInstallmentSubmission(
+              existing,
+              await getDeps(),
+            );
+          } catch (error) {
+            console.warn("[bot] prepareInstallmentSubmission failed:", error);
+            await args.telegram.answerCallbackQuery(callbackQueryId);
+            await args.telegram.sendMessage(
+              chatId,
+              "Não consegui preparar o lançamento. Tente confirmar novamente.",
+            );
+            return { status: 200, body: { ok: true } };
+          }
+        } else if (canSubmitCardBill(existing)) {
+          callbackState = await prepareCardBillSubmission(
+            existing,
+            todayIso(),
+            await getDeps(),
+          );
+        }
+      }
       if (callbackState !== existing) {
         await args.store.save(chatId, callbackState);
       }
@@ -689,6 +773,20 @@ export async function handleWebhook(args: {
     // Serialized per chat (same rule as callbacks/text): a concurrent voice +
     // text confirm must not race load/save on the conversation store.
     return withChatQueue(voice.chatId, async (): Promise<WebhookResult> => {
+      const existing = await args.store.load(voice.chatId);
+      if (
+        existing !== undefined &&
+        (existing.status === "installment_submission_started" ||
+          existing.status === "installment_outcome_uncertain" ||
+          existing.status === "card_bill_submission_started")
+      ) {
+        await args.telegram.sendMessage(
+          voice.chatId,
+          'O lançamento anterior ainda precisa ser confirmado. Envie "confirmar" antes de começar outro lançamento.',
+          { replyMarkup: installmentReconciliationKeyboard() },
+        );
+        return { status: 200, body: { ok: true } };
+      }
       let outcome;
       try {
         outcome = await startConversationFromAudio(
@@ -789,16 +887,30 @@ export async function handleWebhook(args: {
       reply = outcome.reply;
       keyboard = outcome.keyboard;
     } else {
-      // Persist the retry-only state before an installment purchase can reach
+      // Persist the retry-only state before a purchase or settlement can reach
       // the database. It survives a later final-state save failure and keeps
       // every retry on the original idempotency key.
-      const messageState =
-        canSubmitInstallment(existing) && isConfirmationCommand(message.text)
-          ? ({
-              ...existing,
-              status: "installment_submission_started",
-            } satisfies ConversationState)
-          : existing;
+      let messageState = existing;
+      if (isConfirmationCommand(message.text)) {
+        if (canSubmitInstallment(existing)) {
+          try {
+            messageState = await prepareInstallmentSubmission(existing, deps);
+          } catch (error) {
+            console.warn("[bot] prepareInstallmentSubmission failed:", error);
+            await args.telegram.sendMessage(
+              message.chatId,
+              "Não consegui preparar o lançamento. Tente confirmar novamente.",
+            );
+            return { status: 200, body: { ok: true } };
+          }
+        } else if (canSubmitCardBill(existing)) {
+          messageState = await prepareCardBillSubmission(
+            existing,
+            todayIso(),
+            deps,
+          );
+        }
+      }
       if (messageState !== existing) {
         await args.store.save(message.chatId, messageState);
       }

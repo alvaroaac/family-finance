@@ -89,6 +89,22 @@ export {
   paidKey,
 } from "./obligations.js";
 
+// Card bills (faturas) — closed/open, totals, status and badge rules.
+export type {
+  CardBillOverrideState,
+  CardBillStatus,
+  CardBillSummary,
+} from "./card-bills.js";
+export {
+  isCardBillClosed,
+  cardBillClosingDate,
+  summarizeCardBill,
+  cardBillBadge,
+  firstOpenInvoiceMonth,
+  cardFaturaPair,
+  shiftInstallmentPlan,
+} from "./card-bills.js";
+
 // Household-local calendar semantics shared by server and browser entry points.
 export {
   HOUSEHOLD_TIME_ZONE,

@@ -9,6 +9,7 @@ import {
   type ParcelPreview,
   type SaveResult,
 } from "./actions";
+import { faturaMonthLabel } from "../../../lib/fatura";
 import { parseReaisToCents } from "../../../lib/format";
 import {
   Button,
@@ -71,6 +72,8 @@ export function CardPurchaseForm({
   const [subcategoryId, setSubcategoryId] = useState<string>("");
 
   const [parcels, setParcels] = useState<ParcelPreview[] | null>(null);
+  /** The closed fatura month the parcels were pushed past, when any (C15). */
+  const [shiftedFrom, setShiftedFrom] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
@@ -115,6 +118,7 @@ export function CardPurchaseForm({
         return;
       }
       setParcels(result.parcels);
+      setShiftedFrom(result.shiftedFrom);
     } finally {
       setIsPreviewing(false);
     }
@@ -129,7 +133,10 @@ export function CardPurchaseForm({
       return;
     }
     if (creditCardId === "") {
-      setSaveResult({ ok: false, message: "Escolha o cartão antes de salvar." });
+      setSaveResult({
+        ok: false,
+        message: "Escolha o cartão antes de salvar.",
+      });
       return;
     }
     startTransition(async () => {
@@ -222,7 +229,9 @@ export function CardPurchaseForm({
               <Field label="Forma">
                 <Select
                   value={mode}
-                  onChange={(e) => setMode(e.target.value as "avista" | "parcelado")}
+                  onChange={(e) =>
+                    setMode(e.target.value as "avista" | "parcelado")
+                  }
                 >
                   <option value="avista">À vista</option>
                   <option value="parcelado">Parcelado</option>
@@ -279,7 +288,14 @@ export function CardPurchaseForm({
               </Field>
             </div>
 
-            <div style={{ display: "flex", gap: 12, marginTop: 18, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                marginTop: 18,
+                flexWrap: "wrap",
+              }}
+            >
               <Button
                 variant="ghost"
                 loading={isPreviewing}
@@ -326,6 +342,12 @@ export function CardPurchaseForm({
 
             {parcels ? (
               <div style={{ marginTop: 18 }}>
+                {shiftedFrom !== null && parcels[0] ? (
+                  <p className="ff-note" style={{ margin: "0 0 10px" }}>
+                    Fatura de {faturaMonthLabel(shiftedFrom)} já fechada —
+                    começa em {faturaMonthLabel(parcels[0].dueMonth)}.
+                  </p>
+                ) : null}
                 <h3 className="ff-name" style={{ margin: "0 0 10px" }}>
                   Parcelas geradas ({parcels.length}){" "}
                   {totalCents !== null ? (
@@ -364,7 +386,9 @@ export function CardPurchaseForm({
                         <div className="ff-txrow__desc ff-num">
                           {p.number}/{p.installmentCount}
                         </div>
-                        <div className="ff-txrow__meta ff-num">{p.dueMonth}</div>
+                        <div className="ff-txrow__meta ff-num">
+                          {p.dueMonth}
+                        </div>
                       </div>
                       <div className="ff-txrow__amount ff-num">
                         {formatBrl(p.amountCents)}

@@ -191,6 +191,29 @@ Exact-number reconciliation of the dashboard is proven deterministically by the
 offline integration test (step 1); the browser spec proves the UI surfaces and
 the auth boundary against real infra.
 
+### 5b. Card-bill flow on a disposable local stack
+
+`apps/web/e2e/card-bill-payments.spec.ts` runs the fatura pay/close/undo
+scenario signed in, with no Google session and no shared data. Requirements:
+Docker running and the Supabase CLI installed.
+
+```sh
+pnpm --filter @family-finance/web test:e2e:local   # start/reset stack, seed, run
+scripts/e2e-local-stack.sh stop                    # tear the stack down
+```
+
+- `scripts/e2e-local-stack.sh start` creates a separate Supabase project in
+  `.e2e-supabase/` (gitignored, id `ff-e2e-local`, ports 564xx). It never
+  touches your regular local stack on 543xx.
+- Each run resets that database and applies every migration in
+  `supabase/migrations/`.
+- `apps/web/e2e/local-auth.setup.ts` seeds a password user, household, account
+  and card. It refuses non-local Supabase URLs.
+- The app runs on `localhost:3100`. Screenshots, trace and the HTML report
+  land in `apps/web/test-results/` and `apps/web/playwright-report/`.
+- The latest recorded run is in
+  `thoughts/features/card-bill-payments/e2e-evidence/`.
+
 ---
 
 ## Release gate checklist

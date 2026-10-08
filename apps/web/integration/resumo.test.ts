@@ -6,8 +6,8 @@
  *  2. `buildResumoData` — the same composition `loadResumoData` performs —
  *     running the REAL `@family-finance/db` repositories against the in-memory
  *     fake store (./fake-supabase.ts): delta sign vs the previous month,
- *     PER-CARD projected invoice (direct card purchases + parcelas due in the
- *     month), pending-review count, and the recent list capped at 5.
+ *     per-card fatura pair (pending closed fatura + open one, by
+ *     `invoice_month`), pending-review count, and the recent list capped at 5.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -80,6 +80,7 @@ type TxSeed = {
   credit_card_id?: string | null;
   account_id?: string | null;
   bill_month?: string;
+  invoice_month?: string | null;
   created_at?: string;
 };
 
@@ -154,6 +155,7 @@ function seedStore(): FakeSupabaseStore {
         description: "Restaurante no cartão",
         amount_cents: 5000,
         credit_card_id: CARD_ROX,
+        invoice_month: "2026-07",
         category_id: null, // pending review #2
       }),
       // A refund ON the card: counts as income, must NOT add card pressure.
@@ -164,6 +166,7 @@ function seedStore(): FakeSupabaseStore {
         description: "Estorno cartão",
         amount_cents: 2000,
         credit_card_id: CARD_ROX,
+        invoice_month: "2026-07",
       }),
       // Income + transfer in July: ignored by expenseCents; the transfer has
       // no category but must NOT count as pending review.
@@ -243,10 +246,54 @@ function seedStore(): FakeSupabaseStore {
   return new FakeSupabaseStore(seed);
 }
 
+/** A Roxinho bill payment (kind='transfer') for `billMonth`, paid 10/07. */
+function billPayment(
+  billMonth: string,
+  amountCents: number,
+): Record<string, unknown> {
+  return tx({
+    id: `tx-pagamento-rox-${billMonth}-${amountCents}`,
+    kind: "transfer",
+    occurred_on: "2026-07-10",
+    description: "Pagamento fatura Roxinho",
+    amount_cents: amountCents,
+    credit_card_id: CARD_ROX,
+    account_id: "acc-corrente",
+    category_id: null,
+    bill_month: billMonth,
+  });
+}
+
+/**
+ * Roxinho's June fatura (auto-closed on 28/06) holds a 20000 charge; `paidCents`
+ * of it was paid in July.
+ */
+function clientWithPendingJune({
+  paidCents,
+}: {
+  paidCents: number;
+}): AppSupabaseClient {
+  const store = seedStore();
+  store.table("transactions").push(
+    tx({
+      id: "tx-jun-card-rox",
+      occurred_on: "2026-06-12",
+      description: "Mercado no cartão",
+      amount_cents: 20000,
+      credit_card_id: CARD_ROX,
+      invoice_month: "2026-06",
+    }),
+    billPayment("2026-06", paidCents),
+  );
+  return createFakeSupabaseClient(store) as unknown as AppSupabaseClient;
+}
+
 let client: AppSupabaseClient;
 
 beforeEach(() => {
-  client = createFakeSupabaseClient(seedStore()) as unknown as AppSupabaseClient;
+  client = createFakeSupabaseClient(
+    seedStore(),
+  ) as unknown as AppSupabaseClient;
 });
 
 describe("buildResumoData", () => {
@@ -266,39 +313,107 @@ describe("buildResumoData", () => {
     expect(data.loadError).toBeNull();
   });
 
-  it("projects the invoice PER CARD: direct purchases + parcelas due this month", async () => {
+  it("shows one open fatura block per card when nothing closed is pending (P3)", async () => {
     const data = await buildResumoData(client, HOUSEHOLD, NOW);
-    // listCreditCards orders by name: Azulzinho first.
+    // listCreditCards orders by name: Azulzinho first. Roxinho's June fatura
+    // closed on 28/06 with nothing in it, so it is not surfaced as pending.
     expect(data.cards).toEqual([
-      { id: CARD_AZUL, name: "Azulzinho", projectedCents: 10000, settled: false },
-      // 5000 direct (refund ignored) + 3334 July parcela; August parcela out.
-      { id: CARD_ROX, name: "Roxinho", projectedCents: 8334, settled: false },
+      {
+        id: CARD_AZUL,
+        name: "Azulzinho",
+        pending: null,
+        open: {
+          month: "2026-07",
+          closed: false,
+          totalCents: 10000,
+          status: "open",
+          badge: "aberta",
+        },
+      },
+      {
+        id: CARD_ROX,
+        name: "Roxinho",
+        pending: null,
+        // 5000 direct (refund ignored) + 3334 July parcela; August out.
+        open: {
+          month: "2026-07",
+          closed: false,
+          totalCents: 8334,
+          status: "open",
+          badge: "aberta",
+        },
+      },
     ]);
   });
 
-  it("marks a card settled when a kind='transfer' bill payment exists for the month", async () => {
-    const store = seedStore();
-    store.table("transactions").push(
-      tx({
-        id: "tx-jul-pagamento-rox",
-        kind: "transfer",
-        occurred_on: "2026-07-10",
-        description: "Pagamento fatura Roxinho",
-        amount_cents: 8334,
-        credit_card_id: CARD_ROX,
-        account_id: "acc-corrente",
-        category_id: null,
-        bill_month: "2026-07",
-      }),
+  it("puts a closed, partially paid fatura above the próxima one (P1)", async () => {
+    const data = await buildResumoData(
+      clientWithPendingJune({ paidCents: 5000 }),
+      HOUSEHOLD,
+      NOW,
     );
-    const settledClient = createFakeSupabaseClient(
-      store,
-    ) as unknown as AppSupabaseClient;
-    const data = await buildResumoData(settledClient, HOUSEHOLD, NOW);
-    expect(data.cards).toEqual([
-      { id: CARD_AZUL, name: "Azulzinho", projectedCents: 10000, settled: false },
-      { id: CARD_ROX, name: "Roxinho", projectedCents: 8334, settled: true },
-    ]);
+    expect(data.cards.find((c) => c.id === CARD_ROX)).toEqual({
+      id: CARD_ROX,
+      name: "Roxinho",
+      pending: {
+        month: "2026-06",
+        closed: true,
+        totalCents: 20000,
+        status: "closed_partial",
+        badge: "fechada · parcial, falta R$ 150,00",
+      },
+      open: {
+        month: "2026-07",
+        closed: false,
+        totalCents: 8334,
+        status: "open",
+        badge: "aberta",
+      },
+    });
+  });
+
+  it("collapses to the open fatura once the pending one is fully paid (P3)", async () => {
+    const data = await buildResumoData(
+      clientWithPendingJune({ paidCents: 20000 }),
+      HOUSEHOLD,
+      NOW,
+    );
+    const roxinho = data.cards.find((c) => c.id === CARD_ROX);
+    expect(roxinho?.pending).toBeNull();
+    expect(roxinho?.open.month).toBe("2026-07");
+  });
+
+  it("keeps the spending headline unchanged by closing, correcting and paying faturas (P8)", async () => {
+    const before = await buildResumoData(client, HOUSEHOLD, NOW);
+    const store = seedStore();
+    store.table("card_bill_closures").push({
+      id: "closure-rox-jul",
+      household_id: HOUSEHOLD,
+      credit_card_id: CARD_ROX,
+      bill_month: "2026-07",
+      state: "closed",
+      total_override_cents: 9000,
+      updated_by_user_id: ALVARO,
+    });
+    store.table("transactions").push(billPayment("2026-07", 9000));
+    const after = await buildResumoData(
+      createFakeSupabaseClient(store) as unknown as AppSupabaseClient,
+      HOUSEHOLD,
+      NOW,
+    );
+    const headline = (d: typeof before) => ({
+      totalSpentCents: d.totalSpentCents,
+      accountSpentCents: d.accountSpentCents,
+      cardSpentCents: d.cardSpentCents,
+      deltaVsPreviousCents: d.deltaVsPreviousCents,
+    });
+    expect(headline(after)).toEqual(headline(before));
+    // Only the fatura block moved: July closed with the corrected total and
+    // paid, so the open fatura is August's.
+    expect(after.cards.find((c) => c.id === CARD_ROX)).toMatchObject({
+      pending: null,
+      open: { month: "2026-08", closed: false },
+    });
   });
 
   it("counts pending review across months, excluding transfers", async () => {

@@ -2,10 +2,19 @@ import Link from "next/link";
 
 import { requireAuthorizedUser } from "../../../lib/auth";
 import { currentMemberName } from "../../../lib/member";
+import { faturaBadgeTone, faturaMonthNumber } from "../../../lib/fatura";
 import { formatBrlCents } from "../../../lib/format";
 import { RecentTransactions } from "../../../components/recent-transactions";
-import { Badge, Card, Delta, IconCard, IconTag, Kicker } from "../../../components/ui";
 import {
+  Badge,
+  Card,
+  Delta,
+  IconCard,
+  IconTag,
+  Kicker,
+} from "../../../components/ui";
+import {
+  type FaturaView,
   loadResumoData,
   monthLabelPtBr,
   spendingComparisonLabel,
@@ -19,6 +28,12 @@ export const metadata = {
 // Per-request, RLS-scoped data; never statically prerender.
 export const dynamic = "force-dynamic";
 
+/** "Fatura 09 · fechada" — the short label on a Resumo fatura block. */
+function faturaLabel(prefix: string, fatura: FaturaView): string {
+  return `${prefix} ${faturaMonthNumber(fatura.month)} · ${
+    fatura.closed ? "fechada" : "aberta"
+  }`;
+}
 
 /** Split "R$ 4.812,90" into ["R$ 4.812", ",90"] for the hero's smaller cents. */
 function splitCents(value: string): [string, string] {
@@ -48,8 +63,13 @@ export default async function ResumoPage() {
   } = data;
   const previousMonth = shiftMonth(month, -1);
   const name = await currentMemberName(email);
-  const [spentMain, spentCentsPart] = splitCents(formatBrlCents(totalSpentCents));
-  const comparison = spendingComparisonLabel(deltaVsPreviousCents, previousMonth);
+  const [spentMain, spentCentsPart] = splitCents(
+    formatBrlCents(totalSpentCents),
+  );
+  const comparison = spendingComparisonLabel(
+    deltaVsPreviousCents,
+    previousMonth,
+  );
 
   return (
     <section style={{ maxWidth: 980, margin: "0 auto" }}>
@@ -58,9 +78,13 @@ export default async function ResumoPage() {
       <p className="ff-hello-lead">Como estão as contas da casa?</p>
 
       {loadError ? (
-        <div role="alert" className="ff-alert ff-alert--negative" style={{ marginTop: 20 }}>
-          Não foi possível carregar o resumo agora; mostrando tudo zerado.{" "}
-          ({loadError})
+        <div
+          role="alert"
+          className="ff-alert ff-alert--negative"
+          style={{ marginTop: 20 }}
+        >
+          Não foi possível carregar o resumo agora; mostrando tudo zerado. (
+          {loadError})
         </div>
       ) : null}
 
@@ -111,7 +135,10 @@ export default async function ResumoPage() {
 
           {/* Pendentes de revisão */}
           {pendingCount > 0 ? (
-            <Link href="/transactions?pending=1" className="ff-callout ff-callout--warn">
+            <Link
+              href="/transactions?pending=1"
+              className="ff-callout ff-callout--warn"
+            >
               <span className="ff-callout__bubble">
                 <IconTag size={17} />
               </span>
@@ -127,7 +154,9 @@ export default async function ResumoPage() {
             </Link>
           ) : (
             <div className="ff-callout ff-callout--positive">
-              <span className="ff-callout__text">Tudo revisado por aqui ✨</span>
+              <span className="ff-callout__text">
+                Tudo revisado por aqui ✨
+              </span>
             </div>
           )}
 
@@ -140,22 +169,43 @@ export default async function ResumoPage() {
               <p className="ff-muted">Nenhum cartão cadastrado.</p>
             ) : (
               <div className="ff-cards-grid">
-                {cards.map((card) => (
-                  <Card key={card.id} hoverable className="ff-icard">
-                    <div className="ff-icard__head">
-                      <span className="ff-bubble">
-                        <IconCard size={17} />
-                      </span>
-                      <div className="ff-icard__name">
-                        {card.name}
-                        {card.settled ? <Badge tone="positive">paga ✅</Badge> : null}
+                {cards.map((card) => {
+                  // Pair rule: a pending closed fatura leads; the open one
+                  // drops to a small "Próxima" row below it (P1/P3).
+                  const main = card.pending ?? card.open;
+                  return (
+                    <Card key={card.id} hoverable className="ff-icard">
+                      <div className="ff-icard__head">
+                        <span className="ff-bubble">
+                          <IconCard size={17} />
+                        </span>
+                        <div className="ff-icard__name">{card.name}</div>
                       </div>
-                    </div>
-                    <div className="ff-icard__value ff-serif ff-num">
-                      {formatBrlCents(card.projectedCents)}
-                    </div>
-                  </Card>
-                ))}
+                      <div className="ff-icard__label">
+                        {faturaLabel("Fatura", main)}
+                      </div>
+                      <div className="ff-icard__value ff-serif ff-num">
+                        {formatBrlCents(main.totalCents)}
+                      </div>
+                      {/* The label already says "aberta"; no echo badge. */}
+                      {main.status === "open" ? null : (
+                        <div className="ff-icard__badge">
+                          <Badge tone={faturaBadgeTone(main.status)}>
+                            {main.badge}
+                          </Badge>
+                        </div>
+                      )}
+                      {card.pending === null ? null : (
+                        <div className="ff-icard__next">
+                          <span>{faturaLabel("Próxima", card.open)}</span>
+                          <span className="ff-num">
+                            {formatBrlCents(card.open.totalCents)}
+                          </span>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -170,7 +220,10 @@ export default async function ResumoPage() {
             </Link>
           </div>
           <div className="ff-listcard__body">
-            <RecentTransactions transactions={recent} formatCents={formatBrlCents} />
+            <RecentTransactions
+              transactions={recent}
+              formatCents={formatBrlCents}
+            />
           </div>
         </div>
       </div>

@@ -44,7 +44,9 @@ migrations=("$migrations_dir"/*.sql)
 previous_version=""
 for migration in "${migrations[@]}"; do
   filename="$(basename "$migration")"
-  [[ "$filename" =~ ^([0-9]{4})_[a-z0-9_]+\.sql$ ]] || \
+  # Legacy migrations use 4-digit numbers; new ones use a short UTC
+  # timestamp (YYYYMMDDHHMM) so parallel branches never collide.
+  [[ "$filename" =~ ^([0-9]{4}|[0-9]{12})_[a-z0-9_]+\.sql$ ]] || \
     fail "invalid migration filename: $filename"
   version="${BASH_REMATCH[1]}"
   [[ "$version" != "$previous_version" ]] || \
@@ -57,7 +59,7 @@ done
 command="${1:-}"
 case "$command" in
   status|apply|initialize) [[ $# -eq 1 ]] || usage ;;
-  baseline) [[ $# -eq 2 && "$2" =~ ^[0-9]{4}$ ]] || usage ;;
+  baseline) [[ $# -eq 2 && "$2" =~ ^([0-9]{4}|[0-9]{12})$ ]] || usage ;;
   *) usage ;;
 esac
 
@@ -70,7 +72,7 @@ select pg_advisory_xact_lock(728194613);
 create schema if not exists family_finance_migrations;
 revoke all on schema family_finance_migrations from public;
 create table if not exists family_finance_migrations.schema_migrations (
-  version text primary key check (version ~ '^[0-9]{4}$'),
+  version text primary key check (version ~ '^([0-9]{4}|[0-9]{12})$'),
   name text not null unique,
   checksum text not null check (checksum ~ '^[0-9a-f]{64}$'),
   applied_at timestamptz not null default now()
@@ -111,7 +113,7 @@ if [[ "$command" == "baseline" ]]; then
       'create schema if not exists family_finance_migrations;' \
       'revoke all on schema family_finance_migrations from public;' \
       'create table family_finance_migrations.schema_migrations (' \
-      "  version text primary key check (version ~ '^[0-9]{4}$')," \
+      "  version text primary key check (version ~ '^([0-9]{4}|[0-9]{12})$')," \
       '  name text not null unique,' \
       "  checksum text not null check (checksum ~ '^[0-9a-f]{64}$')," \
       '  applied_at timestamptz not null default now()' \
@@ -169,6 +171,10 @@ fi
 
 {
   printf '%s\n' '\set ON_ERROR_STOP on' "select pg_advisory_lock($lock_key);"
+  # Ledgers created before timestamp versions only accept 4-digit versions.
+  printf '%s\n' \
+    "alter table $ledger drop constraint if exists schema_migrations_version_check;" \
+    "alter table $ledger add constraint schema_migrations_version_check check (version ~ '^([0-9]{4}|[0-9]{12})\$');"
   for migration in "${migrations[@]}"; do
     filename="$(basename "$migration")"
     version="${filename%%_*}"

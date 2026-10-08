@@ -1404,6 +1404,57 @@ describe("conversation stores", () => {
     expect(loaded?.draft.createdByUserId).toBe("user-alvaro");
   });
 
+  it("round-trips a durable card-bill submission and retains it past the TTL", async () => {
+    const state: ConversationState = {
+      ...sampleState(),
+      status: "card_bill_submission_started",
+      cardBillDraft: {
+        idempotencyKey: "stable-payment-key",
+        cardId: "card-1",
+        amountCents: 123000,
+        paidOn: TODAY,
+        month: TODAY.slice(0, 7),
+        monthExplicit: false,
+        accountId: "acct-1",
+        createdByUserId: "user-alvaro",
+      },
+    };
+    const { client, tables } = fakeSupabase();
+    const store = createDbConversationStore(client);
+    await store.save("555", state);
+    expect(await store.load("555")).toEqual(state);
+    tables.bot_conversations![0]!.updated_at = new Date(
+      Date.now() - 25 * 60 * 60 * 1000,
+    ).toISOString();
+    expect(await store.load("555")).toEqual(state);
+    expect(tables.bot_conversations).toHaveLength(1);
+  });
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { cardId: "card-1", amountCents: 123000 },
+    { idempotencyKey: "", cardId: "card-1", amountCents: 123000 },
+    { idempotencyKey: "key", cardId: "", amountCents: 123000 },
+    { idempotencyKey: "key", cardId: "card-1", amountCents: "123000" },
+  ])("drops an invalid durable card-bill draft: %j", async (cardBillDraft) => {
+    const { client } = fakeSupabase({
+      bot_conversations: [
+        {
+          chat_id: 555,
+          state: {
+            ...sampleState(),
+            status: "card_bill_submission_started",
+            cardBillDraft,
+          },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+    expect(await createDbConversationStore(client).load("555")).toBeUndefined();
+  });
+
   it("treats a stale (>24h) row as absent and deletes it lazily", async () => {
     const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
     const { client, tables } = fakeSupabase({

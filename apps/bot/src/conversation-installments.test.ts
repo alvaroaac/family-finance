@@ -742,6 +742,7 @@ describe("card installment start: card resolution", () => {
           group: expect.objectContaining({ purchasedOn: expectedPurchasedOn }),
         }),
         expect.any(String),
+        undefined,
       );
     },
   );
@@ -1332,6 +1333,56 @@ describe("card installment confirm: incomplete draft parity", () => {
 });
 
 describe("card installment corrections", () => {
+  it.each(["valor 3.700", "parcelas 10", "cartão inter", "data 12/06"])(
+    "clears the pinned first open month after %s",
+    async (message) => {
+      const { deps } = buildDeps({
+        listActiveCards: () => [
+          { id: "card-1", name: "Nubank" },
+          { id: "card-2", name: "Inter" },
+        ],
+        classifyMessage: classifierReturning(
+          purchaseIntent({
+            totalCents: 360000,
+            installmentCount: 12,
+            cardKeyword: "nubank",
+          }),
+        ),
+      });
+      const state = await startDraft(deps);
+      state.installmentDraft!.firstOpenMonth = "2026-08";
+      const corrected = await applyMessage(state, message, deps, {
+        today: TODAY,
+      });
+      expect(corrected.state.installmentDraft?.firstOpenMonth).toBeUndefined();
+    },
+  );
+
+  it("clears the pinned first open month after a card picker correction", async () => {
+    const { deps } = buildDeps({
+      listActiveCards: () => [
+        { id: "card-1", name: "Nubank" },
+        { id: "card-2", name: "Inter" },
+      ],
+      classifyMessage: classifierReturning(
+        purchaseIntent({
+          totalCents: 360000,
+          installmentCount: 12,
+          cardKeyword: "nubank",
+        }),
+      ),
+    });
+    const state = await startDraft(deps);
+    state.installmentDraft!.firstOpenMonth = "2026-08";
+    const corrected = await applyCallback(
+      state,
+      `${CARD_TOKEN_PREFIX}card-2`,
+      deps,
+      { today: TODAY },
+    );
+    expect(corrected.state.installmentDraft?.firstOpenMonth).toBeUndefined();
+  });
+
   async function startDraft(
     deps: ConversationDeps,
   ): Promise<ConversationState> {
@@ -1490,6 +1541,7 @@ describe("card installment corrections", () => {
         group: expect.objectContaining({ purchasedOn: "2024-02-29" }),
       }),
       expect.any(String),
+      undefined,
     );
   });
 
@@ -2027,6 +2079,79 @@ describe("card installment confirm: persistence", () => {
     expect(createInstallmentPurchase.mock.calls[0]?.[1]).toBe(
       createInstallmentPurchase.mock.calls[1]?.[1],
     );
+  });
+
+  it("pins the resolved first open month across an uncertain save and retry", async () => {
+    const resolveInstallmentOpenMonth = vi
+      .fn()
+      .mockResolvedValueOnce("2026-08")
+      .mockResolvedValue("2026-09");
+    const createInstallmentPurchase = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({
+        groupId: "group-1",
+        creditCardId: "card-1",
+        description: "Notebook",
+        totalCents: 360000,
+        installmentCount: 12,
+        firstDueMonth: "2026-08",
+      });
+    const { deps } = buildDeps({
+      resolveInstallmentOpenMonth,
+      createInstallmentPurchase,
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const started = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const uncertain = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    expect(uncertain.state.status).toBe("installment_outcome_uncertain");
+    expect(uncertain.state.installmentDraft?.firstOpenMonth).toBe("2026-08");
+    const retried = await applyCallback(uncertain.state, TOKENS.confirm, deps, {
+      today: "2026-08-29",
+    });
+    expect(resolveInstallmentOpenMonth).toHaveBeenCalledTimes(1);
+    expect(resolveInstallmentOpenMonth).toHaveBeenCalledWith(
+      createInstallmentPurchase.mock.calls[0]?.[0],
+      started.state.installmentDraft?.idempotencyKey,
+    );
+    expect(createInstallmentPurchase).toHaveBeenCalledTimes(2);
+    expect(createInstallmentPurchase.mock.calls[1]).toEqual(
+      createInstallmentPurchase.mock.calls[0],
+    );
+    expect(createInstallmentPurchase.mock.calls[1]?.[2]).toBe("2026-08");
+    expect(retried.state.status).toBe("saved");
+    expect(retried.reply).toContain("1ª parcela ago/2026");
+  });
+
+  it("resolver failure keeps the installment draft retryable without saving", async () => {
+    const resolveInstallmentOpenMonth = vi.fn(async () => {
+      throw new Error("lookup failed");
+    });
+    const { deps, createInstallmentPurchase } = buildDeps({
+      resolveInstallmentOpenMonth,
+      classifyMessage: classifierReturning(
+        purchaseIntent({ totalCents: 360000, installmentCount: 12 }),
+      ),
+    });
+    const started = await startConversation(
+      { text: "notebook 3600 em 12x", fromUserId: "user-alvaro" },
+      deps,
+      { today: TODAY },
+    );
+    const uncertain = await applyMessage(started.state, "confirmar", deps, {
+      today: TODAY,
+    });
+    expect(uncertain.state.status).toBe("installment_outcome_uncertain");
+    expect(uncertain.state.installmentDraft?.firstOpenMonth).toBeUndefined();
+    expect(createInstallmentPurchase).not.toHaveBeenCalled();
   });
 
   it("persist throws -> uncertain message, state remains retryable, no interaction logged", async () => {
