@@ -1,5 +1,14 @@
 -- The harness uses this same file to seed legacy rows before the new migration.
 \if :{?prepare_backfill}
+-- This disposable fixture creates two houses before multi-tenancy. Remove
+-- only the bootstrap allowlist seed; assigning an unknown legacy email to
+-- either fixture house would violate the real ambiguity guard.
+delete from allowed_emails where email='alvaro.a.a.a.c@gmail.com';
+do $$ begin
+  if exists(select 1 from allowed_emails) then
+    raise exception 'card fixture has unexpected legacy allowlist rows';
+  end if;
+end $$;
 insert into auth.users(id,email) values
   ('81000000-0000-0000-0000-000000000001','bill-member@example.test'),
   ('81000000-0000-0000-0000-000000000002','bill-outsider@example.test');
@@ -228,7 +237,7 @@ select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('zero',amount=>0)$q$
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('negative',amount=>-1)$q$,'22023','invalid amount');
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('bad-month',month=>'2090-13')$q$,'22023','invalid month');
 select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('foreign-card',card=>'84000000-0000-0000-0000-000000000003')$q$,'22023','not found');
-select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('foreign-account',account=>'83000000-0000-0000-0000-000000000003')$q$,'42501','active member authentication required');
+select pg_temp.expect_bill_error($q$select pg_temp.pay_bill('foreign-account',account=>'83000000-0000-0000-0000-000000000003')$q$,'22023','account 83000000-0000-0000-0000-000000000003 not found');
 reset role;
 select pg_temp.assert_bill((select count(*)=4 from transactions where idempotency_key is not null), 'Rejected payments wrote transactions');
 

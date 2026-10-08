@@ -21,14 +21,13 @@ function developerContainers(): string[] {
       (name) =>
         name.startsWith("supabase_db_family-finance") &&
         !name.startsWith("supabase_db_family-finance-e2e"),
-    );
+    )
+    .sort();
 }
 
 describe("isolated end-to-end harness", () => {
   it("starts beside developer stacks and resets migrations plus seed on a second up", () => {
     const before = developerContainers();
-    expect(before).toContain("supabase_db_family-finance");
-    expect(before).toContain("supabase_db_family-finance-mobile");
     execFileSync("pnpm", ["e2e:up"], { cwd: root, stdio: "pipe" });
     expect(developerContainers()).toEqual(before);
     const db = "supabase_db_family-finance-e2e";

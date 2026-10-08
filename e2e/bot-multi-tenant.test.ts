@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { startBot } from "./lib/bot-process.js";
 import { startFakeTelegram, type SentMessage } from "./lib/fake-telegram.js";
 import {
   adminClient,
-  members,
+  disposeMultiTenantFixtures,
   provisionMultiTenantFixtures,
   testPassword,
 } from "./lib/multi-tenant-fixtures.js";
@@ -63,12 +63,16 @@ async function ensureAccount(householdId: string) {
 }
 
 describe("real bot webhook across households", () => {
+  let fixture: Awaited<ReturnType<typeof provisionMultiTenantFixtures>>;
   beforeAll(async () => {
-    await provisionMultiTenantFixtures();
+    fixture = await provisionMultiTenantFixtures(randomUUID());
+  });
+  afterAll(async () => {
+    if (fixture) await disposeMultiTenantFixtures(fixture);
   });
 
   it("separates writes, group drafts, callback ownership, recent expenses and member attribution", async () => {
-    const { ids, azul, verde } = await provisionMultiTenantFixtures();
+    const { ids, azul, verde } = fixture;
     await ensureAccount(azul);
     await ensureAccount(verde);
     const telegram = {
@@ -350,10 +354,16 @@ describe("real bot webhook across households", () => {
   }, 180_000);
 
   it("links only the code owner and rejects expired, missing, and already-bound codes", async () => {
-    const { ids, azul, verde } = await provisionMultiTenantFixtures();
+    const { ids, azul, verde, members } = fixture;
     await ensureAccount(azul);
     await ensureAccount(verde);
     const admin = adminClient();
+    const { data: fixtureMemberships, error: fixtureMemberError } = await admin
+      .from("household_members")
+      .select("id")
+      .in("user_id", Object.values(ids));
+    if (fixtureMemberError) throw fixtureMemberError;
+    const memberIds = fixtureMemberships.map((member) => member.id);
     const linkedId = Math.floor(Math.random() * 1_000_000_000) + 4_000_000_000;
     const outsiderId = linkedId + 1;
     const userId = linkedId + 2;
@@ -415,13 +425,23 @@ describe("real bot webhook across households", () => {
         "só funciona no chat privado",
       );
       expect(
-        (await admin.from("telegram_link_codes").select("member_id")).data,
+        (
+          await admin
+            .from("telegram_link_codes")
+            .select("member_id")
+            .in("member_id", memberIds)
+        ).data,
       ).toHaveLength(0);
       expect(await send(userId, `/vincular ${code}`)).toContain(
         "Não consegui vincular",
       );
       expect(
-        (await admin.from("telegram_link_codes").select("member_id")).data,
+        (
+          await admin
+            .from("telegram_link_codes")
+            .select("member_id")
+            .in("member_id", memberIds)
+        ).data,
       ).toHaveLength(0);
       const freshCode = await codeFor(members.ana.email);
       expect(await send(userId, `/vincular ${freshCode}`)).toContain(

@@ -21,7 +21,18 @@ export function adminClient() {
   );
 }
 
-export async function provisionMultiTenantFixtures() {
+export async function provisionMultiTenantFixtures(namespace?: string) {
+  const fixtureMembers = Object.fromEntries(
+    Object.entries(members).map(([key, value]) => [
+      key,
+      {
+        ...value,
+        email: namespace ? `${key}-${namespace}@e2e.test` : value.email,
+      },
+    ]),
+  ) as Record<keyof typeof members, { email: string; name: string }>;
+  const blueName = namespace ? `Casa Azul ${namespace}` : "Casa Azul";
+  const greenName = namespace ? `Casa Verde ${namespace}` : "Casa Verde";
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const themeDir = mkdtempSync(join(tmpdir(), "family-finance-theme-"));
   const themePath = join(themeDir, "theme.json");
@@ -37,15 +48,15 @@ export async function provisionMultiTenantFixtures() {
     for (const args of [
       [
         "--name",
-        "Casa Azul",
+        blueName,
         "--email",
-        members.ana.email,
+        fixtureMembers.ana.email,
         "--email",
-        members.bruno.email,
+        fixtureMembers.bruno.email,
         "--theme",
         themePath,
       ],
-      ["--name", "Casa Verde", "--email", members.carla.email],
+      ["--name", greenName, "--email", fixtureMembers.carla.email],
     ]) {
       execFileSync("node", ["scripts/create-household.mjs", ...args], {
         cwd: root,
@@ -67,7 +78,7 @@ export async function provisionMultiTenantFixtures() {
     string
   >;
   for (const key of Object.keys(members) as (keyof typeof members)[]) {
-    const member = members[key];
+    const member = fixtureMembers[key];
     const user = existing.users.find(
       (candidate) => candidate.email === member.email,
     );
@@ -84,14 +95,44 @@ export async function provisionMultiTenantFixtures() {
   const { data: households, error } = await admin
     .from("households")
     .select("id,name")
-    .in("name", ["Casa Azul", "Casa Verde"]);
+    .in("name", [blueName, greenName]);
   if (error) throw error;
-  const azul = households.find(
-    (household) => household.name === "Casa Azul",
-  )?.id;
+  const azul = households.find((household) => household.name === blueName)?.id;
   const verde = households.find(
-    (household) => household.name === "Casa Verde",
+    (household) => household.name === greenName,
   )?.id;
   if (!azul || !verde) throw new Error("Fixture households missing");
-  return { ids, azul, verde };
+  return { ids, azul, verde, members: fixtureMembers, namespace };
+}
+
+/** Dispose only namespaced fixtures; shared browser fixtures are preserved. */
+export async function disposeMultiTenantFixtures(
+  fixture: Awaited<ReturnType<typeof provisionMultiTenantFixtures>>,
+) {
+  if (!fixture.namespace)
+    throw new Error("Refusing to dispose shared fixtures");
+  const admin = adminClient();
+  const householdIds = [fixture.azul, fixture.verde];
+  // Closure/card RESTRICT edges require removing financial children first.
+  for (const table of [
+    "transactions",
+    "card_bill_closures",
+    "bot_interactions",
+    "bot_conversations",
+  ]) {
+    const { error } = await admin
+      .from(table)
+      .delete()
+      .in("household_id", householdIds);
+    if (error) throw new Error(`${table} fixture cleanup: ${error.message}`);
+  }
+  const { error } = await admin
+    .from("households")
+    .delete()
+    .in("id", householdIds);
+  if (error) throw error;
+  for (const userId of Object.values(fixture.ids)) {
+    const { error: userError } = await admin.auth.admin.deleteUser(userId);
+    if (userError) throw userError;
+  }
 }

@@ -150,13 +150,8 @@ begin
 end;
 $$;
 
--- The old overload must stay absent after migration replay. The compatibility
--- 3-arg wrapper delegates to the current member-gated 5-arg implementation.
-do $$ begin
-  if to_regprocedure('materialize_obligation_payment(uuid,text,date,bigint)') is not null then
-    raise exception 'replay revived the obsolete obligation payment gate';
-  end if;
-end $$;
+-- Both compatibility wrappers must delegate to the final member gate. The
+-- 4-arg overload is intentionally retained by 0018 (it is no longer the 0017 body).
 create or replace function auth.uid() returns uuid language sql stable
 as 'select null::uuid';
 create or replace function auth.role() returns text language sql stable
@@ -171,7 +166,12 @@ do $$ begin
   begin
     perform materialize_obligation_payment(
       '25000000-0000-0000-0000-000000000001','2026-09','2026-09-10');
-    raise exception 'compatibility wrapper bypassed obligation membership';
+    raise exception '3-arg compatibility wrapper bypassed obligation membership';
+  exception when invalid_parameter_value then null; end;
+  begin
+    perform materialize_obligation_payment(
+      '25000000-0000-0000-0000-000000000001','2026-09','2026-09-10',null::bigint);
+    raise exception '4-arg compatibility wrapper bypassed obligation membership';
   exception when invalid_parameter_value then null; end;
 end $$;
 reset role;
