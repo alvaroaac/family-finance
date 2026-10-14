@@ -5,7 +5,8 @@ const nextConfig = {
     "@family-finance/domain",
     "@family-finance/db",
     "@family-finance/config",
-    "@family-finance/categorization"
+    "@family-finance/categorization",
+    "@family-finance/import-service",
   ],
   // The shared packages are authored as NodeNext ESM TypeScript: intra-package
   // relative imports carry explicit `.js` extensions (required by `tsc` with
@@ -15,10 +16,10 @@ const nextConfig = {
   webpack(config) {
     config.resolve.extensionAlias = {
       ...(config.resolve.extensionAlias ?? {}),
-      ".js": [".ts", ".tsx", ".js", ".jsx"]
+      ".js": [".ts", ".tsx", ".js", ".jsx"],
     };
     return config;
-  }
+  },
 };
 
 export default nextConfig;

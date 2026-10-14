@@ -50,7 +50,11 @@ export default async function ImportBatchPage({
       <div style={{ marginTop: 24 }}>
         <Card>
           <p className="ff-note">
-            Fonte: {batch.source} ·{" "}
+            Fonte:{" "}
+            {batch.source === "agent_structured"
+              ? "Importação por agente"
+              : batch.source}{" "}
+            ·{" "}
             {batch.confirmed_at
               ? new Date(batch.confirmed_at).toLocaleString("pt-BR")
               : "não confirmado"}
