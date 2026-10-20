@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { isAllowedBotUrl, signBotRequest } from "../../../lib/bot-client";
 
 const PATH = "/internal/v1/import-category-suggestions";
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -37,9 +37,13 @@ export function signImportSuggestionRequest(args: {
   timestamp: number;
   nonce: string;
 }): string {
-  const bodyHash = createHash("sha256").update(args.body).digest("hex");
-  const canonical = `${args.timestamp}\n${args.nonce}\nPOST\n${PATH}\n${bodyHash}`;
-  return `v1=${createHmac("sha256", args.secret).update(canonical).digest("hex")}`;
+  return signBotRequest({
+    secret: args.secret,
+    path: PATH,
+    body: args.body,
+    now: args.timestamp * 1000,
+    nonce: args.nonce,
+  })["x-import-signature"] as string;
 }
 
 export async function requestImportSuggestions(args: {
@@ -51,18 +55,10 @@ export async function requestImportSuggestions(args: {
   if (args.secret.length < 32)
     throw new Error("Serviço de sugestões não configurado.");
   const url = new URL(PATH, args.baseUrl);
-  if (
-    url.protocol !== "https:" &&
-    !(
-      url.protocol === "http:" &&
-      ["localhost", "127.0.0.1"].includes(url.hostname)
-    )
-  ) {
+  if (!isAllowedBotUrl(url)) {
     throw new Error("O serviço de sugestões exige HTTPS.");
   }
   const body = JSON.stringify(args.body);
-  const timestamp = Math.floor(Date.now() / 1000);
-  const nonce = randomUUID();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs ?? 30_000);
   try {
@@ -70,14 +66,7 @@ export async function requestImportSuggestions(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-import-timestamp": String(timestamp),
-        "x-import-nonce": nonce,
-        "x-import-signature": signImportSuggestionRequest({
-          body,
-          secret: args.secret,
-          timestamp,
-          nonce,
-        }),
+        ...signBotRequest({ secret: args.secret, path: PATH, body }),
       },
       body,
       signal: controller.signal,

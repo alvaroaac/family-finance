@@ -14,6 +14,9 @@ export default defineConfig({
   // needed by the renderToStaticMarkup primitive tests.
   esbuild: { jsx: "automatic" },
   test: {
+    // `server-only` is not a dependency: Next aliases it at build time. Tests
+    // resolve it to Next's no-op build of the marker.
+    alias: { "server-only": "next/dist/compiled/server-only/empty" },
     // Vitest's default exclude list (node_modules, dist, .next, etc.) plus the
     // Playwright e2e specs so they never get collected by vitest.
     exclude: [
