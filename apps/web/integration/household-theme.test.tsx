@@ -342,6 +342,24 @@ describe("viewport", () => {
     expect((await generateViewport()).themeColor).toBe("#E8EDE3");
   });
 
+  it("uses the household --ff-bg override over the base background", async () => {
+    state.household.theme = {
+      base: "esmeralda",
+      overrides: { "--ff-bg": "#102030" },
+    };
+    state.cookie = "salvia";
+    expect((await generateViewport()).themeColor).toBe("#102030");
+  });
+
+  it("does not apply a household --ff-bg override to non-members", async () => {
+    state.auth = { status: "unauthenticated" };
+    state.household.theme = {
+      base: "esmeralda",
+      overrides: { "--ff-bg": "#102030" },
+    };
+    expect((await generateViewport()).themeColor).toBe("#16352B");
+  });
+
   it("matches the data-theme of the root element", async () => {
     state.household.theme = LOCKED;
     state.cookie = "esmeralda";

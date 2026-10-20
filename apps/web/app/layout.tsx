@@ -6,7 +6,6 @@ import { themeStyle } from "@family-finance/domain";
 import "./globals.css";
 import "../components/ui/ui.css";
 import { resolveRootTheme } from "../lib/root-theme";
-import { themeBackground } from "./(app)/settings/helpers";
 
 const playfair = Playfair_Display({
   weight: ["500", "600"],
@@ -36,8 +35,8 @@ export const metadata = {
 
 /** `cover` lets the page draw under the notch; the shell pads the safe areas. */
 export async function generateViewport(): Promise<Viewport> {
-  const { base } = await resolveRootTheme();
-  return { viewportFit: "cover", themeColor: themeBackground(base) };
+  const { background } = await resolveRootTheme();
+  return { viewportFit: "cover", themeColor: background };
 }
 
 /**
