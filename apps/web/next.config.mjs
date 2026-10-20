@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Quick capture posts up to 1 MB of recorded audio through a server action.
+  experimental: {
+    serverActions: { bodySizeLimit: "2mb" }
+  },
   transpilePackages: [
     "@family-finance/domain",
     "@family-finance/db",
