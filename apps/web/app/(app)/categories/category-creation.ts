@@ -11,8 +11,11 @@ import {
 
 const DIACRITICS_RE = /\p{Diacritic}/gu;
 
-/** The created, restored or already-active row, and the pt-BR outcome. */
-export type CategoryCreation = { id: string; message: string };
+/**
+ * The created, restored or already-active row, and the pt-BR outcome.
+ * `created` is false only when an active row with that name already existed.
+ */
+export type CategoryCreation = { id: string; message: string; created: boolean };
 
 function normalizedName(value: string): string {
   return value
@@ -46,17 +49,23 @@ export async function createOrRestoreCategory(
       return {
         id: existing.id,
         message: `A categoria “${existing.name}” já existe.`,
+        created: false,
       };
     }
     await restoreCategory(client, householdId, existing.id);
     return {
       id: existing.id,
       message: `Categoria “${existing.name}” restaurada.`,
+      created: true,
     };
   }
 
   const created = await createCategory(client, householdId, name, kind);
-  return { id: created.id, message: `Categoria “${name}” criada.` };
+  return {
+    id: created.id,
+    message: `Categoria “${name}” criada.`,
+    created: true,
+  };
 }
 
 export async function createOrRestoreSubcategory(
@@ -93,6 +102,7 @@ export async function createOrRestoreSubcategory(
     return {
       id: existing.id,
       message: `Subcategoria “${existing.name}” restaurada em ${parent.name}.`,
+      created: true,
     };
   }
 
@@ -105,5 +115,6 @@ export async function createOrRestoreSubcategory(
   return {
     id: created.id,
     message: `Subcategoria “${name}” criada em ${parent.name}.`,
+    created: true,
   };
 }

@@ -75,6 +75,7 @@ describe("createCategoryAction", () => {
       ok: true,
       message: "Categoria “Pets” criada.",
       id: created?.id,
+      created: true,
     });
   });
 
@@ -88,6 +89,8 @@ describe("createCategoryAction", () => {
 
     expect(first.ok && second.ok).toBe(true);
     expect(second.ok && second.id).toBe(first.ok && first.id);
+    expect(first.ok && first.created).toBe(true);
+    expect(second.ok && second.created).toBe(false);
     expect(store.table("categories").filter((c) => c.name === "Pets")).toHaveLength(1);
   });
 
@@ -112,6 +115,7 @@ describe("createSubcategoryAction", () => {
       ok: true,
       message: "Subcategoria “Feira” criada em Alimentação.",
       id: created?.id,
+      created: true,
     });
   });
 });

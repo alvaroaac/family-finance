@@ -57,6 +57,7 @@ describe("category creation", () => {
     );
 
     expect(result.message).toBe("Categoria “Salário” criada.");
+    expect(result.created).toBe(true);
     expect(store.table("categories")).toContainEqual(
       expect.objectContaining({
         id: result.id,
@@ -74,6 +75,7 @@ describe("category creation", () => {
     ).resolves.toEqual({
       id: "cat-food",
       message: "A categoria “Alimentação” já existe.",
+      created: false,
     });
     expect(store.table("categories")).toHaveLength(2);
   });
@@ -92,6 +94,7 @@ describe("category creation", () => {
     ).resolves.toEqual({
       id: "cat-old",
       message: "Categoria “Pets” restaurada.",
+      created: true,
     });
 
     expect(
@@ -111,6 +114,7 @@ describe("subcategory creation", () => {
     ).resolves.toEqual({
       id: "sub-old",
       message: "Subcategoria “Café” restaurada em Alimentação.",
+      created: true,
     });
 
     expect(store.table("subcategories")[0]?.is_active).toBe(true);

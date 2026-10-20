@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useTransition } from "react";
+import { useRef, useTransition, type FormEvent } from "react";
 
 import type { CategoryKind } from "@family-finance/db";
 
@@ -37,10 +37,17 @@ export function CategoryCreationPanel({
   const [categoryPending, startCategoryTransition] = useTransition();
   const [subcategoryPending, startSubcategoryTransition] = useTransition();
 
-  function submitCategory(formData: FormData) {
+  // onSubmit, not `action`: React resets an action form after every submit,
+  // and a name that already exists should stay in the field.
+  function submitCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     startCategoryTransition(async () => {
       const result = await createCategoryAction(formData);
-      if (result.ok) {
+      if (result.ok && !result.created) {
+        // Already active: nothing changed, so no success tone and no reset.
+        toast.warn(result.message);
+      } else if (result.ok) {
         categoryForm.current?.reset();
         toast.success(result.message);
       } else {
@@ -49,10 +56,14 @@ export function CategoryCreationPanel({
     });
   }
 
-  function submitSubcategory(formData: FormData) {
+  function submitSubcategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     startSubcategoryTransition(async () => {
       const result = await createSubcategoryAction(formData);
-      if (result.ok) {
+      if (result.ok && !result.created) {
+        toast.warn(result.message);
+      } else if (result.ok) {
         subcategoryForm.current?.reset();
         toast.success(result.message);
       } else {
@@ -93,7 +104,7 @@ export function CategoryCreationPanel({
           </div>
           <form
             ref={categoryForm}
-            action={submitCategory}
+            onSubmit={submitCategory}
             className="ff-category-create__form"
           >
             <Field label="Nome">
@@ -147,7 +158,7 @@ export function CategoryCreationPanel({
           </div>
           <form
             ref={subcategoryForm}
-            action={submitSubcategory}
+            onSubmit={submitSubcategory}
             className="ff-category-create__form"
           >
             <Field label="Categoria principal">
