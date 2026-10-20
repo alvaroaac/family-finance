@@ -187,6 +187,16 @@ export function IconClose(props: IconProps): ReactElement {
   );
 }
 
+export function IconMic(props: IconProps): ReactElement {
+  return (
+    <Svg {...props} strokeWidth={1.8}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5.5 11a6.5 6.5 0 0 0 13 0" />
+      <path d="M12 17.5V21" />
+    </Svg>
+  );
+}
+
 export function IconWifiOff(props: IconProps): ReactElement {
   return (
     <Svg {...props} strokeWidth={2}>

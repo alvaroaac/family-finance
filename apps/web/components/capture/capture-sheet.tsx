@@ -9,7 +9,6 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
-  type ReactNode,
 } from "react";
 
 import {
@@ -37,6 +36,7 @@ import {
   useToast,
 } from "../ui";
 import { useCaptureDraft } from "./use-capture-draft";
+import { VoiceButton, type VoicePhase } from "./voice-button";
 
 /**
  * Quick capture: describe a transaction in free text, let the AI fill the
@@ -50,6 +50,11 @@ type Loaded = { options: TransactionFieldOptions; defaults: TransactionFieldValu
 const FOCUSABLE = "button, input, select, textarea, a[href]";
 const CONFLICT_COPY = "Há regras conflitantes para este lugar — escolha a categoria";
 const OFFLINE_COPY = "Sem conexão — seu rascunho está salvo";
+const PLACEHOLDERS: Record<VoicePhase, string> = {
+  idle: "Ex.: 85 no mercado no nubank",
+  recording: "Ouvindo…",
+  transcribing: "Transcrevendo…",
+};
 
 function cx(...parts: Array<string | false | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -59,13 +64,10 @@ export function CaptureSheet({
   open,
   onClose,
   variant,
-  voice,
 }: {
   open: boolean;
   onClose: () => void;
   variant: "sheet" | "page";
-  /** Slot for the voice button (Task 10); the AI box shows no mic without it. */
-  voice?: ReactNode;
 }): ReactElement | null {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -226,7 +228,6 @@ export function CaptureSheet({
             closeOnNavigate={isSheet}
             online={online}
             setNetworkError={setNetworkError}
-            voice={voice}
           />
         )}
       </div>
@@ -300,7 +301,6 @@ function CaptureBody({
   closeOnNavigate,
   online,
   setNetworkError,
-  voice,
 }: {
   options: TransactionFieldOptions;
   defaults: TransactionFieldValues;
@@ -310,7 +310,6 @@ function CaptureBody({
   online: boolean;
   /** true after a request failed to reach the server, false once one gets through. */
   setNetworkError: (failed: boolean) => void;
-  voice?: ReactNode;
 }): ReactElement {
   const draft = useCaptureDraft(defaults, options);
   const { text, values, result, setField } = draft;
@@ -320,6 +319,7 @@ function CaptureBody({
   const fillRunning = useRef(false);
   const categoryToggle = useRef<HTMLButtonElement>(null);
   const [filling, setFilling] = useState(false);
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>("idle");
   const [message, setMessage] = useState<CaptureMessage | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -332,16 +332,18 @@ function CaptureBody({
     };
   }, []);
 
-  const canFill = text.trim() !== "" && !filling && online;
+  const canFill =
+    text.trim() !== "" && !filling && online && voicePhase === "idle";
   const canSave = values.amount.trim() !== "" && !saving;
 
-  async function fill(): Promise<void> {
-    if (fillRunning.current || !canFill) return;
+  /** `input` lets a transcript fill before the textarea's state catches up. */
+  async function fill(input: string = text): Promise<void> {
+    if (fillRunning.current || input.trim() === "" || !online) return;
     fillRunning.current = true;
     setFilling(true);
     setMessage(null);
     try {
-      const response = await suggestCaptureDraftAction(text);
+      const response = await suggestCaptureDraftAction(input);
       if (!alive.current) return;
       setNetworkError(false);
       if (response.ok) draft.applyDraft(response.draft, options);
@@ -364,7 +366,17 @@ function CaptureBody({
       return;
     }
     event.preventDefault();
-    void fill();
+    if (canFill) void fill();
+  }
+
+  function changeVoicePhase(phase: VoicePhase): void {
+    setVoicePhase(phase);
+    if (phase === "recording") setMessage(null);
+  }
+
+  function fillFromVoice(transcript: string): void {
+    draft.setText(transcript);
+    void fill(transcript);
   }
 
   async function save(): Promise<void> {
@@ -418,11 +430,17 @@ function CaptureBody({
 
   return (
     <div className="ff-capture__body" onKeyDown={onBodyKeyDown}>
-      <div className={cx("ff-capture__ai", filling && "ff-capture__ai--filling")}>
+      <div
+        className={cx(
+          "ff-capture__ai",
+          filling && "ff-capture__ai--filling",
+          voicePhase === "recording" && "ff-capture__ai--recording",
+        )}
+      >
         <textarea
           className="ff-capture__text"
           aria-label="Descreva o lançamento"
-          placeholder="Ex.: 85 no mercado no nubank"
+          placeholder={PLACEHOLDERS[voicePhase]}
           rows={2}
           maxLength={500}
           value={text}
@@ -430,7 +448,12 @@ function CaptureBody({
           onKeyDown={onTextKeyDown}
         />
         <div className="ff-capture__actions">
-          {voice}
+          <VoiceButton
+            disabled={!online || filling}
+            onPhase={changeVoicePhase}
+            onText={fillFromVoice}
+            onError={setMessage}
+          />
           <span className="ff-capture__hint">Enter preenche</span>
           <Button
             variant="primary"

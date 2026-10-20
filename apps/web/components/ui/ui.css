@@ -4814,6 +4814,10 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   border-color: var(--ff-accent);
 }
 
+.ff-capture__ai--recording {
+  border-color: var(--ff-negative);
+}
+
 .ff-capture__text {
   display: block;
   width: 100%;
@@ -4837,6 +4841,75 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* Voice: outline "Gravar" ↔ red "Parar" with a pulsing dot and the timer. */
+.ff-capture__mic {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid var(--ff-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ff-ink);
+  font: 500 14px var(--ff-font-body), Inter, sans-serif;
+  cursor: pointer;
+}
+
+.ff-capture__mic svg {
+  color: var(--ff-accent);
+}
+
+.ff-capture__mic:hover:not(:disabled) {
+  background: var(--ff-tint);
+  border-color: var(--ff-accent);
+}
+
+.ff-capture__mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ff-capture__mic--stop {
+  gap: 8px;
+  border-color: var(--ff-negative);
+  background: var(--ff-negative-wash);
+  font-weight: 600;
+}
+
+.ff-capture__mic--stop:hover:not(:disabled) {
+  border-color: var(--ff-negative);
+  background: var(--ff-negative-wash);
+}
+
+.ff-capture__rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ff-negative);
+  animation: ff-capture-pulse 1.2s ease-in-out infinite;
+}
+
+.ff-capture__timer {
+  font: 500 13px var(--ff-font-body), Inter, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--ff-ink-soft);
+}
+
+.ff-capture__timer-cap {
+  opacity: 0.6;
+}
+
+.ff-capture__transcribing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px;
+  color: var(--ff-ink-soft);
+  font: 500 14px var(--ff-font-body), Inter, sans-serif;
 }
 
 .ff-capture__hint {
@@ -5090,6 +5163,19 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   }
 }
 
+@keyframes ff-capture-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
 @keyframes ff-capture-fill {
   from {
     width: 0;
@@ -5153,5 +5239,9 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 
   .ff-capture__fillbar {
     animation-duration: 0.01s;
+  }
+
+  .ff-capture__rec-dot {
+    animation: none;
   }
 }

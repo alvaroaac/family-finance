@@ -11,9 +11,15 @@ import type { TransactionFieldOptions } from "../transaction-fields";
 import { ToastProvider } from "../ui";
 import { CaptureSheet } from "./capture-sheet";
 import { CAPTURE_DRAFT_KEY } from "./use-capture-draft";
+import {
+  installFakeMedia,
+  uninstallFakeMedia,
+  type FakeMedia,
+} from "./voice-test-fakes";
 
 const mocks = vi.hoisted(() => ({
   suggest: vi.fn(),
+  transcribe: vi.fn(),
   load: vi.fn(),
   createCategory: vi.fn(),
   createTransaction: vi.fn(),
@@ -22,6 +28,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../app/(app)/capture/actions", () => ({
   suggestCaptureDraftAction: mocks.suggest,
+  transcribeCaptureAudioAction: mocks.transcribe,
   loadCaptureOptionsAction: mocks.load,
 }));
 vi.mock("../../app/(app)/categories/actions", () => ({
@@ -504,6 +511,120 @@ describe("offline", () => {
     await click(fillButton());
     await flush();
     expect(document.querySelector(".ff-capture__offline")).toBeNull();
+  });
+});
+
+describe("voice", () => {
+  let media: FakeMedia;
+  const aiBox = () => document.querySelector<HTMLElement>(".ff-capture__ai");
+
+  beforeEach(async () => {
+    media = installFakeMedia();
+    await openSheet();
+  });
+
+  afterEach(uninstallFakeMedia);
+
+  async function record(): Promise<void> {
+    await click(button("Gravar"));
+    await flush();
+  }
+
+  async function stopRecording(): Promise<void> {
+    await click(button("Parar"));
+    await flush();
+    await flush();
+  }
+
+  it("puts the transcript in the text box and runs Preencher with it", async () => {
+    mocks.transcribe.mockResolvedValue({ ok: true, text: "85 no mercado no nubank" });
+    mocks.suggest.mockResolvedValue({ ok: true, intent: "plain", draft: draft() });
+    await type(textarea(), "rascunho antigo");
+
+    await record();
+    await stopRecording();
+
+    expect(textarea()?.value).toBe("85 no mercado no nubank");
+    expect(mocks.suggest).toHaveBeenCalledTimes(1);
+    expect(mocks.suggest).toHaveBeenCalledWith("85 no mercado no nubank");
+    expect(field("amount")?.value).toBe("85,00");
+  });
+
+  it("keeps the text and shows the negative banner when transcription fails", async () => {
+    mocks.transcribe.mockResolvedValue({
+      ok: false,
+      message: captureMessage("transcribe_failed"),
+    });
+    await type(textarea(), "rascunho antigo");
+
+    await record();
+    await stopRecording();
+
+    expect(textarea()?.value).toBe("rascunho antigo");
+    expect(mocks.suggest).not.toHaveBeenCalled();
+    expect(banner()?.textContent).toContain(captureMessage("transcribe_failed").text);
+    expect(banner()?.className).toContain("ff-capture__banner--neg");
+  });
+
+  it("shows the mic_denied banner when the mic is refused", async () => {
+    media.getUserMedia.mockRejectedValueOnce(
+      new DOMException("Permission denied", "NotAllowedError"),
+    );
+    await record();
+
+    expect(banner()?.textContent).toContain(captureMessage("mic_denied").text);
+    expect(banner()?.className).toContain("ff-capture__banner--warn");
+  });
+
+  it("reads Ouvindo… while recording and Transcrevendo… while transcribing, with Preencher off", async () => {
+    mocks.transcribe.mockReturnValue(new Promise(() => undefined));
+    await type(textarea(), "85 no mercado");
+
+    await record();
+    expect(textarea()?.placeholder).toBe("Ouvindo…");
+    expect(aiBox()?.className).toContain("ff-capture__ai--recording");
+    expect(fillButton()?.disabled).toBe(true);
+
+    await stopRecording();
+    expect(textarea()?.placeholder).toBe("Transcrevendo…");
+    expect(aiBox()?.className).not.toContain("ff-capture__ai--recording");
+    expect(fillButton()?.disabled).toBe(true);
+  });
+
+  it("disables Gravar while offline", async () => {
+    expect(button("Gravar")?.disabled).toBe(false);
+    await setOnline(false);
+    expect(button("Gravar")?.disabled).toBe(true);
+    await setOnline(true);
+    expect(button("Gravar")?.disabled).toBe(false);
+  });
+
+  it("disables Gravar while a fill runs", async () => {
+    const pending = deferred<unknown>();
+    mocks.suggest.mockReturnValue(pending.promise);
+    await type(textarea(), "85 no mercado");
+    await click(fillButton());
+
+    expect(button("Gravar")?.disabled).toBe(true);
+
+    await act(async () =>
+      pending.resolve({ ok: true, intent: "plain", draft: draft() }),
+    );
+    await flush();
+    expect(button("Gravar")?.disabled).toBe(false);
+  });
+
+  it("closing while recording stops the recorder, releases the mic and sends nothing", async () => {
+    await record();
+    const recorder = media.recorder();
+
+    await click(button("Fechar"));
+    await flush();
+
+    expect(dialog()).toBeNull();
+    expect(recorder.stop).toHaveBeenCalled();
+    expect(media.track.stop).toHaveBeenCalled();
+    expect(mocks.transcribe).not.toHaveBeenCalled();
   });
 });
 

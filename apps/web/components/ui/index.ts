@@ -41,6 +41,7 @@ export {
   IconGrid,
   IconHome,
   IconJar,
+  IconMic,
   IconPencil,
   IconPlus,
   IconPlusCircle,
