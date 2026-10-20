@@ -112,21 +112,6 @@ async function clickButton(text: string): Promise<void> {
   });
 }
 
-async function chooseIncome(): Promise<void> {
-  const tipo = container.querySelector('select[aria-label="Tipo"]');
-  if (tipo instanceof HTMLSelectElement) {
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype,
-        "value",
-      )?.set?.call(tipo, "income");
-      tipo.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    return;
-  }
-  await clickButton("Receita");
-}
-
 describe("NewTransactionForm FormData parity", () => {
   it("posts a parcelado card expense with every field", async () => {
     await fill("amount", "120,00");
@@ -181,7 +166,7 @@ describe("NewTransactionForm FormData parity", () => {
   it("posts income à vista on the first account after leaving a parcelado card", async () => {
     await fill("payment", "card:card-1");
     await fill("purchaseMode", "parcelado");
-    await chooseIncome();
+    await clickButton("Receita");
     await fill("amount", "3000");
     await fill("description", "Salário");
     await fill("occurredOn", "2026-10-07");

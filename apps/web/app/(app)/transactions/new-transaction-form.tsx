@@ -3,15 +3,20 @@
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { currentHouseholdDate } from "@family-finance/domain";
 
-import { Button, Field, Input, Select, useToast } from "../../../components/ui";
-import { parseReaisToCents } from "../../../lib/format";
+import {
+  TransactionFields,
+  emptyTransactionFieldValues,
+  toTransactionFormData,
+  validateTransactionFields,
+  type CategoryOption,
+  type PaymentOption,
+  type ResponsibleOption,
+  type SubcategoryOption,
+  type TransactionFieldKey,
+  type TransactionFieldValues,
+} from "../../../components/transaction-fields";
+import { Button, useToast } from "../../../components/ui";
 import { createManualTransactionAction } from "./actions";
-import type {
-  CategoryOption,
-  PaymentOption,
-  ResponsibleOption,
-  SubcategoryOption,
-} from "./transactions-table";
 
 /**
  * Focused "Novo lançamento" modal for /transactions. Client-side pre-checks
@@ -40,43 +45,11 @@ export function NewTransactionForm({
   const descriptionId = useId();
   const [open, setOpen] = useState(initiallyOpen);
   const [isSaving, startTransition] = useTransition();
-  const [kind, setKind] = useState<"expense" | "income">("expense");
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-  const [occurredOn, setOccurredOn] = useState(currentHouseholdDate());
-  const [categoryId, setCategoryId] = useState("");
-  const [subcategoryId, setSubcategoryId] = useState("");
-  const defaultExpensePayment =
-    accounts[0] !== undefined
-      ? `account:${accounts[0].id}`
-      : cards[0] !== undefined
-        ? `card:${cards[0].id}`
-        : "";
-  const [payment, setPayment] = useState(defaultExpensePayment);
-  const [purchaseMode, setPurchaseMode] = useState<"avista" | "parcelado">(
-    "avista",
+  const options = { accounts, cards, categories, subcategories, responsibles };
+  const [values, setValues] = useState(() =>
+    emptyTransactionFieldValues(options, currentHouseholdDate()),
   );
-  const [installmentCount, setInstallmentCount] = useState(2);
-  const [responsible, setResponsible] = useState("household");
   const [fieldError, setFieldError] = useState<string | null>(null);
-
-  const paymentOptions = [
-    ...accounts.map((a) => ({
-      value: `account:${a.id}`,
-      label: `Conta: ${a.name}`,
-    })),
-    ...(kind === "expense"
-      ? cards.map((c) => ({
-          value: `card:${c.id}`,
-          label: `Cartão: ${c.name}`,
-        }))
-      : []),
-  ];
-  const visibleCategories = categories.filter((c) => c.kind === kind);
-  const visibleSubcategories = subcategories.filter(
-    (s) => s.categoryId === categoryId,
-  );
-  const isCardExpense = kind === "expense" && payment.startsWith("card:");
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -86,17 +59,15 @@ export function NewTransactionForm({
     dialog.showModal();
   }, [open]);
 
+  function changeField<K extends TransactionFieldKey>(
+    key: K,
+    value: TransactionFieldValues[K],
+  ) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
+
   function reset() {
-    setKind("expense");
-    setAmount("");
-    setDescription("");
-    setOccurredOn(currentHouseholdDate());
-    setCategoryId("");
-    setSubcategoryId("");
-    setPayment(defaultExpensePayment);
-    setPurchaseMode("avista");
-    setInstallmentCount(2);
-    setResponsible("household");
+    setValues(emptyTransactionFieldValues(options, currentHouseholdDate()));
     setFieldError(null);
   }
 
@@ -111,36 +82,14 @@ export function NewTransactionForm({
   }
 
   function save() {
-    const cents = parseReaisToCents(amount);
-    if (cents === null || cents <= 0) {
-      setFieldError('Não entendi o valor — use algo como "56,13".');
-      return;
-    }
-    if (description.trim() === "") {
-      setFieldError("A descrição não pode ficar vazia.");
-      return;
-    }
-    if (payment === "") {
-      setFieldError("Escolha a conta ou o cartão do lançamento.");
-      return;
-    }
-    if (isCardExpense && purchaseMode === "parcelado" && installmentCount < 2) {
-      setFieldError("Informe pelo menos 2 parcelas.");
+    const invalid = validateTransactionFields(values);
+    if (invalid !== null) {
+      setFieldError(invalid);
       return;
     }
     setFieldError(null);
     startTransition(async () => {
-      const formData = new FormData();
-      formData.set("kind", kind);
-      formData.set("amount", amount);
-      formData.set("description", description);
-      formData.set("occurredOn", occurredOn);
-      formData.set("categoryId", categoryId);
-      formData.set("subcategoryId", subcategoryId);
-      formData.set("payment", payment);
-      formData.set("purchaseMode", isCardExpense ? purchaseMode : "avista");
-      formData.set("installmentCount", String(installmentCount));
-      formData.set("responsible", responsible);
+      const formData = toTransactionFormData(values);
       const result = await createManualTransactionAction(formData);
       if (!result.ok) {
         const message = result.error ?? "Não foi possível salvar o lançamento.";
@@ -148,7 +97,7 @@ export function NewTransactionForm({
         toast.error(message);
       } else {
         toast.success(
-          isCardExpense && purchaseMode === "parcelado"
+          formData.get("purchaseMode") === "parcelado"
             ? "Compra parcelada salva."
             : "Lançamento salvo.",
         );
@@ -203,169 +152,11 @@ export function NewTransactionForm({
             a compra foi à vista ou parcelada.
           </p>
 
-          <div className="ff-form-grid">
-            <Field label="Tipo">
-              <Select
-                value={kind}
-                aria-label="Tipo"
-                onChange={(e) => {
-                  const next =
-                    e.target.value === "income" ? "income" : "expense";
-                  setKind(next);
-                  // The other kind's categories are hidden — drop the pick.
-                  setCategoryId("");
-                  setSubcategoryId("");
-                  if (next === "income" && payment.startsWith("card:")) {
-                    setPayment(
-                      accounts[0] !== undefined
-                        ? `account:${accounts[0].id}`
-                        : "",
-                    );
-                    setPurchaseMode("avista");
-                  }
-                }}
-              >
-                <option value="expense">Despesa</option>
-                <option value="income">Entrada</option>
-              </Select>
-            </Field>
-
-            <Field label="Valor (R$)">
-              <Input
-                name="amount"
-                value={amount}
-                placeholder="56,13"
-                inputMode="decimal"
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </Field>
-
-            <Field label="Descrição">
-              <Input
-                name="description"
-                value={description}
-                placeholder="ex.: mercado"
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </Field>
-
-            <Field label="Data">
-              <Input
-                type="date"
-                name="occurredOn"
-                value={occurredOn}
-                onChange={(e) => setOccurredOn(e.target.value)}
-              />
-            </Field>
-
-            <Field label="Categoria">
-              <Select
-                name="categoryId"
-                value={categoryId}
-                onChange={(e) => {
-                  setCategoryId(e.target.value);
-                  setSubcategoryId("");
-                }}
-              >
-                <option value="">— sem categoria —</option>
-                {visibleCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label="Subcategoria">
-              <Select
-                name="subcategoryId"
-                value={subcategoryId}
-                disabled={categoryId === ""}
-                onChange={(e) => setSubcategoryId(e.target.value)}
-              >
-                <option value="">—</option>
-                {visibleSubcategories.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label="Pagamento">
-              <Select
-                name="payment"
-                value={payment}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setPayment(next);
-                  if (!next.startsWith("card:")) {
-                    setPurchaseMode("avista");
-                  }
-                }}
-              >
-                {paymentOptions.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            {isCardExpense ? (
-              <>
-                <Field label="Forma">
-                  <Select
-                    name="purchaseMode"
-                    value={purchaseMode}
-                    onChange={(e) =>
-                      setPurchaseMode(
-                        e.target.value === "parcelado" ? "parcelado" : "avista",
-                      )
-                    }
-                  >
-                    <option value="avista">À vista</option>
-                    <option value="parcelado">Parcelado</option>
-                  </Select>
-                </Field>
-
-                {purchaseMode === "parcelado" ? (
-                  <Field label="Parcelas">
-                    <Input
-                      type="number"
-                      name="installmentCount"
-                      min={2}
-                      max={48}
-                      step={1}
-                      value={installmentCount}
-                      onChange={(e) =>
-                        setInstallmentCount(
-                          Math.max(
-                            2,
-                            Number.parseInt(e.target.value || "2", 10),
-                          ),
-                        )
-                      }
-                    />
-                  </Field>
-                ) : null}
-              </>
-            ) : null}
-
-            <Field label="Responsável">
-              <Select
-                name="responsible"
-                value={responsible}
-                onChange={(e) => setResponsible(e.target.value)}
-              >
-                {responsibles.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
+          <TransactionFields
+            values={values}
+            onChange={changeField}
+            options={options}
+          />
 
           {fieldError !== null ? (
             <div role="alert" className="ff-alert ff-alert--negative">

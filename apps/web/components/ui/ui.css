@@ -3863,6 +3863,168 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   gap: 12px;
   margin-top: 12px;
 }
+
+/* ---- TransactionFields (Quick Capture.dc.html "Form") -------------------
+   Shared by "Novo lançamento" and the quick-capture sheet. Fields the AI
+   filled get the "IA" pill + tint/accent; `--warn` marks a category to pick. */
+.ff-txfields {
+  display: grid;
+  gap: 12px;
+}
+
+.ff-txfields__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ff-txfields__heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ff-ink-soft);
+}
+
+.ff-txfields__kind .ff-seg {
+  padding: 3px;
+}
+
+.ff-txfields__kind .ff-seg__item {
+  min-height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ff-txfields__kind .ff-seg__item--on {
+  background: var(--ff-surface);
+}
+
+.ff-txfields__kind--expense .ff-seg__item--on {
+  color: var(--ff-negative);
+}
+
+.ff-txfields__kind--income .ff-seg__item--on {
+  color: var(--ff-positive);
+}
+
+.ff-txfields__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.ff-txfields__field--wide {
+  grid-column: 1 / -1;
+}
+
+.ff-txfields__label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ff-txfields__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  font-size: 10px;
+}
+
+.ff-txfields__ai-pill {
+  padding: 1px 6px;
+  border-radius: var(--ff-radius-pill);
+  background: var(--ff-tint);
+  color: var(--ff-accent);
+  font-weight: 600;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.ff-txfields__grid .ff-input,
+.ff-txfields__grid .ff-select__control,
+.ff-txfields__money {
+  min-height: 44px;
+}
+
+.ff-txfields__money {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  background: var(--ff-surface-soft);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-sm);
+  padding: 0 13px;
+}
+
+.ff-txfields__money:focus-within {
+  border-color: var(--ff-accent);
+  box-shadow: 0 0 0 3px var(--ff-tint);
+}
+
+.ff-txfields__currency {
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-txfields__money-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--ff-ink);
+  font-family: var(--ff-font-display), "Playfair Display", serif;
+  font-weight: 600;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ff-input.ff-txfields--ai,
+.ff-txfields__money.ff-txfields--ai,
+.ff-txfields--ai .ff-select__control {
+  background: var(--ff-tint);
+  border-color: var(--ff-accent);
+}
+
+.ff-txfields--warn .ff-select__control {
+  border-color: var(--ff-warn);
+}
+
+@media (max-width: 520px) {
+  .ff-txfields__kind .ff-seg__item {
+    min-height: 34px;
+  }
+
+  .ff-txfields__grid {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 14px 10px;
+  }
+
+  /* 16px keeps iOS from zooming into the focused field. */
+  .ff-txfields__grid .ff-input,
+  .ff-txfields__grid .ff-select__control {
+    min-height: 46px;
+    font-size: 16px;
+  }
+
+  .ff-txfields__money {
+    min-height: 46px;
+  }
+}
 @keyframes ff-import-updated {
   from {
     box-shadow: inset 4px 0 var(--ff-accent, #55bda4);
