@@ -366,6 +366,59 @@ describe("Preencher", () => {
   });
 });
 
+describe("suggestion chips", () => {
+  const SALARY = "00000000-0000-4000-8000-000000000007";
+  const chipNames = () =>
+    [...document.querySelectorAll(".ff-capture__chip")].map((c) => c.textContent);
+  const radio = (text: string) =>
+    [...document.querySelectorAll('[role="radio"]')].find(
+      (candidate) => candidate.textContent === text,
+    ) ?? null;
+
+  beforeEach(async () => {
+    mocks.load.mockResolvedValue({
+      ...loaded,
+      options: {
+        ...options,
+        categories: [
+          ...options.categories,
+          { id: SALARY, name: "Salário", kind: "income" },
+        ],
+      },
+    });
+    await openSheet();
+    mocks.suggest.mockResolvedValue({
+      ok: true,
+      intent: "plain",
+      draft: draft({
+        categoryId: undefined,
+        needsReview: true,
+        candidates: [
+          { categoryId: "00000000-0000-4000-8000-0000000000ee", explanation: "?" },
+          { categoryId: FOOD, explanation: "a" },
+          { categoryId: SALARY, explanation: "b" },
+          { categoryId: FUN, explanation: "c" },
+        ],
+      }),
+    });
+    await type(textarea(), "85 no mercado");
+    await click(fillButton());
+    await flush();
+  });
+
+  it("shows only known candidates of the current kind and follows a kind change", async () => {
+    expect(chipNames()).toEqual(["Alimentação", "Lazer"]);
+
+    await click(radio("Receita"));
+    expect(chipNames()).toEqual(["Salário"]);
+    await click(document.querySelector(".ff-capture__chip"));
+    expect(field<HTMLSelectElement>("categoryId")?.value).toBe(SALARY);
+
+    await click(radio("Despesa"));
+    expect(chipNames()).toEqual(["Alimentação", "Lazer"]);
+  });
+});
+
 describe("message banner", () => {
   beforeEach(openSheet);
 

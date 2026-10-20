@@ -468,6 +468,14 @@ function CaptureBody({
   }
 
   const needsCategory = result?.needsReview === true && values.categoryId === "";
+  // A chip must never put a category of the other kind back after Tipo changed.
+  const chips = (result?.candidates ?? [])
+    .filter(
+      (candidate) =>
+        options.categories.find((c) => c.id === candidate.categoryId)?.kind ===
+        values.kind,
+    )
+    .slice(0, 3);
 
   return (
     <div className="ff-capture__body" onKeyDown={onBodyKeyDown}>
@@ -526,9 +534,9 @@ function CaptureBody({
           {result.needsReview ? (
             <p className="ff-capture__conflict">{CONFLICT_COPY}</p>
           ) : null}
-          {result.candidates.length > 0 ? (
+          {chips.length > 0 ? (
             <div className="ff-capture__chips">
-              {result.candidates.slice(0, 3).map((candidate) => (
+              {chips.map((candidate) => (
                 <button
                   key={`${candidate.categoryId}:${candidate.subcategoryId ?? ""}`}
                   type="button"
