@@ -29,7 +29,10 @@ In:
 Out (deliberately): cash-flow simulation (later round), offline queue,
 service worker, push notifications, install-prompt banner, share-sheet
 target, `packages/intake` extraction, any `/api/mobile` surface, capture of
-obligations / fatura payments / card-bill flows (Telegram keeps those).
+obligations / fatura payments / card-bill flows (Telegram keeps those), and
+a general assistant memory (free-form notes the AI remembers about the
+household) — that is a separate feature; capture only reads the existing
+categorization memory.
 
 ## Key decisions
 
@@ -45,6 +48,13 @@ obligations / fatura payments / card-bill flows (Telegram keeps those).
 | Service worker | **None** | Not needed to install; offline is handled by the saved draft. Trade-off: launching the app with no signal at all shows the phone's own "no connection" screen. |
 | Audio limits | **≤ 60 s, ≤ 1 MB of raw audio** | iOS AAC at ~64 kbps ≈ 480 KB/min. Requires raising the server-action body limit to 2 MB. |
 | Rate limiting | **In-memory limit per household on the bot: 20 capture calls per minute, max 2 at once** | Cost per call is tiny; the import flow's DB budget reservation is built for bulk paid fallback and is overkill here. |
+
+**The catalog** is the household's own lists the AI may choose from when it
+fills the form: its categories and subcategories, its accounts, its credit
+cards, and its categorization memory (merchant → category rules learned from
+past corrections, the `categorization_memory` table). The bot needs these to
+turn "85 no mercado no nubank" into *Mercado* + the *Nubank* card; it may
+only return ids from this list.
 
 The web sends the catalog; the bot never reads household data for capture.
 Since multi-tenancy the bot *could* load it itself as the member
@@ -107,14 +117,14 @@ context: startConversation mixes parsing, routing (financial-routing.ts), classi
 label: Pipeline is separable
 statement: The parse → route → classify → categorize → account-match steps in startConversation can be pulled out without changing any Telegram reply, given the existing conversation test suite as the safety net.
 quote: extracts its stateless part into one function
-context: Not yet verified line by line; based on a skim of conversation.ts on main.
+context: Not yet verified line by line; based on a skim of conversation.ts on main. Step 5 starts by mapping startConversation; if the extraction would change any Telegram reply, it stops and reports, and capture falls back to option B for this release.
 ```
 
 - Category runtime: the handler gets `categorizer` from the same
   `createCategoryRuntime(env)` instance `index.ts` builds, and the
   classifier from the same `withClassifierDeadline(...)` wiring. No new env.
-- Memory: the request's memory entries are wrapped in an in-memory
-  `CategorizationMemoryStore` so `suggestCategory` runs unchanged.
+- Categorization memory: the request's memory entries are wrapped in an
+  in-memory `CategorizationMemoryStore` so `suggestCategory` runs unchanged.
 - Transcribe handler: reuses `audio.ts`. Add a buffer entry point next to
   `transcribeVoiceMessage`, which today takes a Telegram file ref; both share
   the temp-file + Whisper step. No `OPENAI_API_KEY` → 503.
@@ -142,7 +152,9 @@ catalog: {
 }
 ```
 
-`memory` uses the `CategorizationMemoryEntry` type from
+`memory` is categorization memory only — the merchant → category rules
+the Telegram bot and imports already use, not a general assistant memory.
+It uses the `CategorizationMemoryEntry` type from
 `@family-finance/categorization` as-is (including the optional `matchKind`,
 `rowKind`, `normalizerVersion`), and the web loads it with the same
 `listActiveCategorizationMemory` the import flow uses. When the
@@ -150,8 +162,8 @@ merchant-evidence branch lands (`learningStatus`, conflicting-rule review),
 the contract follows the type with no separate change.
 
 ```assumption id=memory-type-follows
-label: Memory shape follows the package type
-statement: Deriving the zod schema for catalog.memory from CategorizationMemoryEntry keeps capture correct when the merchant-evidence branch adds learningStatus, with only a schema field added.
+label: Categorization rules follow the package type
+statement: Deriving the zod schema for catalog.memory (merchant → category rules) from CategorizationMemoryEntry keeps capture correct when the merchant-evidence branch adds learningStatus to those rules, with only one schema field added.
 quote: the contract follows the type with no separate change
 context: That branch also makes resolveMemory report conflicting confirmed rules; the response's needsReview flag below is reserved for it.
 ```
@@ -332,3 +344,7 @@ needs 7 and 9.
 - **Manual on real phones:** iOS login (Risk 1); install on iOS Safari and
   Android Chrome; voice on both; safe areas in installed mode.
 - **Gates:** `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm build`.
+
+```reply thread=t_fnfrx2
+The household's own lists the AI picks from: categories, subcategories, accounts, credit cards, and the merchant → category rules (categorization memory). Added a definition right above this paragraph.
+```
