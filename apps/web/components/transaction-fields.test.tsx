@@ -361,6 +361,14 @@ describe("TransactionFields", () => {
     );
   });
 
+  it("names the amount input with R$ and without the IA pill", async () => {
+    await render({}, { aiFilled: new Set<TransactionFieldKey>(["amount"]) });
+
+    const name = field("amount")?.getAttribute("aria-label") ?? "";
+    expect(name).toContain("R$");
+    expect(name).not.toContain("IA");
+  });
+
   it("tints selects the AI filled and leaves the rest plain", async () => {
     await render(
       {},

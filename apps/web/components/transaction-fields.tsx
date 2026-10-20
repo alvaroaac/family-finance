@@ -173,8 +173,14 @@ export function TransactionFields({
   aiFilled,
   categoryHighlight,
   categoryAction,
+  categoryField,
 }: {
   values: TransactionFieldValues;
+  /**
+   * May fire several times for one interaction (e.g. a kind change also
+   * clears the category), each with `values` from the same render. Merge with
+   * a functional update: `setValues((current) => ({ ...current, [key]: value }))`.
+   */
   onChange: <K extends TransactionFieldKey>(
     key: K,
     value: TransactionFieldValues[K],
@@ -184,6 +190,8 @@ export function TransactionFields({
   categoryHighlight?: "warn";
   /** Rendered right of the Categoria label (e.g. "+ Nova categoria"). */
   categoryAction?: ReactNode;
+  /** Replaces the Categoria select (e.g. an inline "new category" input). */
+  categoryField?: ReactNode;
 }): ReactElement {
   const idPrefix = useId();
   const id = (key: TransactionFieldKey) => `${idPrefix}-${key}`;
@@ -266,6 +274,7 @@ export function TransactionFields({
             <input
               id={id("amount")}
               name="amount"
+              aria-label="Valor (R$)"
               className="ff-txfields__money-input"
               value={values.amount}
               placeholder="0,00"
@@ -394,23 +403,25 @@ export function TransactionFields({
           wide
           action={categoryAction}
         >
-          <Select
-            id={id("categoryId")}
-            name="categoryId"
-            className={cx(
-              aiClass("categoryId"),
-              categoryHighlight === "warn" && "ff-txfields--warn",
-            )}
-            value={values.categoryId}
-            onChange={(e) => changeCategory(e.target.value)}
-          >
-            <option value="">Escolha…</option>
-            {visibleCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          {categoryField ?? (
+            <Select
+              id={id("categoryId")}
+              name="categoryId"
+              className={cx(
+                aiClass("categoryId"),
+                categoryHighlight === "warn" && "ff-txfields--warn",
+              )}
+              value={values.categoryId}
+              onChange={(e) => changeCategory(e.target.value)}
+            >
+              <option value="">Escolha…</option>
+              {visibleCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          )}
         </FieldBlock>
 
         {visibleSubcategories.length > 0 ? (
