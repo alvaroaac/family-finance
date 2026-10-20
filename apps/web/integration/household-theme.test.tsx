@@ -65,6 +65,7 @@ vi.mock("../lib/auth", () => ({
   requireAuthorizedUser: async () => ({
     email: "ana@e2e.test",
     householdId: "h",
+    userId: "u",
   }),
 }));
 vi.mock("../lib/member", async (importOriginal) => {

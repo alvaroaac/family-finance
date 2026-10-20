@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { act, type ComponentProps } from "react";
+import { act, useContext, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CaptureAppShell } from "./capture-app-shell";
+import { CaptureUserContext } from "./capture-sheet";
 
 const nav = vi.hoisted(() => ({ pathname: "/resumo" }));
 
@@ -15,10 +16,20 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/link", () => ({
   default: (props: ComponentProps<"a">) => <a {...props} />,
 }));
-vi.mock("./capture-sheet", () => ({
-  CaptureSheet: ({ open }: { open: boolean }) =>
-    open ? <div className="ff-capture" /> : null,
-}));
+vi.mock("./capture-sheet", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./capture-sheet")>();
+  return {
+    ...actual,
+    CaptureSheet: ({ open }: { open: boolean }) => {
+      const userId = useContext(actual.CaptureUserContext);
+      return open ? <div className="ff-capture" data-user={userId} /> : null;
+    },
+  };
+});
+
+function PageUser() {
+  return <p className="page-user">{useContext(CaptureUserContext)}</p>;
+}
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -39,8 +50,9 @@ async function render(pathname: string): Promise<void> {
         ]}
         householdName="Casa Azul"
         user={{ initial: "M", name: "Member", email: "member@example.test" }}
+        userId="user-1"
       >
-        <p>Page content</p>
+        <PageUser />
       </CaptureAppShell>,
     ),
   );
@@ -71,6 +83,20 @@ describe("CaptureAppShell", () => {
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(container.querySelector(".ff-capture")).not.toBeNull();
+  });
+
+  it("gives the sheet and the page the signed-in user's id for the draft key", async () => {
+    await render("/resumo");
+    expect(container.querySelector(".page-user")?.textContent).toBe("user-1");
+
+    await act(async () => {
+      container
+        .querySelector(".ff-bottomnav__new")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector(".ff-capture")?.getAttribute("data-user")).toBe(
+      "user-1",
+    );
   });
 
   it("hides the Novo lançamento entries on /capture", async () => {

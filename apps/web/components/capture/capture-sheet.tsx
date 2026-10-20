@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -47,6 +49,13 @@ import { VoiceButton, type VoicePhase } from "./voice-button";
 
 type Loaded = { options: TransactionFieldOptions; defaults: TransactionFieldValues };
 
+/**
+ * The signed-in user's id, which keys the stored draft. Provided by
+ * CaptureAppShell from the server layout, so the sheet and the `/capture`
+ * page (a child of the shell) both read it.
+ */
+export const CaptureUserContext = createContext<string | null>(null);
+
 const FOCUSABLE = "button, input, select, textarea, a[href]";
 const CONFLICT_COPY = "Há regras conflitantes para este lugar — escolha a categoria";
 const OFFLINE_COPY = "Sem conexão — seu rascunho está salvo";
@@ -75,6 +84,10 @@ export function CaptureSheet({
   const [loadFailed, setLoadFailed] = useState(false);
   const [online, setOnline] = useState(true);
   const [networkError, setNetworkError] = useState(false);
+  const userId = useContext(CaptureUserContext);
+  if (userId === null) {
+    throw new Error("CaptureSheet must render inside CaptureUserContext");
+  }
   const loading = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -223,6 +236,7 @@ export function CaptureSheet({
           <CaptureLoading failed={loadFailed} />
         ) : (
           <CaptureBody
+            userId={userId}
             options={loaded.options}
             defaults={loaded.defaults}
             onCategoryCreated={addCategory}
@@ -294,8 +308,9 @@ function Banner({
   );
 }
 
-/** Mounted once per open, so edit protection and the restored draft are per open. */
+/** Mounted once per open; the draft, with its edit protection, is restored from storage. */
 function CaptureBody({
+  userId,
   options,
   defaults,
   onCategoryCreated,
@@ -304,6 +319,7 @@ function CaptureBody({
   online,
   setNetworkError,
 }: {
+  userId: string;
   options: TransactionFieldOptions;
   defaults: TransactionFieldValues;
   onCategoryCreated: (category: CategoryOption) => void;
@@ -313,7 +329,7 @@ function CaptureBody({
   /** true after a request failed to reach the server, false once one gets through. */
   setNetworkError: (failed: boolean) => void;
 }): ReactElement {
-  const draft = useCaptureDraft(defaults, options);
+  const draft = useCaptureDraft(userId, defaults, options);
   const { text, values, result, setField } = draft;
   const router = useRouter();
   const toast = useToast();

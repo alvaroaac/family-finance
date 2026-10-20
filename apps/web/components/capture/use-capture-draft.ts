@@ -14,13 +14,16 @@ import type {
  * State of one quick-capture draft: the free text, the editable field values,
  * which fields the AI filled, and the last fill's explanation/candidates.
  * Text, values and the set of user-edited fields survive a closed sheet or a
- * reload through localStorage.
+ * reload through localStorage, under a key per signed-in user.
  *
  * Fields the user edits (since the last `discard`) are protected: a later
  * `applyDraft` never overwrites them.
  */
 
-export const CAPTURE_DRAFT_KEY = "ff-capture-draft";
+/** Per user, so a shared browser never shows one member's draft to another. */
+export function captureDraftKey(userId: string): string {
+  return `ff-capture-draft:${userId}`;
+}
 
 export type CaptureResult = {
   explanation: string;
@@ -45,11 +48,12 @@ const PURCHASE_MODES: ReadonlyArray<TransactionFieldValues["purchaseMode"]> = [
  * missing or malformed edited set restores as empty.
  */
 function readStored(
+  key: string,
   defaults: TransactionFieldValues,
   options: TransactionFieldOptions,
 ): Stored | null {
   try {
-    const raw = localStorage.getItem(CAPTURE_DRAFT_KEY);
+    const raw = localStorage.getItem(key);
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
@@ -130,10 +134,10 @@ function fitCategory(
   return values;
 }
 
-function writeStored(stored: Stored | null): void {
+function writeStored(key: string, stored: Stored | null): void {
   try {
-    if (stored === null) localStorage.removeItem(CAPTURE_DRAFT_KEY);
-    else localStorage.setItem(CAPTURE_DRAFT_KEY, JSON.stringify(stored));
+    if (stored === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(stored));
   } catch {
     // Storage full or blocked: the draft just doesn't survive a reload.
   }
@@ -211,10 +215,12 @@ function toResult(
 }
 
 export function useCaptureDraft(
+  userId: string,
   defaults: TransactionFieldValues,
   options: TransactionFieldOptions,
 ) {
-  const [initial] = useState(() => readStored(defaults, options));
+  const key = captureDraftKey(userId);
+  const [initial] = useState(() => readStored(key, defaults, options));
   const [text, setText] = useState(initial?.text ?? "");
   // One state so a fill can drop the AI mark of a field `fitCategory` cleared.
   const [form, setForm] = useState<{
@@ -228,11 +234,12 @@ export function useCaptureDraft(
 
   useEffect(() => {
     writeStored(
+      key,
       isPristine(text, values, defaultsRef.current)
         ? null
         : { text, values, edited: [...edited.current] },
     );
-  }, [text, values]);
+  }, [key, text, values]);
 
   const setField = useCallback(
     <K extends TransactionFieldKey>(key: K, value: TransactionFieldValues[K]) => {
@@ -277,8 +284,8 @@ export function useCaptureDraft(
     setText("");
     setForm({ values: defaultsRef.current, aiFilled: new Set() });
     setResult(null);
-    writeStored(null);
-  }, []);
+    writeStored(key, null);
+  }, [key]);
 
   return { text, setText, values, setField, aiFilled, applyDraft, result, discard };
 }

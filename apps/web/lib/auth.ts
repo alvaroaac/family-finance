@@ -29,7 +29,7 @@ export function evaluateAccess(
 export type ServerAuthState =
   | { status: "unauthenticated" }
   | { status: "forbidden"; email: string }
-  | { status: "authorized"; email: string; householdId: string };
+  | { status: "authorized"; email: string; householdId: string; userId: string };
 
 /** Resolve the current session and its active household under the user's RLS. */
 export const getAuthState = cache(async (): Promise<ServerAuthState> => {
@@ -45,7 +45,7 @@ export const getAuthState = cache(async (): Promise<ServerAuthState> => {
     const householdId = await findHouseholdIdForCurrentUser(supabase);
     const decision = evaluateAccess({ email: data.user.email }, householdId);
     return decision.status === "authorized"
-      ? { ...decision, householdId: householdId! }
+      ? { ...decision, householdId: householdId!, userId: data.user.id }
       : decision;
   } catch {
     // Auth and membership query failures both fail closed as signed out.
@@ -53,16 +53,21 @@ export const getAuthState = cache(async (): Promise<ServerAuthState> => {
   }
 });
 
-/** Guard protected routes and return the authorized member's household. */
+/** Guard protected routes and return the authorized member and household. */
 export async function requireAuthorizedUser(): Promise<{
   email: string;
   householdId: string;
+  userId: string;
 }> {
   const { redirect } = await import("next/navigation");
   const state = await getAuthState();
 
   if (state.status === "authorized") {
-    return { email: state.email, householdId: state.householdId };
+    return {
+      email: state.email,
+      householdId: state.householdId,
+      userId: state.userId,
+    };
   }
   if (state.status === "forbidden") {
     return redirect(`/login?denied=1&email=${encodeURIComponent(state.email)}`);

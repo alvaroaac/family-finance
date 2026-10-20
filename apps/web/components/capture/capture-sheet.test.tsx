@@ -9,8 +9,8 @@ import CapturePage from "../../app/(app)/capture/page";
 import { captureMessage } from "../../lib/capture-copy";
 import type { TransactionFieldOptions } from "../transaction-fields";
 import { ToastProvider } from "../ui";
-import { CaptureSheet } from "./capture-sheet";
-import { CAPTURE_DRAFT_KEY } from "./use-capture-draft";
+import { CaptureSheet, CaptureUserContext } from "./capture-sheet";
+import { captureDraftKey } from "./use-capture-draft";
 import {
   installFakeMedia,
   uninstallFakeMedia,
@@ -49,6 +49,7 @@ vi.mock("next/link", () => ({
 const ACCOUNT = "00000000-0000-4000-8000-000000000001";
 const FOOD = "00000000-0000-4000-8000-000000000003";
 const FUN = "00000000-0000-4000-8000-000000000004";
+const USER = "00000000-0000-4000-8000-0000000000a1";
 
 const options: TransactionFieldOptions = {
   accounts: [{ id: ACCOUNT, name: "Conta Corrente" }],
@@ -96,19 +97,21 @@ const onClose = vi.fn();
 function Host() {
   const [open, setOpen] = useState(false);
   return (
-    <ToastProvider>
-      <button type="button" id="opener" onClick={() => setOpen(true)}>
-        Abrir
-      </button>
-      <CaptureSheet
-        open={open}
-        variant="sheet"
-        onClose={() => {
-          onClose();
-          setOpen(false);
-        }}
-      />
-    </ToastProvider>
+    <CaptureUserContext.Provider value={USER}>
+      <ToastProvider>
+        <button type="button" id="opener" onClick={() => setOpen(true)}>
+          Abrir
+        </button>
+        <CaptureSheet
+          open={open}
+          variant="sheet"
+          onClose={() => {
+            onClose();
+            setOpen(false);
+          }}
+        />
+      </ToastProvider>
+    </CaptureUserContext.Provider>
   );
 }
 
@@ -179,7 +182,7 @@ const saveButton = () =>
 const banner = () => document.querySelector<HTMLElement>(".ff-capture__banner");
 const field = <T extends Element = HTMLInputElement>(name: string) =>
   document.querySelector<T>(`[name='${name}']`);
-const stored = () => localStorage.getItem(CAPTURE_DRAFT_KEY);
+const stored = () => localStorage.getItem(captureDraftKey(USER));
 
 async function openSheet(): Promise<void> {
   const opener = document.getElementById("opener") as HTMLButtonElement;
@@ -861,9 +864,11 @@ describe("/capture page", () => {
   it("renders the page variant and closing goes to /", async () => {
     await act(async () =>
       root.render(
-        <ToastProvider>
-          <CapturePage />
-        </ToastProvider>,
+        <CaptureUserContext.Provider value={USER}>
+          <ToastProvider>
+            <CapturePage />
+          </ToastProvider>
+        </CaptureUserContext.Provider>,
       ),
     );
     await flush();
@@ -879,9 +884,11 @@ describe("/capture page", () => {
   it("shows the offline banner at the top of the page panel", async () => {
     await act(async () =>
       root.render(
-        <ToastProvider>
-          <CapturePage />
-        </ToastProvider>,
+        <CaptureUserContext.Provider value={USER}>
+          <ToastProvider>
+            <CapturePage />
+          </ToastProvider>
+        </CaptureUserContext.Provider>,
       ),
     );
     await flush();

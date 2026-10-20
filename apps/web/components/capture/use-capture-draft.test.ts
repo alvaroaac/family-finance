@@ -9,7 +9,7 @@ import {
   emptyTransactionFieldValues,
   type TransactionFieldOptions,
 } from "../transaction-fields";
-import { CAPTURE_DRAFT_KEY, useCaptureDraft } from "./use-capture-draft";
+import { captureDraftKey, useCaptureDraft } from "./use-capture-draft";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -21,6 +21,9 @@ const FOOD = "00000000-0000-4000-8000-000000000003";
 const FUN = "00000000-0000-4000-8000-000000000004";
 const MARKET = "00000000-0000-4000-8000-000000000005";
 const MEMBER = "00000000-0000-4000-8000-000000000006";
+const USER = "00000000-0000-4000-8000-0000000000a1";
+const OTHER_USER = "00000000-0000-4000-8000-0000000000a2";
+const CAPTURE_DRAFT_KEY = captureDraftKey(USER);
 
 const options: TransactionFieldOptions = {
   accounts: [{ id: ACCOUNT, name: "Conta Corrente" }],
@@ -59,16 +62,16 @@ let hook: Hook;
 let container: HTMLDivElement;
 let root: Root;
 
-function Harness() {
-  hook = useCaptureDraft(defaults, options);
+function Harness({ userId }: { userId: string }) {
+  hook = useCaptureDraft(userId, defaults, options);
   return null;
 }
 
-async function mount(): Promise<void> {
+async function mount(userId: string = USER): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root.render(createElement(Harness)));
+  await act(async () => root.render(createElement(Harness, { userId })));
 }
 
 async function unmount(): Promise<void> {
@@ -283,6 +286,21 @@ describe("persistence", () => {
 
     expect(hook.text).toBe("85 no mercado");
     expect(hook.values.amount).toBe("85,00");
+  });
+
+  it("keys the stored draft by user, so another user starts empty", async () => {
+    expect(CAPTURE_DRAFT_KEY).toBe(`ff-capture-draft:${USER}`);
+    await act(async () => hook.setText("85 no mercado"));
+    expect(localStorage.getItem(CAPTURE_DRAFT_KEY)).not.toBeNull();
+
+    await unmount();
+    await mount(OTHER_USER);
+    expect(hook.text).toBe("");
+    expect(hook.values).toEqual(defaults);
+
+    await unmount();
+    await mount(USER);
+    expect(hook.text).toBe("85 no mercado");
   });
 
   it.each([
