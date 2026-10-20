@@ -16,14 +16,17 @@ import { LOCAL_STORAGE_STATE } from "./e2e/local-env";
  *                             (Google OAuth cannot be scripted headlessly), e.g.
  *                             produced once via a manual login + `page.context().storageState`.
  *
- * `pnpm test:e2e:local` (E2E_LOCAL_SUPABASE=1) instead runs the card-bill
- * scenario against the disposable stack from scripts/e2e-local-stack.sh: a
+ * `pnpm test:e2e:local` (E2E_LOCAL_SUPABASE=1) runs the card-bill and quick-capture
+ * scenarios against the disposable stack from scripts/e2e-local-stack.sh: a
  * setup project seeds it and signs in with a password user, and the dev server
- * starts on :3100 pointed at that stack.
+ * starts on :3100 pointed at that stack, alongside the signed capture stub.
  */
 
 const harness = process.env.E2E_HARNESS === "1";
 const local = process.env.E2E_LOCAL_SUPABASE === "1";
+// The worktree itself is named pwa-quick-capture, so Playwright's absolute-path
+// CLI filter would also select every other local spec without this narrowing.
+const quickCaptureOnly = process.argv.includes("quick-capture");
 const baseURL =
   process.env.E2E_BASE_URL ??
   (harness || local ? "http://localhost:3100" : "http://localhost:3000");
@@ -63,7 +66,9 @@ export default defineConfig({
         { name: "local-setup", testMatch: /local-auth\.setup\.ts/ },
         {
           name: "local-chromium",
-          testMatch: /card-bill-payments\.spec\.ts/,
+          testMatch: quickCaptureOnly
+            ? /quick-capture\.spec\.ts/
+            : /(?:card-bill-payments|quick-capture)\.spec\.ts/,
           dependencies: ["local-setup"],
           use: {
             ...devices["Desktop Chrome"],
@@ -74,7 +79,7 @@ export default defineConfig({
     : [
         {
           name: "chromium",
-          testIgnore: /card-bill-payments\.spec\.ts/,
+          testIgnore: /(?:card-bill-payments|quick-capture)\.spec\.ts/,
           use: { ...devices["Desktop Chrome"] },
         },
       ],
@@ -85,9 +90,9 @@ export default defineConfig({
         command: harness
           ? "pnpm exec next start --port 3100 --hostname 0.0.0.0"
           : local
-            ? "pnpm dev --port 3100"
+            ? "pnpm --filter @family-finance/bot exec tsx ../web/e2e/quick-capture-server.mjs"
             : "pnpm dev",
-        url: baseURL,
+        url: local ? `${baseURL}/login` : baseURL,
         // Never reuse a server that may point at another database.
         reuseExistingServer: !process.env.CI && !local && !harness,
         timeout: 120_000,

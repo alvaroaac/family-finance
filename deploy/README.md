@@ -214,6 +214,23 @@ Set `IMPORT_PAID_FALLBACK_ENABLED=false` to disable paid import fallback explici
 The web import review displays Jev/GPT provenance and still requires the user to
 accept each AI suggestion. No database migration is required for this routing change.
 
+Quick capture uses two signed internal POST routes on the same bot origin:
+
+| Route                             | Body cap               |
+| --------------------------------- | ---------------------- |
+| `/internal/v1/capture-draft`      | 256 KB (262144 bytes)  |
+| `/internal/v1/capture-transcribe` | 1.5 MB (1572864 bytes) |
+
+Both routes reuse `IMPORT_SUGGESTION_SHARED_SECRET` and are registered only when
+it is set. They share a limit of 20 requests/min and 2 concurrent requests per
+household across both routes. Requests verify the HMAC signature, reject replayed
+nonces, and resolve the acting member's household before running the handler.
+
+Transcription needs `OPENAI_API_KEY` on the VPS; `capture-transcribe` answers
+503 without it. AI keys stay on the VPS only. Quick capture returns an editable
+draft; the web saves it through the existing manual-transaction action after
+the member reviews it.
+
 ```bash
 cd deploy/bot
 ../migrate.sh apply
