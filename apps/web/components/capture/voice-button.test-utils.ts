@@ -23,11 +23,27 @@ export class FakeMediaRecorder {
   state: "inactive" | "recording" = "inactive";
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
   start = vi.fn(() => {
     this.state = "recording";
   });
   stop = vi.fn(() => {
     if (this.state === "inactive") return;
+    this.finish();
+  });
+
+  /** The browser ending the recording on its own (a call, the OS taking the mic). */
+  stopFromBrowser(): void {
+    this.finish();
+  }
+
+  /** A recording error: browsers fire `error`, then stop with what they have. */
+  fail(): void {
+    this.onerror?.(new Event("error"));
+    this.finish();
+  }
+
+  private finish(): void {
     this.state = "inactive";
     queueMicrotask(() => {
       this.ondataavailable?.({
@@ -36,7 +52,7 @@ export class FakeMediaRecorder {
       });
       this.onstop?.();
     });
-  });
+  }
 
   constructor(
     readonly stream: MediaStream,

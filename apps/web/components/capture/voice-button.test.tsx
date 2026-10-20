@@ -11,7 +11,7 @@ import {
   installFakeMedia,
   uninstallFakeMedia,
   type FakeMedia,
-} from "./voice-test-fakes";
+} from "./voice-button.test-utils";
 
 const mocks = vi.hoisted(() => ({ transcribe: vi.fn() }));
 
@@ -149,6 +149,18 @@ describe("recording", () => {
     expect(mocks.transcribe).toHaveBeenCalledTimes(1);
   });
 
+  it("counts elapsed time from the clock, so throttled ticks still stop at 60 seconds", async () => {
+    vi.useFakeTimers();
+    await render();
+    await record();
+
+    vi.setSystemTime(Date.now() + 59_500);
+    await act(async () => vi.advanceTimersByTime(1000));
+    await settle();
+    expect(media.recorder().stop).toHaveBeenCalled();
+    expect(mocks.transcribe).toHaveBeenCalledTimes(1);
+  });
+
   it("reports mic_denied when permission is refused and stays idle", async () => {
     media.getUserMedia.mockRejectedValueOnce(
       new DOMException("Permission denied", "NotAllowedError"),
@@ -261,6 +273,50 @@ describe("after stop", () => {
     expect(mocks.transcribe).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(captureMessage("transcribe_failed"));
     expect(onPhase).toHaveBeenLastCalledWith("idle");
+  });
+});
+
+describe("the browser ending the recording", () => {
+  it("transcribes what was recorded and lets Gravar start again", async () => {
+    vi.useFakeTimers();
+    await render();
+    await record();
+    await act(async () => vi.advanceTimersByTime(5000));
+
+    await act(async () => media.recorder().stopFromBrowser());
+    await settle();
+    expect(onPhase.mock.calls.map(([phase]) => phase)).toEqual([
+      "recording",
+      "transcribing",
+      "idle",
+    ]);
+    expect(onText).toHaveBeenCalledWith("85 no mercado no nubank");
+
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(onPhase).toHaveBeenLastCalledWith("idle");
+    expect(button("Gravar")).not.toBeNull();
+
+    await record();
+    expect(FakeMediaRecorder.instances).toHaveLength(2);
+    expect(onPhase).toHaveBeenLastCalledWith("recording");
+  });
+
+  it("on a recorder error releases the mic, goes idle, reports transcribe_failed and sends nothing", async () => {
+    vi.useFakeTimers();
+    await render();
+    await record();
+
+    await act(async () => media.recorder().fail());
+    await settle();
+    expect(media.track.stop).toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(captureMessage("transcribe_failed"));
+    expect(onPhase).toHaveBeenLastCalledWith("idle");
+    expect(mocks.transcribe).not.toHaveBeenCalled();
+
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(onPhase).toHaveBeenLastCalledWith("idle");
+    await record();
+    expect(FakeMediaRecorder.instances).toHaveLength(2);
   });
 });
 

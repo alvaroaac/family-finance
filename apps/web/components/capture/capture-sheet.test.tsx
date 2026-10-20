@@ -15,7 +15,7 @@ import {
   installFakeMedia,
   uninstallFakeMedia,
   type FakeMedia,
-} from "./voice-test-fakes";
+} from "./voice-button.test-utils";
 
 const mocks = vi.hoisted(() => ({
   suggest: vi.fn(),
@@ -548,6 +548,34 @@ describe("voice", () => {
     expect(mocks.suggest).toHaveBeenCalledTimes(1);
     expect(mocks.suggest).toHaveBeenCalledWith("85 no mercado no nubank");
     expect(field("amount")?.value).toBe("85,00");
+  });
+
+  it("cuts a transcript over 500 characters to its first 500 before filling", async () => {
+    const transcript = `85 no mercado no nubank ${"e mais ".repeat(100)}`;
+    mocks.transcribe.mockResolvedValue({ ok: true, text: transcript });
+    mocks.suggest.mockResolvedValue({ ok: true, intent: "plain", draft: draft() });
+
+    await record();
+    await stopRecording();
+
+    expect(textarea()?.value).toBe(transcript.slice(0, 500));
+    expect(mocks.suggest).toHaveBeenCalledWith(transcript.slice(0, 500));
+  });
+
+  it("after the browser ends a recording, Preencher and a new Gravar both work", async () => {
+    mocks.transcribe.mockResolvedValue({ ok: true, text: "85 no mercado no nubank" });
+    mocks.suggest.mockResolvedValue({ ok: true, intent: "plain", draft: draft() });
+
+    await record();
+    await act(async () => media.recorder().stopFromBrowser());
+    await flush();
+    await flush();
+
+    expect(mocks.suggest).toHaveBeenCalledWith("85 no mercado no nubank");
+    expect(fillButton()?.disabled).toBe(false);
+    await record();
+    expect(button("Parar")).not.toBeNull();
+    expect(textarea()?.placeholder).toBe("Ouvindo…");
   });
 
   it("keeps the text and shows the negative banner when transcription fails", async () => {

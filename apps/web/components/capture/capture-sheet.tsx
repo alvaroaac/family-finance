@@ -50,6 +50,8 @@ type Loaded = { options: TransactionFieldOptions; defaults: TransactionFieldValu
 const FOCUSABLE = "button, input, select, textarea, a[href]";
 const CONFLICT_COPY = "Há regras conflitantes para este lugar — escolha a categoria";
 const OFFLINE_COPY = "Sem conexão — seu rascunho está salvo";
+/** Same cap as the draft action; a longer text would be refused as non-financial. */
+const MAX_TEXT_LENGTH = 500;
 const PLACEHOLDERS: Record<VoicePhase, string> = {
   idle: "Ex.: 85 no mercado no nubank",
   recording: "Ouvindo…",
@@ -375,8 +377,9 @@ function CaptureBody({
   }
 
   function fillFromVoice(transcript: string): void {
-    draft.setText(transcript);
-    void fill(transcript);
+    const clipped = transcript.slice(0, MAX_TEXT_LENGTH);
+    draft.setText(clipped);
+    void fill(clipped);
   }
 
   async function save(): Promise<void> {
@@ -442,7 +445,7 @@ function CaptureBody({
           aria-label="Descreva o lançamento"
           placeholder={PLACEHOLDERS[voicePhase]}
           rows={2}
-          maxLength={500}
+          maxLength={MAX_TEXT_LENGTH}
           value={text}
           onChange={(event) => changeText(event.target.value)}
           onKeyDown={onTextKeyDown}

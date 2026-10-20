@@ -118,17 +118,33 @@ export function VoiceButton(props: Props): ReactElement | null {
     }
 
     const chunks: Blob[] = [];
+    let failed = false;
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.push(event.data);
     };
-    recorder.onstop = () => {
+    recorder.onerror = () => {
+      failed = true;
       releaseMic(stream);
       if (!alive.current) return;
+      detach(recorder);
+      changePhase("idle");
+      latest.current.onError(captureMessage("transcribe_failed"));
+    };
+    // Also fires when the browser ends the recording itself (a call, the OS
+    // taking the mic), so it must leave the button ready for the next one.
+    recorder.onstop = () => {
+      releaseMic(stream);
+      if (!alive.current || failed) return;
+      if (detach(recorder)) changePhase("transcribing");
       void send(new Blob(chunks, { type: baseType(recorder.mimeType || type) }));
     };
-    let elapsed = 0;
+    // From the clock, not by counting ticks: background tabs throttle timers.
+    const startedAt = Date.now();
     const timer = window.setInterval(() => {
-      elapsed += 1;
+      const elapsed = Math.min(
+        MAX_SECONDS,
+        Math.floor((Date.now() - startedAt) / 1000),
+      );
       setSeconds(elapsed);
       if (elapsed >= MAX_SECONDS) stop();
     }, 1000);
@@ -137,13 +153,20 @@ export function VoiceButton(props: Props): ReactElement | null {
     changePhase("recording");
   }
 
-  function stop(): void {
+  /** Ends the recording's bookkeeping; false when `recorder` is no longer the live one. */
+  function detach(recorder: MediaRecorder): boolean {
     const current = recording.current;
+    if (current?.recorder !== recorder) return false;
     recording.current = null;
-    if (current === null) return;
     window.clearInterval(current.timer);
+    return true;
+  }
+
+  function stop(): void {
+    const recorder = recording.current?.recorder;
+    if (recorder === undefined || !detach(recorder)) return;
     changePhase("transcribing");
-    current.recorder.stop();
+    recorder.stop();
   }
 
   async function send(audio: Blob): Promise<void> {
