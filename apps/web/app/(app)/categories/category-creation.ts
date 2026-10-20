@@ -11,6 +11,9 @@ import {
 
 const DIACRITICS_RE = /\p{Diacritic}/gu;
 
+/** The created, restored or already-active row, and the pt-BR outcome. */
+export type CategoryCreation = { id: string; message: string };
+
 function normalizedName(value: string): string {
   return value
     .normalize("NFD")
@@ -23,7 +26,7 @@ export async function createOrRestoreCategory(
   householdId: string,
   name: string,
   kind: CategoryKind,
-): Promise<string> {
+): Promise<CategoryCreation> {
   const wanted = normalizedName(name);
   const categories = await listAllCategories(client, householdId);
   const existing = categories.find(
@@ -37,15 +40,23 @@ export async function createOrRestoreCategory(
         `“${existing.name}” já existe como ${existingKind === "income" ? "entrada" : "despesa"}.`,
       );
     }
+    // Same name and kind: hand back the existing row, so a retry (or the
+    // quick-capture sheet asking for a category that exists) gets its id.
     if (existing.is_active) {
-      throw new Error(`A categoria “${existing.name}” já existe.`);
+      return {
+        id: existing.id,
+        message: `A categoria “${existing.name}” já existe.`,
+      };
     }
     await restoreCategory(client, householdId, existing.id);
-    return `Categoria “${existing.name}” restaurada.`;
+    return {
+      id: existing.id,
+      message: `Categoria “${existing.name}” restaurada.`,
+    };
   }
 
-  await createCategory(client, householdId, name, kind);
-  return `Categoria “${name}” criada.`;
+  const created = await createCategory(client, householdId, name, kind);
+  return { id: created.id, message: `Categoria “${name}” criada.` };
 }
 
 export async function createOrRestoreSubcategory(
@@ -53,7 +64,7 @@ export async function createOrRestoreSubcategory(
   householdId: string,
   categoryId: string,
   name: string,
-): Promise<string> {
+): Promise<CategoryCreation> {
   const [categories, subcategories] = await Promise.all([
     listAllCategories(client, householdId),
     listAllSubcategories(client, householdId),
@@ -79,9 +90,20 @@ export async function createOrRestoreSubcategory(
       );
     }
     await restoreSubcategory(client, householdId, existing.id);
-    return `Subcategoria “${existing.name}” restaurada em ${parent.name}.`;
+    return {
+      id: existing.id,
+      message: `Subcategoria “${existing.name}” restaurada em ${parent.name}.`,
+    };
   }
 
-  await createSubcategory(client, householdId, categoryId, name);
-  return `Subcategoria “${name}” criada em ${parent.name}.`;
+  const created = await createSubcategory(
+    client,
+    householdId,
+    categoryId,
+    name,
+  );
+  return {
+    id: created.id,
+    message: `Subcategoria “${name}” criada em ${parent.name}.`,
+  };
 }
