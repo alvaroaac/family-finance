@@ -66,26 +66,41 @@ function dropUnknownIds(
     ...options.accounts.map((account) => `account:${account.id}`),
     ...options.cards.map((card) => `card:${card.id}`),
   ];
-  const categoryId = options.categories.some((c) => c.id === values.categoryId)
-    ? values.categoryId
-    : defaults.categoryId;
-  const subcategoryId = options.subcategories.some(
-    (s) => s.id === values.subcategoryId && s.categoryId === categoryId,
-  )
-    ? values.subcategoryId
-    : defaults.subcategoryId;
   const responsible =
     values.responsible === "household" ||
     options.responsibles.some((r) => r.value === values.responsible)
       ? values.responsible
       : defaults.responsible;
-  return {
-    ...values,
-    payment: payments.includes(values.payment) ? values.payment : defaults.payment,
-    categoryId,
-    subcategoryId,
-    responsible,
-  };
+  return fitCategory(
+    {
+      ...values,
+      payment: payments.includes(values.payment) ? values.payment : defaults.payment,
+      responsible,
+    },
+    options,
+  );
+}
+
+/**
+ * Clears a category that is unknown or of another kind, and a subcategory
+ * that isn't its child — whoever picked them, like `changeKind` in
+ * TransactionFields. The server checks neither, so this guards the save.
+ */
+function fitCategory(
+  values: TransactionFieldValues,
+  options: TransactionFieldOptions,
+): TransactionFieldValues {
+  const category = options.categories.find((c) => c.id === values.categoryId);
+  if (values.categoryId !== "" && category?.kind !== values.kind) {
+    return { ...values, categoryId: "", subcategoryId: "" };
+  }
+  const subcategory = options.subcategories.find(
+    (s) => s.id === values.subcategoryId,
+  );
+  if (values.subcategoryId !== "" && subcategory?.categoryId !== values.categoryId) {
+    return { ...values, subcategoryId: "" };
+  }
+  return values;
 }
 
 function writeStored(stored: Stored | null): void {
@@ -173,10 +188,12 @@ export function useCaptureDraft(
 ) {
   const [initial] = useState(() => readStored(defaults, options));
   const [text, setText] = useState(initial?.text ?? "");
-  const [values, setValues] = useState(initial?.values ?? defaults);
-  const [aiFilled, setAiFilled] = useState<ReadonlySet<TransactionFieldKey>>(
-    () => new Set(),
-  );
+  // One state so a fill can drop the AI mark of a field `fitCategory` cleared.
+  const [form, setForm] = useState<{
+    values: TransactionFieldValues;
+    aiFilled: ReadonlySet<TransactionFieldKey>;
+  }>(() => ({ values: initial?.values ?? defaults, aiFilled: new Set() }));
+  const { values, aiFilled } = form;
   const [result, setResult] = useState<CaptureResult | null>(null);
   const edited = useRef(new Set<TransactionFieldKey>());
   const defaultsRef = useRef(defaults);
@@ -190,12 +207,10 @@ export function useCaptureDraft(
   const setField = useCallback(
     <K extends TransactionFieldKey>(key: K, value: TransactionFieldValues[K]) => {
       edited.current.add(key);
-      setValues((current) => ({ ...current, [key]: value }));
-      setAiFilled((current) => {
-        if (!current.has(key)) return current;
-        const next = new Set(current);
-        next.delete(key);
-        return next;
+      setForm((current) => {
+        const marks = new Set(current.aiFilled);
+        marks.delete(key);
+        return { values: { ...current.values, [key]: value }, aiFilled: marks };
       });
     },
     [],
@@ -207,22 +222,21 @@ export function useCaptureDraft(
       const filled = (Object.keys(proposed) as TransactionFieldKey[]).filter(
         (key) => !edited.current.has(key),
       );
-      const patch = Object.fromEntries(filled.map((key) => [key, proposed[key]]));
-      const keep = new Set(edited.current);
-      // No category from this fill: the old one is wrong when review is
-      // needed or the kind changed, so clear whatever the user didn't pick.
-      const clearCategory = (current: TransactionFieldValues) =>
-        proposed.categoryId === undefined &&
-        (draft.needsReview || (patch.kind ?? current.kind) !== current.kind);
-      setValues((current) => {
-        const next = { ...current, ...patch };
-        if (clearCategory(current)) {
-          if (!keep.has("categoryId")) next.categoryId = "";
-          if (!keep.has("subcategoryId")) next.subcategoryId = "";
-        }
-        return next;
+      const patch: Partial<TransactionFieldValues> = Object.fromEntries(
+        filled.map((key) => [key, proposed[key]]),
+      );
+      // Review needed: the old category is a guess, so clear what the user didn't pick.
+      if (draft.needsReview && !edited.current.has("categoryId")) {
+        patch.categoryId = "";
+        if (!edited.current.has("subcategoryId")) patch.subcategoryId = "";
+      }
+      setForm((current) => {
+        const next = fitCategory({ ...current.values, ...patch }, options);
+        return {
+          values: next,
+          aiFilled: new Set(filled.filter((key) => next[key] === patch[key])),
+        };
       });
-      setAiFilled(new Set(filled));
       setResult(toResult(draft, options));
     },
     [],
@@ -231,8 +245,7 @@ export function useCaptureDraft(
   const discard = useCallback(() => {
     edited.current = new Set();
     setText("");
-    setValues(defaultsRef.current);
-    setAiFilled(new Set());
+    setForm({ values: defaultsRef.current, aiFilled: new Set() });
     setResult(null);
     writeStored(null);
   }, []);

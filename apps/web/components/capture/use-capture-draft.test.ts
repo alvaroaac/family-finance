@@ -222,7 +222,7 @@ describe("applyDraft dependent fields", () => {
     expect(hook.values.subcategoryId).toBe("");
   });
 
-  it("keeps a user-picked category when a fill changes the kind", async () => {
+  it("clears even a user-picked category when a fill changes the kind it belongs to", async () => {
     await act(async () => hook.applyDraft(draft(), options));
     await act(async () => hook.setField("categoryId", FUN));
     await act(async () =>
@@ -232,8 +232,30 @@ describe("applyDraft dependent fields", () => {
       ),
     );
 
+    expect(hook.values.kind).toBe("income");
+    expect(hook.values.categoryId).toBe("");
+    expect(hook.values.subcategoryId).toBe("");
+  });
+
+  it("drops an AI category that doesn't fit the user's kind, with its AI mark", async () => {
+    await act(async () => hook.setField("kind", "income"));
+    await act(async () => hook.applyDraft(draft(), options));
+
+    expect(hook.values.kind).toBe("income");
+    expect(hook.values.categoryId).toBe("");
+    expect(hook.values.subcategoryId).toBe("");
+    expect(hook.aiFilled.has("categoryId")).toBe(false);
+    expect(hook.aiFilled.has("subcategoryId")).toBe(false);
+    expect(hook.aiFilled.has("amount")).toBe(true);
+  });
+
+  it("drops an AI subcategory that isn't a child of the user's category, with its AI mark", async () => {
+    await act(async () => hook.setField("categoryId", FUN));
+    await act(async () => hook.applyDraft(draft(), options));
+
     expect(hook.values.categoryId).toBe(FUN);
     expect(hook.values.subcategoryId).toBe("");
+    expect(hook.aiFilled.has("subcategoryId")).toBe(false);
   });
 });
 
@@ -303,6 +325,22 @@ describe("persistence", () => {
     await mount();
 
     expect(hook.values).toEqual(restored);
+  });
+
+  it("drops a restored category whose kind doesn't match the restored kind", async () => {
+    await unmount();
+    localStorage.setItem(
+      CAPTURE_DRAFT_KEY,
+      JSON.stringify({
+        text: "",
+        values: { ...defaults, kind: "income", categoryId: FOOD, subcategoryId: MARKET },
+      }),
+    );
+    await mount();
+
+    expect(hook.values.kind).toBe("income");
+    expect(hook.values.categoryId).toBe("");
+    expect(hook.values.subcategoryId).toBe("");
   });
 
   it("drops a restored subcategory that belongs to another category", async () => {
