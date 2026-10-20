@@ -106,7 +106,6 @@ describe("applyDraft", () => {
         "kind",
         "occurredOn",
         "payment",
-        "responsible",
         "subcategoryId",
       ].sort(),
     );
@@ -143,17 +142,29 @@ describe("applyDraft", () => {
     expect(hook.aiFilled.has("installmentCount")).toBe(true);
   });
 
-  it("maps the responsible member and defaults an absent one to the household", async () => {
+  it("maps the responsible member and marks it as filled by the AI", async () => {
     await act(async () =>
       hook.applyDraft(draft({ responsibleUserId: MEMBER }), options),
     );
     expect(hook.values.responsible).toBe(MEMBER);
+    expect(hook.aiFilled.has("responsible")).toBe(true);
+  });
 
-    await act(async () => hook.discard());
+  it.each([
+    ["absent", undefined],
+    ["not a listed member", "00000000-0000-4000-8000-0000000000ff"],
+  ])("leaves Quem untouched and unmarked when the responsible is %s", async (_label, id) => {
     await act(async () =>
-      hook.applyDraft(draft({ responsibleUserId: undefined }), options),
+      hook.applyDraft(draft({ responsibleUserId: MEMBER }), options),
     );
-    expect(hook.values.responsible).toBe("household");
+    await act(async () =>
+      hook.applyDraft(draft({ responsibleUserId: id }), options),
+    );
+
+    expect(hook.values.responsible).toBe(MEMBER);
+    expect(hook.aiFilled.has("responsible")).toBe(false);
+    expect(hook.aiFilled.has("kind")).toBe(true);
+    expect(hook.aiFilled.has("occurredOn")).toBe(true);
   });
 
   it("leaves the category empty when the draft needs review and exposes the candidates by name", async () => {
@@ -278,6 +289,14 @@ describe("persistence", () => {
     ["not JSON", "{oops"],
     ["a wrong shape", JSON.stringify({ text: 3, values: [] })],
     ["values missing keys", JSON.stringify({ text: "oi", values: { amount: 5 } })],
+    [
+      "an unknown kind",
+      JSON.stringify({ text: "oi", values: { ...defaults, kind: "transfer" } }),
+    ],
+    [
+      "an unknown purchase mode",
+      JSON.stringify({ text: "oi", values: { ...defaults, purchaseMode: "fiado" } }),
+    ],
   ])("ignores a stored value that is %s", async (_label, raw) => {
     await unmount();
     localStorage.setItem(CAPTURE_DRAFT_KEY, raw);
@@ -358,6 +377,39 @@ describe("persistence", () => {
     expect(hook.values.subcategoryId).toBe("");
   });
 
+  it("restores edit protection after a remount", async () => {
+    await act(async () => hook.setText("85 no mercado"));
+    await act(async () => hook.applyDraft(draft(), options));
+    await act(async () => hook.setField("amount", "58,00"));
+
+    await unmount();
+    await mount();
+    await act(async () => hook.applyDraft(draft(), options));
+
+    expect(hook.values.amount).toBe("58,00");
+    expect(hook.aiFilled.has("amount")).toBe(false);
+    expect(hook.aiFilled.has("description")).toBe(true);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["not an array", "amount"],
+    ["holding an unknown key", ["amount", "nope"]],
+  ])("restores a draft whose edited set is %s with no edit protection", async (_label, edited) => {
+    await unmount();
+    localStorage.setItem(
+      CAPTURE_DRAFT_KEY,
+      JSON.stringify({ text: "oi", values: { ...defaults, amount: "58,00" }, edited }),
+    );
+    await mount();
+
+    expect(hook.text).toBe("oi");
+    expect(hook.values.amount).toBe("58,00");
+
+    await act(async () => hook.applyDraft(draft(), options));
+    expect(hook.values.amount).toBe("85,00");
+  });
+
   it("discard clears state, AI marks, edit protection and storage", async () => {
     await act(async () => hook.setText("85 no mercado"));
     await act(async () => hook.setField("amount", "1,00"));
@@ -372,5 +424,10 @@ describe("persistence", () => {
 
     await act(async () => hook.applyDraft(draft(), options));
     expect(hook.values.amount).toBe("85,00");
+
+    await unmount();
+    await mount();
+    await act(async () => hook.applyDraft(draft({ amountCents: 9900 }), options));
+    expect(hook.values.amount).toBe("99,00");
   });
 });

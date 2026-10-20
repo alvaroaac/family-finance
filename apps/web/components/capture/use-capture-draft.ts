@@ -13,10 +13,11 @@ import type {
 /**
  * State of one quick-capture draft: the free text, the editable field values,
  * which fields the AI filled, and the last fill's explanation/candidates.
- * Text and values survive a closed sheet or a reload through localStorage.
+ * Text, values and the set of user-edited fields survive a closed sheet or a
+ * reload through localStorage.
  *
- * Fields the user edits (since mount or the last `discard`) are protected:
- * a later `applyDraft` never overwrites them.
+ * Fields the user edits (since the last `discard`) are protected: a later
+ * `applyDraft` never overwrites them.
  */
 
 export const CAPTURE_DRAFT_KEY = "ff-capture-draft";
@@ -27,9 +28,22 @@ export type CaptureResult = {
   needsReview: boolean;
 };
 
-type Stored = { text: string; values: TransactionFieldValues };
+type Stored = {
+  text: string;
+  values: TransactionFieldValues;
+  edited: TransactionFieldKey[];
+};
 
-/** A stored draft whose shape no longer matches the defaults is ignored. */
+const KINDS: ReadonlyArray<TransactionFieldValues["kind"]> = ["expense", "income"];
+const PURCHASE_MODES: ReadonlyArray<TransactionFieldValues["purchaseMode"]> = [
+  "avista",
+  "parcelado",
+];
+
+/**
+ * A stored draft whose shape no longer matches the defaults is ignored; a
+ * missing or malformed edited set restores as empty.
+ */
 function readStored(
   defaults: TransactionFieldValues,
   options: TransactionFieldOptions,
@@ -39,7 +53,7 @@ function readStored(
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
-    const { text, values } = parsed as Record<string, unknown>;
+    const { text, values, edited } = parsed as Record<string, unknown>;
     if (typeof text !== "string") return null;
     if (typeof values !== "object" || values === null) return null;
     const record = values as Record<string, unknown>;
@@ -47,9 +61,22 @@ function readStored(
       (key) => typeof record[key] === typeof defaults[key],
     );
     if (!matches) return null;
+    if (!KINDS.includes(record.kind as TransactionFieldValues["kind"])) return null;
+    if (
+      !PURCHASE_MODES.includes(
+        record.purchaseMode as TransactionFieldValues["purchaseMode"],
+      )
+    ) {
+      return null;
+    }
+    const keys = Object.keys(defaults);
+    const validEdited =
+      Array.isArray(edited) &&
+      edited.every((key) => typeof key === "string" && keys.includes(key));
     return {
       text,
       values: dropUnknownIds(values as TransactionFieldValues, defaults, options),
+      edited: validEdited ? (edited as TransactionFieldKey[]) : [],
     };
   } catch {
     return null;
@@ -133,10 +160,11 @@ function draftToValues(
   const proposed: Partial<TransactionFieldValues> = {
     kind: draft.kind,
     occurredOn: draft.date,
-    responsible:
-      options.responsibles.find((r) => r.value === draft.responsibleUserId)
-        ?.value ?? "household",
   };
+  const responsible = options.responsibles.find(
+    (r) => r.value === draft.responsibleUserId,
+  );
+  if (responsible !== undefined) proposed.responsible = responsible.value;
   if (draft.description.trim() !== "") proposed.description = draft.description;
   if (draft.amountCents !== undefined) {
     proposed.amount = centsToInputValue(draft.amountCents);
@@ -195,12 +223,14 @@ export function useCaptureDraft(
   }>(() => ({ values: initial?.values ?? defaults, aiFilled: new Set() }));
   const { values, aiFilled } = form;
   const [result, setResult] = useState<CaptureResult | null>(null);
-  const edited = useRef(new Set<TransactionFieldKey>());
+  const edited = useRef(new Set<TransactionFieldKey>(initial?.edited));
   const defaultsRef = useRef(defaults);
 
   useEffect(() => {
     writeStored(
-      isPristine(text, values, defaultsRef.current) ? null : { text, values },
+      isPristine(text, values, defaultsRef.current)
+        ? null
+        : { text, values, edited: [...edited.current] },
     );
   }, [text, values]);
 
