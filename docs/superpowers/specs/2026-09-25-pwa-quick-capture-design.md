@@ -91,26 +91,14 @@ Bot (VPS, node:http)
   `{status, body}`).
 - Draft handler: builds the member's catalog with `memberClient(actorUserId)`
   (the same loaders `index.ts` uses for Telegram) and runs the Telegram text
-  pipeline on it. Today that pipeline lives inside `startConversation` in
-  `conversation.ts` (~700 lines, mixed with the conversation state machine),
-  so the first bot task extracts its stateless part into one function both
-  callers use.
-
-```decision id=pipeline-reuse
-label: Sharing the Telegram text pipeline
-question: How should the capture-draft handler reuse the Telegram text pipeline?
-quote: so the first bot task extracts its stateless part into one function both callers use
-context: startConversation mixes parsing, routing (financial-routing.ts), classifier, account matching and suggestCategory with conversation state and replies.
-- A: Extract a stateless interpret step from startConversation; Telegram and capture both call it | One pipeline; Telegram behavior locked by the existing conversation tests; a larger refactor in the bot's busiest file [pick]
-- B: Capture composes the pieces itself (parser, detectFinancialRoute, classifier, suggestCategory) | No Telegram refactor; the two paths will drift
-```
-
-```assumption id=pipeline-extractable
-label: Pipeline is separable
-statement: The parse → route → classify → categorize → account-match steps in startConversation can be pulled out without changing any Telegram reply, given the existing conversation test suite as the safety net.
-quote: extracts its stateless part into one function
-context: Not yet verified line by line; based on a skim of conversation.ts on main. Step 5 starts by mapping startConversation; if the extraction would change any Telegram reply, it stops and reports, and capture falls back to option B for this release.
-```
+  pipeline on it by calling `startConversation` unchanged with read-only
+  deps (every write dep removed, `createTransaction` rejecting,
+  `logInteraction` a no-op) and mapping the returned `ConversationState` to
+  the draft contract. `startConversation` persists nothing itself; its only
+  pre-confirmation writes go through those optional deps. Decided
+  2026-10-20 in the implementation plan (decision `pipeline-reuse`, option C);
+  this replaces the earlier extraction plan, so `conversation.ts` is not
+  edited.
 
 - Category runtime: the handler gets `categorizer` from the same
   `createCategoryRuntime(env)` instance `index.ts` builds, and the
@@ -260,10 +248,9 @@ in `apps/bot` and would need a package move just to cover outages.)
    a 6-digit code typed into the app (a code, not a link, because links open
    Safari). Access stays decided by the household membership row bound to
    the verified email.
-2. **Pipeline extraction** (decision `pipeline-reuse`) touches
-   `conversation.ts`, which other branches also edit
-   (`codex/merchant-categorization-evidence` touches the bot and
-   `packages/categorization`). Land the extraction early as its own PR.
+2. **State-shape coupling:** capture maps `ConversationState`, so a change
+   to that shape on another branch can break the mapper. Capture tests lock
+   the mapping; `conversation.ts` itself is not edited.
 3. MediaRecorder formats differ: iOS gives `audio/mp4`, Chrome gives
    `audio/webm`. Both are on the allow-list; verify on both.
 
@@ -276,16 +263,15 @@ in `apps/bot` and would need a package move just to cover outages.)
    (refactor, no behavior change).
 4. Bot: shared signature + membership check extracted from the import
    route (refactor, no behavior change).
-5. Bot: stateless text-pipeline extraction from `startConversation`
-   (refactor, no Telegram behavior change).
-6. Bot: `capture-draft` route + handler.
-7. Bot: `capture-transcribe` route + audio buffer entry point.
-8. Web: `TransactionFields` extraction (refactor, no behavior change);
+5. Bot: `capture-draft` route + handler (calls `startConversation` with
+   read-only deps).
+6. Bot: `capture-transcribe` route + audio buffer entry point.
+7. Web: `TransactionFields` extraction (refactor, no behavior change);
    category actions return the id.
-9. Web: capture actions + capture sheet + `/capture` + AppShell entry
+8. Web: capture actions + capture sheet + `/capture` + AppShell entry
    points + draft storage + inline category.
-10. Web: voice button.
-11. Deploy docs: `deploy/README.md` (bot routes), `deploy/vercel.md` (body
+9. Web: voice button.
+10. Deploy docs: `deploy/README.md` (bot routes), `deploy/vercel.md` (body
     limit note).
 
 Steps 3, 4→5→6, 4→7 and 8 are independent tracks; 9 needs 3, 6 and 8; 10
@@ -299,7 +285,7 @@ needs 7 and 9.
   `unsupported_intent`, unknown ids dropped, memory hit beats Jev, Jev
   unavailable → GPT fallback, rate limit. Transcribe handler: bad mime type,
   over-size audio, missing key → 503. Existing conversation tests pass
-  unchanged after step 5.
+  unchanged and `conversation.ts` has no diff.
 - **Web (vitest):** `bot-client` signing matches the bot's verifier (shared
   fixture); error-code → copy mapping; AI fill leaves user-edited fields
   alone; picking a chip applies the category; `needsReview` leaves the
