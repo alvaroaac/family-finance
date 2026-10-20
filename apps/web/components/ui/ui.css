@@ -4707,6 +4707,7 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 }
 
 .ff-capture__panel {
+  --ff-capture-gutter: 28px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -4738,7 +4739,7 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px 10px 20px;
+  padding: 14px 16px 10px var(--ff-capture-gutter);
 }
 
 .ff-capture__title {
@@ -4774,8 +4775,13 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 0 20px;
+  padding: 0 var(--ff-capture-gutter);
   font-family: var(--ff-font-body), Inter, sans-serif;
+}
+
+/* Children keep their natural height; the body scrolls instead. */
+.ff-capture__body > * {
+  flex-shrink: 0;
 }
 
 .ff-capture__skeleton {
@@ -4790,7 +4796,7 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   flex-shrink: 0;
   align-items: center;
   gap: 9px;
-  padding: 10px 20px;
+  padding: 10px var(--ff-capture-gutter);
   background: var(--ff-warn-wash);
   border-bottom: 1px solid var(--ff-warn);
   font-family: var(--ff-font-body), Inter, sans-serif;
@@ -5078,6 +5084,14 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   color: var(--ff-on-accent);
 }
 
+/* Divider between the capture/feedback area and DETALHES (20px above, with
+   the body gap). */
+.ff-capture__body > .ff-txfields {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ff-border);
+}
+
 /* "+ Nova categoria" link-button and its inline input. */
 .ff-capture__category-toggle {
   padding: 0;
@@ -5109,14 +5123,16 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   margin: 0;
 }
 
-/* Footer: sticky at the bottom of the scrolling body, safe-area aware. */
+/* Footer: sticky at the bottom of the scrolling body, safe-area aware.
+   Desktop: a compact Cancelar/Salvar pair on the right; mobile: wide Salvar. */
 .ff-capture__footer {
   position: sticky;
   bottom: 0;
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
-  margin: 8px -20px 0;
-  padding: 12px 20px max(16px, env(safe-area-inset-bottom));
+  margin: 8px calc(-1 * var(--ff-capture-gutter)) 0;
+  padding: 12px var(--ff-capture-gutter) max(16px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--ff-border);
   background: var(--ff-surface-soft);
 }
@@ -5126,12 +5142,11 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 }
 
 .ff-capture__footer .ff-btn {
-  min-height: 50px;
-  font-size: 15px;
+  min-height: 44px;
 }
 
 .ff-capture__save {
-  flex: 1;
+  padding-inline: 26px;
 }
 
 .ff-capture__save:disabled {
@@ -5187,6 +5202,10 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 }
 
 @media (max-width: 720px) {
+  .ff-capture__panel {
+    --ff-capture-gutter: 20px;
+  }
+
   .ff-capture--sheet {
     align-items: flex-end;
     padding: 0;
@@ -5223,6 +5242,35 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 
   .ff-capture__fill {
     margin-left: auto;
+  }
+
+  .ff-capture__footer {
+    justify-content: normal;
+  }
+
+  .ff-capture__footer .ff-btn {
+    min-height: 50px;
+    font-size: 15px;
+  }
+
+  .ff-capture__save {
+    flex: 1;
+  }
+
+  /* `/capture` page: the footer sticks above the fixed bottom nav (same
+     clearance as .ff-sticky-cta). `clip` keeps the rounded corners without
+     creating a scroll container, so the page scroll drives the sticky. */
+  .ff-capture--page .ff-capture__panel {
+    overflow: clip;
+  }
+
+  .ff-capture--page .ff-capture__body {
+    overflow: visible;
+  }
+
+  .ff-capture--page .ff-capture__footer {
+    position: sticky;
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
   }
 }
 
