@@ -139,6 +139,36 @@ describe("suggestCaptureDraftAction", () => {
     expect(mocks.postToBot).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a non-string value", 42],
+    ["an empty string", ""],
+    ["whitespace only", "   \n\t "],
+    ["more than 500 characters", "a".repeat(501)],
+  ])("rejects %s as non-financial without a bot call", async (_name, text) => {
+    await expect(suggestCaptureDraftAction(text as string)).resolves.toEqual({
+      ok: false,
+      message: captureMessage("non_financial"),
+    });
+    expect(mocks.postToBot).not.toHaveBeenCalled();
+    expect(mocks.findHouseholdIdForCurrentUser).not.toHaveBeenCalled();
+  });
+
+  it("sends text of exactly 500 characters to the bot", async () => {
+    botReturns(200, { ok: true, intent: "plain", draft: validDraft });
+
+    await suggestCaptureDraftAction("a".repeat(500));
+
+    expect(mocks.postToBot).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the trimmed text to the bot", async () => {
+    botReturns(200, { ok: true, intent: "plain", draft: validDraft });
+
+    await suggestCaptureDraftAction("  85 no mercado \n");
+
+    expect(mocks.postToBot.mock.calls[0]?.[1].text).toBe("85 no mercado");
+  });
+
   it("posts the household, actor, today and a fresh requestId to capture-draft", async () => {
     botReturns(200, { ok: true, intent: "plain", draft: validDraft });
 
@@ -409,22 +439,12 @@ describe("loadCaptureOptionsAction", () => {
         ],
       },
       today: TODAY,
-      defaultResponsible: USER_ID,
+      defaultResponsible: "household",
     });
     expect(mocks.listAccounts).toHaveBeenCalledWith(
       expect.anything(),
       HOUSEHOLD_ID,
     );
-  });
-
-  it("defaults the responsible to the household when the user is not a listed member", async () => {
-    mocks.listHouseholdMembers.mockResolvedValue([
-      { userId: OTHER_USER_ID, displayName: "Outra pessoa" },
-    ]);
-
-    await expect(loadCaptureOptionsAction()).resolves.toMatchObject({
-      defaultResponsible: "household",
-    });
   });
 
   it("throws when the user has no active household", async () => {

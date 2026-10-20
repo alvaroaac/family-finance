@@ -27,6 +27,7 @@ export type { CaptureMessage };
 
 const DRAFT_PATH = "/internal/v1/capture-draft";
 const TRANSCRIBE_PATH = "/internal/v1/capture-transcribe";
+const MAX_DRAFT_TEXT_LENGTH = 500;
 const MAX_AUDIO_BYTES = 1024 * 1024;
 const ALLOWED_AUDIO_TYPES = [
   "audio/webm",
@@ -157,12 +158,17 @@ export async function suggestCaptureDraftAction(
   | { ok: true; intent: "plain" | "card_installment"; draft: CaptureDraft }
   | { ok: false; message: CaptureMessage }
 > {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (trimmed === "" || trimmed.length > MAX_DRAFT_TEXT_LENGTH) {
+    return failure("non_financial");
+  }
+
   const actor = await resolveActorOrNull();
   if (actor === null) return failure("unavailable");
 
   const outcome = await callBot(DRAFT_PATH, actor, {
     today: currentHouseholdDate(),
-    text,
+    text: trimmed,
   });
   if (!outcome.ok) {
     return failure(
@@ -230,7 +236,7 @@ export async function loadCaptureOptionsAction(): Promise<{
   const actor = await resolveActor();
   if (actor === null)
     throw new Error("Nenhuma casa ativa para o usuário atual.");
-  const { client, householdId, userId } = actor;
+  const { client, householdId } = actor;
 
   const [accounts, cards, categories, subcategories, members] =
     await Promise.all([
@@ -264,8 +270,6 @@ export async function loadCaptureOptionsAction(): Promise<{
       ],
     },
     today: currentHouseholdDate(),
-    defaultResponsible: members.some((m) => m.userId === userId)
-      ? userId
-      : "household",
+    defaultResponsible: "household",
   };
 }
