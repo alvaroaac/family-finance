@@ -31,6 +31,7 @@ export const metadata = {
     : undefined,
   title: "Family Finance — Casa",
   description: "Workspace financeiro privado para a sua casa.",
+  appleWebApp: { capable: true, title: "Casa", statusBarStyle: "default" },
   openGraph: {
     url: process.env.NEXT_PUBLIC_SITE_URL,
     title: "Family Finance — Casa",

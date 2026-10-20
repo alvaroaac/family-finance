@@ -12,6 +12,16 @@ import type { HouseholdTheme } from "@family-finance/domain";
 
 export type ThemeId = HouseholdTheme["base"];
 
+/** Each theme's `--ff-bg`, for places that cannot read CSS (manifest, browser chrome). */
+const THEME_BACKGROUND: Record<ThemeId, string> = {
+  esmeralda: "#16352B",
+  salvia: "#E8EDE3",
+};
+
+export function themeBackground(id: ThemeId): string {
+  return THEME_BACKGROUND[id];
+}
+
 /** The two household skins; Esmeralda (dark) is the default. */
 export const THEMES: ReadonlyArray<{
   id: ThemeId;
@@ -22,12 +32,12 @@ export const THEMES: ReadonlyArray<{
   {
     id: "esmeralda",
     label: "Esmeralda",
-    swatch: { background: "#16352B", accent: "#D4AF6A" },
+    swatch: { background: THEME_BACKGROUND.esmeralda, accent: "#D4AF6A" },
   },
   {
     id: "salvia",
     label: "Sálvia",
-    swatch: { background: "#E8EDE3", accent: "#A8853C" },
+    swatch: { background: THEME_BACKGROUND.salvia, accent: "#A8853C" },
   },
 ];
 
