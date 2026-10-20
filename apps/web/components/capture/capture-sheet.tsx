@@ -80,22 +80,29 @@ export function CaptureSheet({
   onClose: () => void;
   variant: "sheet" | "page";
 }): ReactElement | null {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [online, setOnline] = useState(true);
-  const [networkError, setNetworkError] = useState(false);
   const userId = useContext(CaptureUserContext);
   if (userId === null) {
     throw new Error("CaptureSheet must render inside CaptureUserContext");
   }
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [online, setOnline] = useState(true);
+  const [networkError, setNetworkError] = useState(false);
+  // Lives here, not in the body, so no close path can unmount a running save.
+  const [saving, setSaving] = useState(false);
   const loading = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
   const isSheet = variant === "sheet";
 
+  /** Every user-initiated close; a save in flight finishes first. */
+  const requestClose = () => {
+    if (!saving) onClose();
+  };
+
   useEffect(() => {
-    onCloseRef.current = onClose;
+    onCloseRef.current = requestClose;
   });
 
   useEffect(() => {
@@ -201,7 +208,11 @@ export function CaptureSheet({
   return (
     <div className={cx("ff-capture", `ff-capture--${variant}`)}>
       {isSheet ? (
-        <div className="ff-capture__backdrop" aria-hidden="true" onClick={onClose} />
+        <div
+          className="ff-capture__backdrop"
+          aria-hidden="true"
+          onClick={requestClose}
+        />
       ) : null}
       <div
         ref={panelRef}
@@ -227,7 +238,7 @@ export function CaptureSheet({
             className="ff-capture__close"
             aria-label="Fechar"
             title={isSheet ? "Fechar (Esc)" : "Fechar"}
-            onClick={onClose}
+            onClick={requestClose}
           >
             <IconClose size={18} />
           </button>
@@ -241,6 +252,9 @@ export function CaptureSheet({
             defaults={loaded.defaults}
             onCategoryCreated={addCategory}
             onClose={onClose}
+            requestClose={requestClose}
+            saving={saving}
+            setSaving={setSaving}
             closeOnNavigate={isSheet}
             online={online}
             setNetworkError={setNetworkError}
@@ -315,6 +329,9 @@ function CaptureBody({
   defaults,
   onCategoryCreated,
   onClose,
+  requestClose,
+  saving,
+  setSaving,
   closeOnNavigate,
   online,
   setNetworkError,
@@ -323,7 +340,12 @@ function CaptureBody({
   options: TransactionFieldOptions;
   defaults: TransactionFieldValues;
   onCategoryCreated: (category: CategoryOption) => void;
+  /** Closes unconditionally; only a successful save uses it. */
   onClose: () => void;
+  /** Closes unless a save is in flight. */
+  requestClose: () => void;
+  saving: boolean;
+  setSaving: (saving: boolean) => void;
   closeOnNavigate: boolean;
   online: boolean;
   /** true after a request failed to reach the server, false once one gets through. */
@@ -339,7 +361,6 @@ function CaptureBody({
   const [filling, setFilling] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("idle");
   const [message, setMessage] = useState<CaptureMessage | null>(null);
-  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
 
@@ -424,7 +445,7 @@ function CaptureBody({
     } catch {
       if (alive.current) setNetworkError(true);
     } finally {
-      if (alive.current) setSaving(false);
+      setSaving(false);
     }
   }
 
@@ -441,6 +462,7 @@ function CaptureBody({
   }
 
   function cancel(): void {
+    if (saving) return;
     draft.discard();
     onClose();
   }
@@ -492,7 +514,7 @@ function CaptureBody({
         <Banner
           message={message}
           onDismiss={() => setMessage(null)}
-          onNavigate={closeOnNavigate ? onClose : undefined}
+          onNavigate={closeOnNavigate ? requestClose : undefined}
         />
       ) : null}
 

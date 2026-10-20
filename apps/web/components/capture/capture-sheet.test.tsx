@@ -781,6 +781,58 @@ describe("Salvar", () => {
     expect(mocks.router.refresh).toHaveBeenCalled();
   });
 
+  it.each([
+    ["the × button", () => click(button("Fechar"))],
+    ["Esc", () => press(document, "Escape").then(() => undefined)],
+    [
+      "the backdrop",
+      () => click(document.querySelector(".ff-capture__backdrop")),
+    ],
+    ["Cancelar", () => click(document.querySelector(".ff-capture__cancel"))],
+    [
+      "the Obrigações link",
+      async () => {
+        const link = banner()?.querySelector("a") ?? null;
+        link?.addEventListener("click", (event) => event.preventDefault());
+        await click(link);
+      },
+    ],
+  ])("cannot be closed from %s while a save is in flight", async (_label, close) => {
+    mocks.suggest.mockResolvedValue({
+      ok: false,
+      message: captureMessage("unsupported_intent"),
+    });
+    await type(textarea(), "aluguel todo dia 5");
+    await click(fillButton());
+    await flush();
+    await type(field("amount"), "85,00");
+    await type(field("description"), "Mercado");
+    const pending = deferred<{ ok: true }>();
+    mocks.createTransaction.mockReturnValueOnce(pending.promise);
+    await click(saveButton());
+
+    await close();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog()).not.toBeNull();
+    expect(stored()).not.toBeNull();
+
+    await act(async () => pending.resolve({ ok: true }));
+    await flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(dialog()).toBeNull();
+  });
+
+  it("can be closed again after a failed save", async () => {
+    mocks.createTransaction.mockResolvedValue({ ok: false, error: "Falhou." });
+    await type(field("amount"), "85,00");
+    await type(field("description"), "Mercado");
+    await click(saveButton());
+    await flush();
+
+    await click(button("Fechar"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the sheet open with the action's error under the form", async () => {
     mocks.createTransaction.mockResolvedValue({
       ok: false,
