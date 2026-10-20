@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useContext, type ComponentProps } from "react";
+import { act, useContext, useEffect, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,7 @@ import { CaptureAppShell } from "./capture-app-shell";
 import { CaptureUserContext } from "./capture-sheet";
 
 const nav = vi.hoisted(() => ({ pathname: "/resumo" }));
+const sheetMounts = vi.hoisted(() => ({ count: 0 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => nav.pathname,
@@ -22,6 +23,9 @@ vi.mock("./capture-sheet", async (importOriginal) => {
     ...actual,
     CaptureSheet: ({ open }: { open: boolean }) => {
       const userId = useContext(actual.CaptureUserContext);
+      useEffect(() => {
+        sheetMounts.count++;
+      }, []);
       return open ? <div className="ff-capture" data-user={userId} /> : null;
     },
   };
@@ -38,7 +42,7 @@ function PageUser() {
 let root: Root;
 let container: HTMLDivElement;
 
-async function render(pathname: string): Promise<void> {
+async function render(pathname: string, userId = "user-1"): Promise<void> {
   nav.pathname = pathname;
   await act(async () =>
     root.render(
@@ -50,7 +54,7 @@ async function render(pathname: string): Promise<void> {
         ]}
         householdName="Casa Azul"
         user={{ initial: "M", name: "Member", email: "member@example.test" }}
-        userId="user-1"
+        userId={userId}
       >
         <PageUser />
       </CaptureAppShell>,
@@ -97,6 +101,17 @@ describe("CaptureAppShell", () => {
     expect(container.querySelector(".ff-capture")?.getAttribute("data-user")).toBe(
       "user-1",
     );
+  });
+
+  it("remounts the capture sheet when the signed-in user changes", async () => {
+    sheetMounts.count = 0;
+    await render("/resumo");
+    await render("/resumo", "user-1");
+    expect(sheetMounts.count).toBe(1);
+
+    await render("/resumo", "user-2");
+    expect(sheetMounts.count).toBe(2);
+    expect(container.querySelector(".page-user")?.textContent).toBe("user-2");
   });
 
   it("hides the Novo lançamento entries on /capture", async () => {

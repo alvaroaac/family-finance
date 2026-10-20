@@ -15,7 +15,9 @@ import { CaptureSheet, CaptureUserContext } from "./capture-sheet";
  * and two forms would fight over the same stored draft.
  *
  * `userId` (the signed-in Supabase user) keys the stored draft; it reaches the
- * sheet and the `/capture` page through CaptureUserContext.
+ * sheet and the `/capture` page through CaptureUserContext. Keying the tree by
+ * it remounts the draft state on a user switch, so one user's draft is never
+ * written under another's key.
  */
 export function CaptureAppShell({
   userId,
@@ -26,7 +28,7 @@ export function CaptureAppShell({
   const [open, setOpen] = useState(false);
   const onCapturePage = usePathname() === "/capture";
   return (
-    <CaptureUserContext.Provider value={userId}>
+    <CaptureUserContext.Provider key={userId} value={userId}>
       <AppShell
         {...props}
         onNewTransaction={onCapturePage ? undefined : () => setOpen(true)}
