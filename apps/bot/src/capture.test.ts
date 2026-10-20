@@ -214,6 +214,46 @@ describe("capture read-only conversation pipeline", () => {
     });
   });
 
+  it("answers non_financial when the classifier says so and nothing parsed an amount", async () => {
+    const classifyMessage = vi.fn(async () => ({
+      intent: "non_financial" as const,
+    }));
+    const { handle, writes } = fixture({ classifyMessage });
+    expect(await handle({ ...request, text: "bom dia" }, actor)).toEqual({
+      status: 422,
+      body: { ok: false, error: "non_financial" },
+    });
+    expect(classifyMessage).toHaveBeenCalled();
+    for (const write of Object.values(writes))
+      expect(write).not.toHaveBeenCalled();
+  });
+
+  it("keeps the draft when the classifier says non_financial but the parser found an amount", async () => {
+    const { handle } = fixture({
+      classifyMessage: async () => ({ intent: "non_financial" as const }),
+    });
+    const result = await handle(request, actor);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      ok: true,
+      draft: { amountCents: 8500 },
+    });
+  });
+
+  it("keeps an amountless draft when the classifier did not say non_financial", async () => {
+    vi.spyOn(conversation, "startConversation").mockResolvedValue({
+      state: state({
+        status: "needs_amount",
+        draft: { ...state().draft, amountCents: undefined },
+      }),
+      reply: "",
+    });
+    const { handle } = fixture({ classifyMessage: async () => null });
+    const result = await handle({ ...request, text: "mercado" }, actor);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ ok: true });
+  });
+
   it.each([1, 500])("accepts %i characters after trimming", async (length) => {
     vi.spyOn(conversation, "startConversation").mockResolvedValue({
       state: state(),

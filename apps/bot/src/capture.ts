@@ -218,6 +218,7 @@ export function toCaptureDraft(
 function readOnlyDeps(
   deps: ConversationDeps,
   onObligationAttempt: () => void,
+  onNonFinancial: () => void,
 ): ConversationDeps {
   const readOnly = { ...deps };
   for (const name of [
@@ -242,6 +243,14 @@ function readOnlyDeps(
     throw new Error("Capture is read-only");
   };
   readOnly.logInteraction = async () => undefined;
+  const classifyMessage = deps.classifyMessage;
+  // Observe, not change: the classifier's own verdict, before any parser override.
+  if (classifyMessage !== undefined)
+    readOnly.classifyMessage = async (...args) => {
+      const classified = await classifyMessage(...args);
+      if (classified?.intent === "non_financial") onNonFinancial();
+      return classified;
+    };
   return readOnly;
 }
 
@@ -288,6 +297,7 @@ export function createCaptureDraftHandler(deps: {
     if (release === null)
       return { status: 429, body: { ok: false, error: "rate_limited" } };
     let obligationAttempted = false;
+    let classifiedNonFinancial = false;
     const unsupportedIntent = {
       status: 422,
       body: { ok: false, error: "unsupported_intent" },
@@ -297,6 +307,9 @@ export function createCaptureDraftHandler(deps: {
         await deps.buildCaptureDeps(actor),
         () => {
           obligationAttempted = true;
+        },
+        () => {
+          classifiedNonFinancial = true;
         },
       );
       const { state } = await startConversation(
@@ -316,6 +329,9 @@ export function createCaptureDraftHandler(deps: {
       };
       const result = toCaptureDraft(checkedState, request.today);
       if (!result.ok) return { status: 422, body: result };
+      // The parser may still find an amount the classifier missed: keep that draft.
+      if (classifiedNonFinancial && result.draft.amountCents === undefined)
+        return { status: 422, body: { ok: false, error: "non_financial" } };
       const draft = filterCategory(result.draft, conversationDeps);
       draft.candidates = draft.candidates
         .filter((candidate) =>
