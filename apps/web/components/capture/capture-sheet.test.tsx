@@ -1,0 +1,622 @@
+// @vitest-environment jsdom
+
+import { act, useState, type ComponentProps } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { CaptureDraft } from "../../app/(app)/capture/actions";
+import CapturePage from "../../app/(app)/capture/page";
+import { captureMessage } from "../../lib/capture-copy";
+import type { TransactionFieldOptions } from "../transaction-fields";
+import { ToastProvider } from "../ui";
+import { CaptureSheet } from "./capture-sheet";
+import { CAPTURE_DRAFT_KEY } from "./use-capture-draft";
+
+const mocks = vi.hoisted(() => ({
+  suggest: vi.fn(),
+  load: vi.fn(),
+  createCategory: vi.fn(),
+  createTransaction: vi.fn(),
+  router: { refresh: vi.fn(), push: vi.fn() },
+}));
+
+vi.mock("../../app/(app)/capture/actions", () => ({
+  suggestCaptureDraftAction: mocks.suggest,
+  loadCaptureOptionsAction: mocks.load,
+}));
+vi.mock("../../app/(app)/categories/actions", () => ({
+  createCategoryAction: mocks.createCategory,
+}));
+vi.mock("../../app/(app)/transactions/actions", () => ({
+  createManualTransactionAction: mocks.createTransaction,
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => mocks.router }));
+vi.mock("next/link", () => ({
+  default: (props: ComponentProps<"a">) => <a {...props} />,
+}));
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const ACCOUNT = "00000000-0000-4000-8000-000000000001";
+const FOOD = "00000000-0000-4000-8000-000000000003";
+const FUN = "00000000-0000-4000-8000-000000000004";
+
+const options: TransactionFieldOptions = {
+  accounts: [{ id: ACCOUNT, name: "Conta Corrente" }],
+  cards: [],
+  categories: [
+    { id: FOOD, name: "Alimentação", kind: "expense" },
+    { id: FUN, name: "Lazer", kind: "expense" },
+  ],
+  subcategories: [],
+  responsibles: [{ value: "household", label: "Casa" }],
+};
+const loaded = { options, today: "2026-10-20", defaultResponsible: "household" };
+
+function draft(overrides: Partial<CaptureDraft> = {}): CaptureDraft {
+  return {
+    description: "Mercado",
+    amountCents: 8500,
+    date: "2026-10-19",
+    kind: "expense",
+    categoryId: FOOD,
+    accountId: ACCOUNT,
+    installmentCount: 1,
+    candidates: [],
+    explanation: "Regra: mercado → Alimentação",
+    needsReview: false,
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+let container: HTMLDivElement;
+let root: Root;
+let online = true;
+const onClose = vi.fn();
+
+function Host() {
+  const [open, setOpen] = useState(false);
+  return (
+    <ToastProvider>
+      <button type="button" id="opener" onClick={() => setOpen(true)}>
+        Abrir
+      </button>
+      <CaptureSheet
+        open={open}
+        variant="sheet"
+        onClose={() => {
+          onClose();
+          setOpen(false);
+        }}
+      />
+    </ToastProvider>
+  );
+}
+
+const flush = () =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+async function click(element: Element | null): Promise<void> {
+  if (!(element instanceof HTMLElement)) throw new Error("Nothing to click");
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+async function type(
+  element: Element | null,
+  value: string,
+): Promise<void> {
+  if (
+    !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+  ) {
+    throw new Error("Nothing to type into");
+  }
+  const proto = Object.getPrototypeOf(element) as object;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+  await act(async () => {
+    setter?.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function press(
+  element: Element | Document | null,
+  key: string,
+  init: KeyboardEventInit = {},
+): Promise<KeyboardEvent> {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  await act(async () => {
+    (element ?? document).dispatchEvent(event);
+  });
+  return event;
+}
+
+function button(name: string): HTMLButtonElement | null {
+  return (
+    [...document.querySelectorAll("button")].find(
+      (b) =>
+        b.getAttribute("aria-label") === name || b.textContent?.trim() === name,
+    ) ?? null
+  );
+}
+
+const dialog = () => document.querySelector<HTMLElement>("[role='dialog']");
+const textarea = () =>
+  document.querySelector<HTMLTextAreaElement>(
+    "textarea[aria-label='Descreva o lançamento']",
+  );
+const fillButton = () =>
+  document.querySelector<HTMLButtonElement>(".ff-capture__fill");
+const saveButton = () =>
+  document.querySelector<HTMLButtonElement>(".ff-capture__save");
+const banner = () => document.querySelector<HTMLElement>(".ff-capture__banner");
+const field = <T extends Element = HTMLInputElement>(name: string) =>
+  document.querySelector<T>(`[name='${name}']`);
+const stored = () => localStorage.getItem(CAPTURE_DRAFT_KEY);
+
+async function openSheet(): Promise<void> {
+  const opener = document.getElementById("opener") as HTMLButtonElement;
+  opener.focus();
+  await click(opener);
+  await flush();
+}
+
+async function setOnline(next: boolean): Promise<void> {
+  online = next;
+  await act(async () => {
+    window.dispatchEvent(new Event(next ? "online" : "offline"));
+  });
+}
+
+beforeEach(async () => {
+  localStorage.clear();
+  vi.clearAllMocks();
+  online = true;
+  Object.defineProperty(window.navigator, "onLine", {
+    configurable: true,
+    get: () => online,
+  });
+  mocks.load.mockResolvedValue(loaded);
+  mocks.createTransaction.mockResolvedValue({ ok: true });
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => root.render(<Host />));
+});
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+});
+
+describe("options loading", () => {
+  it("loads once on the first open, shows the skeleton until then, and reuses the result", async () => {
+    const pending = deferred<typeof loaded>();
+    mocks.load.mockReturnValueOnce(pending.promise);
+    await openSheet();
+
+    expect(document.querySelector(".ff-capture__skeleton")).not.toBeNull();
+    expect(field("amount")).toBeNull();
+
+    await act(async () => pending.resolve(loaded));
+    await flush();
+    expect(document.querySelector(".ff-capture__skeleton")).toBeNull();
+    expect(field("amount")).not.toBeNull();
+
+    await click(button("Fechar"));
+    await openSheet();
+    expect(field("amount")).not.toBeNull();
+    expect(mocks.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the unavailable banner on a failed load and retries on the next open", async () => {
+    mocks.load.mockRejectedValueOnce(new Error("Nenhuma casa ativa"));
+    await openSheet();
+
+    expect(banner()?.textContent).toContain(captureMessage("unavailable").text);
+    expect(document.querySelector(".ff-capture__skeleton")).not.toBeNull();
+    expect(field("amount")).toBeNull();
+
+    await click(button("Fechar"));
+    await openSheet();
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+    expect(field("amount")).not.toBeNull();
+  });
+});
+
+describe("Preencher", () => {
+  beforeEach(openSheet);
+
+  it("is disabled while the text is empty and caps the text at 500 characters", async () => {
+    expect(textarea()?.maxLength).toBe(500);
+    expect(fillButton()?.disabled).toBe(true);
+    await type(textarea(), "   ");
+    expect(fillButton()?.disabled).toBe(true);
+    await type(textarea(), "85 no mercado");
+    expect(fillButton()?.disabled).toBe(false);
+  });
+
+  it("fills from Enter but lets Shift+Enter insert a newline", async () => {
+    mocks.suggest.mockResolvedValue({ ok: true, intent: "plain", draft: draft() });
+    await type(textarea(), "85 no mercado");
+
+    const shifted = await press(textarea(), "Enter", { shiftKey: true });
+    expect(shifted.defaultPrevented).toBe(false);
+    expect(mocks.suggest).not.toHaveBeenCalled();
+
+    const enter = await press(textarea(), "Enter");
+    await flush();
+    expect(enter.defaultPrevented).toBe(true);
+    expect(mocks.suggest).toHaveBeenCalledWith("85 no mercado");
+    expect(field("amount")?.value).toBe("85,00");
+  });
+
+  it("reads Preenchendo… while running, keeps fields editable and runs one fill at a time", async () => {
+    const pending = deferred<unknown>();
+    mocks.suggest.mockReturnValue(pending.promise);
+    await type(textarea(), "85 no mercado");
+
+    await click(fillButton());
+    expect(fillButton()?.textContent).toContain("Preenchendo…");
+    expect(fillButton()?.disabled).toBe(true);
+    await press(textarea(), "Enter");
+    await click(fillButton());
+    expect(mocks.suggest).toHaveBeenCalledTimes(1);
+
+    expect(field("amount")?.disabled).toBe(false);
+    await type(field("amount"), "12,00");
+    expect(field("amount")?.value).toBe("12,00");
+
+    await act(async () =>
+      pending.resolve({ ok: true, intent: "plain", draft: draft() }),
+    );
+    await flush();
+    expect(field("amount")?.value).toBe("12,00");
+    expect(field("description")?.value).toBe("Mercado");
+  });
+
+  it("drops a result that arrives after the sheet closed", async () => {
+    const pending = deferred<unknown>();
+    mocks.suggest.mockReturnValue(pending.promise);
+    await type(textarea(), "85 no mercado");
+    await click(fillButton());
+    await click(button("Fechar"));
+
+    await act(async () =>
+      pending.resolve({ ok: true, intent: "plain", draft: draft() }),
+    );
+    await openSheet();
+
+    expect(textarea()?.value).toBe("85 no mercado");
+    expect(field("amount")?.value).toBe("");
+    expect(document.querySelector(".ff-capture__explanation")).toBeNull();
+  });
+
+  it("shows the explanation, the AI marks, and the conflict chips; a chip picks the category as a user edit", async () => {
+    mocks.suggest.mockResolvedValue({
+      ok: true,
+      intent: "plain",
+      draft: draft({
+        categoryId: undefined,
+        needsReview: true,
+        candidates: [
+          { categoryId: FOOD, explanation: "a" },
+          { categoryId: FUN, explanation: "b" },
+        ],
+      }),
+    });
+    await type(textarea(), "85 no mercado");
+    await click(fillButton());
+    await flush();
+
+    expect(document.querySelector(".ff-capture__explanation")?.textContent).toBe(
+      "Regra: mercado → Alimentação",
+    );
+    expect(document.querySelector(".ff-capture__conflict")?.textContent).toBe(
+      "Há regras conflitantes para este lugar — escolha a categoria",
+    );
+    const amountLabel = document.querySelector(`label[for='${field("amount")?.id}']`);
+    expect(amountLabel?.textContent).toContain("IA");
+    const category = field<HTMLSelectElement>("categoryId");
+    expect(category?.value).toBe("");
+    expect(category?.closest(".ff-txfields--warn")).not.toBeNull();
+
+    const chips = [...document.querySelectorAll<HTMLButtonElement>(".ff-capture__chip")];
+    expect(chips.map((c) => c.textContent)).toEqual(["Alimentação", "Lazer"]);
+    await click(chips[1]!);
+
+    expect(field<HTMLSelectElement>("categoryId")?.value).toBe(FUN);
+    expect(field("categoryId")?.closest(".ff-txfields--warn")).toBeNull();
+    expect(chips[1]?.getAttribute("aria-pressed")).toBe("true");
+
+    mocks.suggest.mockResolvedValue({ ok: true, intent: "plain", draft: draft() });
+    await click(fillButton());
+    await flush();
+    expect(field<HTMLSelectElement>("categoryId")?.value).toBe(FUN);
+  });
+});
+
+describe("message banner", () => {
+  beforeEach(openSheet);
+
+  it("shows an error with its tone and dismisses with Dispensar", async () => {
+    mocks.suggest.mockResolvedValue({
+      ok: false,
+      message: captureMessage("rate_limited"),
+    });
+    await type(textarea(), "85 no mercado");
+    await click(fillButton());
+    await flush();
+
+    expect(banner()?.getAttribute("role")).toBe("status");
+    expect(banner()?.classList.contains("ff-capture__banner--warn")).toBe(true);
+    expect(banner()?.textContent).toContain("Muitas tentativas — aguarde um minuto");
+
+    await type(textarea(), "85 no mercado!");
+    expect(banner()).not.toBeNull();
+
+    await click(button("Dispensar"));
+    expect(banner()).toBeNull();
+  });
+
+  it("renders the href as a link to Obrigações", async () => {
+    mocks.suggest.mockResolvedValue({
+      ok: false,
+      message: captureMessage("unsupported_intent"),
+    });
+    await type(textarea(), "aluguel todo dia 5");
+    await click(fillButton());
+    await flush();
+
+    const link = banner()?.querySelector("a");
+    expect(banner()?.classList.contains("ff-capture__banner--accent")).toBe(true);
+    expect(link?.getAttribute("href")).toBe("/obligations");
+    expect(link?.textContent).toBe("Abrir Obrigações →");
+  });
+
+  it("clears the non_financial message once the text changes", async () => {
+    mocks.suggest.mockResolvedValue({
+      ok: false,
+      message: captureMessage("non_financial"),
+    });
+    await type(textarea(), "bom dia");
+    await click(fillButton());
+    await flush();
+    expect(banner()?.textContent).toContain("Não entendi como lançamento");
+
+    await type(textarea(), "bom dia 85");
+    expect(banner()).toBeNull();
+  });
+});
+
+describe("offline", () => {
+  beforeEach(openSheet);
+
+  it("shows the saved-draft banner and disables Preencher", async () => {
+    await type(textarea(), "85 no mercado");
+    await setOnline(false);
+
+    expect(document.querySelector(".ff-capture__offline")?.textContent).toContain(
+      "Sem conexão — seu rascunho está salvo",
+    );
+    expect(fillButton()?.disabled).toBe(true);
+
+    await setOnline(true);
+    expect(document.querySelector(".ff-capture__offline")).toBeNull();
+    expect(fillButton()?.disabled).toBe(false);
+  });
+
+  it("keeps the sheet open with the same banner when a save throws", async () => {
+    mocks.createTransaction.mockRejectedValue(new TypeError("Failed to fetch"));
+    await type(field("amount"), "85,00");
+    await type(field("description"), "Mercado");
+    await click(saveButton());
+    await flush();
+
+    expect(dialog()).not.toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector(".ff-capture__offline")?.textContent).toContain(
+      "Sem conexão — seu rascunho está salvo",
+    );
+  });
+});
+
+describe("new category", () => {
+  beforeEach(openSheet);
+
+  it("swaps the select for an input, creates with the current kind, and selects the result", async () => {
+    mocks.createCategory.mockResolvedValue({
+      ok: true,
+      message: "Categoria criada.",
+      id: "new-cat",
+    });
+    await click(button("+ Nova categoria"));
+
+    expect(field("categoryId")).toBeNull();
+    const input = document.querySelector<HTMLInputElement>(
+      "input[aria-label='Nome da nova categoria']",
+    );
+    expect(button("Criar")).not.toBeNull();
+    expect(document.querySelector(".ff-capture__category-toggle")?.textContent).toBe(
+      "Cancelar",
+    );
+
+    await type(input, "Pets");
+    await press(input, "Enter");
+    await flush();
+
+    const formData = mocks.createCategory.mock.calls[0]?.[0] as FormData;
+    expect(formData.get("name")).toBe("Pets");
+    expect(formData.get("kind")).toBe("expense");
+    const select = field<HTMLSelectElement>("categoryId");
+    expect(select?.value).toBe("new-cat");
+    expect(select?.selectedOptions[0]?.textContent).toBe("Pets");
+  });
+
+  it("shows the action's message under the field on failure", async () => {
+    mocks.createCategory.mockResolvedValue({
+      ok: false,
+      message: "Já existe uma categoria com esse nome.",
+    });
+    await click(button("+ Nova categoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova categoria']"),
+      "Lazer",
+    );
+    await click(button("Criar"));
+    await flush();
+
+    expect(
+      document.querySelector(".ff-capture__category-error")?.textContent,
+    ).toBe("Já existe uma categoria com esse nome.");
+    expect(field("categoryId")).toBeNull();
+  });
+});
+
+describe("Salvar", () => {
+  beforeEach(openSheet);
+
+  it("is disabled until Valor has a value", async () => {
+    expect(saveButton()?.disabled).toBe(true);
+    await type(field("amount"), "85,00");
+    expect(saveButton()?.disabled).toBe(false);
+  });
+
+  it("validates before calling the action", async () => {
+    await type(field("amount"), "85,00");
+    await click(saveButton());
+
+    expect(mocks.createTransaction).not.toHaveBeenCalled();
+    expect(document.querySelector(".ff-capture__save-error")?.textContent).toBe(
+      "A descrição não pode ficar vazia.",
+    );
+  });
+
+  it("saves, closes, clears the draft, toasts and refreshes", async () => {
+    await type(textarea(), "85 no mercado");
+    await type(field("amount"), "85,00");
+    await type(field("description"), "Mercado");
+    expect(stored()).not.toBeNull();
+
+    await click(saveButton());
+    await flush();
+
+    const formData = mocks.createTransaction.mock.calls[0]?.[0] as FormData;
+    expect(formData.get("amount")).toBe("85,00");
+    expect(formData.get("description")).toBe("Mercado");
+    expect(formData.get("payment")).toBe(`account:${ACCOUNT}`);
+    expect(formData.get("responsible")).toBe("household");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(dialog()).toBeNull();
+    expect(stored()).toBeNull();
+    expect(document.body.textContent).toContain("Lançamento salvo");
+    expect(mocks.router.refresh).toHaveBeenCalled();
+  });
+
+  it("keeps the sheet open with the action's error under the form", async () => {
+    mocks.createTransaction.mockResolvedValue({
+      ok: false,
+      error: "Escolha uma categoria de despesa.",
+    });
+    await type(field("amount"), "85,00");
+    await type(field("description"), "Mercado");
+    await click(saveButton());
+    await flush();
+
+    expect(dialog()).not.toBeNull();
+    expect(document.querySelector(".ff-capture__save-error")?.textContent).toBe(
+      "Escolha uma categoria de despesa.",
+    );
+  });
+});
+
+describe("closing", () => {
+  beforeEach(openSheet);
+
+  it.each([
+    ["the × button", () => click(button("Fechar"))],
+    ["Esc", () => press(document, "Escape").then(() => undefined)],
+    [
+      "the backdrop",
+      () => click(document.querySelector(".ff-capture__backdrop")),
+    ],
+  ])("closes from %s and keeps the draft", async (_label, close) => {
+    await type(textarea(), "85 no mercado");
+    await close();
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(dialog()).toBeNull();
+    expect(JSON.parse(stored() ?? "null")?.text).toBe("85 no mercado");
+  });
+
+  it("Cancelar closes and clears the draft", async () => {
+    await type(textarea(), "85 no mercado");
+    await click(document.querySelector(".ff-capture__cancel"));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(stored()).toBeNull();
+  });
+
+  it("traps focus inside the sheet and restores it to the opener", async () => {
+    const panel = dialog()!;
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    const focusable = [
+      ...panel.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href]"),
+    ].filter((el) => !(el as HTMLButtonElement).disabled);
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+
+    last.focus();
+    const forward = await press(last, "Tab");
+    expect(forward.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+
+    const back = await press(first, "Tab", { shiftKey: true });
+    expect(back.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(last);
+
+    await click(button("Fechar"));
+    expect(document.activeElement).toBe(document.getElementById("opener"));
+  });
+});
+
+describe("/capture page", () => {
+  it("renders the page variant and closing goes to /", async () => {
+    await act(async () =>
+      root.render(
+        <ToastProvider>
+          <CapturePage />
+        </ToastProvider>,
+      ),
+    );
+    await flush();
+
+    expect(document.querySelector(".ff-capture--page")).not.toBeNull();
+    expect(document.querySelector(".ff-capture__backdrop")).toBeNull();
+    expect(textarea()).not.toBeNull();
+
+    await click(button("Fechar"));
+    expect(mocks.router.push).toHaveBeenCalledWith("/");
+  });
+});

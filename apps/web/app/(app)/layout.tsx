@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { CaptureAppShell } from "../../components/capture/capture-app-shell";
 import {
-  AppShell,
   SubmitButton,
   ThemePicker,
   ToastProvider,
@@ -62,7 +62,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <ToastProvider>
-      <AppShell
+      <CaptureAppShell
         items={NAV_ITEMS}
         householdName={household.name}
         user={{ initial: name.charAt(0).toUpperCase(), name, email }}
@@ -84,7 +84,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         }
       >
         {children}
-      </AppShell>
+      </CaptureAppShell>
     </ToastProvider>
   );
 }

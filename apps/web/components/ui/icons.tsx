@@ -9,7 +9,11 @@ import type { ReactElement, ReactNode } from "react";
 
 export type IconProps = { size?: number };
 
-function Svg({ size = 18, children }: IconProps & { children: ReactNode }): ReactElement {
+function Svg({
+  size = 18,
+  strokeWidth = 1.7,
+  children,
+}: IconProps & { strokeWidth?: number; children: ReactNode }): ReactElement {
   return (
     <svg
       width={size}
@@ -17,7 +21,7 @@ function Svg({ size = 18, children }: IconProps & { children: ReactNode }): Reac
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.7"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -161,6 +165,36 @@ export function IconDots(props: IconProps): ReactElement {
       <circle cx="5" cy="12" r="1.6" />
       <circle cx="12" cy="12" r="1.6" />
       <circle cx="19" cy="12" r="1.6" />
+    </Svg>
+  );
+}
+
+export function IconPlus(props: IconProps): ReactElement {
+  return (
+    <Svg {...props} strokeWidth={2.2}>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </Svg>
+  );
+}
+
+export function IconClose(props: IconProps): ReactElement {
+  return (
+    <Svg {...props} strokeWidth={1.8}>
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
+    </Svg>
+  );
+}
+
+export function IconWifiOff(props: IconProps): ReactElement {
+  return (
+    <Svg {...props} strokeWidth={2}>
+      <path d="M3 3l18 18" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+      <path d="M5 12.5a10 10 0 0 1 4-2.4" />
+      <path d="M19 12.5a10 10 0 0 0-3-2" />
+      <circle cx="12" cy="20" r="0.8" />
     </Svg>
   );
 }

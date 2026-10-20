@@ -4,6 +4,8 @@
  * AppShell — the "Editorial acolhedor" chrome around every private page:
  * desktop 256px sidebar (soft bg, active item = gold tint + inset gold bar)
  * and mobile bottom nav (Resumo/Transações/Cartões/Mais, per the mockups).
+ * With `onNewTransaction`, a "Novo lançamento" entry sits above the sidebar
+ * nav and as a raised round + in the middle of the bottom bar.
  * "Mais" opens a sheet above the bar with every remaining section, so no
  * page is reachable only by typing its URL on a phone.
  *
@@ -11,7 +13,13 @@
  * sign-out form and theme picker all arrive via props from `(app)/layout.tsx`.
  * The only client concern here is the active state via `usePathname()`.
  */
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
@@ -22,6 +30,7 @@ import {
   IconGrid,
   IconHome,
   IconJar,
+  IconPlus,
   IconSliders,
   IconTag,
   IconTransfer,
@@ -66,6 +75,8 @@ const BOTTOM_NAV_HREFS: ReadonlyArray<string> = [
   "/cards",
 ];
 const MORE_NAV_ID = "ff-morenav";
+/** The round "+" goes before this bottom item: Resumo · Transações · + · Cartões. */
+const NEW_ENTRY_INDEX = 2;
 
 export function AppShell(props: {
   items: NavItem[];
@@ -73,9 +84,19 @@ export function AppShell(props: {
   user: { initial: string; name: string; email: string };
   signOut?: ReactNode;
   themePicker?: ReactNode;
+  /** Opens the quick-capture sheet; omit to hide the "Novo lançamento" entries. */
+  onNewTransaction?: () => void;
   children: ReactNode;
 }) {
-  const { items, householdName, user, signOut, themePicker, children } = props;
+  const {
+    items,
+    householdName,
+    user,
+    signOut,
+    themePicker,
+    onNewTransaction,
+    children,
+  } = props;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -198,6 +219,17 @@ export function AppShell(props: {
           </div>
         </div>
 
+        {onNewTransaction ? (
+          <button
+            type="button"
+            className="ff-sidebar__new"
+            onClick={onNewTransaction}
+          >
+            <IconPlus size={16} />
+            Novo lançamento
+          </button>
+        ) : null}
+
         <nav className="ff-sidebar__nav">
           {items.map((item) => {
             const Icon = NAV_ICONS[item.icon];
@@ -303,10 +335,10 @@ export function AppShell(props: {
           </nav>
 
           <nav className="ff-bottomnav">
-            {bottomItems.map((item) => {
+            {bottomItems.map((item, index) => {
               const Icon = NAV_ICONS[item.icon];
               const active = isNavItemActive(pathname, item.href);
-              return (
+              const link = (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -325,6 +357,22 @@ export function AppShell(props: {
                     {pendingHref === item.href ? <Spinner /> : null}
                   </span>
                 </Link>
+              );
+              return onNewTransaction && index === NEW_ENTRY_INDEX ? (
+                <Fragment key={item.href}>
+                  <button
+                    type="button"
+                    className="ff-bottomnav__new"
+                    aria-label="Novo lançamento"
+                    title="Novo lançamento"
+                    onClick={onNewTransaction}
+                  >
+                    <IconPlus size={24} />
+                  </button>
+                  {link}
+                </Fragment>
+              ) : (
+                link
               );
             })}
             <button

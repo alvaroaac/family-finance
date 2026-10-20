@@ -35,18 +35,21 @@ export { PressureBars } from "./charts";
 export {
   IconBank,
   IconCard,
+  IconClose,
   IconDoc,
   IconDots,
   IconGrid,
   IconHome,
   IconJar,
   IconPencil,
+  IconPlus,
   IconPlusCircle,
   IconSliders,
   IconTag,
   IconTransfer,
   IconTrash,
   IconUpload,
+  IconWifiOff,
 } from "./icons";
 export type { IconProps } from "./icons";
 export { ToastProvider, useToast } from "./toast";
