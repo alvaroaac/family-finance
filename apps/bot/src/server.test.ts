@@ -5,6 +5,7 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -675,6 +676,47 @@ describe("shared signed internal routes", () => {
     });
     expect(claimNonce).not.toHaveBeenCalled();
     expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("closes the connection after answering 413 to an oversized body", async () => {
+    const { base } = await setup({ maxBodyBytes: 8 });
+    const { status, connection, socketClosed } = await new Promise<{
+      status: number | undefined;
+      connection: string | undefined;
+      socketClosed: Promise<void>;
+    }>((resolve, reject) => {
+      const request = httpRequest(
+        `${base}${firstPath}`,
+        { method: "POST", agent: false },
+        (response) => {
+          response.resume();
+          resolve({
+            status: response.statusCode,
+            connection: response.headers.connection,
+            socketClosed: new Promise<void>((done) =>
+              response.socket.once("close", () => done()),
+            ),
+          });
+        },
+      );
+      request.on("error", reject);
+      request.end("x".repeat(64 * 1024));
+    });
+    expect(status).toBe(413);
+    expect(connection).toBe("close");
+    await socketClosed;
+  });
+
+  it("returns 503 when an internal route handler throws and keeps serving", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { base, internal } = await setup();
+    internal.mockRejectedValueOnce(new Error("handler down"));
+    const failed = await post(base);
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toEqual({ ok: false, error: "unavailable" });
+    const next = await post(base);
+    expect(next.status).toBe(202);
+    expect(internal).toHaveBeenCalledTimes(2);
   });
 
   it("accepts a body exactly at the byte cap", async () => {

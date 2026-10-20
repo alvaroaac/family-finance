@@ -126,10 +126,12 @@ function sendJson(
   response: http.ServerResponse,
   status: number,
   body: unknown,
+  headers: http.OutgoingHttpHeaders = {},
 ): void {
   const payload = JSON.stringify(body);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
+    ...headers,
   });
   response.end(payload);
 }
@@ -236,7 +238,8 @@ async function routeRequest(
     (importSuggestions !== undefined ||
       (internalRoute !== undefined && signed !== undefined))
   ) {
-    // Adapt the existing import nonce API without changing its expiry contract.
+    // The import adapter keeps its 120 s nonce expiry; an internal route's
+    // SignedRouteDeps.claimNonce owns its own expiry.
     const deps = importSuggestions ?? {
       ...signed!,
       claimNonce: (nonce: string) => signed!.claimNonce(nonce),
@@ -265,8 +268,16 @@ async function routeRequest(
         });
       }
     } else {
-      const result = await internalRoute!.handle(verified.json, verified.actor);
-      sendJson(response, result.status, result.body);
+      try {
+        const result = await internalRoute!.handle(
+          verified.json,
+          verified.actor,
+        );
+        sendJson(response, result.status, result.body);
+      } catch (error) {
+        console.error("[bot:server] internal route handler failed:", error);
+        sendJson(response, 503, { ok: false, error: "unavailable" });
+      }
     }
     return;
   }
@@ -290,7 +301,14 @@ async function verifySignedRequest(
   try {
     raw = await readBody(request, maxBodyBytes, false);
   } catch {
-    sendJson(response, 413, { ok: false, error: "body too large" });
+    // Don't drain an oversized upload: answer, then drop the connection.
+    response.on("finish", () => request.destroy());
+    sendJson(
+      response,
+      413,
+      { ok: false, error: "body too large" },
+      { connection: "close" },
+    );
     return null;
   }
   const timestampHeader = request.headers["x-import-timestamp"];
