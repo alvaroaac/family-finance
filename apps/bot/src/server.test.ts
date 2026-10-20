@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -7,10 +12,17 @@ import {
   createBotServer,
   createPaidFallbackClient,
   type ImportSuggestionRoute,
+  type InternalRoute,
+  type SignedRouteDeps,
 } from "./server.js";
 import { IMPORT_SUGGESTION_OUTPUT_SCHEMA } from "./import-suggestions.js";
 import type { BotEnv } from "@family-finance/config";
 import type { WebhookResult } from "./index.js";
+
+vi.mock("node:crypto", async (importOriginal) => {
+  const crypto = await importOriginal<typeof import("node:crypto")>();
+  return { ...crypto, timingSafeEqual: vi.fn(crypto.timingSafeEqual) };
+});
 
 type Handle = (
   rawBody: unknown,
@@ -504,5 +516,455 @@ describe("createBotServer", () => {
     );
     expect(replay.status).toBe(409);
     expect(internal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shared signed internal routes", () => {
+  const secret = "shared-test-secret";
+  const now = 1_800_000_000_000;
+  const timestamp = Math.floor(now / 1000);
+  const firstPath = "/internal/v1/test-first";
+  const secondPath = "/internal/v1/test-second";
+  const importPath = "/internal/v1/import-category-suggestions";
+  const actorUserId = "a9bcdb2e-ad9a-4659-9ae8-bf8487f4522a";
+  const scopeKey = "10000000-0000-4000-8000-000000000001";
+  const payload = { actorUserId, scopeKey, text: "mercado 85" };
+  const openServers: http.Server[] = [];
+
+  function headers(
+    body: string,
+    path = firstPath,
+    at = timestamp,
+    nonce = randomUUID(),
+  ) {
+    const bodyHash = createHash("sha256").update(body).digest("hex");
+    const canonical = `${at}\n${nonce}\nPOST\n${path}\n${bodyHash}`;
+    return {
+      "x-import-timestamp": String(at),
+      "x-import-nonce": nonce,
+      "x-import-signature": `v1=${createHmac("sha256", secret).update(canonical).digest("hex")}`,
+    };
+  }
+
+  async function setup(
+    options: {
+      signed?: Partial<SignedRouteDeps>;
+      maxBodyBytes?: number;
+      importRoute?: boolean;
+      withoutSigned?: boolean;
+    } = {},
+  ) {
+    const events: string[] = [];
+    const claimNonce = vi.fn(async () => {
+      events.push("nonce");
+      return true;
+    });
+    const resolveActorHouseholdId = vi.fn(async () => {
+      events.push("membership");
+      return scopeKey;
+    });
+    const internal = vi.fn(async () => {
+      events.push("handler");
+      return { status: 202, body: { received: true } };
+    });
+    const signed: SignedRouteDeps = {
+      secret,
+      claimNonce,
+      resolveActorHouseholdId,
+      now: () => now,
+      ...options.signed,
+    };
+    const routes: InternalRoute[] = [firstPath, secondPath].map((path) => ({
+      path,
+      maxBodyBytes: options.maxBodyBytes ?? 4096,
+      handle: internal,
+    }));
+    const importSuggestions: ImportSuggestionRoute | undefined =
+      options.importRoute ? { ...signed, handle: internal } : undefined;
+    const webhook = vi.fn<Handle>();
+    const server = createBotServer(webhook, {
+      internalRoutes: routes,
+      signed: options.withoutSigned ? undefined : signed,
+      importSuggestions,
+    });
+    openServers.push(server);
+    const base = await listen(server);
+    return {
+      base,
+      internal,
+      claimNonce,
+      resolveActorHouseholdId,
+      events,
+      webhook,
+    };
+  }
+
+  async function post(
+    base: string,
+    body = JSON.stringify(payload),
+    path = firstPath,
+    signedHeaders = headers(body, path),
+  ) {
+    return fetch(`${base}${path}`, {
+      method: "POST",
+      headers: signedHeaders,
+      body,
+    });
+  }
+
+  afterEach(async () => {
+    for (const server of openServers.splice(0)) await closeServer(server);
+    vi.mocked(timingSafeEqual).mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it.each([firstPath, secondPath])(
+    "verifies %s and passes JSON and the trusted actor in order",
+    async (path) => {
+      const {
+        base,
+        internal,
+        claimNonce,
+        resolveActorHouseholdId,
+        events,
+        webhook,
+      } = await setup();
+      const body = JSON.stringify(payload);
+      const signedHeaders = headers(body, path);
+      const response = await post(base, body, path, signedHeaders);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ received: true });
+      expect(claimNonce).toHaveBeenCalledTimes(1);
+      expect(claimNonce).toHaveBeenCalledWith(signedHeaders["x-import-nonce"]);
+      expect(resolveActorHouseholdId).toHaveBeenCalledTimes(1);
+      expect(resolveActorHouseholdId).toHaveBeenCalledWith(actorUserId);
+      expect(internal).toHaveBeenCalledTimes(1);
+      expect(internal).toHaveBeenCalledWith(payload, {
+        userId: actorUserId,
+        householdId: scopeKey,
+      });
+      expect(events).toEqual(["nonce", "membership", "handler"]);
+      expect(webhook).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a non-POST method before reading or verifying its body", async () => {
+    const { base, claimNonce, internal } = await setup({ maxBodyBytes: 1 });
+    const response = await fetch(`${base}${firstPath}`, {
+      method: "PUT",
+      body: "oversized",
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ ok: false, error: "not found" });
+    expect(claimNonce).not.toHaveBeenCalled();
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("returns 413 for an oversized body before checking the signature", async () => {
+    const { base, claimNonce, internal } = await setup({ maxBodyBytes: 8 });
+    const response = await post(
+      base,
+      "too large",
+      firstPath,
+      headers("different"),
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "body too large",
+    });
+    expect(claimNonce).not.toHaveBeenCalled();
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("accepts a body exactly at the byte cap", async () => {
+    const body = JSON.stringify({ ...payload, text: "café" });
+    const { base } = await setup({ maxBodyBytes: Buffer.byteLength(body) });
+    expect((await post(base, body)).status).toBe(202);
+  });
+
+  it.each([
+    "wrong secret",
+    "wrong path",
+    "changed body",
+    "missing timestamp",
+    "missing nonce",
+    "invalid nonce",
+    "missing signature",
+    "short signature",
+    "first byte",
+    "last byte",
+  ])("rejects %s before parsing JSON or claiming a nonce", async (failure) => {
+    const { base, claimNonce, resolveActorHouseholdId, internal } =
+      await setup();
+    const body = "{invalid json";
+    const signedHeaders: Record<string, string> = headers(body);
+    if (failure === "wrong secret") {
+      const hash = createHash("sha256").update(body).digest("hex");
+      const canonical = `${timestamp}\n${signedHeaders["x-import-nonce"]}\nPOST\n${firstPath}\n${hash}`;
+      signedHeaders["x-import-signature"] =
+        `v1=${createHmac("sha256", "wrong-secret").update(canonical).digest("hex")}`;
+    }
+    if (failure === "wrong path")
+      Object.assign(signedHeaders, headers(body, secondPath));
+    if (failure === "changed body")
+      Object.assign(signedHeaders, headers("different"));
+    if (failure === "missing timestamp")
+      delete signedHeaders["x-import-timestamp"];
+    if (failure === "missing nonce") delete signedHeaders["x-import-nonce"];
+    if (failure === "invalid nonce") signedHeaders["x-import-nonce"] = "short";
+    if (failure === "missing signature")
+      delete signedHeaders["x-import-signature"];
+    if (failure === "short signature")
+      signedHeaders["x-import-signature"] = "v1=bad";
+    if (failure === "first byte")
+      signedHeaders["x-import-signature"] =
+        `x${signedHeaders["x-import-signature"]!.slice(1)}`;
+    if (failure === "last byte")
+      signedHeaders["x-import-signature"] =
+        `${signedHeaders["x-import-signature"]!.slice(0, -1)}x`;
+    const response = await fetch(`${base}${firstPath}`, {
+      method: "POST",
+      headers: signedHeaders,
+      body,
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "invalid signature",
+    });
+    expect(claimNonce).not.toHaveBeenCalled();
+    expect(resolveActorHouseholdId).not.toHaveBeenCalled();
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it.each([-61, 61, 0.5])(
+    "rejects timestamp offset %s before JSON parsing",
+    async (offset) => {
+      const { base, claimNonce } = await setup();
+      const body = "{bad json";
+      const response = await post(
+        base,
+        body,
+        firstPath,
+        headers(body, firstPath, timestamp + offset),
+      );
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: "invalid signature",
+      });
+      expect(claimNonce).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([-60, 60])(
+    "accepts the inclusive timestamp boundary %s",
+    async (offset) => {
+      const { base } = await setup();
+      const body = JSON.stringify(payload);
+      expect(
+        (
+          await post(
+            base,
+            body,
+            firstPath,
+            headers(body, firstPath, timestamp + offset),
+          )
+        ).status,
+      ).toBe(202);
+    },
+  );
+
+  it("rejects malformed JSON before claiming a nonce", async () => {
+    const { base, claimNonce, resolveActorHouseholdId } = await setup();
+    const response = await post(base, "{bad json");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ ok: false, error: "invalid json" });
+    expect(claimNonce).not.toHaveBeenCalled();
+    expect(resolveActorHouseholdId).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    {},
+    { ...payload, actorUserId: undefined },
+    { ...payload, scopeKey: undefined },
+    { ...payload, actorUserId: "bad" },
+    { ...payload, scopeKey: "bad" },
+    { ...payload, actorUserId: 123 },
+    { ...payload, scopeKey: null },
+  ])("rejects invalid actor/scope %j before claiming a nonce", async (json) => {
+    const { base, claimNonce, resolveActorHouseholdId, internal } =
+      await setup();
+    const response = await post(base, JSON.stringify(json));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "invalid request",
+    });
+    expect(claimNonce).not.toHaveBeenCalled();
+    expect(resolveActorHouseholdId).not.toHaveBeenCalled();
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 on replay before looking up membership", async () => {
+    const claimed = new Set<string>();
+    const claimNonce = vi.fn(async (nonce: string) => {
+      if (claimed.has(nonce)) return false;
+      claimed.add(nonce);
+      return true;
+    });
+    const { base, resolveActorHouseholdId, internal } = await setup({
+      signed: { claimNonce },
+    });
+    const body = JSON.stringify(payload);
+    const signedHeaders = headers(body);
+    expect((await post(base, body, firstPath, signedHeaders)).status).toBe(202);
+    const response = await post(base, body, firstPath, signedHeaders);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "replayed request",
+    });
+    expect(resolveActorHouseholdId).toHaveBeenCalledTimes(1);
+    expect(internal).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 503 when the nonce claim throws, without looking up membership", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const claimNonce = vi
+      .fn()
+      .mockRejectedValue(new Error("nonce unavailable"));
+    const { base, resolveActorHouseholdId, internal } = await setup({
+      signed: { claimNonce },
+    });
+    const response = await post(base);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "replay protection unavailable",
+    });
+    expect(resolveActorHouseholdId).not.toHaveBeenCalled();
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "20000000-0000-4000-8000-000000000002"])(
+    "returns 403 for membership %s after claiming the nonce",
+    async (household) => {
+      const resolveActorHouseholdId = vi.fn().mockResolvedValue(household);
+      const { base, claimNonce, internal } = await setup({
+        signed: { resolveActorHouseholdId },
+      });
+      const response = await post(base);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: "household access denied",
+      });
+      expect(claimNonce).toHaveBeenCalledTimes(1);
+      expect(internal).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns 503 when the membership lookup throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolveActorHouseholdId = vi
+      .fn()
+      .mockRejectedValue(new Error("lookup unavailable"));
+    const { base, claimNonce, internal } = await setup({
+      signed: { resolveActorHouseholdId },
+    });
+    const response = await post(base);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "member lookup unavailable",
+    });
+    expect(claimNonce).toHaveBeenCalledTimes(1);
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("does not expose an internal route without signing dependencies", async () => {
+    const { base, internal } = await setup({ withoutSigned: true });
+    expect((await post(base)).status).toBe(404);
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("uses timingSafeEqual for valid and same-length invalid signatures", async () => {
+    const { base } = await setup();
+    vi.mocked(timingSafeEqual).mockClear();
+    const body = JSON.stringify(payload);
+    const valid = headers(body);
+    expect((await post(base, body, firstPath, valid)).status).toBe(202);
+    const invalid = {
+      ...valid,
+      "x-import-signature": `x${valid["x-import-signature"].slice(1)}`,
+    };
+    expect((await post(base, body, firstPath, invalid)).status).toBe(401);
+    expect(timingSafeEqual).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(timingSafeEqual).mock.calls[0]).toEqual([
+      Buffer.from(valid["x-import-signature"]),
+      Buffer.from(valid["x-import-signature"]),
+    ]);
+    expect(vi.mocked(timingSafeEqual).mock.calls[1]).toEqual([
+      Buffer.from(invalid["x-import-signature"]),
+      Buffer.from(valid["x-import-signature"]),
+    ]);
+  });
+
+  it("uses the shared JSON-before-nonce order for import suggestions", async () => {
+    const { base, claimNonce } = await setup({ importRoute: true });
+    const response = await post(base, "{bad json", importPath);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ ok: false, error: "invalid json" });
+    expect(claimNonce).not.toHaveBeenCalled();
+  });
+
+  it("keeps import validation responses before invoking its handler", async () => {
+    const { base, internal } = await setup({ importRoute: true });
+    const response = await post(base, JSON.stringify(payload), importPath);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "invalid request",
+    });
+    expect(internal).not.toHaveBeenCalled();
+  });
+
+  it("preserves import handler errors and nonce expiry", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { base, internal, claimNonce } = await setup({ importRoute: true });
+    internal.mockRejectedValueOnce(new Error("provider down"));
+    const json = {
+      actorUserId,
+      scopeKey,
+      version: 2,
+      requestId: randomUUID(),
+      budgetKey: randomUUID(),
+      catalog: { categories: [], subcategories: [] },
+      items: [
+        {
+          key: "item-1",
+          description: "Mercado",
+          amountCents: 1000,
+          occurredOn: "2026-09-29",
+        },
+      ],
+    };
+    const body = JSON.stringify(json);
+    const signedHeaders = headers(body, importPath);
+    const response = await post(base, body, importPath, signedHeaders);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "suggestions unavailable",
+    });
+    expect(claimNonce).toHaveBeenCalledTimes(1);
+    expect(claimNonce).toHaveBeenCalledWith(
+      signedHeaders["x-import-nonce"],
+      new Date(now + 120_000),
+    );
   });
 });

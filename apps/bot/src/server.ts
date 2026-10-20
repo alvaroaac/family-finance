@@ -19,6 +19,7 @@ import { createCategoryRuntime } from "./category-runtime.js";
 import http from "node:http";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { z } from "zod";
 
 import { getBotServerEnv, type BotEnv } from "@family-finance/config";
 import type { AiCompletionClient } from "@family-finance/categorization";
@@ -92,6 +93,35 @@ export type ImportSuggestionRoute = {
   now?: () => number;
 };
 
+export type SignedRouteDeps = {
+  secret: string;
+  claimNonce: (nonce: string) => Promise<boolean>;
+  resolveActorHouseholdId: (actorUserId: string) => Promise<string | null>;
+  now?: () => number;
+};
+
+export type InternalRouteHandler = (
+  json: unknown,
+  actor: { userId: string; householdId: string },
+) => Promise<{ status: number; body: unknown }>;
+
+export type InternalRoute = {
+  path: string;
+  maxBodyBytes: number;
+  handle: InternalRouteHandler;
+};
+
+type BotServerOptions = {
+  importSuggestions?: ImportSuggestionRoute;
+  internalRoutes?: InternalRoute[];
+  signed?: SignedRouteDeps;
+};
+
+const signedActorSchema = z.object({
+  actorUserId: z.string().uuid(),
+  scopeKey: z.string().uuid(),
+});
+
 function sendJson(
   response: http.ServerResponse,
   status: number,
@@ -108,6 +138,7 @@ function sendJson(
 function readBody(
   request: http.IncomingMessage,
   maxBytes = MAX_BODY_BYTES,
+  destroyOnLimit = true,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -116,7 +147,9 @@ function readBody(
       total += chunk.length;
       if (total > maxBytes) {
         reject(new Error("body too large"));
-        request.destroy();
+        // Internal routes need the socket open to deliver their 413 response.
+        if (destroyOnLimit) request.destroy();
+        chunks.length = 0;
         return;
       }
       chunks.push(chunk);
@@ -132,10 +165,10 @@ function readBody(
  */
 export function createBotServer(
   handle: WebhookHandle,
-  options?: { importSuggestions?: ImportSuggestionRoute },
+  options?: BotServerOptions,
 ): http.Server {
   return http.createServer((request, response) => {
-    void routeRequest(handle, request, response, options?.importSuggestions);
+    void routeRequest(handle, request, response, options);
   });
 }
 
@@ -143,7 +176,7 @@ async function routeRequest(
   handle: WebhookHandle,
   request: http.IncomingMessage,
   response: http.ServerResponse,
-  importSuggestions?: ImportSuggestionRoute,
+  options?: BotServerOptions,
 ): Promise<void> {
   const url = request.url ?? "/";
   const path = url.split("?")[0] ?? url;
@@ -192,116 +225,168 @@ async function routeRequest(
     return;
   }
 
-  if (request.method === "POST" && path === IMPORT_SUGGESTION_PATH) {
-    if (importSuggestions === undefined) {
-      sendJson(response, 404, { ok: false, error: "not found" });
-      return;
-    }
-    let raw: string;
-    try {
-      raw = await readBody(request, MAX_INTERNAL_BODY_BYTES);
-    } catch {
-      sendJson(response, 413, { ok: false, error: "body too large" });
-      return;
-    }
-    const now = importSuggestions.now?.() ?? Date.now();
-    const timestampHeader = request.headers["x-import-timestamp"];
-    const nonceHeader = request.headers["x-import-nonce"];
-    const signatureHeader = request.headers["x-import-signature"];
-    const timestampRaw = Array.isArray(timestampHeader)
-      ? timestampHeader[0]
-      : timestampHeader;
-    const nonce = Array.isArray(nonceHeader) ? nonceHeader[0] : nonceHeader;
-    const signature = Array.isArray(signatureHeader)
-      ? signatureHeader[0]
-      : signatureHeader;
-    const timestamp = Number(timestampRaw);
-    if (
-      timestampRaw === undefined ||
-      !Number.isInteger(timestamp) ||
-      Math.abs(Math.floor(now / 1000) - timestamp) > 60 ||
-      nonce === undefined ||
-      !/^[A-Za-z0-9_-]{16,128}$/.test(nonce) ||
-      signature === undefined
-    ) {
-      sendJson(response, 401, { ok: false, error: "invalid signature" });
-      return;
-    }
-    const bodyHash = createHash("sha256").update(raw).digest("hex");
-    const canonical = `${timestamp}\n${nonce}\nPOST\n${IMPORT_SUGGESTION_PATH}\n${bodyHash}`;
-    const expected = `v1=${createHmac("sha256", importSuggestions.secret)
-      .update(canonical)
-      .digest("hex")}`;
-    const supplied = Buffer.from(signature);
-    const wanted = Buffer.from(expected);
-    if (
-      supplied.length !== wanted.length ||
-      !timingSafeEqual(supplied, wanted)
-    ) {
-      sendJson(response, 401, { ok: false, error: "invalid signature" });
-      return;
-    }
-    try {
-      if (
-        !(await importSuggestions.claimNonce(nonce, new Date(now + 120_000)))
-      ) {
-        sendJson(response, 409, { ok: false, error: "replayed request" });
-        return;
-      }
-    } catch (error) {
-      console.error("[bot:server] nonce claim failed:", error);
-      sendJson(response, 503, {
-        ok: false,
-        error: "replay protection unavailable",
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      sendJson(response, 400, { ok: false, error: "invalid json" });
-      return;
-    }
-    const suggestionRequest = importSuggestionRequestSchema.safeParse(parsed);
-    if (!suggestionRequest.success) {
-      sendJson(response, 400, { ok: false, error: "invalid request" });
-      return;
-    }
-    if (suggestionRequest.data.version !== 2) {
-      sendJson(response, 403, { ok: false, error: "member scope required" });
-      return;
-    }
-    try {
-      const actorHouseholdId = await importSuggestions.resolveActorHouseholdId(
-        suggestionRequest.data.actorUserId,
-      );
-      if (actorHouseholdId !== suggestionRequest.data.scopeKey) {
-        sendJson(response, 403, {
+  const importSuggestions =
+    path === IMPORT_SUGGESTION_PATH ? options?.importSuggestions : undefined;
+  const internalRoute = options?.internalRoutes?.find(
+    (route) => route.path === path,
+  );
+  const signed = options?.signed;
+  if (
+    request.method === "POST" &&
+    (importSuggestions !== undefined ||
+      (internalRoute !== undefined && signed !== undefined))
+  ) {
+    // Adapt the existing import nonce API without changing its expiry contract.
+    const deps = importSuggestions ?? {
+      ...signed!,
+      claimNonce: (nonce: string) => signed!.claimNonce(nonce),
+    };
+    const verified = await verifySignedRequest(
+      request,
+      response,
+      path,
+      importSuggestions === undefined
+        ? internalRoute!.maxBodyBytes
+        : MAX_INTERNAL_BODY_BYTES,
+      deps,
+      importSuggestions !== undefined,
+    );
+    if (verified === null) return;
+
+    if (importSuggestions !== undefined) {
+      try {
+        const result = await importSuggestions.handle(verified.json);
+        sendJson(response, result.status, result.body);
+      } catch (error) {
+        console.error("[bot:server] import suggestion handler failed:", error);
+        sendJson(response, 503, {
           ok: false,
-          error: "household access denied",
+          error: "suggestions unavailable",
         });
-        return;
       }
-    } catch (error) {
-      console.error("[bot:server] import member lookup failed:", error);
-      sendJson(response, 503, {
-        ok: false,
-        error: "member lookup unavailable",
-      });
-      return;
-    }
-    try {
-      const result = await importSuggestions.handle(parsed);
+    } else {
+      const result = await internalRoute!.handle(verified.json, verified.actor);
       sendJson(response, result.status, result.body);
-    } catch (error) {
-      console.error("[bot:server] import suggestion handler failed:", error);
-      sendJson(response, 503, { ok: false, error: "suggestions unavailable" });
     }
     return;
   }
 
   sendJson(response, 404, { ok: false, error: "not found" });
+}
+
+/** The sole verification path for import suggestions and registered internal routes. */
+async function verifySignedRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  path: string,
+  maxBodyBytes: number,
+  deps: Omit<ImportSuggestionRoute, "handle">,
+  validateImport: boolean,
+): Promise<{
+  json: unknown;
+  actor: { userId: string; householdId: string };
+} | null> {
+  let raw: string;
+  try {
+    raw = await readBody(request, maxBodyBytes, false);
+  } catch {
+    sendJson(response, 413, { ok: false, error: "body too large" });
+    return null;
+  }
+  const timestampHeader = request.headers["x-import-timestamp"];
+  const nonceHeader = request.headers["x-import-nonce"];
+  const signatureHeader = request.headers["x-import-signature"];
+  const timestampRaw = Array.isArray(timestampHeader)
+    ? timestampHeader[0]
+    : timestampHeader;
+  const nonce = Array.isArray(nonceHeader) ? nonceHeader[0] : nonceHeader;
+  const signature = Array.isArray(signatureHeader)
+    ? signatureHeader[0]
+    : signatureHeader;
+  const timestamp = Number(timestampRaw);
+  if (
+    timestampRaw === undefined ||
+    !Number.isInteger(timestamp) ||
+    nonce === undefined ||
+    !/^[A-Za-z0-9_-]{16,128}$/.test(nonce) ||
+    signature === undefined
+  ) {
+    sendJson(response, 401, { ok: false, error: "invalid signature" });
+    return null;
+  }
+  const bodyHash = createHash("sha256").update(raw).digest("hex");
+  const canonical = `${timestamp}\n${nonce}\nPOST\n${path}\n${bodyHash}`;
+  const expected = `v1=${createHmac("sha256", deps.secret)
+    .update(canonical)
+    .digest("hex")}`;
+  const supplied = Buffer.from(signature);
+  const wanted = Buffer.from(expected);
+  if (supplied.length !== wanted.length || !timingSafeEqual(supplied, wanted)) {
+    sendJson(response, 401, { ok: false, error: "invalid signature" });
+    return null;
+  }
+  const now = deps.now?.() ?? Date.now();
+  if (Math.abs(Math.floor(now / 1000) - timestamp) > 60) {
+    sendJson(response, 401, { ok: false, error: "invalid signature" });
+    return null;
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    sendJson(response, 400, { ok: false, error: "invalid json" });
+    return null;
+  }
+  if (validateImport) {
+    const suggestionRequest = importSuggestionRequestSchema.safeParse(json);
+    if (!suggestionRequest.success) {
+      sendJson(response, 400, { ok: false, error: "invalid request" });
+      return null;
+    }
+    // Preserve the import route's legacy response even without an actor UUID.
+    if (suggestionRequest.data.version !== 2) {
+      sendJson(response, 403, { ok: false, error: "member scope required" });
+      return null;
+    }
+  }
+  const actor = signedActorSchema.safeParse(json);
+  if (!actor.success) {
+    sendJson(response, 400, { ok: false, error: "invalid request" });
+    return null;
+  }
+  try {
+    if (!(await deps.claimNonce(nonce, new Date(now + 120_000)))) {
+      sendJson(response, 409, { ok: false, error: "replayed request" });
+      return null;
+    }
+  } catch (error) {
+    console.error("[bot:server] nonce claim failed:", error);
+    sendJson(response, 503, {
+      ok: false,
+      error: "replay protection unavailable",
+    });
+    return null;
+  }
+  try {
+    const actorHouseholdId = await deps.resolveActorHouseholdId(
+      actor.data.actorUserId,
+    );
+    if (actorHouseholdId !== actor.data.scopeKey) {
+      sendJson(response, 403, { ok: false, error: "household access denied" });
+      return null;
+    }
+  } catch (error) {
+    console.error("[bot:server] internal member lookup failed:", error);
+    sendJson(response, 503, {
+      ok: false,
+      error: "member lookup unavailable",
+    });
+    return null;
+  }
+  return {
+    json,
+    actor: { userId: actor.data.actorUserId, householdId: actor.data.scopeKey },
+  };
 }
 
 /** Production entry point: real bot wiring + listen on PORT. */
