@@ -1,19 +1,22 @@
 # Installable web app + quick capture — design
 
-**Status:** design approved section by section by Alvaro on 2026-09-25; spec
-pending review.
+**Status:** design approved section by section by Alvaro on 2026-09-25;
+revised 2026-10-20 for today's main (Jev categorization, multi-tenancy,
+category creation on the web). Spec pending review.
+**Base:** `main` at `0f5a22c` (PR #40 multi-tenancy). The unmerged
+`codex/merchant-categorization-evidence` branch is not a prerequisite.
 **Replaces:** PR #28 (`codex/mobile-expo-prototype`, React Native/Expo app +
-`/api/mobile/v1`). PR #28 is closed with a link to this work; its branch is
-kept.
+`/api/mobile/v1`). PR #28 was closed on 2026-10-20 with a link to this work;
+its branch is kept.
 
 ## Problem
 
 We want Casa on our phones with fast transaction entry: type or say
 "85 no mercado no nubank" and get a filled form. PR #28 did this as a native
 Expo app, which costs a second UI, a parallel mobile API, a session bridge in
-every server action, and an app-store/EAS pipeline — for two users. The web
-app is already responsive (AppShell with mobile bottom nav), so we make it
-installable and bring the capture features to it instead.
+every server action, and an app-store/EAS pipeline. The web app is already
+responsive (AppShell with mobile bottom nav), so we make it installable and
+bring the capture features to it instead.
 
 ## Scope
 
@@ -25,61 +28,106 @@ In:
 
 Out (deliberately): cash-flow simulation (later round), offline queue,
 service worker, push notifications, install-prompt banner, share-sheet
-target, `packages/intake` extraction, any `/api/mobile` surface.
+target, `packages/intake` extraction, any `/api/mobile` surface, capture of
+obligations / fatura payments / card-bill flows (Telegram keeps those).
 
 ## Key decisions
 
 | Decision | Choice | Why |
 |---|---|---|
-| Where AI runs | **On the bot (VPS), called by the web over the existing signed channel** | OpenAI/Anthropic keys never go to Vercel. `deploy/vercel.md` keeps Vercel to low-power secrets only; a leaked `IMPORT_SUGGESTION_SHARED_SECRET` can only call the bot's suggestion routes. The signed channel (HMAC, ±60 s timestamp, nonce replay protection) already exists for import suggestions. |
-| Catalog source | **Web sends it in the request** (same as imports) | The web reads it under RLS for the logged-in user; the bot never loads household data based on a caller-supplied scope. |
-| Classifier | **Same pipeline as Telegram text messages** (classifier with deadline + fallback, then `suggestCategory` with memory) | Telegram and web categorize the same way; model env (`OPENAI_MODEL`, `OPENAI_FALLBACK_MODEL`, Anthropic last resort) stays in one place. |
+| Where AI runs | **On the bot (VPS), called by the web over the existing signed channel** | OpenAI and Typesafe (Jev) keys never go to Vercel. `deploy/vercel.md` keeps Vercel to low-power secrets only; a leaked `IMPORT_SUGGESTION_SHARED_SECRET` can only call the bot's internal routes. The signed channel (HMAC, ±60 s timestamp, nonce replay protection, actor membership check) already exists for import suggestions. |
+| Catalog source | **Web sends it in the request** (same as imports) | See decision below. |
+| Classifier | **Same pipeline as Telegram text messages** | Deterministic parsing/routing → GPT extraction-only classifier (with deadline) → `suggestCategory` (memory/rules → Jev → GPT fallback via `createCategoryRuntime(env)`). Telegram and web categorize the same way; model env stays in one place. |
 | Save path | **Existing `createManualTransactionAction`**, unchanged | Already handles card installments, subcategory, and responsible member; one validation path. |
 | Form | **One shared field set** extracted from `new-transaction-form.tsx` | The "Novo lançamento" modal and the capture sheet can't drift apart. |
+| Inline category | **Existing `createCategoryAction`** (categories page), extended to return the id | It already does create-or-restore by name and maps duplicate-name errors. |
 | Offline | **Online only; draft kept on the device** | No sync/duplicate logic. iOS has no Background Sync anyway. |
 | Service worker | **None** | Not needed to install; offline is handled by the saved draft. Trade-off: launching the app with no signal at all shows the phone's own "no connection" screen. |
 | Audio limits | **≤ 60 s, ≤ 1 MB of raw audio** | iOS AAC at ~64 kbps ≈ 480 KB/min. Requires raising the server-action body limit to 2 MB. |
-| Rate limiting | **In-memory limit per household on the bot: 20 capture calls per minute, max 2 at once** | Cost per call is tiny; the import flow's DB budget reservation is built for bulk paid fallback and is overkill here. (Part 4 of the design said "Limite de IA atingido hoje"; replaced by the per-minute message below.) |
+| Rate limiting | **In-memory limit per household on the bot: 20 capture calls per minute, max 2 at once** | Cost per call is tiny; the import flow's DB budget reservation is built for bulk paid fallback and is overkill here. |
+
+The web sends the catalog; the bot never reads household data for capture.
+Since multi-tenancy the bot *could* load it itself as the member
+(`memberClient(userId)` under RLS, like Telegram does), which would shrink
+the request and drop the catalog contract — but then a leaked shared secret
+plus any member's user id would read that household's categories, accounts
+and memory. With the catalog in the request, a leaked secret only spends AI
+calls.
+
+```decision id=catalog-source
+label: Who loads the catalog
+question: Should the web send the catalog in each capture request, or should the bot load it as the member?
+quote: The web sends the catalog; the bot never reads household data for capture.
+context: Imports send the catalog today. Telegram loads it on the bot as the member under RLS.
+- A: Web sends it (like imports) | Leaked secret can't read household data; one more closed schema to keep in sync [pick]
+- B: Bot loads it as the member via memberClient | Smaller request, exact Telegram data path; leaked secret + user id reads that household's catalog
+```
 
 ## Architecture
 
 ```
 Browser (capture sheet)
   ├─ suggestCaptureDraftAction(text)          ─┐
-  ├─ transcribeCaptureAudioAction(formData)    ├─ web server actions: requireAuthorizedUser →
-  └─ createManualTransactionAction(formData)   │  load catalog (RLS) → sign → POST bot
-                                               ┘
+  ├─ transcribeCaptureAudioAction(formData)    ├─ web server actions: authorize member →
+  ├─ createCategoryAction(formData)            │  load catalog (RLS) → sign → POST bot
+  └─ createManualTransactionAction(formData)   ┘
 Bot (VPS, node:http)
-  POST /internal/v1/capture-draft       → classifier + suggestCategory → draft
+  POST /internal/v1/capture-draft       → shared text pipeline → draft
   POST /internal/v1/capture-transcribe  → Whisper → text
 ```
 
 ### Bot (`apps/bot`)
 
-- `server.ts`: add the two routes. Pull the existing HMAC/timestamp/nonce
-  verification out of the import route into one shared function; all three
+- `server.ts`: add the two routes. Pull the existing HMAC / timestamp /
+  nonce verification **and** the actor membership check
+  (`resolveActorHouseholdId(actorUserId) === scopeKey`, else 403; lookup
+  failure → 503) out of the import route into one shared function; all three
   routes use it. Body caps: draft 256 KB (the existing internal cap);
   transcribe 1.5 MB.
 - New `capture.ts`: `createCaptureDraftHandler` and
   `createCaptureTranscribeHandler`, in the same style as
   `createImportSuggestionHandler` (zod-parse → rate-limit → work →
   `{status, body}`).
-- Draft handler: runs the same classifier plus `suggestCategory` composition
-  the Telegram text path uses (wired in `index.ts`), against the catalog in
-  the request instead of a DB lookup. Account/card matching reuses the bot's
-  existing matching.
+- Draft handler: runs the Telegram text pipeline against the catalog in the
+  request. Today that pipeline lives inside `startConversation` in
+  `conversation.ts` (~700 lines, mixed with the conversation state machine),
+  so the first bot task extracts its stateless part into one function both
+  callers use.
+
+```decision id=pipeline-reuse
+label: Sharing the Telegram text pipeline
+question: How should the capture-draft handler reuse the Telegram text pipeline?
+quote: so the first bot task extracts its stateless part into one function both callers use
+context: startConversation mixes parsing, routing (financial-routing.ts), classifier, account matching and suggestCategory with conversation state and replies.
+- A: Extract a stateless interpret step from startConversation; Telegram and capture both call it | One pipeline; Telegram behavior locked by the existing conversation tests; a larger refactor in the bot's busiest file [pick]
+- B: Capture composes the pieces itself (parser, detectFinancialRoute, classifier, suggestCategory) | No Telegram refactor; the two paths will drift
+```
+
+```assumption id=pipeline-extractable
+label: Pipeline is separable
+statement: The parse → route → classify → categorize → account-match steps in startConversation can be pulled out without changing any Telegram reply, given the existing conversation test suite as the safety net.
+quote: extracts its stateless part into one function
+context: Not yet verified line by line; based on a skim of conversation.ts on main.
+```
+
+- Category runtime: the handler gets `categorizer` from the same
+  `createCategoryRuntime(env)` instance `index.ts` builds, and the
+  classifier from the same `withClassifierDeadline(...)` wiring. No new env.
+- Memory: the request's memory entries are wrapped in an in-memory
+  `CategorizationMemoryStore` so `suggestCategory` runs unchanged.
 - Transcribe handler: reuses `audio.ts`. Add a buffer entry point next to
   `transcribeVoiceMessage`, which today takes a Telegram file ref; both share
   the temp-file + Whisper step. No `OPENAI_API_KEY` → 503.
-- **Dependency:** the main checkout has uncommitted bot work touching
-  `codex.ts`, `providers.ts`, `index.ts` (branch
-  `codex/drop-legacy-obligation-payment-overload`). Land or rebase over that
-  before the bot tasks start.
+- Latency: worst case is classifier deadline + Jev (2.5 s) + GPT fallback
+  (4 s). The web shows a loading state on Preencher for the whole call (see
+  UI).
 
 ### Contracts (closed schemas; `.strict()`)
 
 Both requests carry the existing signing headers and
 `version: 1, requestId: uuid, scopeKey: uuid (householdId), actorUserId: uuid`.
+The bot rejects any request whose actor is not an active member of
+`scopeKey` (403), same as imports v2.
 
 **`capture-draft` request:**
 ```
@@ -90,8 +138,22 @@ catalog: {
   subcategories: [{ id, categoryId, name }]
   accounts:      [{ id, name }]
   creditCards:   [{ id, name }]
-  memory:        [{ merchantKey, categoryId, subcategoryId? }]   // active rules only
+  memory:        CategorizationMemoryEntry[]   // active entries only
 }
+```
+
+`memory` uses the `CategorizationMemoryEntry` type from
+`@family-finance/categorization` as-is (including the optional `matchKind`,
+`rowKind`, `normalizerVersion`), and the web loads it with the same
+`listActiveCategorizationMemory` the import flow uses. When the
+merchant-evidence branch lands (`learningStatus`, conflicting-rule review),
+the contract follows the type with no separate change.
+
+```assumption id=memory-type-follows
+label: Memory shape follows the package type
+statement: Deriving the zod schema for catalog.memory from CategorizationMemoryEntry keeps capture correct when the merchant-evidence branch adds learningStatus, with only a schema field added.
+quote: the contract follows the type with no separate change
+context: That branch also makes resolveMemory report conflicting confirmed rules; the response's needsReview flag below is reserved for it.
 ```
 
 **`capture-draft` response (200):**
@@ -104,16 +166,18 @@ catalog: {
     categoryId?, subcategoryId?, accountId?, creditCardId?,
     installmentCount: int ≥1,
     candidates: [{ categoryId, subcategoryId?, explanation }]  // ≤3
-    explanation: string
+    explanation: string,
+    needsReview: boolean   // true → categoryId omitted, user must pick
   } }
 ```
 Every returned id must exist in the request catalog; the handler drops any
-that don't.
+that don't. `needsReview` is `false` on today's main; it becomes `true` when
+memory reports conflicting rules (after the merchant-evidence branch).
 
 **Errors (all routes):** `{ ok: false, error: code }` where code ∈
 `invalid_request` (400), `non_financial` (422), `unsupported_intent` (422),
-`rate_limited` (429), `unavailable` (503). Signature failures keep the
-existing 401/409 behavior.
+`rate_limited` (429), `unavailable` (503). Signature and membership failures
+keep the import route's 401/403/409/503 behavior.
 
 **`capture-transcribe` request:** `mimeType: "audio/webm" | "audio/mp4" |
 "audio/mpeg" | "audio/ogg"`, `audioBase64` (decoded ≤ 1 MB).
@@ -127,13 +191,16 @@ existing 401/409 behavior.
 - `app/(app)/capture/actions.ts`:
   - `suggestCaptureDraftAction(text) → { ok: true, draft, intent } | { ok: false, error: string }`
   - `transcribeCaptureAudioAction(formData) → { ok: true, text } | { ok: false, error: string }`
-  - Each checks the user first, loads the catalog under RLS for
-    `suggestCaptureDraftAction`, calls the bot, and maps error codes to the pt-BR copy
-    below. Raw bot/LLM errors are logged on the server, never returned.
-  - `createCaptureCategoryAction(name, kind) → { ok: true, categoryId } | { ok: false, error: string }`:
-    new (the web has no create-category action today). Find-or-create by
-    normalized name via `createCategory` from `@family-finance/db`, so a
-    retry after a network failure never creates a duplicate.
+  - Each authorizes the active household member first (same helper the
+    import actions use), loads the catalog under RLS for
+    `suggestCaptureDraftAction`, calls the bot, and maps error codes to the
+    pt-BR copy below. Raw bot/LLM errors are logged on the server, never
+    returned.
+- `categories/actions.ts`: `createCategoryAction` and
+  `createSubcategoryAction` also return the created-or-restored id
+  (`{ ok: true, message, id }`). The categories page ignores the new field.
+  Create-or-restore by name already makes a retry after a network failure
+  safe.
 - `next.config`: `experimental.serverActions.bodySizeLimit = "2mb"`.
 - Env: none new (reuses `IMPORT_SUGGESTION_URL` +
   `IMPORT_SUGGESTION_SHARED_SECRET`).
@@ -149,11 +216,16 @@ existing 401/409 behavior.
   automatically.
 - `app/(app)/capture/page.tsx`: the same sheet content as a full page
   (Android shortcut target).
-- AppShell: a center **+** in the mobile bottom nav; a "Novo lançamento"
-  button in the desktop sidebar. Both open the sheet.
+- AppShell (`components/ui/app-shell.tsx`): the mobile bottom bar becomes
+  Resumo / Transações / **+** / Cartões / Mais, with + in the center; a
+  "Novo lançamento" button in the desktop sidebar. Both open the sheet.
+- Preencher loading state: the button shows "Preenchendo…" and is disabled;
+  the AI box and fields stay editable. A second Preencher while one is
+  running is not possible.
 - AI fill rules: fill only fields the user hasn't edited; category chips
   switch the category with one tap; the explanation shows in small text
-  under the AI box.
+  under the AI box. With `needsReview`, the category stays empty and the
+  chips show the candidates.
 - Draft: text + fields saved to localStorage (`ff-capture-draft`) as you
   type; cleared after a successful save.
 - Save: button disabled while pending; on success close, toast, refresh.
@@ -163,12 +235,16 @@ existing 401/409 behavior.
 - `app/manifest.ts`: `name`/`short_name` "Casa", `display: "standalone"`,
   `start_url: "/"`, Esmeralda background/theme colors, icons 192, 512 and 512
   maskable, `shortcuts: [{ name: "Novo lançamento", url: "/capture" }]`.
+  The manifest is per origin, so it uses the product defaults, not a
+  household's theme; relative URLs keep it valid on every allowlisted host.
 - Icons generated once from PR #28's `apps/mobile/assets/casa-icon.png`
   (1024 px) and committed as PNGs.
 - `app/layout.tsx`: `metadata.appleWebApp = { capable: true, title: "Casa",
   statusBarStyle: "default" }`; `generateViewport()` returns
-  `viewportFit: "cover"` and a `themeColor` from the `ff-theme` cookie.
-- CSS: bottom nav `padding-bottom: env(safe-area-inset-bottom)`, header
+  `viewportFit: "cover"` and a `themeColor` resolved the same way the root
+  layout resolves the theme (household theme for members, `ff-theme`
+  cookie otherwise).
+- CSS: bottom bar `padding-bottom: env(safe-area-inset-bottom)`, header
   `padding-top: env(safe-area-inset-top)`.
 
 ## User-facing copy (pt-BR, verbatim)
@@ -176,15 +252,16 @@ existing 401/409 behavior.
 | Where | Text |
 |---|---|
 | AI box placeholder | Ex.: 85 no mercado no nubank |
-| AI button | Preencher |
+| AI button (idle / running) | Preencher / Preenchendo… |
 | Mic (idle / recording) | Gravar / Parar |
 | Transcribing | Transcrevendo… |
 | New category option | + Nova categoria |
 | Save success toast | Lançamento salvo |
+| `needsReview` hint | Há regras conflitantes para este lugar — escolha a categoria |
 | `unavailable` / bot unreachable | IA indisponível — preencha manualmente |
 | `rate_limited` | Muitas tentativas — aguarde um minuto |
 | `non_financial` | Não entendi como lançamento |
-| `unsupported_intent` | Isso parece um compromisso — use Compromissos (link to `/obligations`) |
+| `unsupported_intent` | Isso parece uma obrigação — use Obrigações (link to `/obligations`) |
 | Transcription failure / too long | Não consegui transcrever — tente de novo ou digite |
 | Mic permission denied | Permita o microfone nas configurações |
 | Offline banner | Sem conexão — seu rascunho está salvo |
@@ -200,10 +277,13 @@ in `apps/bot` and would need a package move just to cover outages.)
    its own cookies, separate from Safari's, and the OAuth hand-back is
    unreliable. **Task 1 checks this on a real iPhone** against a preview
    deploy with the manifest only. On failure, add Supabase email login with
-   a 6-digit code typed into the app (still limited by `AUTHORIZED_EMAILS`;
-   a code, not a link, because links open Safari).
-2. The uncommitted bot work (see Bot → Dependency) conflicts with the bot
-   tasks if it isn't landed first.
+   a 6-digit code typed into the app (a code, not a link, because links open
+   Safari). Access stays decided by the household membership row bound to
+   the verified email.
+2. **Pipeline extraction** (decision `pipeline-reuse`) touches
+   `conversation.ts`, which other branches also edit
+   (`codex/merchant-categorization-evidence` touches the bot and
+   `packages/categorization`). Land the extraction early as its own PR.
 3. MediaRecorder formats differ: iOS gives `audio/mp4`, Chrome gives
    `audio/webm`. Both are on the allow-list; verify on both.
 
@@ -214,32 +294,41 @@ in `apps/bot` and would need a package move just to cover outages.)
 2. Installable app: remaining pieces (safe areas, themeColor).
 3. `lib/bot-client.ts` extraction; import flow moved onto it
    (refactor, no behavior change).
-4. Bot: shared signature check + `capture-draft` route + handler.
-5. Bot: `capture-transcribe` route + audio buffer entry point.
-6. Web: `TransactionFields` extraction (refactor, no behavior change).
-7. Web: capture actions + capture sheet + `/capture` + AppShell entry
+4. Bot: shared signature + membership check extracted from the import
+   route (refactor, no behavior change).
+5. Bot: stateless text-pipeline extraction from `startConversation`
+   (refactor, no Telegram behavior change).
+6. Bot: `capture-draft` route + handler.
+7. Bot: `capture-transcribe` route + audio buffer entry point.
+8. Web: `TransactionFields` extraction (refactor, no behavior change);
+   category actions return the id.
+9. Web: capture actions + capture sheet + `/capture` + AppShell entry
    points + draft storage + inline category.
-8. Web: voice button.
-9. Deploy docs: `deploy/README.md` (bot routes), `deploy/vercel.md` (body
-   limit note), then close PR #28.
+10. Web: voice button.
+11. Deploy docs: `deploy/README.md` (bot routes), `deploy/vercel.md` (body
+    limit note).
 
-Steps 3–5 and 6 are independent; 7 needs 3, 4 and 6; 8 needs 5 and 7.
+Steps 3, 4→5→6, 4→7 and 8 are independent tracks; 9 needs 3, 6 and 8; 10
+needs 7 and 9.
 
 ## Testing
 
 - **Bot (vitest):** both routes: bad signature, stale timestamp, replayed
-  nonce, over-size body. Draft handler: plain expense, card installment,
-  non-financial, obligation → `unsupported_intent`, unknown ids dropped,
-  rate limit. Transcribe handler: bad mime type, over-size audio, missing
-  key → 503.
+  nonce, over-size body, actor not a member of `scopeKey` → 403. Draft
+  handler: plain expense, card installment, non-financial, obligation →
+  `unsupported_intent`, unknown ids dropped, memory hit beats Jev, Jev
+  unavailable → GPT fallback, rate limit. Transcribe handler: bad mime type,
+  over-size audio, missing key → 503. Existing conversation tests pass
+  unchanged after step 5.
 - **Web (vitest):** `bot-client` signing matches the bot's verifier (shared
   fixture); error-code → copy mapping; AI fill leaves user-edited fields
-  alone; picking a chip applies the category; `createCaptureCategoryAction`
-  called twice with the same name returns the same id; draft saved as you type and
-  cleared after save; `new-transaction-form` still posts the same FormData
-  after the extraction.
-- **E2E (Playwright, bot stubbed):** + → type → Preencher → edit category →
-  Salvar → the transaction appears in `/transactions`.
+  alone; picking a chip applies the category; `needsReview` leaves the
+  category empty; `createCategoryAction` called twice with the same name
+  returns the same id; draft saved as you type and cleared after save;
+  `new-transaction-form` still posts the same FormData after the extraction.
+- **E2E (Playwright, bot stubbed, multi-tenant harness):** + → type →
+  Preencher → edit category → Salvar → the transaction appears in
+  `/transactions` for that household only.
 - **Manual on real phones:** iOS login (Risk 1); install on iOS Safari and
   Android Chrome; voice on both; safe areas in installed mode.
 - **Gates:** `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm build`.
