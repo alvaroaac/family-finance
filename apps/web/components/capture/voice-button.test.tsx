@@ -262,6 +262,18 @@ describe("after stop", () => {
     expect(onPhase).toHaveBeenLastCalledWith("idle");
   });
 
+  it("reports a silent (zero-byte) recording as non_financial and sends nothing", async () => {
+    FakeMediaRecorder.nextData = new Blob([], { type: "audio/webm" });
+    await render();
+    await record();
+    await stopRecording();
+
+    expect(mocks.transcribe).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(captureMessage("non_financial"));
+    expect(onText).not.toHaveBeenCalled();
+    expect(onPhase).toHaveBeenLastCalledWith("idle");
+  });
+
   it("does not send a clip over 1 MB", async () => {
     FakeMediaRecorder.nextData = new Blob([new Uint8Array(1024 * 1024 + 1)], {
       type: "audio/mp4",

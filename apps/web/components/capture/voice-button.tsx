@@ -171,7 +171,10 @@ export function VoiceButton(props: Props): ReactElement | null {
 
   async function send(audio: Blob): Promise<void> {
     let outcome: Awaited<ReturnType<typeof transcribeCaptureAudioAction>>;
-    if (audio.size === 0 || audio.size > MAX_AUDIO_BYTES) {
+    if (audio.size === 0) {
+      // Nothing was heard: same answer as the bot gives an empty transcript.
+      outcome = { ok: false, message: captureMessage("non_financial") };
+    } else if (audio.size > MAX_AUDIO_BYTES) {
       outcome = { ok: false, message: captureMessage("transcribe_failed") };
     } else {
       const form = new FormData();
