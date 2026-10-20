@@ -24,9 +24,6 @@ import { LOCAL_STORAGE_STATE } from "./e2e/local-env";
 
 const harness = process.env.E2E_HARNESS === "1";
 const local = process.env.E2E_LOCAL_SUPABASE === "1";
-// The worktree itself is named pwa-quick-capture, so Playwright's absolute-path
-// CLI filter would also select every other local spec without this narrowing.
-const quickCaptureOnly = process.argv.includes("quick-capture");
 const baseURL =
   process.env.E2E_BASE_URL ??
   (harness || local ? "http://localhost:3100" : "http://localhost:3000");
@@ -66,9 +63,7 @@ export default defineConfig({
         { name: "local-setup", testMatch: /local-auth\.setup\.ts/ },
         {
           name: "local-chromium",
-          testMatch: quickCaptureOnly
-            ? /quick-capture\.spec\.ts/
-            : /(?:card-bill-payments|quick-capture)\.spec\.ts/,
+          testMatch: /(?:card-bill-payments|quick-capture)\.spec\.ts/,
           dependencies: ["local-setup"],
           use: {
             ...devices["Desktop Chrome"],

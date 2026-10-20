@@ -82,6 +82,7 @@ async function main() {
       internalRoutes: [
         {
           path: CAPTURE_DRAFT_PATH,
+          // Mirrors the bot's capture-draft body cap (MAX_INTERNAL_BODY_BYTES).
           maxBodyBytes: 262144,
           handle: async (json, actor) => {
             if (
@@ -143,6 +144,7 @@ async function main() {
   });
   web.once("exit", (code) => {
     stub.close();
+    stub.closeAllConnections();
     process.exitCode = code ?? 1;
   });
 }
