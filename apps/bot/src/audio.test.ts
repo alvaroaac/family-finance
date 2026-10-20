@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import * as audio from "./audio.js";
 
 import {
   transcribeVoiceMessage,
@@ -175,5 +177,95 @@ describe("transcribeVoiceMessage (oversize guard)", () => {
     expect(downloader.download).not.toHaveBeenCalled();
     expect(provider.transcribe).not.toHaveBeenCalled();
     expect(await audioTempDirCount()).toBe(before);
+  });
+});
+
+describe("transcribeAudioBuffer", () => {
+  it.each(["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg"])(
+    "transcribes %s bytes through a temporary file and removes its directory",
+    async (mimeType) => {
+      expect(audio.transcribeAudioBuffer).toEqual(expect.any(Function));
+      const bytes = new Uint8Array([1, 2, 3]);
+      let seenPath = "";
+      const provider: TranscriptionProvider = {
+        transcribe: vi.fn(async (path) => {
+          seenPath = path;
+          expect(new Uint8Array(await readFile(path))).toEqual(bytes);
+          return "85 no mercado";
+        }),
+      };
+      expect(
+        await audio.transcribeAudioBuffer(bytes, mimeType, { provider }),
+      ).toBe("85 no mercado");
+      expect(provider.transcribe).toHaveBeenCalledWith(seenPath, mimeType);
+      expect(existsSync(dirname(seenPath))).toBe(false);
+    },
+  );
+
+  it("removes the temp directory when the provider throws", async () => {
+    expect(audio.transcribeAudioBuffer).toEqual(expect.any(Function));
+    const before = await audioTempDirCount();
+    let seenPath = "";
+    const provider: TranscriptionProvider = {
+      async transcribe(path) {
+        seenPath = path;
+        expect(existsSync(path)).toBe(true);
+        throw new Error("provider failed");
+      },
+    };
+    await expect(
+      audio.transcribeAudioBuffer(new Uint8Array([1]), "audio/webm", {
+        provider,
+      }),
+    ).rejects.toThrow("provider failed");
+    expect(existsSync(dirname(seenPath))).toBe(false);
+    expect(await audioTempDirCount()).toBe(before);
+  });
+
+  it.each([undefined, 16])(
+    "rejects bytes beyond the %s limit without invoking the provider or leaving a temp directory",
+    async (maxBytes) => {
+      expect(audio.transcribeAudioBuffer).toEqual(expect.any(Function));
+      const before = await audioTempDirCount();
+      const provider = { transcribe: vi.fn(async () => "unused") };
+      const limit = maxBytes ?? audio.MAX_VOICE_NOTE_BYTES;
+      await expect(
+        audio.transcribeAudioBuffer(new Uint8Array(limit + 1), "audio/webm", {
+          provider,
+          maxBytes,
+        }),
+      ).rejects.toBeInstanceOf(VoiceNoteTooLargeError);
+      expect(provider.transcribe).not.toHaveBeenCalled();
+      expect(await audioTempDirCount()).toBe(before);
+    },
+  );
+
+  it("accepts bytes exactly at the configured limit", async () => {
+    expect(audio.transcribeAudioBuffer).toEqual(expect.any(Function));
+    const provider = { transcribe: vi.fn(async () => "ok") };
+    expect(
+      await audio.transcribeAudioBuffer(new Uint8Array(16), "audio/webm", {
+        provider,
+        maxBytes: 16,
+      }),
+    ).toBe("ok");
+  });
+});
+
+describe("shared audio container and cleanup behavior", () => {
+  it("gives Telegram webm audio the webm extension and removes its directory", async () => {
+    let seenPath = "";
+    const provider: TranscriptionProvider = {
+      async transcribe(path) {
+        seenPath = path;
+        return "ok";
+      },
+    };
+    await transcribeVoiceMessage(
+      { fileId: "webm", mimeType: "audio/webm" },
+      { downloader: fakeDownloader(new Uint8Array([1])), provider },
+    );
+    expect(seenPath).toMatch(/\.webm$/);
+    expect(existsSync(dirname(seenPath))).toBe(false);
   });
 });

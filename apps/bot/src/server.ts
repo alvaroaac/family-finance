@@ -33,10 +33,12 @@ import {
 import { startBot, buildDeps, type WebhookResult } from "./index.js";
 import {
   CAPTURE_DRAFT_PATH,
+  CAPTURE_TRANSCRIBE_PATH,
+  createCaptureTranscribeHandler,
   createCaptureDraftHandler,
   createCaptureRateLimiter,
 } from "./capture.js";
-export { CAPTURE_DRAFT_PATH } from "./capture.js";
+export { CAPTURE_DRAFT_PATH, CAPTURE_TRANSCRIBE_PATH } from "./capture.js";
 import {
   createImportSuggestionHandler,
   IMPORT_SUGGESTION_OUTPUT_SCHEMA,
@@ -47,6 +49,7 @@ import { createOpenAiCompletionClient } from "./providers.js";
 /** Telegram updates are small; anything above this is not a real update. */
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_INTERNAL_BODY_BYTES = 256 * 1024;
+export const MAX_CAPTURE_TRANSCRIBE_BODY_BYTES = 1572864;
 const IMPORT_SUGGESTION_PATH = "/internal/v1/import-category-suggestions";
 
 const DEFAULT_PORT = 8787;
@@ -420,6 +423,7 @@ async function main(): Promise<void> {
     client,
     memberClient,
     categorizer,
+    transcriptionProvider,
     interpretText,
     classifyMessage,
   } = await startBot();
@@ -467,6 +471,7 @@ async function main(): Promise<void> {
           claimNonce: (nonce) =>
             importSuggestions.claimNonce(nonce, new Date(Date.now() + 120_000)),
         };
+  const captureLimiter = createCaptureRateLimiter();
   const internalRoutes: InternalRoute[] =
     importSuggestions === undefined
       ? []
@@ -483,7 +488,16 @@ async function main(): Promise<void> {
                   interpretText,
                   classifyMessage,
                 ),
-              limiter: createCaptureRateLimiter(),
+              limiter: captureLimiter,
+              log: (event, fields) => console.error(`[bot:${event}]`, fields),
+            }),
+          },
+          {
+            path: CAPTURE_TRANSCRIBE_PATH,
+            maxBodyBytes: MAX_CAPTURE_TRANSCRIBE_BODY_BYTES,
+            handle: createCaptureTranscribeHandler({
+              provider: transcriptionProvider,
+              limiter: captureLimiter,
               log: (event, fields) => console.error(`[bot:${event}]`, fields),
             }),
           },

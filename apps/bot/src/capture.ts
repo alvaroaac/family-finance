@@ -5,8 +5,22 @@ import {
   type ConversationState,
 } from "./conversation.js";
 import type { InternalRouteHandler } from "./server.js";
+import { transcribeAudioBuffer, type TranscriptionProvider } from "./audio.js";
 
 export const CAPTURE_DRAFT_PATH = "/internal/v1/capture-draft";
+export const CAPTURE_TRANSCRIBE_PATH = "/internal/v1/capture-transcribe";
+const MAX_CAPTURE_AUDIO_BYTES = 1048576;
+
+const captureTranscribeRequestSchema = z
+  .object({
+    version: z.literal(1),
+    requestId: z.string().uuid(),
+    scopeKey: z.string().uuid(),
+    actorUserId: z.string().uuid(),
+    mimeType: z.enum(["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg"]),
+    audioBase64: z.string().min(1),
+  })
+  .strict();
 
 function isCalendarDate(value: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
@@ -336,6 +350,62 @@ export function createCaptureDraftHandler(deps: {
     } catch (error) {
       if (obligationAttempted) return unsupportedIntent;
       deps.log("capture_draft_unavailable", {
+        requestId: request.requestId,
+        error,
+      });
+      return { status: 503, body: { ok: false, error: "unavailable" } };
+    } finally {
+      release();
+    }
+  };
+}
+
+export function createCaptureTranscribeHandler(deps: {
+  provider: TranscriptionProvider | null;
+  limiter: CaptureRateLimiter;
+  log: (event: string, fields: Record<string, unknown>) => void;
+}): InternalRouteHandler {
+  return async (json, actor) => {
+    const parsed = captureTranscribeRequestSchema.safeParse(json);
+    if (
+      !parsed.success ||
+      parsed.data.actorUserId !== actor.userId ||
+      parsed.data.scopeKey !== actor.householdId
+    ) {
+      return { status: 400, body: { ok: false, error: "invalid_request" } };
+    }
+    const request = parsed.data;
+    // Buffer.from is permissive: require canonical, padded base64 explicitly.
+    if (
+      request.audioBase64.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(request.audioBase64)
+    ) {
+      return { status: 400, body: { ok: false, error: "invalid_request" } };
+    }
+    const bytes = Buffer.from(request.audioBase64, "base64");
+    if (
+      bytes.byteLength > MAX_CAPTURE_AUDIO_BYTES ||
+      bytes.toString("base64") !== request.audioBase64
+    ) {
+      return { status: 400, body: { ok: false, error: "invalid_request" } };
+    }
+    const release = deps.limiter.acquire(actor.householdId);
+    if (release === null)
+      return { status: 429, body: { ok: false, error: "rate_limited" } };
+    try {
+      if (deps.provider === null)
+        return { status: 503, body: { ok: false, error: "unavailable" } };
+      const text = (
+        await transcribeAudioBuffer(bytes, request.mimeType, {
+          provider: deps.provider,
+          maxBytes: MAX_CAPTURE_AUDIO_BYTES,
+        })
+      ).trim();
+      if (text.length === 0)
+        return { status: 422, body: { ok: false, error: "non_financial" } };
+      return { status: 200, body: { ok: true, text: text.slice(0, 4000) } };
+    } catch (error) {
+      deps.log("capture_transcribe_unavailable", {
         requestId: request.requestId,
         error,
       });

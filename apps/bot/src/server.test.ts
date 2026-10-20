@@ -17,6 +17,7 @@ import {
   type InternalRoute,
   type SignedRouteDeps,
 } from "./server.js";
+import * as serverModule from "./server.js";
 import { IMPORT_SUGGESTION_OUTPUT_SCHEMA } from "./import-suggestions.js";
 import type { BotEnv } from "@family-finance/config";
 import type { WebhookResult } from "./index.js";
@@ -618,6 +619,64 @@ describe("shared signed internal routes", () => {
     for (const server of openServers.splice(0)) await closeServer(server);
     vi.mocked(timingSafeEqual).mockClear();
     vi.restoreAllMocks();
+  });
+
+  it("routes capture-transcribe through signing and membership with an exact 1572864 byte cap", async () => {
+    expect(serverModule.CAPTURE_TRANSCRIBE_PATH).toBe(
+      "/internal/v1/capture-transcribe",
+    );
+    expect(serverModule.MAX_CAPTURE_TRANSCRIBE_BODY_BYTES).toBe(1572864);
+    const path = serverModule.CAPTURE_TRANSCRIBE_PATH;
+    const internal = vi.fn(async () => ({
+      status: 200,
+      body: { ok: true, text: "mercado 85" },
+    }));
+    const claimNonce = vi.fn(async () => true);
+    const resolveActorHouseholdId = vi.fn(async () => scopeKey);
+    const server = createBotServer(vi.fn<Handle>(), {
+      internalRoutes: [
+        {
+          path,
+          maxBodyBytes: serverModule.MAX_CAPTURE_TRANSCRIBE_BODY_BYTES,
+          handle: internal,
+        },
+      ],
+      signed: { secret, now: () => now, claimNonce, resolveActorHouseholdId },
+    });
+    openServers.push(server);
+    const base = await listen(server);
+    const json = JSON.stringify({
+      ...payload,
+      mimeType: "audio/webm",
+      audioBase64: "AQID",
+    });
+    const body = json + " ".repeat(1572864 - Buffer.byteLength(json));
+    const response = await post(base, body, path);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, text: "mercado 85" });
+    expect(internal).toHaveBeenCalledWith(JSON.parse(json), {
+      userId: actorUserId,
+      householdId: scopeKey,
+    });
+    expect((await post(base, body + " ", path)).status).toBe(413);
+    expect(internal).toHaveBeenCalledOnce();
+    expect(claimNonce).toHaveBeenCalledOnce();
+    expect(resolveActorHouseholdId).toHaveBeenCalledOnce();
+    expect(
+      (
+        await post(base, json, path, {
+          ...headers(json, path),
+          "x-import-signature": "v1=bad",
+        })
+      ).status,
+    ).toBe(401);
+    resolveActorHouseholdId.mockResolvedValueOnce("other-household");
+    expect((await post(base, json, path)).status).toBe(403);
+    expect(internal).toHaveBeenCalledOnce();
+    internal.mockRejectedValueOnce(new Error("private details"));
+    const failed = await post(base, json, path);
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toEqual({ ok: false, error: "unavailable" });
   });
 
   it("routes capture-draft through signing and membership with an exact 262144 byte cap", async () => {

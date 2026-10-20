@@ -107,6 +107,7 @@ function extensionFor(mimeType: string | undefined): string {
   if (mimeType === undefined) {
     return "ogg";
   }
+  if (mimeType.includes("webm")) return "webm";
   if (mimeType.includes("ogg")) return "ogg";
   if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "mp3";
   if (mimeType.includes("wav")) return "wav";
@@ -134,38 +135,58 @@ export async function transcribeVoiceMessage(
   const maxDurationSeconds =
     deps.limits?.maxDurationSeconds ?? MAX_VOICE_NOTE_DURATION_SECONDS;
 
-  // Unique temp dir so concurrent voice notes never collide.
+  return transcribeTemporaryAudio(
+    async () => {
+      // Cheap up-front guards from Telegram-provided hints (avoid the download).
+      if (
+        voice.durationSeconds !== undefined &&
+        voice.durationSeconds > maxDurationSeconds
+      ) {
+        throw new VoiceNoteTooLargeError(
+          `Voice note too long: ${voice.durationSeconds}s > ${maxDurationSeconds}s`,
+        );
+      }
+      if (voice.fileSizeBytes !== undefined && voice.fileSizeBytes > maxBytes) {
+        throw new VoiceNoteTooLargeError(
+          `Voice note too large: ${voice.fileSizeBytes} bytes > ${maxBytes} bytes`,
+        );
+      }
+      return deps.downloader.download(voice.fileId);
+    },
+    voice.mimeType,
+    { provider: deps.provider, maxBytes },
+  );
+}
+
+/** Transcribe caller-supplied bytes without retaining raw audio after the call. */
+export async function transcribeAudioBuffer(
+  bytes: Uint8Array,
+  mimeType: string,
+  deps: { provider: TranscriptionProvider; maxBytes?: number },
+): Promise<string> {
+  return transcribeTemporaryAudio(async () => bytes, mimeType, deps);
+}
+
+/** One temporary-file lifecycle for Telegram downloads and web audio buffers. */
+async function transcribeTemporaryAudio(
+  loadBytes: () => Promise<Uint8Array>,
+  mimeType: string | undefined,
+  deps: { provider: TranscriptionProvider; maxBytes?: number },
+): Promise<string> {
+  const maxBytes = deps.maxBytes ?? MAX_VOICE_NOTE_BYTES;
   const dir = await mkdtemp(join(tmpdir(), "family-finance-audio-"));
-  const filePath = join(dir, `voice.${extensionFor(voice.mimeType)}`);
-
+  const filePath = join(dir, `voice.${extensionFor(mimeType)}`);
   try {
-    // Cheap up-front guards from Telegram-provided hints (avoid the download).
-    if (
-      voice.durationSeconds !== undefined &&
-      voice.durationSeconds > maxDurationSeconds
-    ) {
-      throw new VoiceNoteTooLargeError(
-        `Voice note too long: ${voice.durationSeconds}s > ${maxDurationSeconds}s`,
-      );
-    }
-    if (voice.fileSizeBytes !== undefined && voice.fileSizeBytes > maxBytes) {
-      throw new VoiceNoteTooLargeError(
-        `Voice note too large: ${voice.fileSizeBytes} bytes > ${maxBytes} bytes`,
-      );
-    }
-
-    const bytes = await deps.downloader.download(voice.fileId);
-    // Authoritative guard: never write/transcribe an over-limit payload even if
-    // the hints were absent or under-reported.
+    const bytes = await loadBytes();
+    // Never write/transcribe an over-limit payload, even with inaccurate hints.
     if (bytes.byteLength > maxBytes) {
       throw new VoiceNoteTooLargeError(
         `Voice note too large: ${bytes.byteLength} bytes > ${maxBytes} bytes`,
       );
     }
     await writeFile(filePath, bytes);
-    return await deps.provider.transcribe(filePath, voice.mimeType);
+    return await deps.provider.transcribe(filePath, mimeType);
   } finally {
-    // Never persist raw audio: remove the file and its temp dir, even on error.
     await rm(dir, { recursive: true, force: true });
   }
 }

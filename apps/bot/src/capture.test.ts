@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as conversation from "./conversation.js";
+import * as capture from "./capture.js";
+import * as audio from "./audio.js";
 import type { ConversationDeps, ConversationState } from "./conversation.js";
 import {
   createCaptureDraftHandler,
@@ -634,5 +636,246 @@ describe("capture rate limits", () => {
     const next = limiter.acquire("house")!;
     expect(limiter.acquire("house")).toBeNull();
     next();
+  });
+});
+
+describe("capture-transcribe", () => {
+  const transcribeRequest = {
+    version: 1,
+    requestId: request.requestId,
+    scopeKey: actor.householdId,
+    actorUserId: actor.userId,
+    mimeType: "audio/webm",
+    audioBase64: Buffer.from([1, 2, 3]).toString("base64"),
+  };
+
+  function transcribeFixture(
+    options: {
+      provider?: audio.TranscriptionProvider | null;
+      limiter?: capture.CaptureRateLimiter;
+    } = {},
+  ) {
+    expect(capture.createCaptureTranscribeHandler).toEqual(
+      expect.any(Function),
+    );
+    const transcribe = vi
+      .spyOn(audio, "transcribeAudioBuffer")
+      .mockResolvedValue(" 85 no mercado ");
+    const provider =
+      options.provider === undefined
+        ? { transcribe: vi.fn() }
+        : options.provider;
+    const log = vi.fn();
+    const release = vi.fn();
+    const limiter = options.limiter ?? { acquire: vi.fn(() => release) };
+    const handle = capture.createCaptureTranscribeHandler({
+      provider,
+      limiter,
+      log,
+    });
+    return { handle, transcribe, provider, log, limiter, release };
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg"])(
+    "accepts exactly %s and trims text",
+    async (mimeType) => {
+      const { handle, transcribe, provider, release, log } =
+        transcribeFixture();
+      expect(capture.CAPTURE_TRANSCRIBE_PATH).toBe(
+        "/internal/v1/capture-transcribe",
+      );
+      expect(await handle({ ...transcribeRequest, mimeType }, actor)).toEqual({
+        status: 200,
+        body: { ok: true, text: "85 no mercado" },
+      });
+      expect(transcribe).toHaveBeenCalledWith(
+        Buffer.from([1, 2, 3]),
+        mimeType,
+        { provider, maxBytes: 1048576 },
+      );
+      expect(release).toHaveBeenCalledOnce();
+      expect(log).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { version: 2 },
+    { requestId: "bad" },
+    { scopeKey: "bad" },
+    { actorUserId: "bad" },
+    { extra: true },
+    { mimeType: "audio/wav" },
+    { mimeType: "audio/webm;codecs=opus" },
+    { mimeType: "" },
+    { audioBase64: "" },
+    { audioBase64: "%%%" },
+    { audioBase64: "AQID!" },
+    { audioBase64: "AQ=I" },
+    { audioBase64: "AR==" },
+    { audioBase64: "AQID\n" },
+    { audioBase64: 123 },
+    { scopeKey: "40000000-0000-4000-8000-000000000001" },
+    { actorUserId: "40000000-0000-4000-8000-000000000001" },
+  ])(
+    "rejects invalid or mismatched input %j before transcription",
+    async (patch) => {
+      const { handle, transcribe, limiter } = transcribeFixture();
+      expect(await handle({ ...transcribeRequest, ...patch }, actor)).toEqual({
+        status: 400,
+        body: { ok: false, error: "invalid_request" },
+      });
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(limiter.acquire).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects decoded audio over 1048576 bytes before the temp-file helper", async () => {
+    const { handle, transcribe } = transcribeFixture();
+    expect(
+      await handle(
+        {
+          ...transcribeRequest,
+          audioBase64: Buffer.alloc(1048577).toString("base64"),
+        },
+        actor,
+      ),
+    ).toEqual({ status: 400, body: { ok: false, error: "invalid_request" } });
+    expect(transcribe).not.toHaveBeenCalled();
+  });
+
+  it("accepts decoded audio exactly at 1048576 bytes", async () => {
+    const { handle, transcribe } = transcribeFixture();
+    expect(
+      (
+        await handle(
+          {
+            ...transcribeRequest,
+            audioBase64: Buffer.alloc(1048576).toString("base64"),
+          },
+          actor,
+        )
+      ).status,
+    ).toBe(200);
+    expect(transcribe.mock.calls[0]![0].byteLength).toBe(1048576);
+  });
+
+  it("returns unavailable when the provider is null and releases the slot", async () => {
+    const { handle, transcribe, release } = transcribeFixture({
+      provider: null,
+    });
+    expect(await handle(transcribeRequest, actor)).toEqual({
+      status: 503,
+      body: { ok: false, error: "unavailable" },
+    });
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("logs provider failures without audio and returns no error details, releasing the slot", async () => {
+    const { handle, transcribe, log, release } = transcribeFixture();
+    const error = new Error("private provider details");
+    transcribe.mockRejectedValueOnce(error);
+    expect(await handle(transcribeRequest, actor)).toEqual({
+      status: 503,
+      body: { ok: false, error: "unavailable" },
+    });
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("capture_transcribe_unavailable", {
+      requestId: transcribeRequest.requestId,
+      error,
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain(
+      transcribeRequest.audioBase64,
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect((await handle(transcribeRequest, actor)).status).toBe(200);
+  });
+
+  it.each(["", " \n\t "])(
+    "returns non_financial for blank transcription %j",
+    async (text) => {
+      const { handle, transcribe, release } = transcribeFixture();
+      transcribe.mockResolvedValueOnce(text);
+      expect(await handle(transcribeRequest, actor)).toEqual({
+        status: 422,
+        body: { ok: false, error: "non_financial" },
+      });
+      expect(release).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("trims before truncating transcription to 4000 characters", async () => {
+    const { handle, transcribe } = transcribeFixture();
+    transcribe.mockResolvedValueOnce(`  ${"x".repeat(4001)}  `);
+    expect(await handle(transcribeRequest, actor)).toEqual({
+      status: 200,
+      body: { ok: true, text: "x".repeat(4000) },
+    });
+  });
+
+  it("shares the per-household minute budget with capture-draft", async () => {
+    const limiter = createCaptureRateLimiter();
+    const { deps } = fixture();
+    const draft = createCaptureDraftHandler({
+      buildCaptureDeps: async () => deps,
+      limiter,
+      log: vi.fn(),
+    });
+    const { handle, transcribe } = transcribeFixture({ limiter });
+    for (let i = 0; i < 10; i++) {
+      expect((await draft(request, actor)).status).toBe(200);
+      expect((await handle(transcribeRequest, actor)).status).toBe(200);
+    }
+    expect(await handle(transcribeRequest, actor)).toEqual({
+      status: 429,
+      body: { ok: false, error: "rate_limited" },
+    });
+    expect((await draft(request, actor)).status).toBe(429);
+    expect(transcribe).toHaveBeenCalledTimes(10);
+    const other = {
+      ...actor,
+      householdId: "40000000-0000-4000-8000-000000000001",
+    };
+    expect(
+      (
+        await handle(
+          { ...transcribeRequest, scopeKey: other.householdId },
+          other,
+        )
+      ).status,
+    ).toBe(200);
+  });
+
+  it("shares concurrent slots with capture-draft and releases on failure", async () => {
+    const limiter = createCaptureRateLimiter();
+    const { deps } = fixture();
+    let resolveDraft!: (value: ConversationDeps) => void;
+    const draft = createCaptureDraftHandler({
+      buildCaptureDeps: () =>
+        new Promise((resolve) => {
+          resolveDraft = resolve;
+        }),
+      limiter,
+      log: vi.fn(),
+    });
+    const { handle, transcribe } = transcribeFixture({ limiter });
+    let rejectAudio!: (error: Error) => void;
+    transcribe.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectAudio = reject;
+        }),
+    );
+    const pendingDraft = draft(request, actor);
+    const pendingAudio = handle(transcribeRequest, actor);
+    expect((await handle(transcribeRequest, actor)).status).toBe(429);
+    expect((await draft(request, actor)).status).toBe(429);
+    rejectAudio(new Error("failed"));
+    expect((await pendingAudio).status).toBe(503);
+    expect((await handle(transcribeRequest, actor)).status).toBe(200);
+    resolveDraft(deps);
+    expect((await pendingDraft).status).toBe(200);
   });
 });
