@@ -78,6 +78,27 @@ describe("capture entry points", () => {
     expect(onNewTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it("appends the + before Mais when there is no Cartões item", async () => {
+    await act(async () =>
+      root.render(
+        <AppShell
+          items={ITEMS.filter((item) => item.href !== "/cards")}
+          householdName="Casa Azul"
+          user={{ initial: "M", name: "Member", email: "member@example.test" }}
+          onNewTransaction={onNewTransaction}
+        >
+          <p>Page content</p>
+        </AppShell>,
+      ),
+    );
+
+    const bar = container.querySelector(".ff-bottomnav")!;
+    const entries = [...bar.children].map(
+      (el) => el.getAttribute("aria-label") ?? el.textContent,
+    );
+    expect(entries).toEqual(["Resumo", "Transações", "Novo lançamento", "Mais"]);
+  });
+
   it("keeps every other link in the Mais sheet", () => {
     const more = [...container.querySelectorAll("#ff-morenav a")].map((a) =>
       a.getAttribute("href"),

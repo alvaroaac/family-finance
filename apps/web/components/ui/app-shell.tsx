@@ -75,8 +75,8 @@ const BOTTOM_NAV_HREFS: ReadonlyArray<string> = [
   "/cards",
 ];
 const MORE_NAV_ID = "ff-morenav";
-/** The round "+" goes before this bottom item: Resumo · Transações · + · Cartões. */
-const NEW_ENTRY_INDEX = 2;
+/** The round "+" goes before Cartões (Resumo · Transações · + · Cartões), else last. */
+const NEW_ENTRY_BEFORE_HREF = "/cards";
 
 export function AppShell(props: {
   items: NavItem[];
@@ -209,6 +209,20 @@ export function AppShell(props: {
   const moreActive = moreItems.some((item) =>
     isNavItemActive(pathname, item.href),
   );
+  const newEntryIndex = bottomItems.findIndex(
+    (item) => item.href === NEW_ENTRY_BEFORE_HREF,
+  );
+  const newEntry = onNewTransaction ? (
+    <button
+      type="button"
+      className="ff-bottomnav__new"
+      aria-label="Novo lançamento"
+      title="Novo lançamento"
+      onClick={onNewTransaction}
+    >
+      <IconPlus size={24} />
+    </button>
+  ) : null;
 
   return (
     <div className="ff-shell">
@@ -358,23 +372,16 @@ export function AppShell(props: {
                   </span>
                 </Link>
               );
-              return onNewTransaction && index === NEW_ENTRY_INDEX ? (
+              return index === newEntryIndex ? (
                 <Fragment key={item.href}>
-                  <button
-                    type="button"
-                    className="ff-bottomnav__new"
-                    aria-label="Novo lançamento"
-                    title="Novo lançamento"
-                    onClick={onNewTransaction}
-                  >
-                    <IconPlus size={24} />
-                  </button>
+                  {newEntry}
                   {link}
                 </Fragment>
               ) : (
                 link
               );
             })}
+            {newEntryIndex === -1 ? newEntry : null}
             <button
               type="button"
               className={

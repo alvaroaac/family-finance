@@ -4784,14 +4784,16 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   padding-bottom: 20px;
 }
 
+/* Full-width strip at the very top of the panel, above the handle/header. */
 .ff-capture__offline {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 9px;
-  margin: 0 -20px;
   padding: 10px 20px;
   background: var(--ff-warn-wash);
-  border-block: 1px solid var(--ff-warn);
+  border-bottom: 1px solid var(--ff-warn);
+  font-family: var(--ff-font-body), Inter, sans-serif;
   font-weight: 500;
   font-size: 13px;
   color: var(--ff-ink);

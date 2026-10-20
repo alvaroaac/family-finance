@@ -48,6 +48,7 @@ const { captureMessage } = await import("../../../lib/capture-copy");
 const UNAVAILABLE = {
   ok: false,
   message: {
+    code: "unavailable",
     text: "IA indisponível — preencha manualmente",
     tone: "muted",
   },
@@ -55,6 +56,7 @@ const UNAVAILABLE = {
 const TRANSCRIBE_FAILED = {
   ok: false,
   message: {
+    code: "transcribe_failed",
     text: "Não consegui transcrever — tente de novo ou digite",
     tone: "neg",
   },
@@ -91,29 +93,35 @@ afterEach(() => {
 });
 
 describe("captureMessage", () => {
-  it("carries the contractual copy and tone for every code", () => {
+  it("carries its code with the contractual copy and tone", () => {
     expect(captureMessage("unavailable")).toEqual({
+      code: "unavailable",
       text: "IA indisponível — preencha manualmente",
       tone: "muted",
     });
     expect(captureMessage("rate_limited")).toEqual({
+      code: "rate_limited",
       text: "Muitas tentativas — aguarde um minuto",
       tone: "warn",
     });
     expect(captureMessage("non_financial")).toEqual({
+      code: "non_financial",
       text: "Não entendi como lançamento",
       tone: "warn",
     });
     expect(captureMessage("unsupported_intent")).toEqual({
+      code: "unsupported_intent",
       text: "Isso parece uma obrigação — use Obrigações",
       tone: "accent",
       href: "/obligations",
     });
     expect(captureMessage("transcribe_failed")).toEqual({
+      code: "transcribe_failed",
       text: "Não consegui transcrever — tente de novo ou digite",
       tone: "neg",
     });
     expect(captureMessage("mic_denied")).toEqual({
+      code: "mic_denied",
       text: "Permita o microfone nas configurações",
       tone: "warn",
     });

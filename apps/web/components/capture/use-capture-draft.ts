@@ -30,7 +30,10 @@ export type CaptureResult = {
 type Stored = { text: string; values: TransactionFieldValues };
 
 /** A stored draft whose shape no longer matches the defaults is ignored. */
-function readStored(defaults: TransactionFieldValues): Stored | null {
+function readStored(
+  defaults: TransactionFieldValues,
+  options: TransactionFieldOptions,
+): Stored | null {
   try {
     const raw = localStorage.getItem(CAPTURE_DRAFT_KEY);
     if (raw === null) return null;
@@ -43,10 +46,46 @@ function readStored(defaults: TransactionFieldValues): Stored | null {
     const matches = (Object.keys(defaults) as TransactionFieldKey[]).every(
       (key) => typeof record[key] === typeof defaults[key],
     );
-    return matches ? { text, values: values as TransactionFieldValues } : null;
+    if (!matches) return null;
+    return {
+      text,
+      values: dropUnknownIds(values as TransactionFieldValues, defaults, options),
+    };
   } catch {
     return null;
   }
+}
+
+/** Ids restored from storage that the current options no longer list fall back to the defaults. */
+function dropUnknownIds(
+  values: TransactionFieldValues,
+  defaults: TransactionFieldValues,
+  options: TransactionFieldOptions,
+): TransactionFieldValues {
+  const payments = [
+    ...options.accounts.map((account) => `account:${account.id}`),
+    ...options.cards.map((card) => `card:${card.id}`),
+  ];
+  const categoryId = options.categories.some((c) => c.id === values.categoryId)
+    ? values.categoryId
+    : defaults.categoryId;
+  const subcategoryId = options.subcategories.some(
+    (s) => s.id === values.subcategoryId && s.categoryId === categoryId,
+  )
+    ? values.subcategoryId
+    : defaults.subcategoryId;
+  const responsible =
+    values.responsible === "household" ||
+    options.responsibles.some((r) => r.value === values.responsible)
+      ? values.responsible
+      : defaults.responsible;
+  return {
+    ...values,
+    payment: payments.includes(values.payment) ? values.payment : defaults.payment,
+    categoryId,
+    subcategoryId,
+    responsible,
+  };
 }
 
 function writeStored(stored: Stored | null): void {
@@ -98,9 +137,7 @@ function draftToValues(
   }
   if (!draft.needsReview && draft.categoryId !== undefined) {
     proposed.categoryId = draft.categoryId;
-    if (draft.subcategoryId !== undefined) {
-      proposed.subcategoryId = draft.subcategoryId;
-    }
+    proposed.subcategoryId = draft.subcategoryId ?? "";
   }
   return proposed;
 }
@@ -130,8 +167,11 @@ function toResult(
   };
 }
 
-export function useCaptureDraft(defaults: TransactionFieldValues) {
-  const [initial] = useState(() => readStored(defaults));
+export function useCaptureDraft(
+  defaults: TransactionFieldValues,
+  options: TransactionFieldOptions,
+) {
+  const [initial] = useState(() => readStored(defaults, options));
   const [text, setText] = useState(initial?.text ?? "");
   const [values, setValues] = useState(initial?.values ?? defaults);
   const [aiFilled, setAiFilled] = useState<ReadonlySet<TransactionFieldKey>>(
@@ -168,11 +208,20 @@ export function useCaptureDraft(defaults: TransactionFieldValues) {
         (key) => !edited.current.has(key),
       );
       const patch = Object.fromEntries(filled.map((key) => [key, proposed[key]]));
-      if (draft.needsReview && !edited.current.has("categoryId")) {
-        patch.categoryId = "";
-        if (!edited.current.has("subcategoryId")) patch.subcategoryId = "";
-      }
-      setValues((current) => ({ ...current, ...patch }));
+      const keep = new Set(edited.current);
+      // No category from this fill: the old one is wrong when review is
+      // needed or the kind changed, so clear whatever the user didn't pick.
+      const clearCategory = (current: TransactionFieldValues) =>
+        proposed.categoryId === undefined &&
+        (draft.needsReview || (patch.kind ?? current.kind) !== current.kind);
+      setValues((current) => {
+        const next = { ...current, ...patch };
+        if (clearCategory(current)) {
+          if (!keep.has("categoryId")) next.categoryId = "";
+          if (!keep.has("subcategoryId")) next.subcategoryId = "";
+        }
+        return next;
+      });
       setAiFilled(new Set(filled));
       setResult(toResult(draft, options));
     },

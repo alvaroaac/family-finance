@@ -60,7 +60,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function Harness() {
-  hook = useCaptureDraft(defaults);
+  hook = useCaptureDraft(defaults, options);
   return null;
 }
 
@@ -185,6 +185,58 @@ describe("applyDraft", () => {
   });
 });
 
+describe("applyDraft dependent fields", () => {
+  it("replaces a stale subcategory when a later fill proposes a category without one", async () => {
+    await act(async () => hook.applyDraft(draft(), options));
+    expect(hook.values.subcategoryId).toBe(MARKET);
+
+    await act(async () =>
+      hook.applyDraft(draft({ categoryId: FUN, subcategoryId: undefined }), options),
+    );
+
+    expect(hook.values.categoryId).toBe(FUN);
+    expect(hook.values.subcategoryId).toBe("");
+  });
+
+  it("keeps the category when a later fill keeps the kind and proposes none", async () => {
+    await act(async () => hook.applyDraft(draft(), options));
+    await act(async () =>
+      hook.applyDraft(draft({ categoryId: undefined, subcategoryId: undefined }), options),
+    );
+
+    expect(hook.values.categoryId).toBe(FOOD);
+    expect(hook.values.subcategoryId).toBe(MARKET);
+  });
+
+  it("clears the category and subcategory when a fill changes the kind and proposes none", async () => {
+    await act(async () => hook.applyDraft(draft(), options));
+    await act(async () =>
+      hook.applyDraft(
+        draft({ kind: "income", categoryId: undefined, subcategoryId: undefined }),
+        options,
+      ),
+    );
+
+    expect(hook.values.kind).toBe("income");
+    expect(hook.values.categoryId).toBe("");
+    expect(hook.values.subcategoryId).toBe("");
+  });
+
+  it("keeps a user-picked category when a fill changes the kind", async () => {
+    await act(async () => hook.applyDraft(draft(), options));
+    await act(async () => hook.setField("categoryId", FUN));
+    await act(async () =>
+      hook.applyDraft(
+        draft({ kind: "income", categoryId: undefined, subcategoryId: undefined }),
+        options,
+      ),
+    );
+
+    expect(hook.values.categoryId).toBe(FUN);
+    expect(hook.values.subcategoryId).toBe("");
+  });
+});
+
 describe("persistence", () => {
   it("persists text and values on every change and restores them on the next mount", async () => {
     await act(async () => hook.setText("85 no mercado"));
@@ -211,6 +263,61 @@ describe("persistence", () => {
 
     expect(hook.text).toBe("");
     expect(hook.values).toEqual(defaults);
+  });
+
+  it("resets restored ids that are not in the current options to their defaults", async () => {
+    await unmount();
+    localStorage.setItem(
+      CAPTURE_DRAFT_KEY,
+      JSON.stringify({
+        text: "85 no mercado",
+        values: {
+          ...defaults,
+          amount: "85,00",
+          payment: "account:gone",
+          categoryId: "gone",
+          subcategoryId: "gone",
+          responsible: "gone-member",
+        },
+      }),
+    );
+    await mount();
+
+    expect(hook.text).toBe("85 no mercado");
+    expect(hook.values).toEqual({ ...defaults, amount: "85,00" });
+  });
+
+  it("keeps restored ids that are in the current options", async () => {
+    const restored = {
+      ...defaults,
+      payment: `card:${CARD}`,
+      categoryId: FOOD,
+      subcategoryId: MARKET,
+      responsible: MEMBER,
+    };
+    await unmount();
+    localStorage.setItem(
+      CAPTURE_DRAFT_KEY,
+      JSON.stringify({ text: "", values: restored }),
+    );
+    await mount();
+
+    expect(hook.values).toEqual(restored);
+  });
+
+  it("drops a restored subcategory that belongs to another category", async () => {
+    await unmount();
+    localStorage.setItem(
+      CAPTURE_DRAFT_KEY,
+      JSON.stringify({
+        text: "",
+        values: { ...defaults, categoryId: FUN, subcategoryId: MARKET },
+      }),
+    );
+    await mount();
+
+    expect(hook.values.categoryId).toBe(FUN);
+    expect(hook.values.subcategoryId).toBe("");
   });
 
   it("discard clears state, AI marks, edit protection and storage", async () => {

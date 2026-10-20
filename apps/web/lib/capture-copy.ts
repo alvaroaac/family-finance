@@ -1,9 +1,3 @@
-export type CaptureMessage = {
-  text: string;
-  tone: "muted" | "warn" | "neg" | "accent";
-  href?: string;
-};
-
 export type CaptureMessageCode =
   | "unavailable"
   | "rate_limited"
@@ -12,7 +6,15 @@ export type CaptureMessageCode =
   | "transcribe_failed"
   | "mic_denied";
 
-const MESSAGES: Record<CaptureMessageCode, CaptureMessage> = {
+/** `code` lets the UI react to a message without matching its copy. */
+export type CaptureMessage = {
+  code: CaptureMessageCode;
+  text: string;
+  tone: "muted" | "warn" | "neg" | "accent";
+  href?: string;
+};
+
+const MESSAGES: Record<CaptureMessageCode, Omit<CaptureMessage, "code">> = {
   unavailable: {
     text: "IA indisponível — preencha manualmente",
     tone: "muted",
@@ -38,5 +40,5 @@ const MESSAGES: Record<CaptureMessageCode, CaptureMessage> = {
 };
 
 export function captureMessage(code: CaptureMessageCode): CaptureMessage {
-  return MESSAGES[code];
+  return { code, ...MESSAGES[code] };
 }

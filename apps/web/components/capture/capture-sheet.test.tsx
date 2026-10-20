@@ -407,6 +407,20 @@ describe("message banner", () => {
     await type(textarea(), "bom dia 85");
     expect(banner()).toBeNull();
   });
+
+  it("recognises the non_financial message by its code, not its text", async () => {
+    mocks.suggest.mockResolvedValue({
+      ok: false,
+      message: { code: "non_financial", text: "Outra redação", tone: "warn" },
+    });
+    await type(textarea(), "bom dia");
+    await click(fillButton());
+    await flush();
+    expect(banner()?.textContent).toContain("Outra redação");
+
+    await type(textarea(), "bom dia 85");
+    expect(banner()).toBeNull();
+  });
 });
 
 describe("offline", () => {
@@ -438,6 +452,58 @@ describe("offline", () => {
     expect(document.querySelector(".ff-capture__offline")?.textContent).toContain(
       "Sem conexão — seu rascunho está salvo",
     );
+  });
+
+  it("puts the banner at the top of the panel, above the drag handle", async () => {
+    await setOnline(false);
+
+    const panel = dialog()!;
+    expect(panel.firstElementChild?.classList).toContain("ff-capture__offline");
+    expect(panel.firstElementChild?.nextElementSibling?.classList).toContain(
+      "ff-capture__handle",
+    );
+  });
+
+  async function failCategoryCreate(): Promise<void> {
+    mocks.createCategory.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await click(button("+ Nova categoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova categoria']"),
+      "Pets",
+    );
+    await click(button("Criar"));
+    await flush();
+    expect(document.querySelector(".ff-capture__offline")).not.toBeNull();
+  }
+
+  it("clears a network-error banner when the browser comes back online", async () => {
+    await failCategoryCreate();
+
+    await setOnline(true);
+    expect(document.querySelector(".ff-capture__offline")).toBeNull();
+  });
+
+  it("clears a network-error banner when a later action succeeds", async () => {
+    await failCategoryCreate();
+    mocks.createCategory.mockResolvedValue({
+      ok: true,
+      message: "Categoria criada.",
+      id: "new-cat",
+    });
+
+    await click(button("Criar"));
+    await flush();
+    expect(document.querySelector(".ff-capture__offline")).toBeNull();
+  });
+
+  it("clears a network-error banner when a later fill gets an answer", async () => {
+    await failCategoryCreate();
+    mocks.suggest.mockResolvedValue({ ok: true, intent: "plain", draft: draft() });
+
+    await type(textarea(), "85 no mercado");
+    await click(fillButton());
+    await flush();
+    expect(document.querySelector(".ff-capture__offline")).toBeNull();
   });
 });
 
@@ -490,6 +556,36 @@ describe("new category", () => {
       document.querySelector(".ff-capture__category-error")?.textContent,
     ).toBe("Já existe uma categoria com esse nome.");
     expect(field("categoryId")).toBeNull();
+  });
+
+  it("names the open toggle apart from the footer Cancelar", async () => {
+    await click(button("+ Nova categoria"));
+
+    expect(
+      document
+        .querySelector(".ff-capture__category-toggle")
+        ?.getAttribute("aria-label"),
+    ).toBe("Cancelar nova categoria");
+    const cancels = [...document.querySelectorAll("button")].filter(
+      (b) => (b.getAttribute("aria-label") ?? b.textContent?.trim()) === "Cancelar",
+    );
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0]?.classList).toContain("ff-capture__cancel");
+  });
+
+  it("Esc closes only the creator, and a second Esc closes the sheet", async () => {
+    await click(button("+ Nova categoria"));
+    const input = document.querySelector(
+      "input[aria-label='Nome da nova categoria']",
+    );
+
+    await press(input, "Escape");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog()).not.toBeNull();
+    expect(field("categoryId")).not.toBeNull();
+
+    await press(document, "Escape");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -569,6 +665,17 @@ describe("closing", () => {
     expect(JSON.parse(stored() ?? "null")?.text).toBe("85 no mercado");
   });
 
+  it("locks body scroll while open and restores it on close", async () => {
+    await click(button("Fechar"));
+    document.body.style.overflow = "scroll";
+    await openSheet();
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await click(button("Fechar"));
+    expect(document.body.style.overflow).toBe("scroll");
+    document.body.style.overflow = "";
+  });
+
   it("Cancelar closes and clears the draft", async () => {
     await type(textarea(), "85 no mercado");
     await click(document.querySelector(".ff-capture__cancel"));
@@ -618,5 +725,21 @@ describe("/capture page", () => {
 
     await click(button("Fechar"));
     expect(mocks.router.push).toHaveBeenCalledWith("/");
+  });
+
+  it("shows the offline banner at the top of the page panel", async () => {
+    await act(async () =>
+      root.render(
+        <ToastProvider>
+          <CapturePage />
+        </ToastProvider>,
+      ),
+    );
+    await flush();
+    await setOnline(false);
+
+    const panel = document.querySelector(".ff-capture__panel")!;
+    expect(panel.firstElementChild?.classList).toContain("ff-capture__offline");
+    expect(document.body.style.overflow).toBe("");
   });
 });

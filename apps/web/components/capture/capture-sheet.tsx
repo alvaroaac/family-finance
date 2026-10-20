@@ -69,6 +69,8 @@ export function CaptureSheet({
 }): ReactElement | null {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [online, setOnline] = useState(true);
+  const [networkError, setNetworkError] = useState(false);
   const loading = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -98,17 +100,41 @@ export function CaptureSheet({
       });
   }, [open, loaded]);
 
-  // Esc closes the sheet; closing returns focus to whatever opened it.
+  // Read on mount, not during render, so the server render matches.
+  useEffect(() => {
+    setOnline(navigator.onLine);
+    const goOnline = () => {
+      setOnline(true);
+      setNetworkError(false);
+    };
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) setNetworkError(false);
+  }, [open]);
+
+  // Esc closes the sheet (unless something inside handled it first), the page
+  // behind doesn't scroll, and closing returns focus to whatever opened it.
   useEffect(() => {
     if (!open || !isSheet) return;
     const opener =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
+      if (event.key === "Escape" && !event.defaultPrevented) onCloseRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = overflow;
       opener?.focus();
     };
   }, [open, isSheet]);
@@ -168,6 +194,12 @@ export function CaptureSheet({
         aria-labelledby={titleId}
         onKeyDown={isSheet ? trapFocus : undefined}
       >
+        {!online || networkError ? (
+          <div className="ff-capture__offline" role="status">
+            <IconWifiOff size={16} />
+            <span>{OFFLINE_COPY}</span>
+          </div>
+        ) : null}
         {isSheet ? <span className="ff-capture__handle" aria-hidden="true" /> : null}
         <header className="ff-capture__header">
           <h2 id={titleId} className="ff-capture__title">
@@ -192,6 +224,8 @@ export function CaptureSheet({
             onCategoryCreated={addCategory}
             onClose={onClose}
             closeOnNavigate={isSheet}
+            online={online}
+            setNetworkError={setNetworkError}
             voice={voice}
           />
         )}
@@ -264,6 +298,8 @@ function CaptureBody({
   onCategoryCreated,
   onClose,
   closeOnNavigate,
+  online,
+  setNetworkError,
   voice,
 }: {
   options: TransactionFieldOptions;
@@ -271,18 +307,20 @@ function CaptureBody({
   onCategoryCreated: (category: CategoryOption) => void;
   onClose: () => void;
   closeOnNavigate: boolean;
+  online: boolean;
+  /** true after a request failed to reach the server, false once one gets through. */
+  setNetworkError: (failed: boolean) => void;
   voice?: ReactNode;
 }): ReactElement {
-  const draft = useCaptureDraft(defaults);
+  const draft = useCaptureDraft(defaults, options);
   const { text, values, result, setField } = draft;
   const router = useRouter();
   const toast = useToast();
   const alive = useRef(true);
   const fillRunning = useRef(false);
+  const categoryToggle = useRef<HTMLButtonElement>(null);
   const [filling, setFilling] = useState(false);
   const [message, setMessage] = useState<CaptureMessage | null>(null);
-  const [online, setOnline] = useState(() => navigator.onLine);
-  const [networkError, setNetworkError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -291,17 +329,6 @@ function CaptureBody({
     alive.current = true;
     return () => {
       alive.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const goOnline = () => setOnline(true);
-    const goOffline = () => setOnline(false);
-    window.addEventListener("online", goOnline);
-    window.addEventListener("offline", goOffline);
-    return () => {
-      window.removeEventListener("online", goOnline);
-      window.removeEventListener("offline", goOffline);
     };
   }, []);
 
@@ -316,6 +343,7 @@ function CaptureBody({
     try {
       const response = await suggestCaptureDraftAction(text);
       if (!alive.current) return;
+      setNetworkError(false);
       if (response.ok) draft.applyDraft(response.draft, options);
       else setMessage(response.message);
     } catch {
@@ -328,7 +356,7 @@ function CaptureBody({
 
   function changeText(next: string): void {
     draft.setText(next);
-    if (message?.text === captureMessage("non_financial").text) setMessage(null);
+    if (message?.code === "non_financial") setMessage(null);
   }
 
   function onTextKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
@@ -347,11 +375,11 @@ function CaptureBody({
     }
     setSaving(true);
     setSaveError(null);
-    setNetworkError(false);
     try {
       const response = await createManualTransactionAction(
         toTransactionFormData(values),
       );
+      setNetworkError(false);
       if (response.ok) {
         draft.discard();
         toast.success("Lançamento salvo");
@@ -369,6 +397,18 @@ function CaptureBody({
     }
   }
 
+  function closeCategoryCreator(): void {
+    setCreatingCategory(false);
+    categoryToggle.current?.focus();
+  }
+
+  /** Esc while creating a category cancels just that, not the whole sheet. */
+  function onBodyKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== "Escape" || !creatingCategory) return;
+    event.preventDefault();
+    closeCategoryCreator();
+  }
+
   function cancel(): void {
     draft.discard();
     onClose();
@@ -377,14 +417,7 @@ function CaptureBody({
   const needsCategory = result?.needsReview === true && values.categoryId === "";
 
   return (
-    <div className="ff-capture__body">
-      {!online || networkError ? (
-        <div className="ff-capture__offline" role="status">
-          <IconWifiOff size={16} />
-          <span>{OFFLINE_COPY}</span>
-        </div>
-      ) : null}
-
+    <div className="ff-capture__body" onKeyDown={onBodyKeyDown}>
       <div className={cx("ff-capture__ai", filling && "ff-capture__ai--filling")}>
         <textarea
           className="ff-capture__text"
@@ -458,8 +491,10 @@ function CaptureBody({
         categoryHighlight={needsCategory ? "warn" : undefined}
         categoryAction={
           <button
+            ref={categoryToggle}
             type="button"
             className="ff-capture__category-toggle"
+            aria-label={creatingCategory ? "Cancelar nova categoria" : undefined}
             onClick={() => setCreatingCategory((current) => !current)}
           >
             {creatingCategory ? "Cancelar" : "+ Nova categoria"}
@@ -475,7 +510,7 @@ function CaptureBody({
                 setField("subcategoryId", "");
                 setCreatingCategory(false);
               }}
-              onNetworkError={() => setNetworkError(true)}
+              setNetworkError={setNetworkError}
             />
           ) : undefined
         }
@@ -510,11 +545,11 @@ function CaptureBody({
 function NewCategoryInput({
   kind,
   onCreated,
-  onNetworkError,
+  setNetworkError,
 }: {
   kind: TransactionFieldValues["kind"];
   onCreated: (category: CategoryOption) => void;
-  onNetworkError: () => void;
+  setNetworkError: (failed: boolean) => void;
 }): ReactElement {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -539,10 +574,11 @@ function NewCategoryInput({
     try {
       const response = await createCategoryAction(formData);
       if (!alive.current) return;
+      setNetworkError(false);
       if (response.ok) onCreated({ id: response.id, name: trimmed, kind });
       else setError(response.message);
     } catch {
-      if (alive.current) onNetworkError();
+      if (alive.current) setNetworkError(true);
     } finally {
       if (alive.current) setBusy(false);
     }
