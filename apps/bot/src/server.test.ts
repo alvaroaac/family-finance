@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import {
   createBotServer,
   createPaidFallbackClient,
+  CAPTURE_DRAFT_PATH,
   type ImportSuggestionRoute,
   type InternalRoute,
   type SignedRouteDeps,
@@ -617,6 +618,43 @@ describe("shared signed internal routes", () => {
     for (const server of openServers.splice(0)) await closeServer(server);
     vi.mocked(timingSafeEqual).mockClear();
     vi.restoreAllMocks();
+  });
+
+  it("routes capture-draft through signing and membership with an exact 262144 byte cap", async () => {
+    expect(CAPTURE_DRAFT_PATH).toBe("/internal/v1/capture-draft");
+    const internal = vi.fn(async () => ({ status: 200, body: { ok: true } }));
+    const claimNonce = vi.fn(async () => true);
+    const resolveActorHouseholdId = vi.fn(async () => scopeKey);
+    const server = createBotServer(vi.fn<Handle>(), {
+      internalRoutes: [
+        { path: CAPTURE_DRAFT_PATH, maxBodyBytes: 262144, handle: internal },
+      ],
+      signed: { secret, now: () => now, claimNonce, resolveActorHouseholdId },
+    });
+    openServers.push(server);
+    const base = await listen(server);
+    const json = JSON.stringify(payload);
+    const body = json + " ".repeat(262144 - Buffer.byteLength(json));
+    expect((await post(base, body, CAPTURE_DRAFT_PATH)).status).toBe(200);
+    expect(internal).toHaveBeenCalledWith(payload, {
+      userId: actorUserId,
+      householdId: scopeKey,
+    });
+    expect(claimNonce).toHaveBeenCalledOnce();
+    expect(resolveActorHouseholdId).toHaveBeenCalledWith(actorUserId);
+    expect((await post(base, body + " ", CAPTURE_DRAFT_PATH)).status).toBe(413);
+    expect(internal).toHaveBeenCalledOnce();
+    expect(claimNonce).toHaveBeenCalledOnce();
+    const invalidSignature = {
+      ...headers(json, CAPTURE_DRAFT_PATH),
+      "x-import-signature": "v1=bad",
+    };
+    expect(
+      (await post(base, json, CAPTURE_DRAFT_PATH, invalidSignature)).status,
+    ).toBe(401);
+    resolveActorHouseholdId.mockResolvedValueOnce("another-household");
+    expect((await post(base, json, CAPTURE_DRAFT_PATH)).status).toBe(403);
+    expect(internal).toHaveBeenCalledOnce();
   });
 
   it.each([firstPath, secondPath])(

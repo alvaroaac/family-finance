@@ -30,7 +30,13 @@ import {
   reserveImportAiPaidItems,
 } from "@family-finance/db";
 
-import { startBot, type WebhookResult } from "./index.js";
+import { startBot, buildDeps, type WebhookResult } from "./index.js";
+import {
+  CAPTURE_DRAFT_PATH,
+  createCaptureDraftHandler,
+  createCaptureRateLimiter,
+} from "./capture.js";
+export { CAPTURE_DRAFT_PATH } from "./capture.js";
 import {
   createImportSuggestionHandler,
   IMPORT_SUGGESTION_OUTPUT_SCHEMA,
@@ -409,7 +415,14 @@ async function verifySignedRequest(
 
 /** Production entry point: real bot wiring + listen on PORT. */
 async function main(): Promise<void> {
-  const { handle, client, memberClient } = await startBot();
+  const {
+    handle,
+    client,
+    memberClient,
+    categorizer,
+    interpretText,
+    classifyMessage,
+  } = await startBot();
   const env = getBotServerEnv();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const paidFallbackClient = createPaidFallbackClient(env);
@@ -445,7 +458,41 @@ async function main(): Promise<void> {
               recordImportAiPaidResult(client, input),
           }),
         };
-  const server = createBotServer(handle, { importSuggestions });
+  const signed: SignedRouteDeps | undefined =
+    importSuggestions === undefined
+      ? undefined
+      : {
+          secret: importSuggestions.secret,
+          resolveActorHouseholdId: importSuggestions.resolveActorHouseholdId,
+          claimNonce: (nonce) =>
+            importSuggestions.claimNonce(nonce, new Date(Date.now() + 120_000)),
+        };
+  const internalRoutes: InternalRoute[] =
+    importSuggestions === undefined
+      ? []
+      : [
+          {
+            path: CAPTURE_DRAFT_PATH,
+            maxBodyBytes: 262144,
+            handle: createCaptureDraftHandler({
+              buildCaptureDeps: ({ userId, householdId }) =>
+                buildDeps(
+                  memberClient({ userId }),
+                  householdId,
+                  categorizer,
+                  interpretText,
+                  classifyMessage,
+                ),
+              limiter: createCaptureRateLimiter(),
+              log: (event, fields) => console.error(`[bot:${event}]`, fields),
+            }),
+          },
+        ];
+  const server = createBotServer(handle, {
+    importSuggestions,
+    internalRoutes,
+    signed,
+  });
   server.listen(port, () => {
     console.log(`[bot:server] listening on :${port}`);
   });

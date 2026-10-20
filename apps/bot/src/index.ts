@@ -257,7 +257,7 @@ function memoryStoreFor(client: AppSupabaseClient): CategorizationMemoryStore {
  * accounts, and cards from the database. Categorization and persistence are the
  * SAME shared services the web app uses.
  */
-async function buildDeps(
+export async function buildDeps(
   client: AppSupabaseClient,
   householdId: string,
   ai?: AiCategorizer,
@@ -1219,6 +1219,9 @@ export async function startBot(): Promise<{
     secretHeader: string | undefined,
   ) => Promise<WebhookResult>;
   client: AppSupabaseClient;
+  categorizer: AiCategorizer;
+  interpretText: TextInterpreter | undefined;
+  classifyMessage: MessageClassifier | undefined;
   memberClient: (
     identity: Pick<BotMemberIdentity, "userId">,
   ) => AppSupabaseClient;
@@ -1344,6 +1347,9 @@ export async function startBot(): Promise<{
   return {
     client,
     memberClient,
+    categorizer: ai,
+    interpretText,
+    classifyMessage,
     handle: (rawBody, secretHeader) =>
       handleWebhook({
         rawBody,
