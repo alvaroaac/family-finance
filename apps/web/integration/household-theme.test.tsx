@@ -88,7 +88,11 @@ vi.mock("../lib/supabase", () => ({
 }));
 
 vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://family-finance.example.dev");
-const { default: RootLayout, metadata } = await import("../app/layout");
+const {
+  default: RootLayout,
+  generateViewport,
+  metadata,
+} = await import("../app/layout");
 const { default: AppLayout } = await import("../app/(app)/layout");
 const { default: LoginPage } = await import("../app/login/page");
 const { default: SettingsPage } = await import("../app/(app)/settings/page");
@@ -303,6 +307,47 @@ describe("login page", () => {
     expect(html).toContain("Acesso por convite.");
     expect(html).not.toContain("Nossa casa");
     expect(html).not.toMatch(/alvaro|karol/i);
+  });
+});
+
+describe("viewport", () => {
+  it("covers the safe areas and defaults the theme color to Esmeralda", async () => {
+    expect(await generateViewport()).toEqual({
+      viewportFit: "cover",
+      themeColor: "#16352B",
+    });
+  });
+
+  it("uses the locked household base for a member", async () => {
+    state.household.theme = LOCKED;
+    state.cookie = "esmeralda";
+    expect((await generateViewport()).themeColor).toBe("#E8EDE3");
+  });
+
+  it("lets the ff-theme cookie choose the base without lockBase", async () => {
+    state.cookie = "salvia";
+    expect((await generateViewport()).themeColor).toBe("#E8EDE3");
+  });
+
+  it("uses the household base when no cookie is set", async () => {
+    state.household.theme = { base: "salvia" };
+    expect((await generateViewport()).themeColor).toBe("#E8EDE3");
+  });
+
+  it("ignores the household for anyone who is not a member", async () => {
+    state.auth = { status: "unauthenticated" };
+    state.household.theme = LOCKED;
+    expect((await generateViewport()).themeColor).toBe("#16352B");
+    state.cookie = "salvia";
+    expect((await generateViewport()).themeColor).toBe("#E8EDE3");
+  });
+
+  it("matches the data-theme of the root element", async () => {
+    state.household.theme = LOCKED;
+    state.cookie = "esmeralda";
+    const root = await renderRoot();
+    expect(root.getAttribute("data-theme")).toBe("salvia");
+    expect((await generateViewport()).themeColor).toBe("#E8EDE3");
   });
 });
 

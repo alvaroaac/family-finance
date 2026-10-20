@@ -951,7 +951,7 @@
   align-items: center;
   border-top: 1px solid var(--ff-border);
   background: var(--ff-surface-soft);
-  padding: 10px 8px 22px;
+  padding: 10px 8px max(22px, env(safe-area-inset-bottom));
 }
 
 .ff-bottomnav__item {
@@ -1029,7 +1029,7 @@
   }
 
   .ff-main {
-    padding: 28px 22px 110px;
+    padding: calc(28px + env(safe-area-inset-top)) 22px 110px;
   }
 
   .ff-bottombar {
