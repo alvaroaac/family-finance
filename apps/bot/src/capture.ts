@@ -8,13 +8,21 @@ import type { InternalRouteHandler } from "./server.js";
 
 export const CAPTURE_DRAFT_PATH = "/internal/v1/capture-draft";
 
+function isCalendarDate(value: string): boolean {
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
 const captureRequestSchema = z
   .object({
     version: z.literal(1),
     requestId: z.string().uuid(),
     scopeKey: z.string().uuid(),
     actorUserId: z.string().uuid(),
-    today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    today: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine(isCalendarDate),
     text: z.string().trim().min(1).max(500),
   })
   .strict();
@@ -193,10 +201,12 @@ export function toCaptureDraft(
   };
 }
 
-function readOnlyDeps(deps: ConversationDeps): ConversationDeps {
+function readOnlyDeps(
+  deps: ConversationDeps,
+  onObligationAttempt: () => void,
+): ConversationDeps {
   const readOnly = { ...deps };
   for (const name of [
-    "materializeObligationPayment",
     "createCategory",
     "restoreCategory",
     "createSubcategory",
@@ -208,6 +218,12 @@ function readOnlyDeps(deps: ConversationDeps): ConversationDeps {
     "reconcileLegacyCardBillPayment",
   ] as const)
     delete readOnly[name];
+  // Stub, not removal: conversation.ts only settles an obligation when this dep
+  // exists, so the attempt itself is the signal for an unsupported intent.
+  readOnly.materializeObligationPayment = async () => {
+    onObligationAttempt();
+    throw new Error("Capture is read-only");
+  };
   readOnly.createTransaction = async () => {
     throw new Error("Capture is read-only");
   };
@@ -257,13 +273,24 @@ export function createCaptureDraftHandler(deps: {
     const release = deps.limiter.acquire(actor.householdId);
     if (release === null)
       return { status: 429, body: { ok: false, error: "rate_limited" } };
+    let obligationAttempted = false;
+    const unsupportedIntent = {
+      status: 422,
+      body: { ok: false, error: "unsupported_intent" },
+    } as const;
     try {
-      const conversationDeps = readOnlyDeps(await deps.buildCaptureDeps(actor));
+      const conversationDeps = readOnlyDeps(
+        await deps.buildCaptureDeps(actor),
+        () => {
+          obligationAttempted = true;
+        },
+      );
       const { state } = await startConversation(
         { text: request.text, fromUserId: actor.userId, inputKind: "text" },
         conversationDeps,
         { today: request.today },
       );
+      if (obligationAttempted) return unsupportedIntent;
       // Validate the entire ranked list before the mapper takes the top three.
       const checkedState: ConversationState = {
         ...state,
@@ -307,6 +334,7 @@ export function createCaptureDraftHandler(deps: {
       }
       return { status: 200, body: result };
     } catch (error) {
+      if (obligationAttempted) return unsupportedIntent;
       deps.log("capture_draft_unavailable", {
         requestId: request.requestId,
         error,

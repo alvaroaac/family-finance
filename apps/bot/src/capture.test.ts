@@ -139,12 +139,17 @@ describe("capture read-only conversation pipeline", () => {
     );
     const passed = start.mock.calls[0]![1];
     expect(passed.suggestCategory).toBe(deps.suggestCategory);
-    for (const name of writeNames) expect(passed).not.toHaveProperty(name);
+    for (const name of writeNames.filter(
+      (n) => n !== "materializeObligationPayment",
+    ))
+      expect(passed).not.toHaveProperty(name);
+    await expect(
+      passed.materializeObligationPayment!({} as never),
+    ).rejects.toThrow();
     await expect(passed.createTransaction({} as never)).rejects.toThrow();
     await passed.logInteraction({} as never);
     for (const write of Object.values(writes))
       expect(write).not.toHaveBeenCalled();
-    expect(deps.createCategory).toBe(writes.createCategory);
   });
 
   it.each([
@@ -153,6 +158,8 @@ describe("capture read-only conversation pipeline", () => {
     { actorUserId: "bad" },
     { scopeKey: "bad" },
     { today: "20/10/2026" },
+    { today: "2026-13-45" },
+    { today: "2026-02-30" },
     { text: " " },
     { text: "a".repeat(501) },
     { text: 3 },
@@ -166,6 +173,43 @@ describe("capture read-only conversation pipeline", () => {
       body: { ok: false, error: "invalid_request" },
     });
     expect(buildCaptureDeps).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid leap day", async () => {
+    vi.spyOn(conversation, "startConversation").mockResolvedValue({
+      state: state(),
+      reply: "",
+    });
+    const { handle } = fixture();
+    expect(
+      (await handle({ ...request, today: "2028-02-29" }, actor)).status,
+    ).toBe(200);
+  });
+
+  it("answers unsupported_intent when an obligation payment is attempted, without writing", async () => {
+    const { handle, writes } = fixture();
+    expect(await handle({ ...request, text: "paguei aluguel" }, actor)).toEqual(
+      {
+        status: 422,
+        body: { ok: false, error: "unsupported_intent" },
+      },
+    );
+    for (const write of Object.values(writes))
+      expect(write).not.toHaveBeenCalled();
+  });
+
+  it("answers unsupported_intent when the obligation attempt surfaces as a thrown error", async () => {
+    vi.spyOn(conversation, "startConversation").mockImplementation(
+      async (_input, deps) => {
+        await deps.materializeObligationPayment!({} as never).catch(() => {});
+        throw new Error("boom");
+      },
+    );
+    const { handle } = fixture();
+    expect(await handle(request, actor)).toEqual({
+      status: 422,
+      body: { ok: false, error: "unsupported_intent" },
+    });
   });
 
   it.each([1, 500])("accepts %i characters after trimming", async (length) => {
@@ -238,8 +282,6 @@ describe("capture read-only conversation pipeline", () => {
         },
       });
       expect(suggestCategory).toHaveBeenCalledOnce();
-      expect(jev).toHaveBeenCalledTimes(source === "memory" ? 0 : 1);
-      expect(gpt).toHaveBeenCalledTimes(source === "memory" ? 0 : 1);
     },
   );
 

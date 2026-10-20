@@ -473,7 +473,7 @@ async function main(): Promise<void> {
       : [
           {
             path: CAPTURE_DRAFT_PATH,
-            maxBodyBytes: 262144,
+            maxBodyBytes: MAX_INTERNAL_BODY_BYTES,
             handle: createCaptureDraftHandler({
               buildCaptureDeps: ({ userId, householdId }) =>
                 buildDeps(
