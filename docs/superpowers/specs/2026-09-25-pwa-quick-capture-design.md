@@ -39,7 +39,7 @@ categorization memory.
 | Decision | Choice | Why |
 |---|---|---|
 | Where AI runs | **On the bot (VPS), called by the web over the existing signed channel** | OpenAI and Typesafe (Jev) keys never go to Vercel. `deploy/vercel.md` keeps Vercel to low-power secrets only; a leaked `IMPORT_SUGGESTION_SHARED_SECRET` can only call the bot's internal routes. The signed channel (HMAC, ±60 s timestamp, nonce replay protection, actor membership check) already exists for import suggestions. |
-| Catalog source | **Web sends it in the request** (same as imports) | See decision below. |
+| Catalog source | **Bot loads it as the member** (`memberClient(actorUserId)` under RLS, like Telegram) | Same data path as Telegram, so the shared pipeline needs no adapters; the request stays text-only. Decided 2026-10-20 (option B). |
 | Classifier | **Same pipeline as Telegram text messages** | Deterministic parsing/routing → GPT extraction-only classifier (with deadline) → `suggestCategory` (memory/rules → Jev → GPT fallback via `createCategoryRuntime(env)`). Telegram and web categorize the same way; model env stays in one place. |
 | Save path | **Existing `createManualTransactionAction`**, unchanged | Already handles card installments, subcategory, and responsible member; one validation path. |
 | Form | **One shared field set** extracted from `new-transaction-form.tsx` | The "Novo lançamento" modal and the capture sheet can't drift apart. |
@@ -56,22 +56,13 @@ past corrections, the `categorization_memory` table). The bot needs these to
 turn "85 no mercado no nubank" into *Mercado* + the *Nubank* card; it may
 only return ids from this list.
 
-The web sends the catalog; the bot never reads household data for capture.
-Since multi-tenancy the bot *could* load it itself as the member
-(`memberClient(userId)` under RLS, like Telegram does), which would shrink
-the request and drop the catalog contract — but then a leaked shared secret
-plus any member's user id would read that household's categories, accounts
-and memory. With the catalog in the request, a leaked secret only spends AI
-calls.
-
-```decision id=catalog-source
-label: Who loads the catalog
-question: Should the web send the catalog in each capture request, or should the bot load it as the member?
-quote: The web sends the catalog; the bot never reads household data for capture.
-context: Imports send the catalog today. Telegram loads it on the bot as the member under RLS.
-- A: Web sends it (like imports) | Leaked secret can't read household data; one more closed schema to keep in sync [pick]
-- B: Bot loads it as the member via memberClient | Smaller request, exact Telegram data path; leaked secret + user id reads that household's catalog
-```
+The bot loads the catalog itself, as the member: the web sends only the
+text and the signed actor (`actorUserId`, `scopeKey`), and the bot builds
+the same catalog, account/card lists and memory store Telegram builds, via
+`memberClient(actorUserId)` under RLS. Accepted trade-off: someone holding
+the leaked shared secret and a member's user id could get drafts for that
+household (category/account ids plus an explanation), not just spend AI
+calls. Imports keep sending their catalog; capture differs on purpose.
 
 ## Architecture
 
@@ -79,7 +70,7 @@ context: Imports send the catalog today. Telegram loads it on the bot as the mem
 Browser (capture sheet)
   ├─ suggestCaptureDraftAction(text)          ─┐
   ├─ transcribeCaptureAudioAction(formData)    ├─ web server actions: authorize member →
-  ├─ createCategoryAction(formData)            │  load catalog (RLS) → sign → POST bot
+  ├─ createCategoryAction(formData)            │  sign (text + actor) → POST bot     
   └─ createManualTransactionAction(formData)   ┘
 Bot (VPS, node:http)
   POST /internal/v1/capture-draft       → shared text pipeline → draft
@@ -98,8 +89,9 @@ Bot (VPS, node:http)
   `createCaptureTranscribeHandler`, in the same style as
   `createImportSuggestionHandler` (zod-parse → rate-limit → work →
   `{status, body}`).
-- Draft handler: runs the Telegram text pipeline against the catalog in the
-  request. Today that pipeline lives inside `startConversation` in
+- Draft handler: builds the member's catalog with `memberClient(actorUserId)`
+  (the same loaders `index.ts` uses for Telegram) and runs the Telegram text
+  pipeline on it. Today that pipeline lives inside `startConversation` in
   `conversation.ts` (~700 lines, mixed with the conversation state machine),
   so the first bot task extracts its stateless part into one function both
   callers use.
@@ -123,8 +115,8 @@ context: Not yet verified line by line; based on a skim of conversation.ts on ma
 - Category runtime: the handler gets `categorizer` from the same
   `createCategoryRuntime(env)` instance `index.ts` builds, and the
   classifier from the same `withClassifierDeadline(...)` wiring. No new env.
-- Categorization memory: the request's memory entries are wrapped in an
-  in-memory `CategorizationMemoryStore` so `suggestCategory` runs unchanged.
+- Categorization memory: the same DB-backed memory store Telegram uses,
+  opened with the member client.
 - Transcribe handler: reuses `audio.ts`. Add a buffer entry point next to
   `transcribeVoiceMessage`, which today takes a Telegram file ref; both share
   the temp-file + Whisper step. No `OPENAI_API_KEY` → 503.
@@ -143,29 +135,6 @@ The bot rejects any request whose actor is not an active member of
 ```
 today: "YYYY-MM-DD"
 text: string, 1–500 chars, trimmed
-catalog: {
-  categories:    [{ id, name, kind: "expense" | "income" }]
-  subcategories: [{ id, categoryId, name }]
-  accounts:      [{ id, name }]
-  creditCards:   [{ id, name }]
-  memory:        CategorizationMemoryEntry[]   // active entries only
-}
-```
-
-`memory` is categorization memory only — the merchant → category rules
-the Telegram bot and imports already use, not a general assistant memory.
-It uses the `CategorizationMemoryEntry` type from
-`@family-finance/categorization` as-is (including the optional `matchKind`,
-`rowKind`, `normalizerVersion`), and the web loads it with the same
-`listActiveCategorizationMemory` the import flow uses. When the
-merchant-evidence branch lands (`learningStatus`, conflicting-rule review),
-the contract follows the type with no separate change.
-
-```assumption id=memory-type-follows
-label: Categorization rules follow the package type
-statement: Deriving the zod schema for catalog.memory (merchant → category rules) from CategorizationMemoryEntry keeps capture correct when the merchant-evidence branch adds learningStatus to those rules, with only one schema field added.
-quote: the contract follows the type with no separate change
-context: That branch also makes resolveMemory report conflicting confirmed rules; the response's needsReview flag below is reserved for it.
 ```
 
 **`capture-draft` response (200):**
@@ -182,8 +151,8 @@ context: That branch also makes resolveMemory report conflicting confirmed rules
     needsReview: boolean   // true → categoryId omitted, user must pick
   } }
 ```
-Every returned id must exist in the request catalog; the handler drops any
-that don't. `needsReview` is `false` on today's main; it becomes `true` when
+Every returned id must belong to the member's household catalog; the
+handler drops any that don't. `needsReview` is `false` on today's main; it becomes `true` when
 memory reports conflicting rules (after the merchant-evidence branch).
 
 **Errors (all routes):** `{ ok: false, error: code }` where code ∈
@@ -204,8 +173,7 @@ keep the import route's 401/403/409/503 behavior.
   - `suggestCaptureDraftAction(text) → { ok: true, draft, intent } | { ok: false, error: string }`
   - `transcribeCaptureAudioAction(formData) → { ok: true, text } | { ok: false, error: string }`
   - Each authorizes the active household member first (same helper the
-    import actions use), loads the catalog under RLS for
-    `suggestCaptureDraftAction`, calls the bot, and maps error codes to the
+    import actions use), sends the text with the signed actor, and maps error codes to the
     pt-BR copy below. Raw bot/LLM errors are logged on the server, never
     returned.
 - `categories/actions.ts`: `createCategoryAction` and
@@ -345,6 +313,3 @@ needs 7 and 9.
   Android Chrome; voice on both; safe areas in installed mode.
 - **Gates:** `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm build`.
 
-```reply thread=t_fnfrx2
-The household's own lists the AI picks from: categories, subcategories, accounts, credit cards, and the merchant → category rules (categorization memory). Added a definition right above this paragraph.
-```
