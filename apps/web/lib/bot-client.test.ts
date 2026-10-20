@@ -126,4 +126,82 @@ describe("postToBot", () => {
       postToBot("/internal/v1/x", {}, { timeoutMs: 5 }),
     ).resolves.toEqual({ ok: false, reason: "timeout" });
   });
+  it("maps an abort while reading the response body to timeout", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.error(new DOMException("aborted", "AbortError"));
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, { status: 200 }),
+    );
+
+    await expect(postToBot("/internal/v1/x", {})).resolves.toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+  });
+
+  it("signs the resolved URL pathname, not the raw path argument", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+
+    await postToBot("/internal/v1/other/../x", { a: 1 });
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(new URL(String(url)).pathname).toBe("/internal/v1/x");
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["x-import-signature"]).toBe(
+      signBotRequest({
+        secret: SECRET,
+        path: "/internal/v1/x",
+        body: '{"a":1}',
+        now: Number(headers["x-import-timestamp"]) * 1000,
+        nonce: headers["x-import-nonce"],
+      })["x-import-signature"],
+    );
+  });
+
+  describe("response size cap (1 MB)", () => {
+    const oversized = JSON.stringify({ pad: "x".repeat(1024 * 1024) });
+
+    it("treats a declared content-length over the cap as an unknown body", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(oversized, {
+          status: 200,
+          headers: { "content-length": String(oversized.length) },
+        }),
+      );
+
+      await expect(postToBot("/internal/v1/x", {})).resolves.toEqual({
+        ok: true,
+        status: 200,
+        json: null,
+      });
+    });
+
+    it("stops reading a streamed body that grows past the cap", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(oversized, { status: 200 }),
+      );
+
+      await expect(postToBot("/internal/v1/x", {})).resolves.toEqual({
+        ok: true,
+        status: 200,
+        json: null,
+      });
+    });
+
+    it("still parses a body just under the cap", async () => {
+      const body = { pad: "x".repeat(1024 * 1024 - 100) };
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(body));
+
+      await expect(postToBot("/internal/v1/x", {})).resolves.toEqual({
+        ok: true,
+        status: 200,
+        json: body,
+      });
+    });
+  });
 });

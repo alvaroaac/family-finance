@@ -4,6 +4,7 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MIN_SECRET_LENGTH = 32;
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 export type BotResponse =
   | { ok: true; status: number; json: unknown }
@@ -50,6 +51,39 @@ function readBotConfig(): { baseUrl: URL; secret: string } | null {
   }
 }
 
+/** The response text, or null when the body is larger than the cap. */
+async function readBoundedText(response: Response): Promise<string | null> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (declaredLength > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
+function parseJsonOrNull(text: string | null): unknown {
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 export async function postToBot(
   path: string,
   body: unknown,
@@ -64,11 +98,16 @@ export async function postToBot(
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   try {
-    const response = await fetch(new URL(path, config.baseUrl), {
+    const url = new URL(path, config.baseUrl);
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...signBotRequest({ secret: config.secret, path, body: payload }),
+        ...signBotRequest({
+          secret: config.secret,
+          path: url.pathname,
+          body: payload,
+        }),
       },
       body: payload,
       signal: controller.signal,
@@ -76,7 +115,8 @@ export async function postToBot(
       // Never forward financial data or HMAC headers to another origin.
       redirect: "error",
     });
-    const json: unknown = await response.json().catch(() => null);
+    // Aborts while reading the body propagate to the timeout mapping below.
+    const json = parseJsonOrNull(await readBoundedText(response));
     return { ok: true, status: response.status, json };
   } catch (error) {
     const aborted = error instanceof Error && error.name === "AbortError";
