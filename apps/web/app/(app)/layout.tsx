@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { CaptureAppShell } from "../../components/capture/capture-app-shell";
 import {
-  AppShell,
   SubmitButton,
   ThemePicker,
   ToastProvider,
@@ -51,7 +51,7 @@ async function signOutAction(): Promise<void> {
  * BEFORE any child page renders, so protected content never reaches the client.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const { email } = await requireAuthorizedUser();
+  const { email, userId } = await requireAuthorizedUser();
   const cookieStore = await cookies();
   const household = await currentHouseholdOrFallback();
   const theme = resolveBaseTheme(
@@ -62,9 +62,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <ToastProvider>
-      <AppShell
+      <CaptureAppShell
         items={NAV_ITEMS}
         householdName={household.name}
+        userId={userId}
         user={{ initial: name.charAt(0).toUpperCase(), name, email }}
         signOut={
           <form action={signOutAction}>
@@ -84,7 +85,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         }
       >
         {children}
-      </AppShell>
+      </CaptureAppShell>
     </ToastProvider>
   );
 }

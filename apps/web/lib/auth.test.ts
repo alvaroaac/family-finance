@@ -51,12 +51,16 @@ describe("getAuthState", () => {
   });
 
   it("authorizes a session with an active membership", async () => {
-    getUser.mockResolvedValue({ data: { user: { email: "member@example.com" } }, error: null });
+    getUser.mockResolvedValue({
+      data: { user: { id: "user-1", email: "member@example.com" } },
+      error: null,
+    });
     findHouseholdIdForCurrentUser.mockResolvedValue("household-1");
     expect(await getAuthState()).toEqual({
       status: "authorized",
       email: "member@example.com",
       householdId: "household-1",
+      userId: "user-1",
     });
   });
 

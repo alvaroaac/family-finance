@@ -257,7 +257,7 @@ function memoryStoreFor(client: AppSupabaseClient): CategorizationMemoryStore {
  * accounts, and cards from the database. Categorization and persistence are the
  * SAME shared services the web app uses.
  */
-async function buildDeps(
+export async function buildDeps(
   client: AppSupabaseClient,
   householdId: string,
   ai?: AiCategorizer,
@@ -1219,6 +1219,10 @@ export async function startBot(): Promise<{
     secretHeader: string | undefined,
   ) => Promise<WebhookResult>;
   client: AppSupabaseClient;
+  categorizer: AiCategorizer;
+  transcriptionProvider: TranscriptionProvider | null;
+  interpretText: TextInterpreter | undefined;
+  classifyMessage: MessageClassifier | undefined;
   memberClient: (
     identity: Pick<BotMemberIdentity, "userId">,
   ) => AppSupabaseClient;
@@ -1320,30 +1324,32 @@ export async function startBot(): Promise<{
     CLASSIFIER_PRIMARY_TIMEOUT_MS,
   );
 
-  // Voice transcription — only when both a bot token (to fetch the file) and a
-  // transcription (OpenAI) key are configured. Raw audio is never persisted:
-  // `transcribeVoiceMessage` deletes the temp file in a `finally`.
+  // Share the provider with web capture even when no Telegram token is set.
+  // Telegram still needs both a downloader token and a transcription key.
   const transcription = getTranscriptionConfig();
+  const transcriptionProvider: TranscriptionProvider | null =
+    transcription.isConfigured && transcription.apiKey !== undefined
+      ? createOpenAiTranscriptionProvider({
+          apiKey: transcription.apiKey,
+          model: transcription.model,
+        })
+      : null;
   let transcribe: TranscribeDeps | undefined;
-  if (
-    env.TELEGRAM_BOT_TOKEN &&
-    transcription.isConfigured &&
-    transcription.apiKey !== undefined
-  ) {
+  if (env.TELEGRAM_BOT_TOKEN && transcriptionProvider !== null) {
     const downloader: AudioDownloader = createHttpAudioDownloader(
       env.TELEGRAM_BOT_TOKEN,
       env.TELEGRAM_API_BASE_URL,
     );
-    const provider: TranscriptionProvider = createOpenAiTranscriptionProvider({
-      apiKey: transcription.apiKey,
-      model: transcription.model,
-    });
-    transcribe = { downloader, provider };
+    transcribe = { downloader, provider: transcriptionProvider };
   }
 
   return {
     client,
     memberClient,
+    categorizer: ai,
+    transcriptionProvider,
+    interpretText,
+    classifyMessage,
     handle: (rawBody, secretHeader) =>
       handleWebhook({
         rawBody,

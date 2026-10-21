@@ -59,10 +59,9 @@ function requireField(formData: FormData, name: string): string {
   return value.trim();
 }
 
-export type CategoryCreationActionResult = {
-  ok: boolean;
-  message: string;
-};
+export type CategoryCreationActionResult =
+  | { ok: true; message: string; id: string; created: boolean }
+  | { ok: false; message: string };
 
 function cleanName(formData: FormData): string {
   const name = requireField(formData, "name").replace(/\s+/g, " ");
@@ -99,14 +98,14 @@ export async function createCategoryAction(
     const { householdId, client } = await authedHousehold();
     const name = cleanName(formData);
     const kind = categoryKind(formData);
-    const message = await createOrRestoreCategory(
+    const { id, message, created } = await createOrRestoreCategory(
       client,
       householdId,
       name,
       kind,
     );
     revalidatePath("/categories");
-    return { ok: true, message };
+    return { ok: true, message, id, created };
   } catch (error) {
     return creationError(error, "Não foi possível criar a categoria.");
   }
@@ -120,14 +119,14 @@ export async function createSubcategoryAction(
     const { householdId, client } = await authedHousehold();
     const name = cleanName(formData);
     const categoryId = requireField(formData, "categoryId");
-    const message = await createOrRestoreSubcategory(
+    const { id, message, created } = await createOrRestoreSubcategory(
       client,
       householdId,
       categoryId,
       name,
     );
     revalidatePath("/categories");
-    return { ok: true, message };
+    return { ok: true, message, id, created };
   } catch (error) {
     return creationError(error, "Não foi possível criar a subcategoria.");
   }

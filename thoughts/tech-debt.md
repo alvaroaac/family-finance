@@ -10,6 +10,50 @@ Track known compromises here. Debt should be specific enough that a future agent
 
 ## Open Debt
 
+## 2026-10-20: Manual/capture transaction save trusts category ids; pickers list archived rows
+
+**Area:** apps/web/app/(app)/transactions/actions.ts (`createManualTransactionAction`), apps/web/app/(app)/capture/actions.ts (`loadCaptureOptionsAction`), the `/transactions` form loaders
+
+**Impact:** The save action does not check that `categoryId` matches the
+transaction kind, that `subcategoryId` is a child of `categoryId`, or that
+either belongs to the actor's household beyond what RLS and the composite FKs
+(migration 0013) enforce. A crafted form, or a UI path that slips past the
+client checks, can store an income under an expense category or a
+mismatched subcategory. The capture sheet and the `/transactions` form also
+offer archived categories, accounts and cards, because the shared loaders do
+not filter `is_active`. Found by the 2026-10-20 final review of PWA quick
+capture; pre-existing in the manual-entry path, now more visible because
+capture is a first-class entry point.
+
+**Current workaround:** Client-side consistency (`fitCategory`, kind-filtered
+chips, bot-side catalog filtering) keeps normal UI flows consistent.
+
+**Revisit trigger:** Any report of a transaction with a wrong-kind category,
+or the next change to the manual-entry action. Fix: one shared options loader
+that filters archived rows, plus server-side kind/parent/household checks in
+`createManualTransactionAction`.
+
+**Status:** open
+
+## 2026-10-20: Text capture always drafts an expense
+
+**Area:** apps/bot/src/conversation.ts (draft builder sets `kind: "expense"`), apps/bot/src/capture.ts
+
+**Impact:** The Telegram text pipeline, which quick capture reuses read-only,
+always builds `kind: "expense"`. "Recebi salário de 5000" in the PWA capture
+sheet fills an expense of R$ 5.000; the user must switch Tipo to Entrada
+before saving. The same happens on Telegram. The quick-capture spec froze
+`conversation.ts`, so the capture mapper cannot fix it.
+
+**Current workaround:** The capture sheet shows Tipo; the user corrects it
+before Salvar.
+
+**Revisit trigger:** First income mis-saved as expense, or the next change to
+the conversation pipeline. Fix: carry the classifier's income/expense signal
+into the draft.
+
+**Status:** open
+
 ## 2026-10-06: Imported card rows are attributed by purchase date, not statement month
 
 **Area:** supabase/migrations/202610070000_card_bill_closing_and_payments.sql (`transactions_set_invoice_month`), import RPCs

@@ -20,6 +20,12 @@ import {
   TableRow,
   useToast,
 } from "../../../components/ui";
+import type {
+  CategoryOption,
+  PaymentOption,
+  ResponsibleOption,
+  SubcategoryOption,
+} from "../../../components/transaction-fields";
 import {
   updateTransactionAction,
   updateInstallmentGroupAction,
@@ -44,18 +50,12 @@ import {
  * "Categorizar/depois" on pending entries. Logic/state untouched.
  */
 
-export type CategoryOption = {
-  id: string;
-  name: string;
-  kind: "expense" | "income";
+export type {
+  CategoryOption,
+  PaymentOption,
+  ResponsibleOption,
+  SubcategoryOption,
 };
-export type SubcategoryOption = {
-  id: string;
-  categoryId: string;
-  name: string;
-};
-export type ResponsibleOption = { value: string; label: string };
-export type PaymentOption = { id: string; name: string };
 
 type Props = {
   rows: TransactionTableRow[];

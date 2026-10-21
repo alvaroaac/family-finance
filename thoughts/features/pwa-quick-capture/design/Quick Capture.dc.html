@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0D1310; }
+    a { color: #D4AF6A; } a:hover { color: #E4C488; }
+    textarea::placeholder, input::placeholder { color: var(--ink2); opacity: 0.75; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes sheetUp { from { transform: translateY(40px); opacity: 0.4; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes popIn { from { transform: translateY(10px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+    @keyframes fillbar { from { width: 0%; } to { width: 92%; } }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;padding:40px 48px 64px;display:flex;flex-direction:column;align-items:center;gap:32px;font-family:Inter,system-ui,sans-serif">
+
+  <!-- Simulator -->
+  <div style="width:1886px;max-width:100%;display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+      <div style="font:600 10px Inter;letter-spacing:0.28em;text-transform:uppercase;color:#D4AF6A">Casa · Lançamento rápido</div>
+      <div style="font:300 13px Inter;color:rgba(242,237,224,0.6)">Protótipo: digite ou grave, toque em Preencher, ajuste e salve. Ou pule direto para um estado:</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <sc-for list="{{ jumps }}" as="j" hint-placeholder-count="14">
+        <button onClick="{{ j.go }}" style="padding:7px 14px;border-radius:999px;border:1px solid rgba(212,175,106,0.3);background:rgba(212,175,106,0.06);color:#F2EDE0;font:500 12px Inter;cursor:pointer" style-hover="background:rgba(212,175,106,0.16);border-color:#D4AF6A">{{ j.label }}</button>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:56px;align-items:flex-start;justify-content:center">
+
+  <!-- ================= MOBILE ================= -->
+  <div data-screen-label="Lançamento rápido · mobile" style="animation:fadeUp 0.4s ease-out">
+    <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Mobile 390 · PWA instalado</div>
+    <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);position:relative;width:390px;height:844px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:28px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+
+      <!-- Background screen (Resumo) -->
+      <div style="flex:1;overflow-y:auto;padding:52px 22px 20px">
+        <div style="font:600 11px Inter;letter-spacing:0.26em;text-transform:uppercase;color:var(--accent)">Nossa casa · Outubro</div>
+        <h1 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:30px;line-height:1.15;color:var(--ink);margin:10px 0 4px">Oi, Karol</h1>
+        <p style="font:300 14px Inter;color:var(--ink2);margin:0">Como estão as contas da casa?</p>
+        <div style="margin-top:26px">
+          <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--ink2)">Gasto do mês</div>
+          <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:54px;line-height:1.05;color:var(--ink);margin-top:8px;font-variant-numeric:tabular-nums">R$ 3.127<span style="font-size:30px">,40</span></div>
+        </div>
+        <div style="margin-top:30px">
+          <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:20px;color:var(--ink);margin:0 0 10px">Últimos lançamentos</h2>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+            <div style="display:flex;align-items:center;gap:12px;padding:14px 16px">
+              <div style="flex:1;min-width:0"><div style="font:500 14px Inter;color:var(--ink)">Farmácia Venâncio</div><div style="font:400 12px Inter;color:var(--ink2);margin-top:2px">ontem · Karol</div></div>
+              <div style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 86,20</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid var(--border)">
+              <div style="flex:1;min-width:0"><div style="font:500 14px Inter;color:var(--ink)">Padaria do bairro</div><div style="font:400 12px Inter;color:var(--ink2);margin-top:2px">18/10 · Alvaro</div></div>
+              <div style="font:600 14px Inter;color:var(--neg);font-variant-numeric:tabular-nums;white-space:nowrap">− R$ 32,50</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast -->
+      <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+        <div role="status" style="position:absolute;left:50%;bottom:118px;transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:10px;padding:12px 18px;border-radius:999px;background:var(--ink);color:var(--bg);font:600 14px Inter;white-space:nowrap;box-shadow:0 10px 26px rgba(20,14,8,0.3);animation:popIn 0.25s ease-out">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>Lançamento salvo
+        </div>
+      </sc-if>
+
+      <!-- Bottom bar: Resumo · Transações · + · Cartões · Mais -->
+      <div style="flex-shrink:0;position:relative;display:grid;grid-template-columns:repeat(5,1fr);align-items:end;border-top:1px solid var(--border);background:var(--soft);padding:8px 6px 34px">
+        <a href="Resumo.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;color:var(--accent);text-decoration:none">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 L12 4.5 L21 11.5"></path><path d="M5.5 10 V19.5 H18.5 V10"></path></svg>
+          <span style="font:600 10px Inter">Resumo</span>
+        </a>
+        <a href="Transacoes.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;color:var(--ink2);text-decoration:none" style-hover="color:var(--ink)">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13"></path><path d="M14 5l3 3-3 3"></path><path d="M20 16H7"></path><path d="M10 13l-3 3 3 3"></path></svg>
+          <span style="font:500 10px Inter">Transações</span>
+        </a>
+        <div style="display:flex;justify-content:center">
+          <button onClick="{{ openSheet }}" aria-label="Novo lançamento" title="Novo lançamento" style="width:56px;height:56px;margin-top:-26px;border-radius:50%;background:var(--accent);color:var(--on-accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 5px var(--soft), 0 10px 22px rgba(20,14,8,0.28);transition:all 0.16s" style-hover="background:var(--accent-h);transform:translateY(-1px)">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+          </button>
+        </div>
+        <a href="Mais Telas.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;color:var(--ink2);text-decoration:none" style-hover="color:var(--ink)">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2.5"></rect><path d="M3 10.5h18"></path></svg>
+          <span style="font:500 10px Inter">Cartões</span>
+        </a>
+        <a href="Configuracoes.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;color:var(--ink2);text-decoration:none" style-hover="color:var(--ink)">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+          <span style="font:500 10px Inter">Mais</span>
+        </a>
+        <span style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink);opacity:0.35"></span>
+      </div>
+
+      <!-- Capture sheet -->
+      <sc-if value="{{ open }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end">
+          <div onClick="{{ closeSheet }}" style="position:absolute;inset:0;background:rgba(10,14,11,0.5)"></div>
+          <div role="dialog" aria-label="Novo lançamento" style="position:relative;max-height:93%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid var(--border);border-radius:24px 24px 0 0;box-shadow:0 -12px 40px rgba(20,14,8,0.3);overflow:hidden;animation:sheetUp 0.28s ease-out">
+
+            <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+              <div role="status" style="display:flex;align-items:center;gap:9px;padding:10px 20px;background:var(--warn-wash);border-bottom:1px solid var(--warn);font:500 13px Inter;color:var(--ink)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round"><path d="M3 3l18 18"></path><path d="M8.5 16.5a5 5 0 0 1 7 0"></path><path d="M5 12.5a10 10 0 0 1 4-2.4"></path><path d="M19 12.5a10 10 0 0 0-3-2"></path><circle cx="12" cy="20" r="0.8"></circle></svg>
+                Sem conexão — seu rascunho está salvo
+              </div>
+            </sc-if>
+
+            <div style="display:flex;justify-content:center;padding:8px 0 2px"><span style="width:38px;height:4px;border-radius:2px;background:var(--ink2);opacity:0.4"></span></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 16px 10px 20px">
+              <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:21px;color:var(--ink);margin:0">Novo lançamento</h2>
+              <button onClick="{{ closeSheet }}" aria-label="Fechar" style="width:44px;height:44px;border:none;border-radius:50%;background:transparent;color:var(--ink2);cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:var(--tint);color:var(--ink)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>
+              </button>
+            </div>
+
+            <div style="flex:1;overflow-y:auto;padding:0 20px 18px">
+              <!-- AI box -->
+              <div style="position:relative;overflow:hidden;background:var(--surface);border:1px solid {{ aiBoxBd }};border-radius:16px;padding:12px 12px 12px 14px;transition:border-color 0.2s">
+                <textarea rows="2" value="{{ text }}" onChange="{{ onText }}" onKeyDown="{{ onTextKey }}" placeholder="{{ placeholder }}" aria-label="Descreva o lançamento" style="display:block;width:100%;box-sizing:border-box;resize:none;background:transparent;border:none;outline:none;padding:2px 0;color:var(--ink);font:400 16px/1.45 Inter"></textarea>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                  <sc-if value="{{ isIdleMic }}" hint-placeholder-val="{{ true }}">
+                    <button onClick="{{ micClick }}" style="display:inline-flex;align-items:center;gap:7px;height:44px;padding:0 15px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--ink);font:500 14px Inter;cursor:pointer;opacity:{{ micOpacity }}" style-hover="background:var(--tint);border-color:var(--accent)">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0"></path><path d="M12 17.5V21"></path></svg>Gravar
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{ isRec }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ micClick }}" style="display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 15px;border-radius:12px;border:1px solid var(--neg);background:var(--neg-wash);color:var(--ink);font:600 14px Inter;cursor:pointer">{{ dot }}Parar</button>
+                    <span style="font:500 13px Inter;color:var(--ink2);font-variant-numeric:tabular-nums">{{ timer }} <span style="opacity:0.6">/ 1:00</span></span>
+                  </sc-if>
+                  <sc-if value="{{ isTrans }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 4px;color:var(--ink2);font:500 14px Inter">{{ spin }}Transcrevendo…</span>
+                  </sc-if>
+                  <button onClick="{{ fill }}" disabled="{{ fillDisabled }}" style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 20px;border-radius:12px;border:none;background:var(--accent);color:var(--on-accent);font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);opacity:{{ fillOpacity }};transition:all 0.16s" style-hover="background:var(--accent-h)">
+                    <sc-if value="{{ isFilling }}" hint-placeholder-val="{{ false }}">{{ spin }}</sc-if>{{ fillLabel }}
+                  </button>
+                </div>
+                <sc-if value="{{ isFilling }}" hint-placeholder-val="{{ false }}">{{ bar }}</sc-if>
+              </div>
+
+              <sc-if value="{{ hasMsg }}" hint-placeholder-val="{{ false }}">
+                <div role="status" style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 8px 10px 13px;border-radius:12px;background:{{ msgBg }};border:1px solid {{ msgBd }};animation:popIn 0.2s ease-out">
+                  <span style="width:7px;height:7px;border-radius:50%;background:{{ msgFg }};flex-shrink:0"></span>
+                  <span style="flex:1;font:500 13px/1.45 Inter;color:var(--ink)">{{ msgText }}</span>
+                  <sc-if value="{{ msgLink }}" hint-placeholder-val="{{ false }}"><a href="#" style="font:600 12px Inter;color:var(--accent);text-decoration:none;white-space:nowrap">Abrir →</a></sc-if>
+                  <button onClick="{{ dismissMsg }}" aria-label="Dispensar" style="width:28px;height:28px;flex-shrink:0;border:none;border-radius:50%;background:transparent;color:var(--ink2);cursor:pointer;font:400 16px Inter" style-hover="color:var(--ink)">×</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ hasResult }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;animation:popIn 0.25s ease-out">
+                  <div style="display:flex;align-items:center;gap:9px;min-width:0">
+                    <span style="width:6px;height:6px;flex-shrink:0;transform:rotate(45deg);background:var(--accent)"></span>
+                    <span style="font:400 12px Inter;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ explain }}</span>
+                  </div>
+                  <sc-if value="{{ conflict }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:10px 13px;border-radius:12px;background:var(--warn-wash);border:1px solid var(--warn);font:500 13px/1.45 Inter;color:var(--ink)">Há regras conflitantes para este lugar — escolha a categoria</div>
+                  </sc-if>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <sc-for list="{{ chipList }}" as="ch" hint-placeholder-count="3">
+                      <button onClick="{{ ch.pick }}" style="min-height:40px;padding:0 16px;border-radius:999px;font:600 13px Inter;cursor:pointer;background:{{ ch.bg }};color:{{ ch.fg }};border:1px solid {{ ch.bd }};transition:all 0.15s">{{ ch.name }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- Form -->
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 12px;padding-top:16px;border-top:1px solid var(--border)">
+                <span style="display:flex;align-items:center;gap:6px;font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink2)">Detalhes<sc-if value="{{ aiTipo }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></span>
+                <div style="display:inline-flex;gap:2px;background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:3px">
+                  <button onClick="{{ setDesp }}" style="min-height:34px;border:none;border-radius:999px;padding:0 14px;font:600 12px Inter;cursor:pointer;background:{{ despBg }};color:{{ despFg }}">Despesa</button>
+                  <button onClick="{{ setRec }}" style="min-height:34px;border:none;border-radius:999px;padding:0 14px;font:600 12px Inter;cursor:pointer;background:{{ recBg }};color:{{ recFg }}">Receita</button>
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px 10px">
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Valor<sc-if value="{{ aiValor }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <div style="display:flex;align-items:center;gap:6px;height:46px;box-sizing:border-box;background:{{ bgValor }};border:1px solid {{ bdValor }};border-radius:10px;padding:0 12px">
+                    <span style="font:500 14px Inter;color:var(--ink2)">R$</span>
+                    <input inputMode="decimal" value="{{ f.valor }}" onChange="{{ onValor }}" placeholder="0,00" style="flex:1;min-width:0;background:transparent;border:none;outline:none;padding:0;color:var(--ink);font:600 20px 'Playfair Display',serif;font-variant-numeric:tabular-nums">
+                  </div>
+                </div>
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Data<sc-if value="{{ aiData }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <input value="{{ f.data }}" onChange="{{ onData }}" style="width:100%;height:46px;box-sizing:border-box;background:{{ bgData }};border:1px solid {{ bdData }};border-radius:10px;padding:0 12px;color:var(--ink);font:400 16px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)">
+                </div>
+                <div style="grid-column:1 / -1">
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Descrição<sc-if value="{{ aiDescricao }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <input value="{{ f.descricao }}" onChange="{{ onDescricao }}" placeholder="Ex.: Mercado Guanabara" style="width:100%;height:46px;box-sizing:border-box;background:{{ bgDescricao }};border:1px solid {{ bdDescricao }};border-radius:10px;padding:0 12px;color:var(--ink);font:400 16px Inter;outline:none" style-focus="border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)">
+                </div>
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Conta / cartão<sc-if value="{{ aiConta }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <div style="position:relative">
+                    <select value="{{ f.conta }}" onChange="{{ onConta }}" style="appearance:none;width:100%;height:46px;box-sizing:border-box;background:{{ bgConta }};border:1px solid {{ bdConta }};border-radius:10px;padding:0 30px 0 12px;color:var(--ink);font:400 16px Inter;outline:none;cursor:pointer">
+                      <option value="">Escolha…</option>
+                      <sc-for list="{{ contas }}" as="c"><option value="{{ c }}">{{ c }}</option></sc-for>
+                    </select>
+                    <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:10px;pointer-events:none">▾</span>
+                  </div>
+                </div>
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Quem<sc-if value="{{ aiQuem }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <div style="position:relative">
+                    <select value="{{ f.quem }}" onChange="{{ onQuem }}" style="appearance:none;width:100%;height:46px;box-sizing:border-box;background:{{ bgQuem }};border:1px solid {{ bdQuem }};border-radius:10px;padding:0 30px 0 12px;color:var(--ink);font:400 16px Inter;outline:none;cursor:pointer">
+                      <sc-for list="{{ pessoas }}" as="p"><option value="{{ p }}">{{ p }}</option></sc-for>
+                    </select>
+                    <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:10px;pointer-events:none">▾</span>
+                  </div>
+                </div>
+                <div style="grid-column:1 / -1">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                    <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2)">Categoria<sc-if value="{{ aiCategoria }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                    <button onClick="{{ toggleNewCat }}" style="background:none;border:none;padding:4px 0;color:var(--accent);font:600 12px Inter;cursor:pointer" style-hover="color:var(--accent-h)">{{ newCatLabel }}</button>
+                  </div>
+                  <sc-if value="{{ notNewCat }}" hint-placeholder-val="{{ true }}">
+                    <div style="position:relative">
+                      <select value="{{ f.categoria }}" onChange="{{ onCategoria }}" style="appearance:none;width:100%;height:46px;box-sizing:border-box;background:{{ bgCategoria }};border:1px solid {{ bdCategoria }};border-radius:10px;padding:0 30px 0 12px;color:var(--ink);font:400 16px Inter;outline:none;cursor:pointer">
+                        <option value="">Escolha…</option>
+                        <sc-for list="{{ cats }}" as="c"><option value="{{ c }}">{{ c }}</option></sc-for>
+                      </select>
+                      <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:10px;pointer-events:none">▾</span>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ newCat }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:8px">
+                      <input autoFocus="{{ true }}" value="{{ newCatName }}" onChange="{{ onNewCatName }}" onKeyDown="{{ onNewCatKey }}" placeholder="Nome da nova categoria" style="flex:1;min-width:0;height:46px;box-sizing:border-box;background:var(--soft);border:1px solid var(--accent);border-radius:10px;padding:0 12px;color:var(--ink);font:400 16px Inter;outline:none;box-shadow:0 0 0 3px var(--tint)">
+                      <button onClick="{{ createCat }}" style="height:46px;padding:0 16px;border-radius:10px;border:1px solid var(--accent);background:transparent;color:var(--accent);font:600 14px Inter;cursor:pointer" style-hover="background:var(--tint)">Criar</button>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sticky footer, safe-area aware -->
+            <div style="position:relative;flex-shrink:0;display:flex;gap:10px;padding:12px 20px 34px;border-top:1px solid var(--border);background:var(--soft)">
+              <button onClick="{{ closeSheet }}" style="height:50px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--ink);font:500 15px Inter;cursor:pointer" style-hover="background:var(--tint)">Cancelar</button>
+              <button onClick="{{ save }}" style="flex:1;height:50px;border-radius:12px;border:none;background:var(--accent);color:var(--on-accent);font:600 15px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);opacity:{{ saveOpacity }}" style-hover="background:var(--accent-h)">Salvar</button>
+              <span style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink);opacity:0.35"></span>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ================= DESKTOP ================= -->
+  <div data-screen-label="Lançamento rápido · desktop" style="animation:fadeUp 0.5s ease-out">
+    <div style="font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:rgba(242,237,224,0.45);margin:0 0 14px 4px">Desktop 1440 · modal</div>
+    <div data-theme-root="true" style="--bg:#16352B;--surface:#1E4133;--soft:#1A3A2E;--tint:rgba(212,175,106,0.14);--ink:#F2EDE0;--ink2:rgba(242,237,224,0.66);--accent:#D4AF6A;--accent-h:#E4C488;--border:rgba(212,175,106,0.24);--on-accent:#16352B;--pos:#93C7A1;--pos-wash:rgba(147,199,161,0.13);--neg:#E08B63;--neg-wash:rgba(224,139,99,0.13);--warn:#E0B662;--warn-wash:rgba(224,182,98,0.15);position:relative;width:1440px;height:900px;background:var(--bg);border:1px solid rgba(242,237,224,0.12);border-radius:20px;overflow:hidden;display:flex;box-shadow:0 24px 60px rgba(20,14,8,0.3)">
+
+      <aside style="width:256px;flex-shrink:0;display:flex;flex-direction:column;background:var(--soft);border-right:1px solid var(--border);padding:30px 16px 22px">
+        <div style="padding:0 12px 22px">
+          <div style="font:600 10px Inter;letter-spacing:0.28em;text-transform:uppercase;color:var(--accent)">Nossa casa</div>
+          <div style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:23px;color:var(--ink);margin-top:6px">Alvaro <span style="font-style:italic;font-weight:500;font-size:16px;color:var(--accent)">&amp;</span> Karol</div>
+        </div>
+        <button onClick="{{ openSheet }}" style="display:flex;align-items:center;justify-content:center;gap:9px;margin:0 4px 20px;height:44px;border:none;border-radius:12px;background:var(--accent);color:var(--on-accent);font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);transition:all 0.16s" style-hover="background:var(--accent-h);transform:translateY(-1px)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>Novo lançamento
+        </button>
+        <nav style="display:flex;flex-direction:column;gap:3px">
+          <a href="Resumo.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--tint);color:var(--accent);font:600 14px Inter;text-decoration:none;box-shadow:inset 2px 0 0 var(--accent)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 L12 4.5 L21 11.5"></path><path d="M5.5 10 V19.5 H18.5 V10"></path></svg>Resumo</a>
+          <a href="Dashboard.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>Dashboard</a>
+          <a href="Transacoes.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13"></path><path d="M14 5l3 3-3 3"></path><path d="M20 16H7"></path><path d="M10 13l-3 3 3 3"></path></svg>Transações</a>
+          <a href="Importacao.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"></path><path d="M8 8l4-4 4 4"></path><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"></path></svg>Importação</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7l9 9-7 7-9-9z"></path><circle cx="8" cy="8" r="1.3"></circle></svg>Categorias</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5 L12 4 L20 9.5"></path><path d="M6 10v8"></path><path d="M12 10v8"></path><path d="M18 10v8"></path><path d="M4 20h16"></path></svg>Contas</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2.5"></rect><path d="M3 10.5h18"></path></svg>Cartões</a>
+          <a href="Mais Telas.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8.5h10V19a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"></path><path d="M6 5.5h12"></path></svg>Investimentos</a>
+          <a href="Configuracoes.dc.html" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--ink2);font:500 14px Inter;text-decoration:none" style-hover="background:rgba(242,237,224,0.05);color:var(--ink)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16"></path><circle cx="9" cy="7" r="2"></circle><path d="M4 17h16"></path><circle cx="15" cy="17" r="2"></circle></svg>Configurações</a>
+        </nav>
+        <div style="margin-top:auto;display:flex;align-items:center;gap:11px;padding:12px;border-top:1px solid var(--border)">
+          <span style="width:34px;height:34px;border-radius:50%;background:var(--tint);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font:600 13px Inter;color:var(--accent)">K</span>
+          <div style="flex:1"><div style="font:500 13px Inter;color:var(--ink)">Karol</div><div style="font:400 11px Inter;color:var(--ink2)">karol@casa.com</div></div>
+        </div>
+      </aside>
+
+      <main style="flex:1;padding:52px 64px">
+        <div style="font:600 11px Inter;letter-spacing:0.26em;text-transform:uppercase;color:var(--accent)">Nossa casa · terça, 20 de outubro</div>
+        <h1 style="font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:40px;line-height:1.12;color:var(--ink);margin:12px 0 6px">Oi, Karol</h1>
+        <p style="font:300 16px Inter;color:var(--ink2);margin:0">Como estão as contas da casa?</p>
+        <div style="max-width:520px;margin-top:36px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:30px 32px">
+          <div style="font:600 11px Inter;letter-spacing:0.24em;text-transform:uppercase;color:var(--ink2)">Gasto do mês</div>
+          <div style="font-family:'Playfair Display',serif;font-weight:600;font-size:62px;line-height:1.05;color:var(--ink);margin-top:10px;font-variant-numeric:tabular-nums">R$ 3.127<span style="font-size:34px">,40</span></div>
+        </div>
+      </main>
+
+      <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+        <div role="status" style="position:absolute;left:calc(50% + 128px);bottom:36px;transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:10px;padding:13px 20px;border-radius:999px;background:var(--ink);color:var(--bg);font:600 14px Inter;box-shadow:0 10px 26px rgba(20,14,8,0.3);animation:popIn 0.25s ease-out">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>Lançamento salvo
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ open }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:32px">
+          <div onClick="{{ closeSheet }}" style="position:absolute;inset:0;background:rgba(10,14,11,0.5)"></div>
+          <div role="dialog" aria-label="Novo lançamento" style="position:relative;width:640px;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:18px;box-shadow:0 24px 60px rgba(20,14,8,0.35);overflow:hidden;animation:popIn 0.25s ease-out">
+
+            <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+              <div role="status" style="display:flex;align-items:center;gap:9px;padding:10px 28px;background:var(--warn-wash);border-bottom:1px solid var(--warn);font:500 13px Inter;color:var(--ink)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round"><path d="M3 3l18 18"></path><path d="M8.5 16.5a5 5 0 0 1 7 0"></path><path d="M5 12.5a10 10 0 0 1 4-2.4"></path><path d="M19 12.5a10 10 0 0 0-3-2"></path><circle cx="12" cy="20" r="0.8"></circle></svg>
+                Sem conexão — seu rascunho está salvo
+              </div>
+            </sc-if>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:22px 20px 14px 28px">
+              <h2 style="font-family:'Playfair Display',serif;font-weight:600;font-size:24px;color:var(--ink);margin:0">Novo lançamento</h2>
+              <button onClick="{{ closeSheet }}" aria-label="Fechar" title="Fechar (Esc)" style="width:36px;height:36px;border:none;border-radius:50%;background:transparent;color:var(--ink2);cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:var(--tint);color:var(--ink)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>
+              </button>
+            </div>
+
+            <div style="flex:1;overflow-y:auto;padding:0 28px 22px">
+              <div style="position:relative;overflow:hidden;background:var(--surface);border:1px solid {{ aiBoxBd }};border-radius:16px;padding:14px 14px 14px 16px;transition:border-color 0.2s">
+                <textarea rows="2" value="{{ text }}" onChange="{{ onText }}" onKeyDown="{{ onTextKey }}" placeholder="{{ placeholder }}" aria-label="Descreva o lançamento" style="display:block;width:100%;box-sizing:border-box;resize:none;background:transparent;border:none;outline:none;padding:2px 0;color:var(--ink);font:400 15px/1.5 Inter"></textarea>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+                  <sc-if value="{{ isIdleMic }}" hint-placeholder-val="{{ true }}">
+                    <button onClick="{{ micClick }}" style="display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--ink);font:500 13px Inter;cursor:pointer;opacity:{{ micOpacity }}" style-hover="background:var(--tint);border-color:var(--accent)">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0"></path><path d="M12 17.5V21"></path></svg>Gravar
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{ isRec }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ micClick }}" style="display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 14px;border-radius:10px;border:1px solid var(--neg);background:var(--neg-wash);color:var(--ink);font:600 13px Inter;cursor:pointer">{{ dot }}Parar</button>
+                    <span style="font:500 13px Inter;color:var(--ink2);font-variant-numeric:tabular-nums">{{ timer }} <span style="opacity:0.6">/ 1:00</span></span>
+                  </sc-if>
+                  <sc-if value="{{ isTrans }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:inline-flex;align-items:center;gap:8px;height:38px;color:var(--ink2);font:500 13px Inter">{{ spin }}Transcrevendo…</span>
+                  </sc-if>
+                  <span style="margin-left:auto;font:400 12px Inter;color:var(--ink2)">Enter preenche</span>
+                  <button onClick="{{ fill }}" disabled="{{ fillDisabled }}" style="display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 18px;border-radius:10px;border:none;background:var(--accent);color:var(--on-accent);font:600 13px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);opacity:{{ fillOpacity }};transition:all 0.16s" style-hover="background:var(--accent-h)">
+                    <sc-if value="{{ isFilling }}" hint-placeholder-val="{{ false }}">{{ spin }}</sc-if>{{ fillLabel }}
+                  </button>
+                </div>
+                <sc-if value="{{ isFilling }}" hint-placeholder-val="{{ false }}">{{ bar }}</sc-if>
+              </div>
+
+              <sc-if value="{{ hasMsg }}" hint-placeholder-val="{{ false }}">
+                <div role="status" style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 8px 9px 14px;border-radius:12px;background:{{ msgBg }};border:1px solid {{ msgBd }};animation:popIn 0.2s ease-out">
+                  <span style="width:7px;height:7px;border-radius:50%;background:{{ msgFg }};flex-shrink:0"></span>
+                  <span style="flex:1;font:500 13px/1.45 Inter;color:var(--ink)">{{ msgText }}</span>
+                  <sc-if value="{{ msgLink }}" hint-placeholder-val="{{ false }}"><a href="#" style="font:600 12px Inter;color:var(--accent);text-decoration:none;white-space:nowrap">Abrir Obrigações →</a></sc-if>
+                  <button onClick="{{ dismissMsg }}" aria-label="Dispensar" style="width:28px;height:28px;flex-shrink:0;border:none;border-radius:50%;background:transparent;color:var(--ink2);cursor:pointer;font:400 16px Inter" style-hover="color:var(--ink)">×</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ hasResult }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;animation:popIn 0.25s ease-out">
+                  <div style="display:flex;align-items:center;gap:9px;min-width:0">
+                    <span style="width:6px;height:6px;flex-shrink:0;transform:rotate(45deg);background:var(--accent)"></span>
+                    <span style="font:400 12px Inter;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ explain }}</span>
+                  </div>
+                  <sc-if value="{{ conflict }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:10px 14px;border-radius:12px;background:var(--warn-wash);border:1px solid var(--warn);font:500 13px/1.45 Inter;color:var(--ink)">Há regras conflitantes para este lugar — escolha a categoria</div>
+                  </sc-if>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <sc-for list="{{ chipList }}" as="ch" hint-placeholder-count="3">
+                      <button onClick="{{ ch.pick }}" style="min-height:34px;padding:0 15px;border-radius:999px;font:600 12px Inter;cursor:pointer;background:{{ ch.bg }};color:{{ ch.fg }};border:1px solid {{ ch.bd }};transition:all 0.15s">{{ ch.name }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 12px;padding-top:16px;border-top:1px solid var(--border)">
+                <span style="display:flex;align-items:center;gap:6px;font:600 10px Inter;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink2)">Detalhes<sc-if value="{{ aiTipo }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></span>
+                <div style="display:inline-flex;gap:2px;background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:3px">
+                  <button onClick="{{ setDesp }}" style="min-height:30px;border:none;border-radius:999px;padding:0 14px;font:600 12px Inter;cursor:pointer;background:{{ despBg }};color:{{ despFg }}">Despesa</button>
+                  <button onClick="{{ setRec }}" style="min-height:30px;border:none;border-radius:999px;padding:0 14px;font:600 12px Inter;cursor:pointer;background:{{ recBg }};color:{{ recFg }}">Receita</button>
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 14px">
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Valor<sc-if value="{{ aiValor }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <div style="display:flex;align-items:center;gap:6px;height:44px;box-sizing:border-box;background:{{ bgValor }};border:1px solid {{ bdValor }};border-radius:10px;padding:0 12px">
+                    <span style="font:500 14px Inter;color:var(--ink2)">R$</span>
+                    <input inputMode="decimal" value="{{ f.valor }}" onChange="{{ onValor }}" placeholder="0,00" style="flex:1;min-width:0;background:transparent;border:none;outline:none;padding:0;color:var(--ink);font:600 20px 'Playfair Display',serif;font-variant-numeric:tabular-nums">
+                  </div>
+                </div>
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Data<sc-if value="{{ aiData }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <input value="{{ f.data }}" onChange="{{ onData }}" style="width:100%;height:44px;box-sizing:border-box;background:{{ bgData }};border:1px solid {{ bdData }};border-radius:10px;padding:0 12px;color:var(--ink);font:400 14px Inter;outline:none;font-variant-numeric:tabular-nums" style-focus="border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)">
+                </div>
+                <div style="grid-column:1 / -1">
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Descrição<sc-if value="{{ aiDescricao }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <input value="{{ f.descricao }}" onChange="{{ onDescricao }}" placeholder="Ex.: Mercado Guanabara" style="width:100%;height:44px;box-sizing:border-box;background:{{ bgDescricao }};border:1px solid {{ bdDescricao }};border-radius:10px;padding:0 12px;color:var(--ink);font:400 14px Inter;outline:none" style-focus="border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)">
+                </div>
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Conta / cartão<sc-if value="{{ aiConta }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <div style="position:relative">
+                    <select value="{{ f.conta }}" onChange="{{ onConta }}" style="appearance:none;width:100%;height:44px;box-sizing:border-box;background:{{ bgConta }};border:1px solid {{ bdConta }};border-radius:10px;padding:0 30px 0 12px;color:var(--ink);font:400 14px Inter;outline:none;cursor:pointer">
+                      <option value="">Escolha…</option>
+                      <sc-for list="{{ contas }}" as="c"><option value="{{ c }}">{{ c }}</option></sc-for>
+                    </select>
+                    <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:10px;pointer-events:none">▾</span>
+                  </div>
+                </div>
+                <div>
+                  <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:6px">Quem<sc-if value="{{ aiQuem }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                  <div style="position:relative">
+                    <select value="{{ f.quem }}" onChange="{{ onQuem }}" style="appearance:none;width:100%;height:44px;box-sizing:border-box;background:{{ bgQuem }};border:1px solid {{ bdQuem }};border-radius:10px;padding:0 30px 0 12px;color:var(--ink);font:400 14px Inter;outline:none;cursor:pointer">
+                      <sc-for list="{{ pessoas }}" as="p"><option value="{{ p }}">{{ p }}</option></sc-for>
+                    </select>
+                    <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:10px;pointer-events:none">▾</span>
+                  </div>
+                </div>
+                <div style="grid-column:1 / -1">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                    <label style="display:flex;align-items:center;gap:6px;font:500 10px Inter;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink2)">Categoria<sc-if value="{{ aiCategoria }}" hint-placeholder-val="{{ false }}"><span style="padding:1px 6px;border-radius:999px;background:var(--tint);color:var(--accent);font:600 9px Inter;letter-spacing:0.04em">IA</span></sc-if></label>
+                    <button onClick="{{ toggleNewCat }}" style="background:none;border:none;padding:2px 0;color:var(--accent);font:600 12px Inter;cursor:pointer" style-hover="color:var(--accent-h)">{{ newCatLabel }}</button>
+                  </div>
+                  <sc-if value="{{ notNewCat }}" hint-placeholder-val="{{ true }}">
+                    <div style="position:relative">
+                      <select value="{{ f.categoria }}" onChange="{{ onCategoria }}" style="appearance:none;width:100%;height:44px;box-sizing:border-box;background:{{ bgCategoria }};border:1px solid {{ bdCategoria }};border-radius:10px;padding:0 30px 0 12px;color:var(--ink);font:400 14px Inter;outline:none;cursor:pointer">
+                        <option value="">Escolha…</option>
+                        <sc-for list="{{ cats }}" as="c"><option value="{{ c }}">{{ c }}</option></sc-for>
+                      </select>
+                      <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:10px;pointer-events:none">▾</span>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ newCat }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:8px">
+                      <input value="{{ newCatName }}" onChange="{{ onNewCatName }}" onKeyDown="{{ onNewCatKey }}" placeholder="Nome da nova categoria" style="flex:1;min-width:0;height:44px;box-sizing:border-box;background:var(--soft);border:1px solid var(--accent);border-radius:10px;padding:0 12px;color:var(--ink);font:400 14px Inter;outline:none;box-shadow:0 0 0 3px var(--tint)">
+                      <button onClick="{{ createCat }}" style="height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--accent);background:transparent;color:var(--accent);font:600 13px Inter;cursor:pointer" style-hover="background:var(--tint)">Criar</button>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </div>
+
+            <div style="flex-shrink:0;display:flex;justify-content:flex-end;gap:10px;padding:16px 28px;border-top:1px solid var(--border);background:var(--soft)">
+              <button onClick="{{ closeSheet }}" style="height:44px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--ink);font:500 14px Inter;cursor:pointer" style-hover="background:var(--tint)">Cancelar</button>
+              <button onClick="{{ save }}" style="height:44px;padding:0 26px;border-radius:12px;border:none;background:var(--accent);color:var(--on-accent);font:600 14px Inter;cursor:pointer;box-shadow:0 4px 12px rgba(20,14,8,0.14);opacity:{{ saveOpacity }}" style-hover="background:var(--accent-h)">Salvar</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+  </div>
+
+  <!-- Floating theme picker -->
+  <div style="position:fixed;right:22px;bottom:22px;z-index:50;display:inline-flex;align-items:center;gap:10px;background:rgba(18,26,22,0.92);border:1px solid rgba(212,175,106,0.3);border-radius:999px;padding:9px 15px;backdrop-filter:blur(8px);box-shadow:0 8px 22px rgba(20,14,8,0.3)">
+    <span style="font:500 11px Inter;letter-spacing:0.12em;text-transform:uppercase;color:rgba(242,237,224,0.6)">Estilo</span>
+    <button onClick="{{ setSalvia }}" title="Sálvia" aria-label="Tema Sálvia" style="width:26px;height:26px;border-radius:50%;background:#E8EDE3;border:1px solid rgba(0,0,0,0.14);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringS }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#A8853C;display:block"></span></button>
+    <button onClick="{{ setEsmeralda }}" title="Esmeralda" aria-label="Tema Esmeralda" style="width:26px;height:26px;border-radius:50%;background:#16352B;border:1px solid rgba(212,175,106,0.4);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:{{ ringE }}" style-hover="transform:scale(1.1)"><span style="width:8px;height:8px;border-radius:50%;background:#D4AF6A;display:block"></span></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  themes = {
+    esmeralda: {
+      '--bg': '#16352B', '--surface': '#1E4133', '--soft': '#1A3A2E',
+      '--tint': 'rgba(212,175,106,0.14)', '--ink': '#F2EDE0', '--ink2': 'rgba(242,237,224,0.66)',
+      '--accent': '#D4AF6A', '--accent-h': '#E4C488', '--border': 'rgba(212,175,106,0.24)',
+      '--on-accent': '#16352B', '--pos': '#93C7A1', '--pos-wash': 'rgba(147,199,161,0.13)',
+      '--neg': '#E08B63', '--neg-wash': 'rgba(224,139,99,0.13)', '--warn': '#E0B662', '--warn-wash': 'rgba(224,182,98,0.15)'
+    },
+    salvia: {
+      '--bg': '#E8EDE3', '--surface': '#F7F9F3', '--soft': '#EFF3EA',
+      '--tint': 'rgba(168,133,60,0.12)', '--ink': '#2E3A2A', '--ink2': '#5F6B58',
+      '--accent': '#A8853C', '--accent-h': '#C2A258', '--border': '#CBD6C0',
+      '--on-accent': '#FFFFFF', '--pos': '#3E7D52', '--pos-wash': 'rgba(62,125,82,0.12)',
+      '--neg': '#B4552F', '--neg-wash': 'rgba(180,85,47,0.10)', '--warn': '#9A7526', '--warn-wash': 'rgba(154,117,38,0.13)'
+    }
+  };
+
+  MSG = {
+    unavailable: { text: 'IA indisponível — preencha manualmente', tone: 'muted' },
+    ratelimit: { text: 'Muitas tentativas — aguarde um minuto', tone: 'warn' },
+    notunderstood: { text: 'Não entendi como lançamento', tone: 'warn' },
+    obligation: { text: 'Isso parece uma obrigação — use Obrigações', tone: 'accent', link: true },
+    transcribefail: { text: 'Não consegui transcrever — tente de novo ou digite', tone: 'neg' },
+    micdenied: { text: 'Permita o microfone nas configurações', tone: 'warn' }
+  };
+  TONES = {
+    muted: ['var(--soft)', 'var(--border)', 'var(--ink2)'],
+    warn: ['var(--warn-wash)', 'var(--warn)', 'var(--warn)'],
+    neg: ['var(--neg-wash)', 'var(--neg)', 'var(--neg)'],
+    accent: ['var(--tint)', 'var(--accent)', 'var(--accent)']
+  };
+  SAMPLE = '85 no mercado no nubank';
+  touched = {};
+
+  blank() {
+    return {
+      text: '', phase: 'idle', sec: 0, msg: null,
+      f: { tipo: 'Despesa', valor: '', descricao: '', data: '20/10/2026', conta: '', categoria: '', quem: 'A casa' },
+      ai: {}, chips: [], explain: '', conflict: false, newCat: false, newCatName: '',
+      cats: ['Mercado', 'Casa', 'Moradia', 'Transporte', 'Saúde', 'Lazer', 'Alimentação fora', 'Renda']
+    };
+  }
+  state = Object.assign(this.blank(), { open: true, offline: false, toast: false, theme: 'esmeralda' });
+
+  componentDidMount() {
+    const saved = localStorage.getItem('ak-fin-theme');
+    if (saved && this.themes[saved] && saved !== this.state.theme) this.applyTheme(saved);
+    this.onKey = (e) => { if (e.key === 'Escape' && this.state.open) this.setState({ open: false }); };
+    window.addEventListener('keydown', this.onKey);
+  }
+  componentWillUnmount() { this.clearTimers(); clearTimeout(this.tt); window.removeEventListener('keydown', this.onKey); }
+
+  applyTheme(key) {
+    const t = this.themes[key];
+    document.querySelectorAll('[data-theme-root]').forEach((el) => { for (const k in t) el.style.setProperty(k, t[k]); });
+    try { localStorage.setItem('ak-fin-theme', key); } catch (e) {}
+    this.setState({ theme: key });
+  }
+
+  clearTimers() { clearTimeout(this.t); clearTimeout(this.tr); clearInterval(this.ri); }
+
+  parse(text) {
+    const s = text.toLowerCase();
+    if (/aluguel|condom|boleto|mensalidade|financiamento/.test(s)) return { msg: 'obligation' };
+    const m = s.match(/(\d+(?:[.,]\d{1,2})?)/);
+    if (!m) return { msg: 'notunderstood' };
+    const valor = parseFloat(m[1].replace(',', '.')).toFixed(2).replace('.', ',');
+    const conta = /nubank|\bnu\b/.test(s) ? 'Nubank' : /ita[uú]/.test(s) ? 'Itaú' : /\binter\b/.test(s) ? 'Inter' : /dinheiro/.test(s) ? 'Dinheiro' : '';
+    const P = [
+      { re: /mercado|guanabara|supermercado/, d: 'Mercado', c: 'Mercado', chips: ['Mercado', 'Casa', 'Alimentação fora'], why: 'regra “mercado” → Mercado' },
+      { re: /padaria/, d: 'Padaria do bairro', c: '', conflict: true, chips: ['Mercado', 'Alimentação fora', 'Lazer'], why: 'duas regras da casa para “padaria”' },
+      { re: /uber|\b99\b|t[aá]xi/, d: 'Uber', c: 'Transporte', chips: ['Transporte', 'Lazer'], why: 'regra “uber” → Transporte' },
+      { re: /farm[aá]cia|drogaria/, d: 'Farmácia', c: 'Saúde', chips: ['Saúde', 'Casa'], why: 'regra “farmácia” → Saúde' },
+      { re: /sal[aá]rio|recebi/, d: 'Salário', c: 'Renda', tipo: 'Receita', chips: ['Renda'], why: '“recebi” indica entrada' }
+    ];
+    let p = P.find((x) => x.re.test(s));
+    if (!p) {
+      const w = s.match(/(?:no|na|em)\s+([a-zà-ú]+)/);
+      const d = w ? w[1].charAt(0).toUpperCase() + w[1].slice(1) : 'Lançamento';
+      p = { d, c: '', chips: ['Casa', 'Lazer', 'Alimentação fora'], why: 'sem regra para esse lugar' };
+    }
+    const ontem = /ontem/.test(s);
+    const fields = { valor, descricao: p.d, data: ontem ? '19/10/2026' : '20/10/2026', tipo: p.tipo || 'Despesa' };
+    if (conta) fields.conta = conta;
+    if (p.c) fields.categoria = p.c;
+    if (/karol/.test(s)) fields.quem = 'Karol'; else if (/alvaro/.test(s)) fields.quem = 'Alvaro';
+    const explain = [p.why, conta ? conta + ' citado' : null, ontem ? 'data de ontem' : 'data de hoje'].filter(Boolean).join(' · ');
+    return { fields, chips: p.chips.slice(0, 3), explain, conflict: !!p.conflict };
+  }
+
+  applyParse(r) {
+    if (r.msg) return this.setState({ phase: 'idle', msg: r.msg });
+    const f = { ...this.state.f }, ai = { ...this.state.ai };
+    Object.keys(r.fields).forEach((k) => { if (!this.touched[k]) { f[k] = r.fields[k]; ai[k] = true; } });
+    this.setState({ phase: 'idle', f, ai, chips: r.chips, explain: r.explain, conflict: r.conflict });
+  }
+
+  fill = () => {
+    const { text, phase, offline } = this.state;
+    if (!text.trim() || phase !== 'idle' || offline) return;
+    this.clearTimers();
+    this.touched = {};
+    this.setState({ phase: 'filling', msg: null, conflict: false, chips: [], explain: '' });
+    this.t = setTimeout(() => this.applyParse(this.parse(this.state.text)), 1800);
+  };
+
+  setField(k, v) {
+    this.touched[k] = true;
+    this.setState((s) => ({ f: { ...s.f, [k]: v }, ai: { ...s.ai, [k]: false }, conflict: k === 'categoria' && v ? false : s.conflict }));
+  }
+
+  startRec(from) {
+    if (this.state.offline) return;
+    this.clearTimers();
+    this.setState({ phase: 'recording', sec: from || 0, msg: null });
+    this.ri = setInterval(() => {
+      const s = this.state.sec + 1;
+      if (s >= 60) { this.setState({ sec: 60 }); this.stopRec(); } else this.setState({ sec: s });
+    }, 1000);
+  }
+  stopRec() {
+    clearInterval(this.ri);
+    this.setState({ phase: 'transcribing' });
+    this.tr = setTimeout(() => this.setState({ phase: 'idle', text: this.SAMPLE }), 1400);
+  }
+
+  save = () => {
+    if (!this.state.f.valor) return;
+    this.clearTimers(); clearTimeout(this.tt); this.touched = {};
+    this.setState(Object.assign(this.blank(), { open: false, toast: true }));
+    this.tt = setTimeout(() => this.setState({ toast: false }), 2600);
+  };
+
+  jump(k) {
+    this.clearTimers(); clearTimeout(this.tt); this.touched = {};
+    const b = Object.assign(this.blank(), { open: true, toast: false, offline: false });
+    const T = this.SAMPLE;
+    switch (k) {
+      case 'vazio': return this.setState(b);
+      case 'preenchendo':
+        this.setState({ ...b, text: T, phase: 'filling' });
+        this.t = setTimeout(() => this.applyParse(this.parse(T)), 6000);
+        return;
+      case 'preenchido': return this.setState({ ...b, text: T }, () => this.applyParse(this.parse(T)));
+      case 'gravando': return this.setState(b, () => this.startRec(7));
+      case 'transcrevendo':
+        this.setState({ ...b, phase: 'transcribing' });
+        this.tr = setTimeout(() => this.setState({ phase: 'idle', text: T }), 2500);
+        return;
+      case 'conflito': { const C = '32 na padaria no itaú'; return this.setState({ ...b, text: C }, () => this.applyParse(this.parse(C))); }
+      case 'offline': return this.setState({ ...b, text: T, offline: true, f: { ...b.f, valor: '85,00', descricao: 'Mercado' } });
+      case 'salvo': return this.setState({ ...b, f: { ...b.f, valor: '85,00' } }, this.save);
+      default: {
+        const text = k === 'notunderstood' ? 'oi, tudo bem?' : k === 'obligation' ? '1800 aluguel de outubro' : (k === 'unavailable' || k === 'ratelimit') ? T : '';
+        return this.setState({ ...b, text, msg: k });
+      }
+    }
+  }
+
+  renderVals() {
+    const st = this.state;
+    const isFilling = st.phase === 'filling', isRec = st.phase === 'recording', isTrans = st.phase === 'transcribing';
+    const fillDisabled = !st.text.trim() || st.phase !== 'idle' || st.offline;
+    const fx = {};
+    ['valor', 'data', 'descricao', 'conta', 'quem', 'categoria', 'tipo'].forEach((k) => {
+      const ai = !!st.ai[k];
+      const name = k.charAt(0).toUpperCase() + k.slice(1);
+      fx['ai' + name] = ai;
+      fx['bg' + name] = ai ? 'var(--tint)' : 'var(--soft)';
+      fx['bd' + name] = ai ? 'var(--accent)' : 'var(--border)';
+      fx['on' + name] = (e) => this.setField(k, e.target.value);
+    });
+    if (st.conflict && !st.f.categoria) fx.bdCategoria = 'var(--warn)';
+    const m = st.msg ? this.MSG[st.msg] : null;
+    const tone = m ? this.TONES[m.tone] : this.TONES.muted;
+    const on = '0 0 0 2px rgba(18,26,22,0.92), 0 0 0 4px #D4AF6A';
+    const desp = st.f.tipo === 'Despesa';
+    const R = React.createElement;
+    const jumps = [
+      ['Vazio', 'vazio'], ['Preenchendo…', 'preenchendo'], ['Preenchido pela IA', 'preenchido'], ['Gravando', 'gravando'],
+      ['Transcrevendo…', 'transcrevendo'], ['Regras conflitantes', 'conflito'], ['IA indisponível', 'unavailable'],
+      ['Muitas tentativas', 'ratelimit'], ['Não entendi', 'notunderstood'], ['Obrigação', 'obligation'],
+      ['Falha ao transcrever', 'transcribefail'], ['Microfone bloqueado', 'micdenied'], ['Sem conexão', 'offline'], ['Lançamento salvo', 'salvo']
+    ].map(([label, k]) => ({ label, go: () => this.jump(k) }));
+
+    return {
+      ...fx,
+      jumps,
+      f: st.f, text: st.text, open: st.open, offline: st.offline, toast: st.toast,
+      openSheet: () => this.setState({ open: true }),
+      closeSheet: () => { if (st.phase === 'recording') this.clearTimers(); this.setState({ open: false, phase: st.phase === 'recording' ? 'idle' : st.phase }); },
+      onText: (e) => this.setState({ text: e.target.value, msg: st.msg === 'notunderstood' ? null : st.msg }),
+      onTextKey: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.fill(); } },
+      placeholder: isRec ? 'Ouvindo…' : isTrans ? 'Transcrevendo…' : 'Ex.: 85 no mercado no nubank',
+      aiBoxBd: isRec ? 'var(--neg)' : isFilling ? 'var(--accent)' : 'var(--border)',
+      isIdleMic: !isRec && !isTrans, isRec, isTrans, isFilling,
+      micOpacity: st.offline || isFilling ? '0.45' : '1',
+      micClick: () => { if (isRec) this.stopRec(); else if (!isFilling) this.startRec(0); },
+      timer: '0:' + String(st.sec).padStart(2, '0'),
+      fill: this.fill, fillDisabled, fillOpacity: fillDisabled && !isFilling ? '0.45' : isFilling ? '0.85' : '1',
+      fillLabel: isFilling ? 'Preenchendo…' : 'Preencher',
+      spin: R('span', { style: { width: 12, height: 12, boxSizing: 'border-box', borderRadius: '50%', border: '2px solid currentColor', borderRightColor: 'transparent', display: 'inline-block', animation: 'spin 0.8s linear infinite' } }),
+      dot: R('span', { style: { width: 8, height: 8, borderRadius: '50%', background: 'var(--neg)', display: 'inline-block', animation: 'pulse 1.2s ease-in-out infinite' } }),
+      bar: R('div', { style: { position: 'absolute', left: 0, bottom: 0, height: 2, background: 'var(--accent)', animation: 'fillbar 6s cubic-bezier(.2,.7,.3,1) forwards' } }),
+      hasMsg: !!m, msgText: m ? m.text : '', msgLink: !!(m && m.link), msgBg: tone[0], msgBd: tone[1], msgFg: tone[2],
+      dismissMsg: () => this.setState({ msg: null }),
+      hasResult: st.chips.length > 0, explain: st.explain, conflict: st.conflict,
+      chipList: st.chips.map((name) => {
+        const sel = st.f.categoria === name;
+        return { name, pick: () => this.setField('categoria', name), bg: sel ? 'var(--accent)' : 'transparent', fg: sel ? 'var(--on-accent)' : 'var(--ink)', bd: sel ? 'var(--accent)' : 'var(--border)' };
+      }),
+      setDesp: () => this.setField('tipo', 'Despesa'), setRec: () => this.setField('tipo', 'Receita'),
+      despBg: desp ? 'var(--surface)' : 'transparent', despFg: desp ? 'var(--neg)' : 'var(--ink2)',
+      recBg: !desp ? 'var(--surface)' : 'transparent', recFg: !desp ? 'var(--pos)' : 'var(--ink2)',
+      contas: ['Nubank', 'Itaú', 'Inter', 'Dinheiro'], pessoas: ['A casa', 'Karol', 'Alvaro'], cats: st.cats,
+      newCat: st.newCat, notNewCat: !st.newCat, newCatName: st.newCatName,
+      newCatLabel: st.newCat ? 'Cancelar' : '+ Nova categoria',
+      toggleNewCat: () => this.setState({ newCat: !st.newCat, newCatName: '' }),
+      onNewCatName: (e) => this.setState({ newCatName: e.target.value }),
+      createCat: () => this.createCat(),
+      onNewCatKey: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.createCat(); } },
+      save: this.save, saveOpacity: st.f.valor ? '1' : '0.5',
+      setSalvia: () => this.applyTheme('salvia'), setEsmeralda: () => this.applyTheme('esmeralda'),
+      ringS: st.theme === 'salvia' ? on : 'none', ringE: st.theme === 'esmeralda' ? on : 'none'
+    };
+  }
+
+  createCat() {
+    const n = this.state.newCatName.trim();
+    if (!n) return;
+    this.touched.categoria = true;
+    this.setState((s) => ({ cats: s.cats.includes(n) ? s.cats : [...s.cats, n], f: { ...s.f, categoria: n }, ai: { ...s.ai, categoria: false }, newCat: false, newCatName: '', conflict: false }));
+  }
+}
+</script>
+</body>
+</html>

@@ -28,6 +28,14 @@ One deployment serves every household. Each web hostname is a domain on the
 same Vercel project; the household always comes from the signed-in member,
 never from the hostname.
 
+Quick capture needs no new Vercel env vars. Its draft and transcription requests
+reuse `IMPORT_SUGGESTION_URL` and `IMPORT_SUGGESTION_SHARED_SECRET`; AI keys
+(including `OPENAI_API_KEY`) stay on the VPS only.
+
+Keep `experimental.serverActions.bodySizeLimit = "2mb"` in
+`apps/web/next.config.mjs` so recorded audio can pass through the server action.
+The bot enforces its own capture-route body caps (see [`README.md`](./README.md)).
+
 ## 2. Google OAuth production redirect
 
 In the Google Cloud console, on the SAME OAuth client used locally, add:

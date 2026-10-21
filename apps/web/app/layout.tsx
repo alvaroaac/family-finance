@@ -1,17 +1,11 @@
 import type { CSSProperties, ReactNode } from "react";
-import { cookies } from "next/headers";
+import type { Viewport } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
 import { themeStyle } from "@family-finance/domain";
 
 import "./globals.css";
 import "../components/ui/ui.css";
-import { getAuthState } from "../lib/auth";
-import { currentHouseholdOrFallback } from "../lib/member";
-import {
-  parseTheme,
-  resolveBaseTheme,
-  THEME_COOKIE,
-} from "./(app)/settings/helpers";
+import { resolveRootTheme } from "../lib/root-theme";
 
 const playfair = Playfair_Display({
   weight: ["500", "600"],
@@ -31,12 +25,19 @@ export const metadata = {
     : undefined,
   title: "Family Finance — Casa",
   description: "Workspace financeiro privado para a sua casa.",
+  appleWebApp: { capable: true, title: "Casa", statusBarStyle: "default" },
   openGraph: {
     url: process.env.NEXT_PUBLIC_SITE_URL,
     title: "Family Finance — Casa",
     description: "Workspace financeiro privado para a sua casa.",
   },
 };
+
+/** `cover` lets the page draw under the notch; the shell pads the safe areas. */
+export async function generateViewport(): Promise<Viewport> {
+  const { background } = await resolveRootTheme();
+  return { viewportFit: "cover", themeColor: background };
+}
 
 /**
  * The theme is decided HERE, server-side, so the <html> attributes are in the
@@ -51,19 +52,12 @@ export default async function RootLayout({
 }: {
   children: ReactNode;
 }) {
-  const cookie = (await cookies()).get(THEME_COOKIE)?.value;
-  const auth = await getAuthState();
-  const household =
-    auth.status === "authorized" ? await currentHouseholdOrFallback() : null;
+  const { base, household } = await resolveRootTheme();
 
   return (
     <html
       lang="pt-BR"
-      data-theme={
-        household
-          ? resolveBaseTheme(household.theme, cookie)
-          : parseTheme(cookie)
-      }
+      data-theme={base}
       style={
         household ? (themeStyle(household.theme) as CSSProperties) : undefined
       }

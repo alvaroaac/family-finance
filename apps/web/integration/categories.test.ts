@@ -49,12 +49,18 @@ function catalog() {
 describe("category creation", () => {
   it("creates an income category with the selected kind", async () => {
     const { client, store } = catalog();
-    await expect(
-      createOrRestoreCategory(client, HOUSEHOLD, "Salário", "income"),
-    ).resolves.toBe("Categoria “Salário” criada.");
+    const result = await createOrRestoreCategory(
+      client,
+      HOUSEHOLD,
+      "Salário",
+      "income",
+    );
 
+    expect(result.message).toBe("Categoria “Salário” criada.");
+    expect(result.created).toBe(true);
     expect(store.table("categories")).toContainEqual(
       expect.objectContaining({
+        id: result.id,
         name: "Salário",
         kind: "income",
         is_active: true,
@@ -62,18 +68,34 @@ describe("category creation", () => {
     );
   });
 
-  it("rejects an active duplicate ignoring case and accents", async () => {
-    const { client } = catalog();
+  it("returns an active duplicate ignoring case and accents", async () => {
+    const { client, store } = catalog();
     await expect(
       createOrRestoreCategory(client, HOUSEHOLD, "alimentacao", "expense"),
-    ).rejects.toThrow("A categoria “Alimentação” já existe.");
+    ).resolves.toEqual({
+      id: "cat-food",
+      message: "A categoria “Alimentação” já existe.",
+      created: false,
+    });
+    expect(store.table("categories")).toHaveLength(2);
+  });
+
+  it("rejects a duplicate of the other kind", async () => {
+    const { client } = catalog();
+    await expect(
+      createOrRestoreCategory(client, HOUSEHOLD, "alimentacao", "income"),
+    ).rejects.toThrow("“Alimentação” já existe como despesa.");
   });
 
   it("restores an archived category instead of duplicating it", async () => {
     const { client, store } = catalog();
     await expect(
       createOrRestoreCategory(client, HOUSEHOLD, "pets", "expense"),
-    ).resolves.toBe("Categoria “Pets” restaurada.");
+    ).resolves.toEqual({
+      id: "cat-old",
+      message: "Categoria “Pets” restaurada.",
+      created: true,
+    });
 
     expect(
       store.table("categories").find((row) => row.id === "cat-old")?.is_active,
@@ -89,7 +111,11 @@ describe("subcategory creation", () => {
     const { client, store } = catalog();
     await expect(
       createOrRestoreSubcategory(client, HOUSEHOLD, "cat-food", "cafe"),
-    ).resolves.toBe("Subcategoria “Café” restaurada em Alimentação.");
+    ).resolves.toEqual({
+      id: "sub-old",
+      message: "Subcategoria “Café” restaurada em Alimentação.",
+      created: true,
+    });
 
     expect(store.table("subcategories")[0]?.is_active).toBe(true);
   });
