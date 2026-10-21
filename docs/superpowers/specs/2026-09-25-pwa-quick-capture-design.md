@@ -25,9 +25,11 @@ In:
 2. AI quick capture: free text → AI-filled, editable form → save.
 3. Voice capture: record → transcribe → same AI flow.
 4. Inline category creation from the capture form.
+5. A small, dismissible install banner on phones (added after review):
+   Chrome's native prompt where offered, Share-sheet steps on iOS.
 
 Out (deliberately): cash-flow simulation (later round), offline queue,
-service worker, push notifications, install-prompt banner, share-sheet
+service worker, push notifications, share-sheet
 target, `packages/intake` extraction, any `/api/mobile` surface, capture of
 obligations / fatura payments / card-bill flows (Telegram keeps those), and
 a general assistant memory (free-form notes the AI remembers about the

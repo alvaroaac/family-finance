@@ -135,3 +135,46 @@ test("quick capture fills a signed draft, saves an edited category, and isolates
     await contextB.close();
   }
 });
+
+test("an iPhone visitor sees the install steps until they dismiss them", async ({
+  browser,
+  baseURL,
+}) => {
+  test.skip(
+    process.env.E2E_LOCAL_SUPABASE !== "1",
+    "Disposable local stack only.",
+  );
+  configureQuickCaptureEnv();
+  const fixture: QuickCaptureFixture = JSON.parse(
+    await readFile(QUICK_CAPTURE_FIXTURE_PATH, "utf8"),
+  );
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    storageState: await storageStateFor(
+      fixture.members.ana.email,
+      testPassword,
+      baseURL!,
+    ),
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/dashboard`);
+    const banner = page.getByRole("status").filter({
+      hasText: "Adicionar à Tela de Início",
+    });
+    await expect(banner).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("install-banner.png"),
+    });
+
+    await banner.getByRole("button", { name: "Dispensar" }).click();
+    await expect(banner).toBeHidden();
+    await page.reload();
+    await expect(page.getByRole("heading").first()).toBeVisible();
+    await expect(banner).toBeHidden();
+  } finally {
+    await context.close();
+  }
+});

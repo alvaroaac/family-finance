@@ -5019,6 +5019,34 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   color: var(--ff-ink);
 }
 
+/* Install banner: an accent capture banner at the top of the page, phones only. */
+.ff-install-banner {
+  margin-bottom: 18px;
+}
+
+.ff-install-banner__share {
+  display: inline-flex;
+  vertical-align: -2px;
+  color: var(--ff-accent);
+}
+
+.ff-install-banner__install {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--ff-accent);
+  color: var(--ff-on-accent);
+  font: 600 12px/1 var(--ff-font-body), Inter, sans-serif;
+  cursor: pointer;
+}
+
+@media (min-width: 721px) {
+  .ff-install-banner {
+    display: none;
+  }
+}
+
 /* Result block: explanation, conflict warning, category chips. */
 .ff-capture__result {
   display: flex;
