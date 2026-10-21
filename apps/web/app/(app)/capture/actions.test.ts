@@ -431,7 +431,7 @@ describe("loadCaptureOptionsAction", () => {
     ]);
   });
 
-  it("returns the same form options /transactions builds, plus today", async () => {
+  it("returns the same form options /transactions builds", async () => {
     await expect(loadCaptureOptionsAction()).resolves.toEqual({
       options: {
         accounts: [{ id: ACCOUNT_ID, name: "Nubank" }],
@@ -446,7 +446,6 @@ describe("loadCaptureOptionsAction", () => {
           { value: USER_ID, label: "Membro" },
         ],
       },
-      today: TODAY,
       defaultResponsible: "household",
     });
     expect(mocks.listAccounts).toHaveBeenCalledWith(

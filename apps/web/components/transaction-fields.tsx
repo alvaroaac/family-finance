@@ -90,7 +90,11 @@ export function emptyTransactionFieldValues(
   };
 }
 
-/** Client-side pre-check; the server action re-validates everything. */
+/**
+ * Client-side pre-check. The server action re-checks these basic fields but
+ * not that the category fits the kind or the subcategory its category (see
+ * tech-debt), so callers keep those consistent themselves.
+ */
 export function validateTransactionFields(
   values: TransactionFieldValues,
 ): string | null {

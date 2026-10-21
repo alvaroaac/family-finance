@@ -131,6 +131,12 @@ test("quick capture fills a signed draft, saves an edited category, and isolates
       },
     ]);
   } finally {
+    // A retry must find no saved row from an earlier attempt.
+    await localAdminClient()
+      .from("transactions")
+      .delete()
+      .eq("household_id", fixture.azul)
+      .eq("description", fixture.description);
     await contextA.close();
     await contextB.close();
   }

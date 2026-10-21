@@ -94,6 +94,7 @@ function dropUnknownIds(
   options: TransactionFieldOptions,
 ): TransactionFieldValues {
   const payments = [
+    "", // still to pick, as a fill leaves an installment without a known card
     ...options.accounts.map((account) => `account:${account.id}`),
     ...options.cards.map((card) => `card:${card.id}`),
   ];
@@ -132,6 +133,17 @@ function fitCategory(
     return { ...values, subcategoryId: "" };
   }
   return values;
+}
+
+/** Income never goes on a card, so a fill under an income kind keeps only an account. */
+function withoutCardFields(
+  patch: Partial<TransactionFieldValues>,
+): Partial<TransactionFieldValues> {
+  const fitted = { ...patch };
+  delete fitted.purchaseMode;
+  delete fitted.installmentCount;
+  if (!fitted.payment?.startsWith("account:")) delete fitted.payment;
+  return fitted;
 }
 
 function writeStored(key: string, stored: Stored | null): void {
@@ -173,14 +185,15 @@ function draftToValues(
   if (draft.amountCents !== undefined) {
     proposed.amount = centsToInputValue(draft.amountCents);
   }
+  const installment = draft.installmentCount >= 2;
   if (draft.accountId !== undefined) {
     proposed.payment = `account:${draft.accountId}`;
-  } else if (draft.creditCardId !== undefined) {
-    proposed.payment = `card:${draft.creditCardId}`;
-    proposed.purchaseMode = draft.installmentCount >= 2 ? "parcelado" : "avista";
-    if (draft.installmentCount >= 2) {
-      proposed.installmentCount = draft.installmentCount;
-    }
+  } else if (draft.creditCardId !== undefined || installment) {
+    // An installment without a known card still needs one: "" makes the user pick.
+    proposed.payment =
+      draft.creditCardId !== undefined ? `card:${draft.creditCardId}` : "";
+    proposed.purchaseMode = installment ? "parcelado" : "avista";
+    if (installment) proposed.installmentCount = draft.installmentCount;
   }
   if (!draft.needsReview && draft.categoryId !== undefined) {
     proposed.categoryId = draft.categoryId;
@@ -268,10 +281,14 @@ export function useCaptureDraft(
         if (!edited.current.has("subcategoryId")) patch.subcategoryId = "";
       }
       setForm((current) => {
-        const next = fitCategory({ ...current.values, ...patch }, options);
+        const fitted =
+          (patch.kind ?? current.values.kind) === "income"
+            ? withoutCardFields(patch)
+            : patch;
+        const next = fitCategory({ ...current.values, ...fitted }, options);
         return {
           values: next,
-          aiFilled: new Set(filled.filter((key) => next[key] === patch[key])),
+          aiFilled: new Set(filled.filter((key) => next[key] === fitted[key])),
         };
       });
       setResult(toResult(draft, options));

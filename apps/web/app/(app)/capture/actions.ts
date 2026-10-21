@@ -230,7 +230,6 @@ export async function transcribeCaptureAudioAction(
 
 export async function loadCaptureOptionsAction(): Promise<{
   options: TransactionFieldOptions;
-  today: string;
   defaultResponsible: string;
 }> {
   const actor = await resolveActor();
@@ -269,7 +268,6 @@ export async function loadCaptureOptionsAction(): Promise<{
         })),
       ],
     },
-    today: currentHouseholdDate(),
     defaultResponsible: "household",
   };
 }

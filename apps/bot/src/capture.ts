@@ -83,17 +83,14 @@ export function createCaptureRateLimiter(
   const perMinute = opts.perMinute ?? 20;
   const concurrent = opts.concurrent ?? 2;
   const now = opts.now ?? Date.now;
+  // One entry per household that ever called, each holding at most
+  // `perMinute` timestamps; only the caller's window is pruned per acquire.
   const households = new Map<string, { calls: number[]; active: number }>();
   return {
     acquire(householdId) {
       const at = now();
-      // Expire idle household entries as well as their rolling-window calls.
-      for (const [id, entry] of households) {
-        entry.calls = entry.calls.filter((call) => call > at - 60_000);
-        if (entry.active === 0 && entry.calls.length === 0)
-          households.delete(id);
-      }
       const entry = households.get(householdId) ?? { calls: [], active: 0 };
+      entry.calls = entry.calls.filter((call) => call > at - 60_000);
       if (entry.calls.length >= perMinute || entry.active >= concurrent)
         return null;
       entry.calls.push(at);

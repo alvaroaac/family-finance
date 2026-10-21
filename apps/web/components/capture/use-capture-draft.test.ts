@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CaptureDraft } from "../../app/(app)/capture/actions";
 import {
   emptyTransactionFieldValues,
+  toTransactionFormData,
   type TransactionFieldOptions,
 } from "../transaction-fields";
 import { captureDraftKey, useCaptureDraft } from "./use-capture-draft";
@@ -145,6 +146,39 @@ describe("applyDraft", () => {
     expect(hook.aiFilled.has("installmentCount")).toBe(true);
   });
 
+  it("keeps an installment without a resolved card and leaves the card for the user to pick", async () => {
+    await act(async () =>
+      hook.applyDraft(
+        draft({ accountId: undefined, amountCents: 120000, installmentCount: 6 }),
+        options,
+      ),
+    );
+
+    expect(hook.values.payment).toBe("");
+    expect(hook.values.purchaseMode).toBe("parcelado");
+    expect(hook.values.installmentCount).toBe(6);
+
+    await act(async () => hook.setField("payment", `card:${CARD}`));
+
+    const formData = toTransactionFormData(hook.values);
+    expect(formData.get("purchaseMode")).toBe("parcelado");
+    expect(formData.get("installmentCount")).toBe("6");
+  });
+
+  it("never overwrites installment fields the user edited", async () => {
+    await act(async () => hook.setField("purchaseMode", "parcelado"));
+    await act(async () => hook.setField("installmentCount", 4));
+    await act(async () =>
+      hook.applyDraft(
+        draft({ accountId: undefined, creditCardId: CARD, installmentCount: 6 }),
+        options,
+      ),
+    );
+
+    expect(hook.values.installmentCount).toBe(4);
+    expect(hook.aiFilled.has("installmentCount")).toBe(false);
+  });
+
   it("maps the responsible member and marks it as filled by the AI", async () => {
     await act(async () =>
       hook.applyDraft(draft({ responsibleUserId: MEMBER }), options),
@@ -263,6 +297,23 @@ describe("applyDraft dependent fields", () => {
     expect(hook.aiFilled.has("amount")).toBe(true);
   });
 
+  it("drops an AI card payment and installment when the user kept the kind as income", async () => {
+    await act(async () => hook.setField("kind", "income"));
+    await act(async () =>
+      hook.applyDraft(
+        draft({ accountId: undefined, creditCardId: CARD, installmentCount: 3 }),
+        options,
+      ),
+    );
+
+    expect(hook.values.kind).toBe("income");
+    expect(hook.values.payment).toBe(defaults.payment);
+    expect(hook.values.purchaseMode).toBe("avista");
+    expect(hook.aiFilled.has("payment")).toBe(false);
+    expect(hook.aiFilled.has("purchaseMode")).toBe(false);
+    expect(hook.aiFilled.has("installmentCount")).toBe(false);
+  });
+
   it("drops an AI subcategory that isn't a child of the user's category, with its AI mark", async () => {
     await act(async () => hook.setField("categoryId", FUN));
     await act(async () => hook.applyDraft(draft(), options));
@@ -353,6 +404,23 @@ describe("persistence", () => {
       categoryId: FOOD,
       subcategoryId: MARKET,
       responsible: MEMBER,
+    };
+    await unmount();
+    localStorage.setItem(
+      CAPTURE_DRAFT_KEY,
+      JSON.stringify({ text: "", values: restored }),
+    );
+    await mount();
+
+    expect(hook.values).toEqual(restored);
+  });
+
+  it("keeps a restored payment the user still has to pick", async () => {
+    const restored = {
+      ...defaults,
+      payment: "",
+      purchaseMode: "parcelado" as const,
+      installmentCount: 6,
     };
     await unmount();
     localStorage.setItem(

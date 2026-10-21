@@ -61,7 +61,7 @@ const options: TransactionFieldOptions = {
   subcategories: [],
   responsibles: [{ value: "household", label: "Casa" }],
 };
-const loaded = { options, today: "2026-10-20", defaultResponsible: "household" };
+const loaded = { options, defaultResponsible: "household" };
 
 function draft(overrides: Partial<CaptureDraft> = {}): CaptureDraft {
   return {
@@ -183,6 +183,52 @@ const banner = () => document.querySelector<HTMLElement>(".ff-capture__banner");
 const field = <T extends Element = HTMLInputElement>(name: string) =>
   document.querySelector<T>(`[name='${name}']`);
 const stored = () => localStorage.getItem(captureDraftKey(USER));
+const radio = (text: string) =>
+  [...document.querySelectorAll('[role="radio"]')].find(
+    (candidate) => candidate.textContent === text,
+  ) ?? null;
+
+/**
+ * Clicks a link the way a browser would and reports whether the app blocked
+ * the navigation. The document listener runs after React's, so it observes
+ * the app's call, then stops jsdom from navigating.
+ */
+async function clickLink(link: Element | null | undefined): Promise<boolean> {
+  if (!(link instanceof HTMLAnchorElement)) throw new Error("No link to click");
+  let prevented = false;
+  const observe = (event: Event) => {
+    prevented = event.defaultPrevented;
+    event.preventDefault();
+  };
+  document.addEventListener("click", observe);
+  try {
+    await act(async () => {
+      link.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+  } finally {
+    document.removeEventListener("click", observe);
+  }
+  return prevented;
+}
+
+/** Shows the Obrigações banner and starts a save that waits on the result. */
+async function startSaveUnderObligationsBanner() {
+  mocks.suggest.mockResolvedValue({
+    ok: false,
+    message: captureMessage("unsupported_intent"),
+  });
+  await type(textarea(), "aluguel todo dia 5");
+  await click(fillButton());
+  await flush();
+  await type(field("amount"), "85,00");
+  await type(field("description"), "Mercado");
+  const pending = deferred<{ ok: boolean; error?: string }>();
+  mocks.createTransaction.mockReturnValueOnce(pending.promise);
+  await click(saveButton());
+  return pending;
+}
 
 async function openSheet(): Promise<void> {
   const opener = document.getElementById("opener") as HTMLButtonElement;
@@ -237,6 +283,23 @@ describe("options loading", () => {
     await openSheet();
     expect(field("amount")).not.toBeNull();
     expect(mocks.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("dates a fresh draft with the current day on every open, from cached options", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-20T23:50:00-03:00"));
+      await openSheet();
+      expect(field("occurredOn")?.value).toBe("2026-10-20");
+
+      await click(button("Fechar"));
+      vi.setSystemTime(new Date("2026-10-21T08:00:00-03:00"));
+      await openSheet();
+      expect(field("occurredOn")?.value).toBe("2026-10-21");
+      expect(mocks.load).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the unavailable banner on a failed load and retries on the next open", async () => {
@@ -370,10 +433,6 @@ describe("suggestion chips", () => {
   const SALARY = "00000000-0000-4000-8000-000000000007";
   const chipNames = () =>
     [...document.querySelectorAll(".ff-capture__chip")].map((c) => c.textContent);
-  const radio = (text: string) =>
-    [...document.querySelectorAll('[role="radio"]')].find(
-      (candidate) => candidate.textContent === text,
-    ) ?? null;
 
   beforeEach(async () => {
     mocks.load.mockResolvedValue({
@@ -744,6 +803,33 @@ describe("new category", () => {
     expect(select?.selectedOptions[0]?.textContent).toBe("Pets");
   });
 
+  it.each([
+    ["Receita", ["Receita"]],
+    ["Receita and back", ["Receita", "Despesa"]],
+  ])("drops a category created after Tipo changed to %s", async (_label, kinds) => {
+    const pending = deferred<{ ok: true; message: string; id: string }>();
+    mocks.createCategory.mockReturnValueOnce(pending.promise);
+    await click(button("+ Nova categoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova categoria']"),
+      "Pets",
+    );
+    await click(button("Criar"));
+    for (const kind of kinds) await click(radio(kind));
+
+    await act(async () =>
+      pending.resolve({ ok: true, message: "Categoria criada.", id: "new-cat" }),
+    );
+    await flush();
+    await type(field("amount"), "85,00");
+    await type(field("description"), "Pets");
+    await click(saveButton());
+    await flush();
+
+    const formData = mocks.createTransaction.mock.calls[0]?.[0] as FormData;
+    expect(formData.get("categoryId")).not.toBe("new-cat");
+  });
+
   it("shows the action's message under the field on failure", async () => {
     mocks.createCategory.mockResolvedValue({
       ok: false,
@@ -844,25 +930,10 @@ describe("Salvar", () => {
     ["Cancelar", () => click(document.querySelector(".ff-capture__cancel"))],
     [
       "the Obrigações link",
-      async () => {
-        const link = banner()?.querySelector("a") ?? null;
-        link?.addEventListener("click", (event) => event.preventDefault());
-        await click(link);
-      },
+      () => clickLink(banner()?.querySelector("a")).then(() => undefined),
     ],
   ])("cannot be closed from %s while a save is in flight", async (_label, close) => {
-    mocks.suggest.mockResolvedValue({
-      ok: false,
-      message: captureMessage("unsupported_intent"),
-    });
-    await type(textarea(), "aluguel todo dia 5");
-    await click(fillButton());
-    await flush();
-    await type(field("amount"), "85,00");
-    await type(field("description"), "Mercado");
-    const pending = deferred<{ ok: true }>();
-    mocks.createTransaction.mockReturnValueOnce(pending.promise);
-    await click(saveButton());
+    const pending = await startSaveUnderObligationsBanner();
 
     await close();
     expect(onClose).not.toHaveBeenCalled();
@@ -873,6 +944,17 @@ describe("Salvar", () => {
     await flush();
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(dialog()).toBeNull();
+  });
+
+  it("blocks the Obrigações link while a save is in flight and follows it after the save fails", async () => {
+    const pending = await startSaveUnderObligationsBanner();
+
+    expect(await clickLink(banner()?.querySelector("a"))).toBe(true);
+
+    await act(async () => pending.resolve({ ok: false, error: "Falhou." }));
+    await flush();
+    expect(await clickLink(banner()?.querySelector("a"))).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("can be closed again after a failed save", async () => {
@@ -984,6 +1066,27 @@ describe("/capture page", () => {
 
     await click(button("Fechar"));
     expect(mocks.router.push).toHaveBeenCalledWith("/");
+  });
+
+  it("blocks the Obrigações link while a save is in flight and follows it after the save fails", async () => {
+    await act(async () =>
+      root.render(
+        <CaptureUserContext.Provider value={USER}>
+          <ToastProvider>
+            <CapturePage />
+          </ToastProvider>
+        </CaptureUserContext.Provider>,
+      ),
+    );
+    await flush();
+    const pending = await startSaveUnderObligationsBanner();
+
+    expect(await clickLink(banner()?.querySelector("a"))).toBe(true);
+
+    await act(async () => pending.resolve({ ok: false, error: "Falhou." }));
+    await flush();
+    expect(await clickLink(banner()?.querySelector("a"))).toBe(false);
+    expect(mocks.router.push).not.toHaveBeenCalled();
   });
 
   it("shows the offline banner at the top of the page panel", async () => {

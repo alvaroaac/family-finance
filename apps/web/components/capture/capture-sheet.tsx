@@ -10,8 +10,11 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactElement,
 } from "react";
+
+import { currentHouseholdDate } from "@family-finance/domain";
 
 import {
   loadCaptureOptionsAction,
@@ -47,7 +50,7 @@ import { VoiceButton, type VoicePhase } from "./voice-button";
  * same content as the `/capture` route. Options load once per page session.
  */
 
-type Loaded = { options: TransactionFieldOptions; defaults: TransactionFieldValues };
+type Loaded = { options: TransactionFieldOptions; defaultResponsible: string };
 
 /**
  * The signed-in user's id, which keys the stored draft. Provided by
@@ -109,14 +112,8 @@ export function CaptureSheet({
     if (!open || loaded !== null || loading.current) return;
     loading.current = true;
     loadCaptureOptionsAction()
-      .then(({ options, today, defaultResponsible }) => {
-        setLoaded({
-          options,
-          defaults: {
-            ...emptyTransactionFieldValues(options, today),
-            responsible: defaultResponsible,
-          },
-        });
+      .then(({ options, defaultResponsible }) => {
+        setLoaded({ options, defaultResponsible });
       })
       .catch(() => setLoadFailed(true))
       .finally(() => {
@@ -249,7 +246,12 @@ export function CaptureSheet({
           <CaptureBody
             userId={userId}
             options={loaded.options}
-            defaults={loaded.defaults}
+            // The body reads these once per open; building them here rather
+            // than caching them with the options keeps a later day's draft on that day.
+            defaults={{
+              ...emptyTransactionFieldValues(loaded.options, currentHouseholdDate()),
+              responsible: loaded.defaultResponsible,
+            }}
             onCategoryCreated={addCategory}
             onClose={onClose}
             requestClose={requestClose}
@@ -291,7 +293,7 @@ function Banner({
 }: {
   message: CaptureMessage;
   onDismiss?: () => void;
-  onNavigate?: () => void;
+  onNavigate?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
 }): ReactElement {
   return (
     <div
@@ -522,7 +524,11 @@ function CaptureBody({
         <Banner
           message={message}
           onDismiss={() => setMessage(null)}
-          onNavigate={closeOnNavigate ? requestClose : undefined}
+          onNavigate={(event) => {
+            // Leaving now would unmount a running save; the link waits for it.
+            if (saving) event.preventDefault();
+            else if (closeOnNavigate) requestClose();
+          }}
         />
       ) : null}
 
@@ -575,6 +581,8 @@ function CaptureBody({
         categoryField={
           creatingCategory ? (
             <NewCategoryInput
+              // A new Tipo remounts it, dropping a create still in flight for the old one.
+              key={values.kind}
               kind={values.kind}
               onCreated={(category) => {
                 onCategoryCreated(category);
