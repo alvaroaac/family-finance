@@ -931,3 +931,23 @@ another is addressed. Same household only; no effect on isolation.
 **Revisit trigger:** A household asks for it, or an administrator role appears.
 
 **Status:** open
+
+## 2026-10-21: A parcelado purchase cannot be deleted
+
+**Area:** `apps/web/app/(app)/transactions/transactions-table.tsx`, `/cards`, `deleteTransaction` (`packages/db/src/repositories.ts`)
+
+**Impact:** The trash button exists only for single transactions. Parcelado
+purchases (`installment_groups` + `installments`) have no delete in the
+transactions list or on `/cards`, and `deleteTransaction` refuses parcela rows.
+A duplicate or mistaken parcelado entry (e.g. a repeated quick capture) can
+only be removed by hand in the production database.
+
+**Current workaround:** Delete the `installment_groups` row in SQL; its
+`installments` cascade. Imported groups are blocked by restrict FKs from
+`import_item_claims` and `import_transaction_replacements`. On 2026-10-21 the
+duplicate "Vezes, dentista Joaquim" (12x R$ 6.750, Nubank) was removed this way.
+
+**Revisit trigger:** The next time a parcelado purchase needs to be removed, or
+when quick capture or the bot makes repeat entries more common.
+
+**Status:** open
