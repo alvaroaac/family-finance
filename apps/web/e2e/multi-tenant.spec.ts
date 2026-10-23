@@ -198,7 +198,6 @@ test("household branding and the public and denied screens", async ({
       "style",
       /--ff-accent:\s*#2f6fed/,
     );
-    await expect(ana.page.locator(".ff-themepicker")).toHaveCount(0);
     await carla.page.goto(`${origin}/dashboard`);
     await expect(carla.page.locator(".ff-sidebar__brand-title")).toHaveText(
       "Casa Verde",

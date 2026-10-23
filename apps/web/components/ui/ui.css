@@ -60,6 +60,16 @@
   flex-shrink: 0;
 }
 
+/* Narrow phones (Fold cover screen): actions drop under the heading instead
+   of squeezing it. */
+@media (max-width: 720px) {
+  .ff-page-title {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}
+
 /* ---- Card -------------------------------------------------------------- */
 
 .ff-card {
@@ -1090,78 +1100,79 @@
   }
 }
 
-/* ---- ThemePicker (floating "Estilo" pill) ------------------------------- */
-
-/* Mockup: dark glass pill fixed bottom-right, gold ring on the active dot.
-   The pill's own colors are theme-constant (it previews both themes). */
-.ff-themepicker {
-  position: fixed;
-  right: 22px;
-  bottom: 22px;
-  z-index: 50;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(18, 26, 22, 0.92);
-  border: 1px solid rgba(212, 175, 106, 0.3);
-  border-radius: var(--ff-radius-pill);
-  padding: 9px 15px;
-  backdrop-filter: blur(8px);
-  box-shadow: var(--ff-shadow-float);
+/* Fold 6 unfolded, tablets, narrow windows: the sidebar shrinks to an icon
+   rail (initial, round +, icon over a short label, avatar) so content keeps
+   its width. Below 721px the bottom nav takes over. */
+.ff-sidebar__brand-initial {
+  display: none;
 }
 
-.ff-themepicker__label {
-  font-family: var(--ff-font-body), Inter, sans-serif;
-  font-weight: 500;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(242, 237, 224, 0.6);
-}
+@media (min-width: 721px) and (max-width: 1100px) {
+  .ff-sidebar {
+    width: 84px;
+    align-items: center;
+    padding: 24px 8px 18px;
+  }
 
-.ff-themepicker__swatch {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  padding: 0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
+  .ff-sidebar__brand {
+    padding: 0 0 20px;
+  }
 
-.ff-themepicker__swatch:hover:not(:disabled) {
-  transform: scale(1.1);
-}
+  .ff-sidebar__brand-title,
+  .ff-sidebar__new-label,
+  .ff-sidebar__id {
+    display: none;
+  }
 
-.ff-themepicker__swatch--salvia {
-  background: #e8ede3;
-  border: 1px solid rgba(0, 0, 0, 0.14);
-}
+  .ff-sidebar__brand-initial {
+    display: block;
+    font-size: 26px;
+    color: var(--ff-ink);
+  }
 
-.ff-themepicker__swatch--esmeralda {
-  background: #16352b;
-  border: 1px solid rgba(212, 175, 106, 0.4);
-}
+  .ff-sidebar__new {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    margin: 0 0 18px;
+    padding: 0;
+    border-radius: 50%;
+  }
 
-.ff-themepicker__swatch--active {
-  box-shadow:
-    0 0 0 2px rgba(18, 26, 22, 0.92),
-    0 0 0 4px #d4af6a;
-}
+  .ff-sidebar__nav {
+    gap: 4px;
+  }
 
-.ff-themepicker__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: block;
-}
+  .ff-nav-link {
+    flex-direction: column;
+    gap: 4px;
+    width: 68px;
+    box-sizing: border-box;
+    padding: 9px 2px 7px;
+    font-size: 10px;
+    line-height: 1.15;
+    text-align: center;
+  }
 
-@media (max-width: 720px) {
-  /* Clear the fixed bottom nav. */
-  .ff-themepicker {
-    bottom: 96px;
+  .ff-nav-link--active,
+  .ff-nav-link--active:hover,
+  .ff-nav-link--pending,
+  .ff-nav-link--pending:hover {
+    box-shadow: none;
+  }
+
+  .ff-nav-link .ff-spinner {
+    margin-left: 0;
+  }
+
+  .ff-sidebar__user {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0 0;
+  }
+
+  .ff-main {
+    padding: 40px 32px;
   }
 }
 
@@ -1557,7 +1568,7 @@ a.ff-callout:hover {
 /* Layout grids (mockups: Resumo 1.1fr/0.9fr, Dashboard 4-up + 2fr/1fr). */
 .ff-grid-resumo {
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
   gap: 24px;
   margin-top: 36px;
   align-items: start;
@@ -1565,14 +1576,14 @@ a.ff-callout:hover {
 
 .ff-grid-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-top: 32px;
 }
 
 .ff-grid-2-1 {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: 16px;
   margin-top: 16px;
   align-items: start;
@@ -1739,9 +1750,14 @@ a.ff-callout:hover {
 }
 
 @media (max-width: 960px) {
+  /* minmax(0, …): a long nowrap description must ellipsize, not widen the page. */
   .ff-grid-resumo,
   .ff-grid-2-1 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ff-grid-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1765,7 +1781,6 @@ a.ff-callout:hover {
   }
 
   .ff-grid-stats {
-    grid-template-columns: repeat(2, 1fr);
     gap: 10px;
     margin-top: 20px;
   }
@@ -1773,6 +1788,13 @@ a.ff-callout:hover {
   .ff-cards-grid {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+}
+
+/* Fold cover screen: two columns leave no room for a 30px "R$ 12.345,67". */
+@media (max-width: 400px) {
+  .ff-grid-stats {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1818,6 +1840,23 @@ a.ff-callout:hover {
 }
 
 /* ---- Transações: filter bar, table cells, inline edit, delete confirm --- */
+
+/* The eight-column grid needs ~1010px. When the list is narrower (icon rail,
+   1280px desktop with the full sidebar) the row cards replace it instead of
+   clipping Quem, Valor and the actions. */
+.ff-txlist {
+  container-type: inline-size;
+}
+
+@container (max-width: 1020px) {
+  .ff-txlist .ff-table {
+    display: none;
+  }
+
+  .ff-txlist .ff-rowcards {
+    display: flex;
+  }
+}
 
 /* Filter bar shell (Transacoes desktop: surface, radius 14, padding 14/16). */
 .ff-filterbar {
@@ -2771,11 +2810,6 @@ a.ff-callout:hover {
   color: inherit;
 }
 
-.ff-themepicker__swatch .ff-spinner {
-  width: 10px;
-  height: 10px;
-  border-width: 1.5px;
-}
 
 .ff-themecard--esmeralda {
   background: #16352b;
@@ -3803,16 +3837,15 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 
 /* ---- Toasts ------------------------------------------------------------ */
 
-/* Desktop default (mockup convention: default styles target desktop, the
-   720px breakpoint below overrides for mobile — see .ff-bottomnav/.ff-main).
-   Top-right, fixed width. */
+/* Solid surface so the page never shows through; the tone lives in the icon
+   badge. Desktop: top-right, fixed width. Touch layout: see the 720px block. */
 .ff-toast-stack {
   position: fixed;
   top: 22px;
   right: 22px;
   bottom: auto;
   left: auto;
-  width: 360px;
+  width: 380px;
   z-index: 60;
   display: flex;
   flex-direction: column;
@@ -3823,9 +3856,18 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
 .ff-toast {
   pointer-events: auto;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
+  padding: 10px 6px 10px 14px;
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-radius: var(--ff-radius-md);
   box-shadow: var(--ff-shadow-float);
+  font-family: var(--ff-font-body), Inter, sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ff-ink);
   animation: ffFadeUp 0.25s ease-out;
 }
 
@@ -3835,72 +3877,69 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   }
 }
 
+.ff-toast__icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ff-toast--positive .ff-toast__icon {
+  background: var(--ff-positive-wash);
+  color: var(--ff-positive);
+}
+
+.ff-toast--negative .ff-toast__icon {
+  background: var(--ff-negative-wash);
+  color: var(--ff-negative);
+}
+
+.ff-toast--warn .ff-toast__icon {
+  background: var(--ff-warn-wash);
+  color: var(--ff-warn);
+}
+
 .ff-toast__message {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
+/* 40px hit area around a 16px glyph. */
 .ff-toast__close {
   flex: none;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
+  border-radius: 50%;
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  color: inherit;
-  opacity: 0.6;
+  color: var(--ff-ink-soft);
   padding: 0;
 }
 
 .ff-toast__close:hover {
-  opacity: 1;
-}
-
-.ff-toast--negative {
-  background: var(--ff-negative-wash);
-  border: 1px solid var(--ff-negative);
-  border-radius: var(--ff-radius-md);
-  padding: 14px 16px;
-  font-family: var(--ff-font-body), Inter, sans-serif;
-  font-weight: 400;
-  font-size: 13px;
-  line-height: 1.5;
   color: var(--ff-ink);
-}
-
-.ff-toast--warn {
-  background: var(--ff-warn-wash);
-  border: 1px solid var(--ff-warn);
-  border-radius: var(--ff-radius-md);
-  padding: 14px 16px;
-  font-family: var(--ff-font-body), Inter, sans-serif;
-  font-weight: 400;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ff-ink);
-}
-
-.ff-toast--positive {
-  background: var(--ff-positive-wash);
-  border: 1px solid var(--ff-positive);
-  border-radius: var(--ff-radius-md);
-  padding: 14px 16px;
-  font-family: var(--ff-font-body), Inter, sans-serif;
-  font-weight: 400;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ff-ink);
+  background: var(--ff-tint);
 }
 
 @media (max-width: 720px) {
-  /* Pinned to the bottom, above the fixed bottom nav (.ff-bottomnav sits at
-     z-index 40 inside this same breakpoint), full-ish width with gutters. */
+  /* Above the bottom nav and the home indicator; centered and capped so it
+     reads as a toast, not a banner, on the wide unfolded screen. */
   .ff-toast-stack {
     top: auto;
     right: 16px;
-    bottom: 96px;
+    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
     left: 16px;
     width: auto;
+    max-width: 480px;
+    margin: 0 auto;
   }
 }
 

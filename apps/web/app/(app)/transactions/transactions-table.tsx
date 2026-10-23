@@ -609,7 +609,7 @@ export function TransactionsTable({
         </div>
       ) : null}
 
-      <div style={{ opacity: isSaving ? 0.6 : 1 }}>
+      <div className="ff-txlist" style={{ opacity: isSaving ? 0.6 : 1 }}>
         <Table columns={COLUMNS} gridTemplate={GRID}>
           {rows.map((row) => {
             const amount = amountDisplay(row);
