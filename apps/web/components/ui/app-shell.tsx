@@ -2,15 +2,16 @@
 
 /**
  * AppShell — the "Editorial acolhedor" chrome around every private page:
- * desktop 256px sidebar (soft bg, active item = gold tint + inset gold bar)
- * and mobile bottom nav (Resumo/Transações/Cartões/Mais, per the mockups).
+ * desktop 256px sidebar (soft bg, active item = gold tint + inset gold bar),
+ * an icon rail from 721px to 1100px (CSS only), and mobile bottom nav
+ * (Resumo/Transações/Cartões/Mais, per the mockups).
  * With `onNewTransaction`, a "Novo lançamento" entry sits above the sidebar
  * nav and as a raised round + in the middle of the bottom bar.
  * "Mais" opens a sheet above the bar with every remaining section, so no
  * page is reachable only by typing its URL on a phone.
  *
  * Design firewall: presentational only. Nav items, household name, user identity,
- * sign-out form and theme picker all arrive via props from `(app)/layout.tsx`.
+ * and sign-out form all arrive via props from `(app)/layout.tsx`.
  * The only client concern here is the active state via `usePathname()`.
  */
 import {
@@ -83,20 +84,12 @@ export function AppShell(props: {
   householdName: string;
   user: { initial: string; name: string; email: string };
   signOut?: ReactNode;
-  themePicker?: ReactNode;
   /** Opens the quick-capture sheet; omit to hide the "Novo lançamento" entries. */
   onNewTransaction?: () => void;
   children: ReactNode;
 }) {
-  const {
-    items,
-    householdName,
-    user,
-    signOut,
-    themePicker,
-    onNewTransaction,
-    children,
-  } = props;
+  const { items, householdName, user, signOut, onNewTransaction, children } =
+    props;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -231,16 +224,24 @@ export function AppShell(props: {
           <div className="ff-sidebar__brand-title ff-serif">
             {householdName}
           </div>
+          <div
+            className="ff-sidebar__brand-initial ff-serif"
+            aria-hidden="true"
+          >
+            {householdName.charAt(0)}
+          </div>
         </div>
 
         {onNewTransaction ? (
           <button
             type="button"
             className="ff-sidebar__new"
+            aria-label="Novo lançamento"
+            title="Novo lançamento"
             onClick={onNewTransaction}
           >
             <IconPlus size={16} />
-            Novo lançamento
+            <span className="ff-sidebar__new-label">Novo lançamento</span>
           </button>
         ) : null}
 
@@ -399,8 +400,6 @@ export function AppShell(props: {
           </nav>
         </div>
       </div>
-
-      {themePicker}
     </div>
   );
 }

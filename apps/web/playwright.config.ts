@@ -16,10 +16,11 @@ import { LOCAL_STORAGE_STATE } from "./e2e/local-env";
  *                             (Google OAuth cannot be scripted headlessly), e.g.
  *                             produced once via a manual login + `page.context().storageState`.
  *
- * `pnpm test:e2e:local` (E2E_LOCAL_SUPABASE=1) runs the card-bill and quick-capture
- * scenarios against the disposable stack from scripts/e2e-local-stack.sh: a
- * setup project seeds it and signs in with a password user, and the dev server
- * starts on :3100 pointed at that stack, alongside the signed capture stub.
+ * `pnpm test:e2e:local` (E2E_LOCAL_SUPABASE=1) runs the card-bill, quick-capture
+ * and Fold 6 layout scenarios against the disposable stack from
+ * scripts/e2e-local-stack.sh: a setup project seeds it and signs in with a
+ * password user, and the dev server starts on :3100 pointed at that stack,
+ * alongside the signed capture stub.
  */
 
 const harness = process.env.E2E_HARNESS === "1";
@@ -63,7 +64,8 @@ export default defineConfig({
         { name: "local-setup", testMatch: /local-auth\.setup\.ts/ },
         {
           name: "local-chromium",
-          testMatch: /(?:card-bill-payments|quick-capture)\.spec\.ts/,
+          testMatch:
+            /(?:card-bill-payments|quick-capture|fold-layout)\.spec\.ts/,
           dependencies: ["local-setup"],
           use: {
             ...devices["Desktop Chrome"],
@@ -74,7 +76,8 @@ export default defineConfig({
     : [
         {
           name: "chromium",
-          testIgnore: /(?:card-bill-payments|quick-capture)\.spec\.ts/,
+          testIgnore:
+            /(?:card-bill-payments|quick-capture|fold-layout)\.spec\.ts/,
           use: { ...devices["Desktop Chrome"] },
         },
       ],

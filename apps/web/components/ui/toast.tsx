@@ -8,8 +8,8 @@
  * call `useToast()` from anywhere inside the provider to fire toasts.
  *
  * Design firewall: presentational only — no workspace packages, no web lib
- * helpers, no app routes, no server context. Pure React + CSS, reusing the
- * `.ff-alert` tone language via `.ff-toast--*` classes in ui.css.
+ * helpers, no app routes, no server context. Pure React + CSS, the tone
+ * shows as a colored icon badge on a solid surface (`.ff-toast--*` in ui.css).
  */
 import {
   createContext,
@@ -23,6 +23,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+
+import { IconAlert, IconCheck, IconClose } from "./icons";
 
 export type ToastTone = "negative" | "positive" | "warn";
 
@@ -101,6 +103,9 @@ function ToastCard({
   const { role, ariaLive } = toneRoleAndLive(toast.tone);
   return (
     <div className={`ff-toast ff-toast--${toast.tone}`} role={role} aria-live={ariaLive}>
+      <span className="ff-toast__icon">
+        {toast.tone === "positive" ? <IconCheck size={14} /> : <IconAlert size={14} />}
+      </span>
       <span className="ff-toast__message">{toast.message}</span>
       <button
         type="button"
@@ -108,7 +113,7 @@ function ToastCard({
         aria-label="Fechar"
         onClick={() => onDismiss(toast.id)}
       >
-        ×
+        <IconClose size={16} />
       </button>
     </div>
   );

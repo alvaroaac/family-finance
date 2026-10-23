@@ -1,21 +1,13 @@
 import type { ReactNode } from "react";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { CaptureAppShell } from "../../components/capture/capture-app-shell";
-import {
-  SubmitButton,
-  ThemePicker,
-  ToastProvider,
-  type NavItem,
-} from "../../components/ui";
+import { SubmitButton, ToastProvider, type NavItem } from "../../components/ui";
 import { requireAuthorizedUser } from "../../lib/auth";
 import {
   currentHouseholdOrFallback,
   currentMemberName,
 } from "../../lib/member";
-import { setThemeAction } from "./settings/actions";
-import { resolveBaseTheme, THEME_COOKIE } from "./settings/helpers";
 
 /**
  * Navigation for the private Casa workspace — the ONLY nav source. Labels are
@@ -52,12 +44,7 @@ async function signOutAction(): Promise<void> {
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { email, userId } = await requireAuthorizedUser();
-  const cookieStore = await cookies();
   const household = await currentHouseholdOrFallback();
-  const theme = resolveBaseTheme(
-    household.theme,
-    cookieStore.get(THEME_COOKIE)?.value,
-  );
   const name = await currentMemberName(email);
 
   return (
@@ -77,11 +64,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               sair
             </SubmitButton>
           </form>
-        }
-        themePicker={
-          household.theme.lockBase ? undefined : (
-            <ThemePicker current={theme} onSelect={setThemeAction} />
-          )
         }
       >
         {children}
