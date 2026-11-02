@@ -306,7 +306,12 @@ describe("options loading", () => {
 
   it("forgets the version after a local add so the next open reloads in full", async () => {
     await openSheet();
-    mocks.createCategory.mockResolvedValue({ ok: true, message: "ok", id: "new-cat" });
+    mocks.createCategory.mockResolvedValue({
+      ok: true,
+      message: "ok",
+      id: "new-cat",
+      name: "Pets",
+    });
     await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
@@ -343,18 +348,57 @@ describe("options loading", () => {
     expect([...(sub?.options ?? [])].map((o) => o.textContent)).toContain("Mercado");
   });
 
-  it("refreshes when the app returns to the foreground while open", async () => {
+  it("checks again on returning to the foreground, at most every 30 s", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-02T10:00:00Z"));
+      await openSheet();
+      expect(mocks.load).toHaveBeenCalledTimes(1);
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      const foreground = async () => {
+        await act(async () => {
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await flush();
+      };
+
+      vi.setSystemTime(new Date("2026-11-02T10:00:20Z"));
+      await foreground();
+      expect(mocks.load).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date("2026-11-02T10:00:31Z"));
+      await foreground();
+      expect(mocks.load).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a picked category that a refresh no longer lists", async () => {
     await openSheet();
-    expect(mocks.load).toHaveBeenCalledTimes(1);
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      get: () => "visible",
-    });
     await act(async () => {
-      document.dispatchEvent(new Event("visibilitychange"));
+      const select = field<HTMLSelectElement>("categoryId");
+      if (select === null) throw new Error("No categoryId select");
+      select.value = FUN;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    await click(button("Fechar"));
+    mocks.load.mockResolvedValueOnce({
+      ...loaded,
+      version: "v3",
+      options: { ...options, categories: options.categories.filter((c) => c.id !== FUN) },
+    });
+    await openSheet();
+    await type(field("amount"), "10,00");
+    await type(field("description"), "Cinema");
+    await click(saveButton());
     await flush();
-    expect(mocks.load).toHaveBeenCalledTimes(2);
+
+    const saved = mocks.createTransaction.mock.calls[0]?.[0] as FormData;
+    expect(saved.get("categoryId")).toBe("");
   });
 
   it("keeps the shown options when a background refresh fails", async () => {
@@ -691,6 +735,7 @@ describe("offline", () => {
       ok: true,
       message: "Categoria criada.",
       id: "new-cat",
+      name: "Pets",
     });
 
     await click(button("Criar"));
@@ -859,6 +904,7 @@ describe("new category", () => {
       ok: true,
       message: "Categoria criada.",
       id: "new-cat",
+      name: "Pets",
     });
     await click(button("Nova categoria"));
 
@@ -887,7 +933,7 @@ describe("new category", () => {
     ["Receita", ["Receita"]],
     ["Receita and back", ["Receita", "Despesa"]],
   ])("drops a category created after Tipo changed to %s", async (_label, kinds) => {
-    const pending = deferred<{ ok: true; message: string; id: string }>();
+    const pending = deferred<{ ok: true; message: string; id: string; name: string }>();
     mocks.createCategory.mockReturnValueOnce(pending.promise);
     await click(button("Nova categoria"));
     await type(
@@ -898,7 +944,12 @@ describe("new category", () => {
     for (const kind of kinds) await click(radio(kind));
 
     await act(async () =>
-      pending.resolve({ ok: true, message: "Categoria criada.", id: "new-cat" }),
+      pending.resolve({
+        ok: true,
+        message: "Categoria criada.",
+        id: "new-cat",
+        name: "Pets",
+      }),
     );
     await flush();
     await type(field("amount"), "85,00");
@@ -983,6 +1034,7 @@ describe("new subcategory", () => {
       ok: true,
       message: "Subcategoria criada.",
       id: "new-sub",
+      name: "Feira livre",
       created: true,
     });
     await pickCategory(FOOD);
@@ -990,16 +1042,17 @@ describe("new subcategory", () => {
     const input = document.querySelector<HTMLInputElement>(
       "input[aria-label='Nome da nova subcategoria']",
     );
-    await type(input, "Feira");
+    await type(input, "Feira  livre");
     await press(input, "Enter");
     await flush();
 
     const formData = mocks.createSubcategory.mock.calls[0]?.[0] as FormData;
-    expect(formData.get("name")).toBe("Feira");
+    expect(formData.get("name")).toBe("Feira  livre");
     expect(formData.get("categoryId")).toBe(FOOD);
     const select = field<HTMLSelectElement>("subcategoryId");
     expect(select?.value).toBe("new-sub");
-    expect(select?.selectedOptions[0]?.textContent).toBe("Feira");
+    // The name as the server stored it, not as typed.
+    expect(select?.selectedOptions[0]?.textContent).toBe("Feira livre");
 
     await type(field("amount"), "12,00");
     await type(field("description"), "Feira");
@@ -1010,8 +1063,14 @@ describe("new subcategory", () => {
     expect(saved.get("subcategoryId")).toBe("new-sub");
   });
 
-  it("drops a subcategory created after Categoria changed", async () => {
-    const pending = deferred<{ ok: true; message: string; id: string; created: boolean }>();
+  it("closes on a Categoria change and drops a create still in flight", async () => {
+    const pending = deferred<{
+      ok: true;
+      message: string;
+      id: string;
+      name: string;
+      created: boolean;
+    }>();
     mocks.createSubcategory.mockReturnValueOnce(pending.promise);
     await pickCategory(FOOD);
     await click(button("Nova subcategoria"));
@@ -1022,13 +1081,35 @@ describe("new subcategory", () => {
     await click(button("Criar"));
     await pickCategory(FUN);
     await act(async () =>
-      pending.resolve({ ok: true, message: "ok", id: "new-sub", created: true }),
+      pending.resolve({
+        ok: true,
+        message: "ok",
+        id: "new-sub",
+        name: "Feira",
+        created: true,
+      }),
     );
     await flush();
 
-    expect(field<HTMLSelectElement>("subcategoryId")).toBeNull();
-    await click(button("Cancelar nova subcategoria"));
+    expect(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+    ).toBeNull();
     expect(field<HTMLSelectElement>("subcategoryId")?.value).toBe("");
+  });
+
+  it("closes when a Tipo switch clears Categoria, so Esc closes the sheet again", async () => {
+    await pickCategory(FOOD);
+    await click(button("Nova subcategoria"));
+    await click(radio("Receita"));
+    await click(radio("Despesa"));
+    await pickCategory(FOOD);
+    expect(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+    ).toBeNull();
+
+    await click(radio("Receita"));
+    await press(document, "Escape");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("Esc closes only the creator", async () => {

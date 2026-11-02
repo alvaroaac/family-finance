@@ -296,6 +296,21 @@ export function useCaptureDraft(
     [],
   );
 
+  /** Options changed under an open form: drop ids they no longer list. */
+  const reconcile = useCallback(
+    (nextDefaults: TransactionFieldValues, options: TransactionFieldOptions) => {
+      defaultsRef.current = nextDefaults;
+      setForm((current) => {
+        const values = dropUnknownIds(current.values, nextDefaults, options);
+        const same = (Object.keys(values) as TransactionFieldKey[]).every(
+          (key) => values[key] === current.values[key],
+        );
+        return same ? current : { ...current, values };
+      });
+    },
+    [],
+  );
+
   const discard = useCallback(() => {
     edited.current = new Set();
     setText("");
@@ -304,5 +319,15 @@ export function useCaptureDraft(
     writeStored(key, null);
   }, [key]);
 
-  return { text, setText, values, setField, aiFilled, applyDraft, result, discard };
+  return {
+    text,
+    setText,
+    values,
+    setField,
+    aiFilled,
+    applyDraft,
+    reconcile,
+    result,
+    discard,
+  };
 }

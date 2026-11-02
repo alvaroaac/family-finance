@@ -230,6 +230,34 @@ export async function transcribeCaptureAudioAction(
   return { ok: true, text: parsed.data.text };
 }
 
+/**
+ * Hash of the payload in a fixed order: rows are sorted by name only, so tied
+ * names (an "Outros" under two categories) may swap between calls and must
+ * not read as a change.
+ */
+function optionsVersion(payload: {
+  options: TransactionFieldOptions;
+  defaultResponsible: string;
+}): string {
+  const byId = <T extends { id: string }>(rows: T[]) =>
+    [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const { options } = payload;
+  const canonical = {
+    ...payload,
+    options: {
+      accounts: byId(options.accounts),
+      cards: byId(options.cards),
+      categories: byId(options.categories),
+      subcategories: byId(options.subcategories),
+      responsibles: options.responsibles,
+    },
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonical))
+    .digest("base64url")
+    .slice(0, 22);
+}
+
 export type CaptureOptionsResult =
   | { unchanged: true; version: string }
   | {
@@ -286,10 +314,7 @@ export async function loadCaptureOptionsAction(
     },
     defaultResponsible: "household",
   };
-  const version = createHash("sha256")
-    .update(JSON.stringify(payload))
-    .digest("base64url")
-    .slice(0, 22);
+  const version = optionsVersion(payload);
   if (version === knownVersion) return { unchanged: true, version };
   return { unchanged: false, version, ...payload };
 }

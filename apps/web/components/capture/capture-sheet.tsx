@@ -58,14 +58,13 @@ import { VoiceButton, type VoicePhase } from "./voice-button";
  * opens, and the app coming back to the foreground, send the held version and
  * the server answers "unchanged" unless something moved (ETag-style), so
  * categories added elsewhere show up without a reload or a needless refetch.
+ * Foreground checks are throttled; opens always check.
  */
 
-type Loaded = {
-  options: TransactionFieldOptions;
-  defaultResponsible: string;
-  /** Server hash of the options; null once a local add made them differ. */
-  version: string | null;
-};
+type Loaded = { options: TransactionFieldOptions; defaultResponsible: string };
+
+/** Minimum gap between two checks triggered by the app returning to the foreground. */
+const FOREGROUND_CHECK_INTERVAL_MS = 30_000;
 
 /**
  * The signed-in user's id, which keys the stored draft. Provided by
@@ -111,8 +110,9 @@ export function CaptureSheet({
   // Bumped by every load and every local category add; a response whose
   // number is no longer current is stale and dropped.
   const loadSeq = useRef(0);
-  const hasLoaded = useRef(false);
+  /** Server hash of the options held; null until loaded or after a local add. */
   const version = useRef<string | null>(null);
+  const lastCheck = useRef(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
@@ -131,26 +131,30 @@ export function CaptureSheet({
     if (!open) return;
     const load = () => {
       const seq = ++loadSeq.current;
+      lastCheck.current = Date.now();
       setLoadFailed(false);
       loadCaptureOptionsAction(version.current ?? undefined)
         .then((result) => {
           if (seq !== loadSeq.current || result.unchanged) return;
-          hasLoaded.current = true;
           version.current = result.version;
           setLoaded({
             options: result.options,
             defaultResponsible: result.defaultResponsible,
-            version: result.version,
           });
         })
         .catch(() => {
-          // A failed background refresh keeps the options already shown.
-          if (seq === loadSeq.current && !hasLoaded.current) setLoadFailed(true);
+          // Only shown while nothing loaded yet; a failed refresh keeps the options.
+          if (seq === loadSeq.current) setLoadFailed(true);
         });
     };
     load();
     const onVisible = () => {
-      if (document.visibilityState === "visible") load();
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastCheck.current >= FOREGROUND_CHECK_INTERVAL_MS
+      ) {
+        load();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -403,7 +407,9 @@ function CaptureBody({
   setNetworkError: (failed: boolean) => void;
 }): ReactElement {
   const draft = useCaptureDraft(userId, defaults, options);
-  const { text, values, result, setField } = draft;
+  const { text, values, result, setField, reconcile } = draft;
+  const defaultsRef = useRef(defaults);
+  defaultsRef.current = defaults;
   const router = useRouter();
   const toast = useToast();
   const alive = useRef(true);
@@ -423,6 +429,19 @@ function CaptureBody({
       alive.current = false;
     };
   }, []);
+
+  // A refresh can drop an account or category the open form still holds.
+  const firstOptions = useRef(options);
+  useEffect(() => {
+    if (options === firstOptions.current) return;
+    reconcile(defaultsRef.current, options);
+  }, [options, reconcile]);
+
+  // The subcategory creator belongs to one category; any change (a pick, or a
+  // Tipo switch clearing it) closes it and drops a create still in flight.
+  useEffect(() => {
+    setCreatingSubcategory(false);
+  }, [values.categoryId]);
 
   const canFill =
     text.trim() !== "" && !filling && online && voicePhase === "idle";
@@ -645,12 +664,8 @@ function CaptureBody({
               // A new Tipo remounts it, dropping a create still in flight for the old one.
               key={values.kind}
               label="Nome da nova categoria"
-              create={(name) => {
-                const formData = new FormData();
-                formData.set("name", name);
-                formData.set("kind", values.kind);
-                return createCategoryAction(formData);
-              }}
+              action={createCategoryAction}
+              fields={{ kind: values.kind }}
               onCreated={(id, name) => {
                 onCategoryCreated({ id, name, kind: values.kind });
                 setField("categoryId", id);
@@ -674,15 +689,11 @@ function CaptureBody({
         subcategoryField={
           creatingSubcategory && values.categoryId !== "" && !creatingCategory ? (
             <NewNameInput
-              // A new Categoria remounts it, dropping a create still in flight for the old one.
+              // Any Categoria change closes it (see the effect above), dropping a create in flight.
               key={values.categoryId}
               label="Nome da nova subcategoria"
-              create={(name) => {
-                const formData = new FormData();
-                formData.set("name", name);
-                formData.set("categoryId", values.categoryId);
-                return createSubcategoryAction(formData);
-              }}
+              action={createSubcategoryAction}
+              fields={{ categoryId: values.categoryId }}
               onCreated={(id, name) => {
                 onSubcategoryCreated({ id, name, categoryId: values.categoryId });
                 setField("subcategoryId", id);
@@ -750,15 +761,20 @@ function AddToggle({
   );
 }
 
-/** The inline "Nova categoria" / "Nova subcategoria" input. */
+/**
+ * The inline "Nova categoria" / "Nova subcategoria" input. Posts `name` plus
+ * `fields` to `action`; `onCreated` gets the name as the server stored it.
+ */
 function NewNameInput({
   label,
-  create: createNamed,
+  action,
+  fields,
   onCreated,
   setNetworkError,
 }: {
   label: string;
-  create: (name: string) => Promise<CategoryCreationActionResult>;
+  action: (formData: FormData) => Promise<CategoryCreationActionResult>;
+  fields: Record<string, string>;
   onCreated: (id: string, name: string) => void;
   setNetworkError: (failed: boolean) => void;
 }): ReactElement {
@@ -780,10 +796,13 @@ function NewNameInput({
     setBusy(true);
     setError(null);
     try {
-      const response = await createNamed(trimmed);
+      const formData = new FormData();
+      formData.set("name", trimmed);
+      for (const [key, value] of Object.entries(fields)) formData.set(key, value);
+      const response = await action(formData);
       if (!alive.current) return;
       setNetworkError(false);
-      if (response.ok) onCreated(response.id, trimmed);
+      if (response.ok) onCreated(response.id, response.name);
       else setError(response.message);
     } catch {
       if (alive.current) setNetworkError(true);
