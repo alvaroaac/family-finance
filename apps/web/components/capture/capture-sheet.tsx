@@ -20,7 +20,11 @@ import {
   loadCaptureOptionsAction,
   suggestCaptureDraftAction,
 } from "../../app/(app)/capture/actions";
-import { createCategoryAction } from "../../app/(app)/categories/actions";
+import {
+  createCategoryAction,
+  createSubcategoryAction,
+  type CategoryCreationActionResult,
+} from "../../app/(app)/categories/actions";
 import { createManualTransactionAction } from "../../app/(app)/transactions/actions";
 import { captureMessage, type CaptureMessage } from "../../lib/capture-copy";
 import {
@@ -29,6 +33,7 @@ import {
   TransactionFields,
   validateTransactionFields,
   type CategoryOption,
+  type SubcategoryOption,
   type TransactionFieldOptions,
   type TransactionFieldValues,
 } from "../transaction-fields";
@@ -47,7 +52,9 @@ import { VoiceButton, type VoicePhase } from "./voice-button";
  * Quick capture: describe a transaction in free text, let the AI fill the
  * fields, review and save. `variant="sheet"` is the bottom sheet (mobile) /
  * centered modal (desktop) opened from the AppShell; `variant="page"` is the
- * same content as the `/capture` route. Options load once per page session.
+ * same content as the `/capture` route. Options load on the first open and
+ * refresh in the background on every later open and whenever the app comes
+ * back to the foreground, so categories added elsewhere show up without a reload.
  */
 
 type Loaded = { options: TransactionFieldOptions; defaultResponsible: string };
@@ -93,7 +100,10 @@ export function CaptureSheet({
   const [networkError, setNetworkError] = useState(false);
   // Lives here, not in the body, so no close path can unmount a running save.
   const [saving, setSaving] = useState(false);
-  const loading = useRef(false);
+  // Bumped by every load and every local category add; a response whose
+  // number is no longer current is stale and dropped.
+  const loadSeq = useRef(0);
+  const hasLoaded = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
@@ -109,17 +119,28 @@ export function CaptureSheet({
   });
 
   useEffect(() => {
-    if (!open || loaded !== null || loading.current) return;
-    loading.current = true;
-    loadCaptureOptionsAction()
-      .then(({ options, defaultResponsible }) => {
-        setLoaded({ options, defaultResponsible });
-      })
-      .catch(() => setLoadFailed(true))
-      .finally(() => {
-        loading.current = false;
-      });
-  }, [open, loaded]);
+    if (!open) return;
+    const load = () => {
+      const seq = ++loadSeq.current;
+      setLoadFailed(false);
+      loadCaptureOptionsAction()
+        .then(({ options, defaultResponsible }) => {
+          if (seq !== loadSeq.current) return;
+          hasLoaded.current = true;
+          setLoaded({ options, defaultResponsible });
+        })
+        .catch(() => {
+          // A failed background refresh keeps the options already shown.
+          if (seq === loadSeq.current && !hasLoaded.current) setLoadFailed(true);
+        });
+    };
+    load();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [open]);
 
   // Read on mount, not during render, so the server render matches.
   useEffect(() => {
@@ -172,17 +193,26 @@ export function CaptureSheet({
 
   if (!open) return null;
 
-  const addCategory = (category: CategoryOption) =>
+  const addOption = (
+    add: (options: TransactionFieldOptions) => TransactionFieldOptions,
+  ) => {
+    // A refresh already in flight may predate this add; let it go.
+    loadSeq.current += 1;
     setLoaded((current) =>
-      current === null
-        ? current
-        : {
-            ...current,
-            options: {
-              ...current.options,
-              categories: [...current.options.categories, category],
-            },
-          },
+      current === null ? current : { ...current, options: add(current.options) },
+    );
+  };
+  const addCategory = (category: CategoryOption) =>
+    addOption((options) =>
+      options.categories.some((c) => c.id === category.id)
+        ? options
+        : { ...options, categories: [...options.categories, category] },
+    );
+  const addSubcategory = (subcategory: SubcategoryOption) =>
+    addOption((options) =>
+      options.subcategories.some((s) => s.id === subcategory.id)
+        ? options
+        : { ...options, subcategories: [...options.subcategories, subcategory] },
     );
 
   const trapFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -253,6 +283,7 @@ export function CaptureSheet({
               responsible: loaded.defaultResponsible,
             }}
             onCategoryCreated={addCategory}
+            onSubcategoryCreated={addSubcategory}
             onClose={onClose}
             requestClose={requestClose}
             saving={saving}
@@ -330,6 +361,7 @@ function CaptureBody({
   options,
   defaults,
   onCategoryCreated,
+  onSubcategoryCreated,
   onClose,
   requestClose,
   saving,
@@ -342,6 +374,7 @@ function CaptureBody({
   options: TransactionFieldOptions;
   defaults: TransactionFieldValues;
   onCategoryCreated: (category: CategoryOption) => void;
+  onSubcategoryCreated: (subcategory: SubcategoryOption) => void;
   /** Closes unconditionally; only a successful save uses it. */
   onClose: () => void;
   /** Closes unless a save is in flight. */
@@ -360,11 +393,13 @@ function CaptureBody({
   const alive = useRef(true);
   const fillRunning = useRef(false);
   const categoryToggle = useRef<HTMLButtonElement>(null);
+  const subcategoryToggle = useRef<HTMLButtonElement>(null);
   const [filling, setFilling] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("idle");
   const [message, setMessage] = useState<CaptureMessage | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [creatingSubcategory, setCreatingSubcategory] = useState(false);
 
   useEffect(() => {
     alive.current = true;
@@ -456,11 +491,21 @@ function CaptureBody({
     categoryToggle.current?.focus();
   }
 
-  /** Esc while creating a category cancels just that, not the whole sheet. */
+  function closeSubcategoryCreator(): void {
+    setCreatingSubcategory(false);
+    subcategoryToggle.current?.focus();
+  }
+
+  /** Esc while creating a (sub)category cancels just that, not the whole sheet. */
   function onBodyKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (event.key !== "Escape" || !creatingCategory) return;
-    event.preventDefault();
-    closeCategoryCreator();
+    if (event.key !== "Escape") return;
+    if (creatingSubcategory) {
+      event.preventDefault();
+      closeSubcategoryCreator();
+    } else if (creatingCategory) {
+      event.preventDefault();
+      closeCategoryCreator();
+    }
   }
 
   function cancel(): void {
@@ -573,22 +618,67 @@ function CaptureBody({
             type="button"
             className="ff-capture__category-toggle"
             aria-label={creatingCategory ? "Cancelar nova categoria" : undefined}
-            onClick={() => setCreatingCategory((current) => !current)}
+            onClick={() => {
+              setCreatingSubcategory(false);
+              setCreatingCategory((current) => !current);
+            }}
           >
             {creatingCategory ? "Cancelar" : "+ Nova categoria"}
           </button>
         }
         categoryField={
           creatingCategory ? (
-            <NewCategoryInput
+            <NewNameInput
               // A new Tipo remounts it, dropping a create still in flight for the old one.
               key={values.kind}
-              kind={values.kind}
-              onCreated={(category) => {
-                onCategoryCreated(category);
-                setField("categoryId", category.id);
+              label="Nome da nova categoria"
+              create={(name) => {
+                const formData = new FormData();
+                formData.set("name", name);
+                formData.set("kind", values.kind);
+                return createCategoryAction(formData);
+              }}
+              onCreated={(id, name) => {
+                onCategoryCreated({ id, name, kind: values.kind });
+                setField("categoryId", id);
                 setField("subcategoryId", "");
                 setCreatingCategory(false);
+              }}
+              setNetworkError={setNetworkError}
+            />
+          ) : undefined
+        }
+        subcategoryAction={
+          values.categoryId !== "" && !creatingCategory ? (
+            <button
+              ref={subcategoryToggle}
+              type="button"
+              className="ff-capture__category-toggle"
+              aria-label={
+                creatingSubcategory ? "Cancelar nova subcategoria" : undefined
+              }
+              onClick={() => setCreatingSubcategory((current) => !current)}
+            >
+              {creatingSubcategory ? "Cancelar" : "+ Nova subcategoria"}
+            </button>
+          ) : undefined
+        }
+        subcategoryField={
+          creatingSubcategory && values.categoryId !== "" && !creatingCategory ? (
+            <NewNameInput
+              // A new Categoria remounts it, dropping a create still in flight for the old one.
+              key={values.categoryId}
+              label="Nome da nova subcategoria"
+              create={(name) => {
+                const formData = new FormData();
+                formData.set("name", name);
+                formData.set("categoryId", values.categoryId);
+                return createSubcategoryAction(formData);
+              }}
+              onCreated={(id, name) => {
+                onSubcategoryCreated({ id, name, categoryId: values.categoryId });
+                setField("subcategoryId", id);
+                setCreatingSubcategory(false);
               }}
               setNetworkError={setNetworkError}
             />
@@ -621,14 +711,16 @@ function CaptureBody({
   );
 }
 
-/** The inline "+ Nova categoria" input; creates with the current kind. */
-function NewCategoryInput({
-  kind,
+/** The inline "+ Nova categoria" / "+ Nova subcategoria" input. */
+function NewNameInput({
+  label,
+  create: createNamed,
   onCreated,
   setNetworkError,
 }: {
-  kind: TransactionFieldValues["kind"];
-  onCreated: (category: CategoryOption) => void;
+  label: string;
+  create: (name: string) => Promise<CategoryCreationActionResult>;
+  onCreated: (id: string, name: string) => void;
   setNetworkError: (failed: boolean) => void;
 }): ReactElement {
   const [name, setName] = useState("");
@@ -646,16 +738,13 @@ function NewCategoryInput({
   async function create(): Promise<void> {
     const trimmed = name.trim();
     if (trimmed === "" || busy) return;
-    const formData = new FormData();
-    formData.set("name", trimmed);
-    formData.set("kind", kind);
     setBusy(true);
     setError(null);
     try {
-      const response = await createCategoryAction(formData);
+      const response = await createNamed(trimmed);
       if (!alive.current) return;
       setNetworkError(false);
-      if (response.ok) onCreated({ id: response.id, name: trimmed, kind });
+      if (response.ok) onCreated(response.id, trimmed);
       else setError(response.message);
     } catch {
       if (alive.current) setNetworkError(true);
@@ -668,8 +757,8 @@ function NewCategoryInput({
     <div className="ff-capture__category-new">
       <div className="ff-capture__category-row">
         <Input
-          aria-label="Nome da nova categoria"
-          placeholder="Nome da nova categoria"
+          aria-label={label}
+          placeholder={label}
           autoFocus
           value={name}
           onChange={(event) => setName(event.target.value)}

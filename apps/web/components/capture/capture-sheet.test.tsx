@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   transcribe: vi.fn(),
   load: vi.fn(),
   createCategory: vi.fn(),
+  createSubcategory: vi.fn(),
   createTransaction: vi.fn(),
   router: { refresh: vi.fn(), push: vi.fn() },
 }));
@@ -33,6 +34,7 @@ vi.mock("../../app/(app)/capture/actions", () => ({
 }));
 vi.mock("../../app/(app)/categories/actions", () => ({
   createCategoryAction: mocks.createCategory,
+  createSubcategoryAction: mocks.createSubcategory,
 }));
 vi.mock("../../app/(app)/transactions/actions", () => ({
   createManualTransactionAction: mocks.createTransaction,
@@ -266,7 +268,7 @@ afterEach(async () => {
 });
 
 describe("options loading", () => {
-  it("loads once on the first open, shows the skeleton until then, and reuses the result", async () => {
+  it("loads on the first open, shows the skeleton until then, and shows cached options while refreshing on reopen", async () => {
     const pending = deferred<typeof loaded>();
     mocks.load.mockReturnValueOnce(pending.promise);
     await openSheet();
@@ -280,9 +282,55 @@ describe("options loading", () => {
     expect(field("amount")).not.toBeNull();
 
     await click(button("Fechar"));
+    mocks.load.mockReturnValueOnce(new Promise(() => {}));
     await openSheet();
     expect(field("amount")).not.toBeNull();
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("picks up a subcategory added elsewhere on the next open", async () => {
+    await openSheet();
+    await click(button("Fechar"));
+    mocks.load.mockResolvedValueOnce({
+      ...loaded,
+      options: {
+        ...options,
+        subcategories: [{ id: "sub-market", categoryId: FOOD, name: "Mercado" }],
+      },
+    });
+    await openSheet();
+    await act(async () => {
+      const select = field<HTMLSelectElement>("categoryId");
+      if (select === null) throw new Error("No categoryId select");
+      select.value = FOOD;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const sub = field<HTMLSelectElement>("subcategoryId");
+    expect([...(sub?.options ?? [])].map((o) => o.textContent)).toContain("Mercado");
+  });
+
+  it("refreshes when the app returns to the foreground while open", async () => {
+    await openSheet();
     expect(mocks.load).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flush();
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the shown options when a background refresh fails", async () => {
+    await openSheet();
+    await click(button("Fechar"));
+    mocks.load.mockRejectedValueOnce(new Error("offline"));
+    await openSheet();
+    expect(field("amount")).not.toBeNull();
+    expect(banner()).toBeNull();
   });
 
   it("dates a fresh draft with the current day on every open, from cached options", async () => {
@@ -296,7 +344,6 @@ describe("options loading", () => {
       vi.setSystemTime(new Date("2026-10-21T08:00:00-03:00"));
       await openSheet();
       expect(field("occurredOn")?.value).toBe("2026-10-21");
-      expect(mocks.load).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -877,6 +924,89 @@ describe("new category", () => {
 
     await press(document, "Escape");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("new subcategory", () => {
+  beforeEach(openSheet);
+
+  async function pickCategory(id: string): Promise<void> {
+    await act(async () => {
+      const select = field<HTMLSelectElement>("categoryId");
+      if (select === null) throw new Error("No categoryId select");
+      select.value = id;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it("is offered only once a category is chosen", async () => {
+    expect(button("+ Nova subcategoria")).toBeNull();
+    await pickCategory(FOOD);
+    expect(button("+ Nova subcategoria")).not.toBeNull();
+  });
+
+  it("creates under the chosen category, selects it, and saves with it", async () => {
+    mocks.createSubcategory.mockResolvedValue({
+      ok: true,
+      message: "Subcategoria criada.",
+      id: "new-sub",
+      created: true,
+    });
+    await pickCategory(FOOD);
+    await click(button("+ Nova subcategoria"));
+    const input = document.querySelector<HTMLInputElement>(
+      "input[aria-label='Nome da nova subcategoria']",
+    );
+    await type(input, "Feira");
+    await press(input, "Enter");
+    await flush();
+
+    const formData = mocks.createSubcategory.mock.calls[0]?.[0] as FormData;
+    expect(formData.get("name")).toBe("Feira");
+    expect(formData.get("categoryId")).toBe(FOOD);
+    const select = field<HTMLSelectElement>("subcategoryId");
+    expect(select?.value).toBe("new-sub");
+    expect(select?.selectedOptions[0]?.textContent).toBe("Feira");
+
+    await type(field("amount"), "12,00");
+    await type(field("description"), "Feira");
+    await click(saveButton());
+    await flush();
+    const saved = mocks.createTransaction.mock.calls[0]?.[0] as FormData;
+    expect(saved.get("categoryId")).toBe(FOOD);
+    expect(saved.get("subcategoryId")).toBe("new-sub");
+  });
+
+  it("drops a subcategory created after Categoria changed", async () => {
+    const pending = deferred<{ ok: true; message: string; id: string; created: boolean }>();
+    mocks.createSubcategory.mockReturnValueOnce(pending.promise);
+    await pickCategory(FOOD);
+    await click(button("+ Nova subcategoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+      "Feira",
+    );
+    await click(button("Criar"));
+    await pickCategory(FUN);
+    await act(async () =>
+      pending.resolve({ ok: true, message: "ok", id: "new-sub", created: true }),
+    );
+    await flush();
+
+    expect(field<HTMLSelectElement>("subcategoryId")).toBeNull();
+    await click(button("Cancelar nova subcategoria"));
+    expect(field<HTMLSelectElement>("subcategoryId")?.value).toBe("");
+  });
+
+  it("Esc closes only the creator", async () => {
+    await pickCategory(FOOD);
+    await click(button("+ Nova subcategoria"));
+    await press(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+      "Escape",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(field("subcategoryId")).not.toBeNull();
   });
 });
 
