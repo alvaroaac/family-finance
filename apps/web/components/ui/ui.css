@@ -5159,14 +5159,32 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   border-top: 1px solid var(--ff-border);
 }
 
-/* "+ Nova categoria" link-button and its inline input. */
+/* The discreet ⊕ beside Categoria / Subcategoria and its inline input.
+   The negative margin keeps the label row as tall as the others. */
 .ff-capture__category-toggle {
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -5px -5px -5px 0;
+  padding: 5px;
   border: none;
+  border-radius: 50%;
   background: transparent;
   color: var(--ff-accent);
-  font: 600 12px var(--ff-font-body), Inter, sans-serif;
+  line-height: 0;
   cursor: pointer;
+}
+
+.ff-capture__category-toggle:hover {
+  color: var(--ff-accent-hover);
+}
+
+.ff-capture__category-toggle svg {
+  transition: transform 0.15s ease-out;
+}
+
+.ff-capture__category-toggle[aria-expanded="true"] svg {
+  transform: rotate(45deg);
 }
 
 .ff-capture__category-row {

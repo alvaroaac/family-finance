@@ -1,5 +1,7 @@
 "use server";
 
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import {
@@ -228,10 +230,24 @@ export async function transcribeCaptureAudioAction(
   return { ok: true, text: parsed.data.text };
 }
 
-export async function loadCaptureOptionsAction(): Promise<{
-  options: TransactionFieldOptions;
-  defaultResponsible: string;
-}> {
+export type CaptureOptionsResult =
+  | { unchanged: true; version: string }
+  | {
+      unchanged: false;
+      version: string;
+      options: TransactionFieldOptions;
+      defaultResponsible: string;
+    };
+
+/**
+ * The sheet's form options, ETag-style: `version` is a hash of the payload.
+ * When the caller already holds `knownVersion`, only `{ unchanged: true }`
+ * goes back, so a check costs the client almost nothing. The queries still
+ * run: the tables keep no reliable change marker to skip them with.
+ */
+export async function loadCaptureOptionsAction(
+  knownVersion?: string,
+): Promise<CaptureOptionsResult> {
   const actor = await resolveActor();
   if (actor === null)
     throw new Error("Nenhuma casa ativa para o usuário atual.");
@@ -246,7 +262,7 @@ export async function loadCaptureOptionsAction(): Promise<{
       listHouseholdMembers(client, householdId),
     ]);
 
-  return {
+  const payload = {
     options: {
       accounts: accounts.map((a) => ({ id: a.id, name: a.name })),
       cards: cards.map((c) => ({ id: c.id, name: c.name })),
@@ -270,4 +286,10 @@ export async function loadCaptureOptionsAction(): Promise<{
     },
     defaultResponsible: "household",
   };
+  const version = createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("base64url")
+    .slice(0, 22);
+  if (version === knownVersion) return { unchanged: true, version };
+  return { unchanged: false, version, ...payload };
 }

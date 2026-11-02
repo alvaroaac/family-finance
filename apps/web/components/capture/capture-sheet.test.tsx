@@ -63,7 +63,12 @@ const options: TransactionFieldOptions = {
   subcategories: [],
   responsibles: [{ value: "household", label: "Casa" }],
 };
-const loaded = { options, defaultResponsible: "household" };
+const loaded = {
+  unchanged: false as const,
+  version: "v1",
+  options,
+  defaultResponsible: "household",
+};
 
 function draft(overrides: Partial<CaptureDraft> = {}): CaptureDraft {
   return {
@@ -288,11 +293,39 @@ describe("options loading", () => {
     expect(mocks.load).toHaveBeenCalledTimes(2);
   });
 
+  it("sends the held version on reopen and keeps the options when unchanged", async () => {
+    await openSheet();
+    expect(mocks.load).toHaveBeenLastCalledWith(undefined);
+    await click(button("Fechar"));
+    mocks.load.mockResolvedValueOnce({ unchanged: true, version: "v1" });
+    await openSheet();
+
+    expect(mocks.load).toHaveBeenLastCalledWith("v1");
+    expect(field<HTMLSelectElement>("categoryId")?.options).toHaveLength(3);
+  });
+
+  it("forgets the version after a local add so the next open reloads in full", async () => {
+    await openSheet();
+    mocks.createCategory.mockResolvedValue({ ok: true, message: "ok", id: "new-cat" });
+    await click(button("Nova categoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova categoria']"),
+      "Pets",
+    );
+    await click(button("Criar"));
+    await flush();
+    await click(button("Fechar"));
+    await openSheet();
+
+    expect(mocks.load).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("picks up a subcategory added elsewhere on the next open", async () => {
     await openSheet();
     await click(button("Fechar"));
     mocks.load.mockResolvedValueOnce({
       ...loaded,
+      version: "v2",
       options: {
         ...options,
         subcategories: [{ id: "sub-market", categoryId: FOOD, name: "Mercado" }],
@@ -635,7 +668,7 @@ describe("offline", () => {
 
   async function failCategoryCreate(): Promise<void> {
     mocks.createCategory.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
       "Pets",
@@ -827,16 +860,16 @@ describe("new category", () => {
       message: "Categoria criada.",
       id: "new-cat",
     });
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
 
     expect(field("categoryId")).toBeNull();
     const input = document.querySelector<HTMLInputElement>(
       "input[aria-label='Nome da nova categoria']",
     );
     expect(button("Criar")).not.toBeNull();
-    expect(document.querySelector(".ff-capture__category-toggle")?.textContent).toBe(
-      "Cancelar",
-    );
+    const toggle = document.querySelector(".ff-capture__category-toggle");
+    expect(toggle?.getAttribute("aria-label")).toBe("Cancelar nova categoria");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
     await type(input, "Pets");
     await press(input, "Enter");
@@ -856,7 +889,7 @@ describe("new category", () => {
   ])("drops a category created after Tipo changed to %s", async (_label, kinds) => {
     const pending = deferred<{ ok: true; message: string; id: string }>();
     mocks.createCategory.mockReturnValueOnce(pending.promise);
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
       "Pets",
@@ -882,7 +915,7 @@ describe("new category", () => {
       ok: false,
       message: "Já existe uma categoria com esse nome.",
     });
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
       "Lazer",
@@ -897,7 +930,7 @@ describe("new category", () => {
   });
 
   it("names the open toggle apart from the footer Cancelar", async () => {
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
 
     expect(
       document
@@ -912,7 +945,7 @@ describe("new category", () => {
   });
 
   it("Esc closes only the creator, and a second Esc closes the sheet", async () => {
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     const input = document.querySelector(
       "input[aria-label='Nome da nova categoria']",
     );
@@ -940,9 +973,9 @@ describe("new subcategory", () => {
   }
 
   it("is offered only once a category is chosen", async () => {
-    expect(button("+ Nova subcategoria")).toBeNull();
+    expect(button("Nova subcategoria")).toBeNull();
     await pickCategory(FOOD);
-    expect(button("+ Nova subcategoria")).not.toBeNull();
+    expect(button("Nova subcategoria")).not.toBeNull();
   });
 
   it("creates under the chosen category, selects it, and saves with it", async () => {
@@ -953,7 +986,7 @@ describe("new subcategory", () => {
       created: true,
     });
     await pickCategory(FOOD);
-    await click(button("+ Nova subcategoria"));
+    await click(button("Nova subcategoria"));
     const input = document.querySelector<HTMLInputElement>(
       "input[aria-label='Nome da nova subcategoria']",
     );
@@ -981,7 +1014,7 @@ describe("new subcategory", () => {
     const pending = deferred<{ ok: true; message: string; id: string; created: boolean }>();
     mocks.createSubcategory.mockReturnValueOnce(pending.promise);
     await pickCategory(FOOD);
-    await click(button("+ Nova subcategoria"));
+    await click(button("Nova subcategoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova subcategoria']"),
       "Feira",
@@ -1000,7 +1033,7 @@ describe("new subcategory", () => {
 
   it("Esc closes only the creator", async () => {
     await pickCategory(FOOD);
-    await click(button("+ Nova subcategoria"));
+    await click(button("Nova subcategoria"));
     await press(
       document.querySelector("input[aria-label='Nome da nova subcategoria']"),
       "Escape",

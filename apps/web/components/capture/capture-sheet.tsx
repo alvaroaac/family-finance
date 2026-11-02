@@ -12,6 +12,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
+  type RefObject,
 } from "react";
 
 import { currentHouseholdDate } from "@family-finance/domain";
@@ -40,6 +41,7 @@ import {
 import {
   Button,
   IconClose,
+  IconPlusCircle,
   IconWifiOff,
   Input,
   Skeleton,
@@ -52,12 +54,18 @@ import { VoiceButton, type VoicePhase } from "./voice-button";
  * Quick capture: describe a transaction in free text, let the AI fill the
  * fields, review and save. `variant="sheet"` is the bottom sheet (mobile) /
  * centered modal (desktop) opened from the AppShell; `variant="page"` is the
- * same content as the `/capture` route. Options load on the first open and
- * refresh in the background on every later open and whenever the app comes
- * back to the foreground, so categories added elsewhere show up without a reload.
+ * same content as the `/capture` route. Options load on the first open; later
+ * opens, and the app coming back to the foreground, send the held version and
+ * the server answers "unchanged" unless something moved (ETag-style), so
+ * categories added elsewhere show up without a reload or a needless refetch.
  */
 
-type Loaded = { options: TransactionFieldOptions; defaultResponsible: string };
+type Loaded = {
+  options: TransactionFieldOptions;
+  defaultResponsible: string;
+  /** Server hash of the options; null once a local add made them differ. */
+  version: string | null;
+};
 
 /**
  * The signed-in user's id, which keys the stored draft. Provided by
@@ -104,6 +112,7 @@ export function CaptureSheet({
   // number is no longer current is stale and dropped.
   const loadSeq = useRef(0);
   const hasLoaded = useRef(false);
+  const version = useRef<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
@@ -123,11 +132,16 @@ export function CaptureSheet({
     const load = () => {
       const seq = ++loadSeq.current;
       setLoadFailed(false);
-      loadCaptureOptionsAction()
-        .then(({ options, defaultResponsible }) => {
-          if (seq !== loadSeq.current) return;
+      loadCaptureOptionsAction(version.current ?? undefined)
+        .then((result) => {
+          if (seq !== loadSeq.current || result.unchanged) return;
           hasLoaded.current = true;
-          setLoaded({ options, defaultResponsible });
+          version.current = result.version;
+          setLoaded({
+            options: result.options,
+            defaultResponsible: result.defaultResponsible,
+            version: result.version,
+          });
         })
         .catch(() => {
           // A failed background refresh keeps the options already shown.
@@ -196,8 +210,10 @@ export function CaptureSheet({
   const addOption = (
     add: (options: TransactionFieldOptions) => TransactionFieldOptions,
   ) => {
-    // A refresh already in flight may predate this add; let it go.
+    // A refresh already in flight may predate this add; let it go. The local
+    // list no longer matches any server version, so the next check reloads it.
     loadSeq.current += 1;
+    version.current = null;
     setLoaded((current) =>
       current === null ? current : { ...current, options: add(current.options) },
     );
@@ -613,18 +629,15 @@ function CaptureBody({
         aiFilled={draft.aiFilled}
         categoryHighlight={needsCategory ? "warn" : undefined}
         categoryAction={
-          <button
+          <AddToggle
             ref={categoryToggle}
-            type="button"
-            className="ff-capture__category-toggle"
-            aria-label={creatingCategory ? "Cancelar nova categoria" : undefined}
+            open={creatingCategory}
+            label="Nova categoria"
             onClick={() => {
               setCreatingSubcategory(false);
               setCreatingCategory((current) => !current);
             }}
-          >
-            {creatingCategory ? "Cancelar" : "+ Nova categoria"}
-          </button>
+          />
         }
         categoryField={
           creatingCategory ? (
@@ -650,17 +663,12 @@ function CaptureBody({
         }
         subcategoryAction={
           values.categoryId !== "" && !creatingCategory ? (
-            <button
+            <AddToggle
               ref={subcategoryToggle}
-              type="button"
-              className="ff-capture__category-toggle"
-              aria-label={
-                creatingSubcategory ? "Cancelar nova subcategoria" : undefined
-              }
+              open={creatingSubcategory}
+              label="Nova subcategoria"
               onClick={() => setCreatingSubcategory((current) => !current)}
-            >
-              {creatingSubcategory ? "Cancelar" : "+ Nova subcategoria"}
-            </button>
+            />
           ) : undefined
         }
         subcategoryField={
@@ -711,7 +719,38 @@ function CaptureBody({
   );
 }
 
-/** The inline "+ Nova categoria" / "+ Nova subcategoria" input. */
+/**
+ * The discreet ⊕ beside the Categoria / Subcategoria label. Open, it turns
+ * into × (CSS rotation) and reads "Cancelar <label>".
+ */
+function AddToggle({
+  ref,
+  open,
+  label,
+  onClick,
+}: {
+  ref: RefObject<HTMLButtonElement | null>;
+  open: boolean;
+  label: string;
+  onClick: () => void;
+}): ReactElement {
+  const name = open ? `Cancelar ${label.toLowerCase()}` : label;
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="ff-capture__category-toggle"
+      aria-label={name}
+      aria-expanded={open}
+      title={name}
+      onClick={onClick}
+    >
+      <IconPlusCircle size={18} />
+    </button>
+  );
+}
+
+/** The inline "Nova categoria" / "Nova subcategoria" input. */
 function NewNameInput({
   label,
   create: createNamed,
