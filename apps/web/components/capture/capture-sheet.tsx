@@ -76,6 +76,9 @@ export const CaptureUserContext = createContext<string | null>(null);
 const FOCUSABLE = "button, input, select, textarea, a[href]";
 const CONFLICT_COPY = "Há regras conflitantes para este lugar — escolha a categoria";
 const OFFLINE_COPY = "Sem conexão — seu rascunho está salvo";
+
+/** What the sheet needs from the mounted body to ask before closing. */
+type DraftControl = { dirty: boolean; discard: () => void };
 /** Same cap as the draft action; a longer text would be refused as non-financial. */
 const MAX_TEXT_LENGTH = 500;
 const PLACEHOLDERS: Record<VoicePhase, string> = {
@@ -115,17 +118,42 @@ export function CaptureSheet({
   const lastCheck = useRef(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const draftControl = useRef<DraftControl | null>(null);
+  // "Descartar o rascunho?" — shown when closing with something filled in.
+  const [confirming, setConfirming] = useState(false);
+  const confirmId = useId();
   const titleId = useId();
   const isSheet = variant === "sheet";
 
-  /** Every user-initiated close; a save in flight finishes first. */
+  /**
+   * Every user-initiated close (×, Esc, backdrop). A save in flight finishes
+   * first; a filled-in draft asks whether to discard or keep it.
+   */
   const requestClose = () => {
-    if (!saving) onClose();
+    if (saving) return;
+    if (draftControl.current?.dirty === true) setConfirming(true);
+    else onClose();
+  };
+
+  const keepDraft = () => {
+    setConfirming(false);
+    onClose();
+  };
+
+  const discardDraft = () => {
+    draftControl.current?.discard();
+    setConfirming(false);
+    onClose();
   };
 
   useEffect(() => {
-    onCloseRef.current = requestClose;
+    // Esc while asking goes back to the form instead of closing.
+    onCloseRef.current = confirming ? () => setConfirming(false) : requestClose;
   });
+
+  useEffect(() => {
+    if (!open) setConfirming(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -239,7 +267,9 @@ export function CaptureSheet({
     if (event.key !== "Tab" || panelRef.current === null) return;
     const items = [
       ...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
-    ].filter((el) => !(el as HTMLButtonElement).disabled);
+    ].filter(
+      (el) => !(el as HTMLButtonElement).disabled && el.closest("[inert]") === null,
+    );
     const first = items[0];
     const last = items[items.length - 1];
     if (first === undefined || last === undefined) return;
@@ -306,6 +336,8 @@ export function CaptureSheet({
             onSubcategoryCreated={addSubcategory}
             onClose={onClose}
             requestClose={requestClose}
+            control={draftControl}
+            inert={confirming}
             saving={saving}
             setSaving={setSaving}
             closeOnNavigate={isSheet}
@@ -313,6 +345,69 @@ export function CaptureSheet({
             setNetworkError={setNetworkError}
           />
         )}
+        {confirming ? (
+          <DiscardPrompt
+            titleId={confirmId}
+            onKeep={keepDraft}
+            onDiscard={discardDraft}
+            onBack={() => setConfirming(false)}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Asked when closing a filled-in draft. Esc or a tap outside the card goes back. */
+function DiscardPrompt({
+  titleId,
+  onKeep,
+  onDiscard,
+  onBack,
+}: {
+  titleId: string;
+  onKeep: () => void;
+  onDiscard: () => void;
+  onBack: () => void;
+}): ReactElement {
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    cardRef.current
+      ?.querySelector<HTMLButtonElement>(".ff-capture__confirm-keep")
+      ?.focus();
+  }, []);
+  return (
+    <div className="ff-capture__confirm">
+      <div
+        className="ff-capture__confirm-scrim"
+        aria-hidden="true"
+        onClick={onBack}
+      />
+      <div
+        ref={cardRef}
+        className="ff-capture__confirm-card"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <p id={titleId} className="ff-capture__confirm-title">
+          Descartar o rascunho?
+        </p>
+        <p className="ff-capture__confirm-text">
+          O que você preencheu será apagado.
+        </p>
+        <div className="ff-capture__confirm-actions">
+          <Button
+            variant="ghost"
+            className="ff-capture__confirm-keep"
+            onClick={onKeep}
+          >
+            Manter rascunho
+          </Button>
+          <Button variant="danger" onClick={onDiscard}>
+            Descartar
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -384,6 +479,8 @@ function CaptureBody({
   onSubcategoryCreated,
   onClose,
   requestClose,
+  control,
+  inert,
   saving,
   setSaving,
   closeOnNavigate,
@@ -397,8 +494,12 @@ function CaptureBody({
   onSubcategoryCreated: (subcategory: SubcategoryOption) => void;
   /** Closes unconditionally; only a successful save uses it. */
   onClose: () => void;
-  /** Closes unless a save is in flight. */
+  /** Closes unless a save is in flight; asks first when the draft is filled in. */
   requestClose: () => void;
+  /** Kept current with the draft's state, for the sheet's close prompt. */
+  control: RefObject<DraftControl | null>;
+  /** True while the discard prompt covers the form. */
+  inert: boolean;
   saving: boolean;
   setSaving: (saving: boolean) => void;
   closeOnNavigate: boolean;
@@ -408,6 +509,15 @@ function CaptureBody({
 }): ReactElement {
   const draft = useCaptureDraft(userId, defaults, options);
   const { text, values, result, setField, reconcile } = draft;
+  useEffect(() => {
+    control.current = { dirty: draft.dirty, discard: draft.discard };
+  });
+  useEffect(
+    () => () => {
+      control.current = null;
+    },
+    [control],
+  );
   const defaultsRef = useRef(defaults);
   defaultsRef.current = defaults;
   const router = useRouter();
@@ -560,7 +670,7 @@ function CaptureBody({
     .slice(0, 3);
 
   return (
-    <div className="ff-capture__body" onKeyDown={onBodyKeyDown}>
+    <div className="ff-capture__body" onKeyDown={onBodyKeyDown} inert={inert}>
       <div
         className={cx(
           "ff-capture__ai",
@@ -607,7 +717,8 @@ function CaptureBody({
           onNavigate={(event) => {
             // Leaving now would unmount a running save; the link waits for it.
             if (saving) event.preventDefault();
-            else if (closeOnNavigate) requestClose();
+            // Leaving for Obrigações keeps the draft; no discard prompt.
+            else if (closeOnNavigate) onClose();
           }}
         />
       ) : null}

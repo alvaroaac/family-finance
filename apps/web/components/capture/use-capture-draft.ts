@@ -320,6 +320,8 @@ export function useCaptureDraft(
   }, [key]);
 
   return {
+    /** Something was typed or picked beyond the defaults. */
+    dirty: !isPristine(text, values, defaultsRef.current),
     text,
     setText,
     values,

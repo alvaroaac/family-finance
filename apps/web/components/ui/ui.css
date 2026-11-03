@@ -5187,6 +5187,62 @@ details[open] > .ff-timeline__row .ff-timeline__chevron {
   transform: rotate(45deg);
 }
 
+/* "Descartar o rascunho?" — covers the panel when closing a filled-in draft. */
+.ff-capture__confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  border-radius: inherit;
+}
+
+/* On /capture the panel can be taller than the screen; keep the card in view. */
+.ff-capture--page .ff-capture__confirm {
+  position: fixed;
+  border-radius: 0;
+}
+
+.ff-capture__confirm-scrim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(10, 20, 15, 0.55);
+}
+
+.ff-capture__confirm-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  padding: 20px;
+  border: 1px solid var(--ff-border);
+  border-radius: 16px;
+  background: var(--ff-surface);
+  box-shadow: 0 16px 40px rgba(20, 14, 8, 0.35);
+  animation: ff-capture-pop 0.18s ease-out;
+}
+
+.ff-capture__confirm-title {
+  margin: 0;
+  font: 600 16px var(--ff-font-body), Inter, sans-serif;
+  color: var(--ff-ink);
+}
+
+.ff-capture__confirm-text {
+  margin: 6px 0 16px;
+  font-size: 14px;
+  color: var(--ff-ink-soft);
+}
+
+.ff-capture__confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .ff-capture__category-row {
   display: flex;
   gap: 8px;

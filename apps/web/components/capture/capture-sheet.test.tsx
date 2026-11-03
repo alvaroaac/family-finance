@@ -178,6 +178,13 @@ function button(name: string): HTMLButtonElement | null {
 }
 
 const dialog = () => document.querySelector<HTMLElement>("[role='dialog']");
+const prompt = () => document.querySelector<HTMLElement>("[role='alertdialog']");
+
+/** × on a filled-in draft asks first; "Manter rascunho" closes keeping it. */
+async function closeKeepingDraft(): Promise<void> {
+  await click(button("Fechar"));
+  await click(button("Manter rascunho"));
+}
 const textarea = () =>
   document.querySelector<HTMLTextAreaElement>(
     "textarea[aria-label='Descreva o lançamento']",
@@ -385,7 +392,7 @@ describe("options loading", () => {
       select.value = FUN;
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await click(button("Fechar"));
+    await closeKeepingDraft();
     mocks.load.mockResolvedValueOnce({
       ...loaded,
       version: "v3",
@@ -497,7 +504,7 @@ describe("Preencher", () => {
     mocks.suggest.mockReturnValue(pending.promise);
     await type(textarea(), "85 no mercado");
     await click(fillButton());
-    await click(button("Fechar"));
+    await closeKeepingDraft();
 
     await act(async () =>
       pending.resolve({ ok: true, intent: "plain", draft: draft() }),
@@ -1109,7 +1116,8 @@ describe("new subcategory", () => {
 
     await click(radio("Receita"));
     await press(document, "Escape");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    // Esc reaches the sheet again: the form is filled in, so it asks first.
+    expect(prompt()).not.toBeNull();
   });
 
   it("Esc closes only the creator", async () => {
@@ -1208,7 +1216,7 @@ describe("Salvar", () => {
     await click(saveButton());
     await flush();
 
-    await click(button("Fechar"));
+    await closeKeepingDraft();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -1239,13 +1247,54 @@ describe("closing", () => {
       "the backdrop",
       () => click(document.querySelector(".ff-capture__backdrop")),
     ],
-  ])("closes from %s and keeps the draft", async (_label, close) => {
+  ])("asks from %s when filled in; Manter rascunho closes and keeps it", async (_label, close) => {
     await type(textarea(), "85 no mercado");
     await close();
 
+    expect(onClose).not.toHaveBeenCalled();
+    expect(prompt()?.textContent).toContain("Descartar o rascunho?");
+    expect(document.activeElement?.textContent).toBe("Manter rascunho");
+
+    await click(button("Manter rascunho"));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(dialog()).toBeNull();
     expect(JSON.parse(stored() ?? "null")?.text).toBe("85 no mercado");
+
+    await openSheet();
+    expect(textarea()?.value).toBe("85 no mercado");
+  });
+
+  it("Descartar closes and clears everything filled in", async () => {
+    await type(textarea(), "85 no mercado");
+    await type(field("amount"), "85,00");
+    await click(button("Fechar"));
+    await click(button("Descartar"));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(stored()).toBeNull();
+    await openSheet();
+    expect(textarea()?.value).toBe("");
+    expect(field("amount")?.value).toBe("");
+  });
+
+  it("Esc or a tap outside the prompt goes back to the form", async () => {
+    await type(textarea(), "85 no mercado");
+    await click(button("Fechar"));
+    await press(document, "Escape");
+    expect(prompt()).toBeNull();
+    expect(dialog()).not.toBeNull();
+
+    await click(button("Fechar"));
+    await click(document.querySelector(".ff-capture__confirm-scrim"));
+    expect(prompt()).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(textarea()?.value).toBe("85 no mercado");
+  });
+
+  it("closes without asking when nothing was filled in", async () => {
+    await click(button("Fechar"));
+    expect(prompt()).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("locks body scroll while open and restores it on close", async () => {
