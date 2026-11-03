@@ -1,5 +1,7 @@
 "use server";
 
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import {
@@ -228,10 +230,52 @@ export async function transcribeCaptureAudioAction(
   return { ok: true, text: parsed.data.text };
 }
 
-export async function loadCaptureOptionsAction(): Promise<{
+/**
+ * Hash of the payload in a fixed order: rows are sorted by name only, so tied
+ * names (an "Outros" under two categories) may swap between calls and must
+ * not read as a change.
+ */
+function optionsVersion(payload: {
   options: TransactionFieldOptions;
   defaultResponsible: string;
-}> {
+}): string {
+  const byId = <T extends { id: string }>(rows: T[]) =>
+    [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const { options } = payload;
+  const canonical = {
+    ...payload,
+    options: {
+      accounts: byId(options.accounts),
+      cards: byId(options.cards),
+      categories: byId(options.categories),
+      subcategories: byId(options.subcategories),
+      responsibles: options.responsibles,
+    },
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonical))
+    .digest("base64url")
+    .slice(0, 22);
+}
+
+export type CaptureOptionsResult =
+  | { unchanged: true; version: string }
+  | {
+      unchanged: false;
+      version: string;
+      options: TransactionFieldOptions;
+      defaultResponsible: string;
+    };
+
+/**
+ * The sheet's form options, ETag-style: `version` is a hash of the payload.
+ * When the caller already holds `knownVersion`, only `{ unchanged: true }`
+ * goes back, so a check costs the client almost nothing. The queries still
+ * run: the tables keep no reliable change marker to skip them with.
+ */
+export async function loadCaptureOptionsAction(
+  knownVersion?: string,
+): Promise<CaptureOptionsResult> {
   const actor = await resolveActor();
   if (actor === null)
     throw new Error("Nenhuma casa ativa para o usuário atual.");
@@ -246,7 +290,7 @@ export async function loadCaptureOptionsAction(): Promise<{
       listHouseholdMembers(client, householdId),
     ]);
 
-  return {
+  const payload = {
     options: {
       accounts: accounts.map((a) => ({ id: a.id, name: a.name })),
       cards: cards.map((c) => ({ id: c.id, name: c.name })),
@@ -270,4 +314,7 @@ export async function loadCaptureOptionsAction(): Promise<{
     },
     defaultResponsible: "household",
   };
+  const version = optionsVersion(payload);
+  if (version === knownVersion) return { unchanged: true, version };
+  return { unchanged: false, version, ...payload };
 }

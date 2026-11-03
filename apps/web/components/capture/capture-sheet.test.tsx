@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   transcribe: vi.fn(),
   load: vi.fn(),
   createCategory: vi.fn(),
+  createSubcategory: vi.fn(),
   createTransaction: vi.fn(),
   router: { refresh: vi.fn(), push: vi.fn() },
 }));
@@ -33,6 +34,7 @@ vi.mock("../../app/(app)/capture/actions", () => ({
 }));
 vi.mock("../../app/(app)/categories/actions", () => ({
   createCategoryAction: mocks.createCategory,
+  createSubcategoryAction: mocks.createSubcategory,
 }));
 vi.mock("../../app/(app)/transactions/actions", () => ({
   createManualTransactionAction: mocks.createTransaction,
@@ -61,7 +63,12 @@ const options: TransactionFieldOptions = {
   subcategories: [],
   responsibles: [{ value: "household", label: "Casa" }],
 };
-const loaded = { options, defaultResponsible: "household" };
+const loaded = {
+  unchanged: false as const,
+  version: "v1",
+  options,
+  defaultResponsible: "household",
+};
 
 function draft(overrides: Partial<CaptureDraft> = {}): CaptureDraft {
   return {
@@ -171,6 +178,13 @@ function button(name: string): HTMLButtonElement | null {
 }
 
 const dialog = () => document.querySelector<HTMLElement>("[role='dialog']");
+const prompt = () => document.querySelector<HTMLElement>("[role='alertdialog']");
+
+/** × on a filled-in draft asks first; "Manter rascunho" closes keeping it. */
+async function closeKeepingDraft(): Promise<void> {
+  await click(button("Fechar"));
+  await click(button("Manter rascunho"));
+}
 const textarea = () =>
   document.querySelector<HTMLTextAreaElement>(
     "textarea[aria-label='Descreva o lançamento']",
@@ -266,7 +280,7 @@ afterEach(async () => {
 });
 
 describe("options loading", () => {
-  it("loads once on the first open, shows the skeleton until then, and reuses the result", async () => {
+  it("loads on the first open, shows the skeleton until then, and shows cached options while refreshing on reopen", async () => {
     const pending = deferred<typeof loaded>();
     mocks.load.mockReturnValueOnce(pending.promise);
     await openSheet();
@@ -280,9 +294,127 @@ describe("options loading", () => {
     expect(field("amount")).not.toBeNull();
 
     await click(button("Fechar"));
+    mocks.load.mockReturnValueOnce(new Promise(() => {}));
     await openSheet();
     expect(field("amount")).not.toBeNull();
-    expect(mocks.load).toHaveBeenCalledTimes(1);
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends the held version on reopen and keeps the options when unchanged", async () => {
+    await openSheet();
+    expect(mocks.load).toHaveBeenLastCalledWith(undefined);
+    await click(button("Fechar"));
+    mocks.load.mockResolvedValueOnce({ unchanged: true, version: "v1" });
+    await openSheet();
+
+    expect(mocks.load).toHaveBeenLastCalledWith("v1");
+    expect(field<HTMLSelectElement>("categoryId")?.options).toHaveLength(3);
+  });
+
+  it("forgets the version after a local add so the next open reloads in full", async () => {
+    await openSheet();
+    mocks.createCategory.mockResolvedValue({
+      ok: true,
+      message: "ok",
+      id: "new-cat",
+      name: "Pets",
+    });
+    await click(button("Nova categoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova categoria']"),
+      "Pets",
+    );
+    await click(button("Criar"));
+    await flush();
+    await click(button("Fechar"));
+    await openSheet();
+
+    expect(mocks.load).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("picks up a subcategory added elsewhere on the next open", async () => {
+    await openSheet();
+    await click(button("Fechar"));
+    mocks.load.mockResolvedValueOnce({
+      ...loaded,
+      version: "v2",
+      options: {
+        ...options,
+        subcategories: [{ id: "sub-market", categoryId: FOOD, name: "Mercado" }],
+      },
+    });
+    await openSheet();
+    await act(async () => {
+      const select = field<HTMLSelectElement>("categoryId");
+      if (select === null) throw new Error("No categoryId select");
+      select.value = FOOD;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const sub = field<HTMLSelectElement>("subcategoryId");
+    expect([...(sub?.options ?? [])].map((o) => o.textContent)).toContain("Mercado");
+  });
+
+  it("checks again on returning to the foreground, at most every 30 s", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-02T10:00:00Z"));
+      await openSheet();
+      expect(mocks.load).toHaveBeenCalledTimes(1);
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      const foreground = async () => {
+        await act(async () => {
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await flush();
+      };
+
+      vi.setSystemTime(new Date("2026-11-02T10:00:20Z"));
+      await foreground();
+      expect(mocks.load).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date("2026-11-02T10:00:31Z"));
+      await foreground();
+      expect(mocks.load).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a picked category that a refresh no longer lists", async () => {
+    await openSheet();
+    await act(async () => {
+      const select = field<HTMLSelectElement>("categoryId");
+      if (select === null) throw new Error("No categoryId select");
+      select.value = FUN;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await closeKeepingDraft();
+    mocks.load.mockResolvedValueOnce({
+      ...loaded,
+      version: "v3",
+      options: { ...options, categories: options.categories.filter((c) => c.id !== FUN) },
+    });
+    await openSheet();
+    await type(field("amount"), "10,00");
+    await type(field("description"), "Cinema");
+    await click(saveButton());
+    await flush();
+
+    const saved = mocks.createTransaction.mock.calls[0]?.[0] as FormData;
+    expect(saved.get("categoryId")).toBe("");
+  });
+
+  it("keeps the shown options when a background refresh fails", async () => {
+    await openSheet();
+    await click(button("Fechar"));
+    mocks.load.mockRejectedValueOnce(new Error("offline"));
+    await openSheet();
+    expect(field("amount")).not.toBeNull();
+    expect(banner()).toBeNull();
   });
 
   it("dates a fresh draft with the current day on every open, from cached options", async () => {
@@ -296,7 +428,6 @@ describe("options loading", () => {
       vi.setSystemTime(new Date("2026-10-21T08:00:00-03:00"));
       await openSheet();
       expect(field("occurredOn")?.value).toBe("2026-10-21");
-      expect(mocks.load).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -373,7 +504,7 @@ describe("Preencher", () => {
     mocks.suggest.mockReturnValue(pending.promise);
     await type(textarea(), "85 no mercado");
     await click(fillButton());
-    await click(button("Fechar"));
+    await closeKeepingDraft();
 
     await act(async () =>
       pending.resolve({ ok: true, intent: "plain", draft: draft() }),
@@ -588,7 +719,7 @@ describe("offline", () => {
 
   async function failCategoryCreate(): Promise<void> {
     mocks.createCategory.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
       "Pets",
@@ -611,6 +742,7 @@ describe("offline", () => {
       ok: true,
       message: "Categoria criada.",
       id: "new-cat",
+      name: "Pets",
     });
 
     await click(button("Criar"));
@@ -779,17 +911,18 @@ describe("new category", () => {
       ok: true,
       message: "Categoria criada.",
       id: "new-cat",
+      name: "Pets",
     });
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
 
     expect(field("categoryId")).toBeNull();
     const input = document.querySelector<HTMLInputElement>(
       "input[aria-label='Nome da nova categoria']",
     );
     expect(button("Criar")).not.toBeNull();
-    expect(document.querySelector(".ff-capture__category-toggle")?.textContent).toBe(
-      "Cancelar",
-    );
+    const toggle = document.querySelector(".ff-capture__category-toggle");
+    expect(toggle?.getAttribute("aria-label")).toBe("Cancelar nova categoria");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
     await type(input, "Pets");
     await press(input, "Enter");
@@ -807,9 +940,9 @@ describe("new category", () => {
     ["Receita", ["Receita"]],
     ["Receita and back", ["Receita", "Despesa"]],
   ])("drops a category created after Tipo changed to %s", async (_label, kinds) => {
-    const pending = deferred<{ ok: true; message: string; id: string }>();
+    const pending = deferred<{ ok: true; message: string; id: string; name: string }>();
     mocks.createCategory.mockReturnValueOnce(pending.promise);
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
       "Pets",
@@ -818,7 +951,12 @@ describe("new category", () => {
     for (const kind of kinds) await click(radio(kind));
 
     await act(async () =>
-      pending.resolve({ ok: true, message: "Categoria criada.", id: "new-cat" }),
+      pending.resolve({
+        ok: true,
+        message: "Categoria criada.",
+        id: "new-cat",
+        name: "Pets",
+      }),
     );
     await flush();
     await type(field("amount"), "85,00");
@@ -835,7 +973,7 @@ describe("new category", () => {
       ok: false,
       message: "Já existe uma categoria com esse nome.",
     });
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     await type(
       document.querySelector("input[aria-label='Nome da nova categoria']"),
       "Lazer",
@@ -850,7 +988,7 @@ describe("new category", () => {
   });
 
   it("names the open toggle apart from the footer Cancelar", async () => {
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
 
     expect(
       document
@@ -865,7 +1003,7 @@ describe("new category", () => {
   });
 
   it("Esc closes only the creator, and a second Esc closes the sheet", async () => {
-    await click(button("+ Nova categoria"));
+    await click(button("Nova categoria"));
     const input = document.querySelector(
       "input[aria-label='Nome da nova categoria']",
     );
@@ -877,6 +1015,120 @@ describe("new category", () => {
 
     await press(document, "Escape");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("new subcategory", () => {
+  beforeEach(openSheet);
+
+  async function pickCategory(id: string): Promise<void> {
+    await act(async () => {
+      const select = field<HTMLSelectElement>("categoryId");
+      if (select === null) throw new Error("No categoryId select");
+      select.value = id;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it("is offered only once a category is chosen", async () => {
+    expect(button("Nova subcategoria")).toBeNull();
+    await pickCategory(FOOD);
+    expect(button("Nova subcategoria")).not.toBeNull();
+  });
+
+  it("creates under the chosen category, selects it, and saves with it", async () => {
+    mocks.createSubcategory.mockResolvedValue({
+      ok: true,
+      message: "Subcategoria criada.",
+      id: "new-sub",
+      name: "Feira livre",
+      created: true,
+    });
+    await pickCategory(FOOD);
+    await click(button("Nova subcategoria"));
+    const input = document.querySelector<HTMLInputElement>(
+      "input[aria-label='Nome da nova subcategoria']",
+    );
+    await type(input, "Feira  livre");
+    await press(input, "Enter");
+    await flush();
+
+    const formData = mocks.createSubcategory.mock.calls[0]?.[0] as FormData;
+    expect(formData.get("name")).toBe("Feira  livre");
+    expect(formData.get("categoryId")).toBe(FOOD);
+    const select = field<HTMLSelectElement>("subcategoryId");
+    expect(select?.value).toBe("new-sub");
+    // The name as the server stored it, not as typed.
+    expect(select?.selectedOptions[0]?.textContent).toBe("Feira livre");
+
+    await type(field("amount"), "12,00");
+    await type(field("description"), "Feira");
+    await click(saveButton());
+    await flush();
+    const saved = mocks.createTransaction.mock.calls[0]?.[0] as FormData;
+    expect(saved.get("categoryId")).toBe(FOOD);
+    expect(saved.get("subcategoryId")).toBe("new-sub");
+  });
+
+  it("closes on a Categoria change and drops a create still in flight", async () => {
+    const pending = deferred<{
+      ok: true;
+      message: string;
+      id: string;
+      name: string;
+      created: boolean;
+    }>();
+    mocks.createSubcategory.mockReturnValueOnce(pending.promise);
+    await pickCategory(FOOD);
+    await click(button("Nova subcategoria"));
+    await type(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+      "Feira",
+    );
+    await click(button("Criar"));
+    await pickCategory(FUN);
+    await act(async () =>
+      pending.resolve({
+        ok: true,
+        message: "ok",
+        id: "new-sub",
+        name: "Feira",
+        created: true,
+      }),
+    );
+    await flush();
+
+    expect(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+    ).toBeNull();
+    expect(field<HTMLSelectElement>("subcategoryId")?.value).toBe("");
+  });
+
+  it("closes when a Tipo switch clears Categoria, so Esc closes the sheet again", async () => {
+    await pickCategory(FOOD);
+    await click(button("Nova subcategoria"));
+    await click(radio("Receita"));
+    await click(radio("Despesa"));
+    await pickCategory(FOOD);
+    expect(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+    ).toBeNull();
+
+    await click(radio("Receita"));
+    await press(document, "Escape");
+    // Esc reaches the sheet again: the form is filled in, so it asks first.
+    expect(prompt()).not.toBeNull();
+  });
+
+  it("Esc closes only the creator", async () => {
+    await pickCategory(FOOD);
+    await click(button("Nova subcategoria"));
+    await press(
+      document.querySelector("input[aria-label='Nome da nova subcategoria']"),
+      "Escape",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(field("subcategoryId")).not.toBeNull();
   });
 });
 
@@ -964,7 +1216,7 @@ describe("Salvar", () => {
     await click(saveButton());
     await flush();
 
-    await click(button("Fechar"));
+    await closeKeepingDraft();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -995,13 +1247,54 @@ describe("closing", () => {
       "the backdrop",
       () => click(document.querySelector(".ff-capture__backdrop")),
     ],
-  ])("closes from %s and keeps the draft", async (_label, close) => {
+  ])("asks from %s when filled in; Manter rascunho closes and keeps it", async (_label, close) => {
     await type(textarea(), "85 no mercado");
     await close();
 
+    expect(onClose).not.toHaveBeenCalled();
+    expect(prompt()?.textContent).toContain("Descartar o rascunho?");
+    expect(document.activeElement?.textContent).toBe("Manter rascunho");
+
+    await click(button("Manter rascunho"));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(dialog()).toBeNull();
     expect(JSON.parse(stored() ?? "null")?.text).toBe("85 no mercado");
+
+    await openSheet();
+    expect(textarea()?.value).toBe("85 no mercado");
+  });
+
+  it("Descartar closes and clears everything filled in", async () => {
+    await type(textarea(), "85 no mercado");
+    await type(field("amount"), "85,00");
+    await click(button("Fechar"));
+    await click(button("Descartar"));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(stored()).toBeNull();
+    await openSheet();
+    expect(textarea()?.value).toBe("");
+    expect(field("amount")?.value).toBe("");
+  });
+
+  it("Esc or a tap outside the prompt goes back to the form", async () => {
+    await type(textarea(), "85 no mercado");
+    await click(button("Fechar"));
+    await press(document, "Escape");
+    expect(prompt()).toBeNull();
+    expect(dialog()).not.toBeNull();
+
+    await click(button("Fechar"));
+    await click(document.querySelector(".ff-capture__confirm-scrim"));
+    expect(prompt()).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(textarea()?.value).toBe("85 no mercado");
+  });
+
+  it("closes without asking when nothing was filled in", async () => {
+    await click(button("Fechar"));
+    expect(prompt()).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("locks body scroll while open and restores it on close", async () => {

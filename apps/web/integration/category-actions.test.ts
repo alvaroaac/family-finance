@@ -75,6 +75,7 @@ describe("createCategoryAction", () => {
       ok: true,
       message: "Categoria “Pets” criada.",
       id: created?.id,
+      name: "Pets",
       created: true,
     });
   });
@@ -115,6 +116,7 @@ describe("createSubcategoryAction", () => {
       ok: true,
       message: "Subcategoria “Feira” criada em Alimentação.",
       id: created?.id,
+      name: "Feira",
       created: true,
     });
   });
