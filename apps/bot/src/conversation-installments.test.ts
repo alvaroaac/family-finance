@@ -1155,6 +1155,31 @@ describe("card installment start: card resolution", () => {
     expect(outcome.state.installmentDraft?.cardId).toBe("card-mercado-pago");
     expect(outcome.reply).toContain("• Cartão: Mercado Pago");
   });
+
+  it.each([
+    "6750 em 12 vezes, dentista Joaquim no nubank",
+    "R$ 6.750 em 12 vezes, dentista Joaquim",
+    "6750 parcelado 12 vezes, dentista Joaquim",
+    "6750, 12 vezes, dentista Joaquim",
+    "562,50 em 12 vezes, dentista Joaquim",
+  ])(
+    "drops a numeric 'N vezes' count from the description: %s",
+    async (text) => {
+      const { deps } = buildDeps({
+        classifyMessage: classifierReturning(null),
+      });
+      const outcome = await startConversation(
+        { text, fromUserId: "user-alvaro" },
+        deps,
+        { today: TODAY },
+      );
+
+      expect(outcome.state.installmentDraft).toMatchObject({
+        description: "Dentista Joaquim",
+        installmentCount: 12,
+      });
+    },
+  );
 });
 
 describe("card installment start: amount normalization + summary", () => {
