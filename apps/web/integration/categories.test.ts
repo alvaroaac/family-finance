@@ -74,6 +74,7 @@ describe("category creation", () => {
       createOrRestoreCategory(client, HOUSEHOLD, "alimentacao", "expense"),
     ).resolves.toEqual({
       id: "cat-food",
+      name: "Alimentação",
       message: "A categoria “Alimentação” já existe.",
       created: false,
     });
@@ -93,6 +94,7 @@ describe("category creation", () => {
       createOrRestoreCategory(client, HOUSEHOLD, "pets", "expense"),
     ).resolves.toEqual({
       id: "cat-old",
+      name: "Pets",
       message: "Categoria “Pets” restaurada.",
       created: true,
     });
@@ -113,6 +115,7 @@ describe("subcategory creation", () => {
       createOrRestoreSubcategory(client, HOUSEHOLD, "cat-food", "cafe"),
     ).resolves.toEqual({
       id: "sub-old",
+      name: "Café",
       message: "Subcategoria “Café” restaurada em Alimentação.",
       created: true,
     });

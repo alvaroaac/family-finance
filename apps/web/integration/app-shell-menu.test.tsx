@@ -65,8 +65,12 @@ afterEach(async () => {
 describe("sidebar brand", () => {
   it("shows the household name without a kicker", () => {
     const brand = container.querySelector(".ff-sidebar__brand")!;
-    expect(brand.textContent).toBe("Casa Azul");
-    expect(brand.querySelectorAll("*")).toHaveLength(1);
+    const [title, initial] = brand.children;
+    expect(brand.children).toHaveLength(2);
+    expect(title!.textContent).toBe("Casa Azul");
+    expect(initial!.className).toContain("ff-sidebar__brand-initial");
+    expect(initial!.getAttribute("aria-hidden")).toBe("true");
+    expect(initial!.textContent).toBe("C");
   });
 });
 describe("mobile Mais menu lifecycle", () => {

@@ -433,6 +433,8 @@ describe("loadCaptureOptionsAction", () => {
 
   it("returns the same form options /transactions builds", async () => {
     await expect(loadCaptureOptionsAction()).resolves.toEqual({
+      unchanged: false,
+      version: expect.any(String),
       options: {
         accounts: [{ id: ACCOUNT_ID, name: "Nubank" }],
         cards: [{ id: CARD_ID, name: "Visa" }],
@@ -452,6 +454,37 @@ describe("loadCaptureOptionsAction", () => {
       expect.anything(),
       HOUSEHOLD_ID,
     );
+  });
+
+  it("answers unchanged for the version the caller holds, and in full once the data moved", async () => {
+    const first = await loadCaptureOptionsAction();
+    await expect(loadCaptureOptionsAction(first.version)).resolves.toEqual({
+      unchanged: true,
+      version: first.version,
+    });
+
+    mocks.listAllSubcategories.mockResolvedValue([
+      { id: "sub-1", category_id: CATEGORY_ID, name: "Feira" },
+      { id: "sub-2", category_id: CATEGORY_ID, name: "Açougue" },
+    ]);
+    const next = await loadCaptureOptionsAction(first.version);
+    expect(next.unchanged).toBe(false);
+    expect(next.version).not.toBe(first.version);
+  });
+
+  it("keeps the version when tied names come back in another order", async () => {
+    const outros = [
+      { id: "sub-a", category_id: CATEGORY_ID, name: "Outros" },
+      { id: "sub-b", category_id: "other-cat", name: "Outros" },
+    ];
+    mocks.listAllSubcategories.mockResolvedValue(outros);
+    const first = await loadCaptureOptionsAction();
+    mocks.listAllSubcategories.mockResolvedValue([...outros].reverse());
+
+    await expect(loadCaptureOptionsAction(first.version)).resolves.toEqual({
+      unchanged: true,
+      version: first.version,
+    });
   });
 
   it("throws when the user has no active household", async () => {

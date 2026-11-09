@@ -246,16 +246,8 @@ describe("authenticated layout", () => {
     expect(html).not.toContain("Nossa casa");
   });
 
-  it("does not render the theme picker with lockBase", async () => {
-    state.household.theme = LOCKED;
+  it("leaves theme choice to Configurações", async () => {
     expect(await renderApp()).not.toContain("ff-themepicker");
-  });
-
-  it("renders the theme picker on the cookie base without lockBase", async () => {
-    state.cookie = "salvia";
-    const html = await renderApp();
-    expect(html).toContain("ff-themepicker");
-    expect(html).toMatch(/aria-label="Tema Sálvia" aria-pressed="true"/);
   });
 });
 
