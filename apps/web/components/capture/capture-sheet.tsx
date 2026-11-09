@@ -12,6 +12,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
+  type RefObject,
 } from "react";
 
 import { currentHouseholdDate } from "@family-finance/domain";
@@ -20,7 +21,11 @@ import {
   loadCaptureOptionsAction,
   suggestCaptureDraftAction,
 } from "../../app/(app)/capture/actions";
-import { createCategoryAction } from "../../app/(app)/categories/actions";
+import {
+  createCategoryAction,
+  createSubcategoryAction,
+  type CategoryCreationActionResult,
+} from "../../app/(app)/categories/actions";
 import { createManualTransactionAction } from "../../app/(app)/transactions/actions";
 import { captureMessage, type CaptureMessage } from "../../lib/capture-copy";
 import {
@@ -29,12 +34,14 @@ import {
   TransactionFields,
   validateTransactionFields,
   type CategoryOption,
+  type SubcategoryOption,
   type TransactionFieldOptions,
   type TransactionFieldValues,
 } from "../transaction-fields";
 import {
   Button,
   IconClose,
+  IconPlusCircle,
   IconWifiOff,
   Input,
   Skeleton,
@@ -47,10 +54,17 @@ import { VoiceButton, type VoicePhase } from "./voice-button";
  * Quick capture: describe a transaction in free text, let the AI fill the
  * fields, review and save. `variant="sheet"` is the bottom sheet (mobile) /
  * centered modal (desktop) opened from the AppShell; `variant="page"` is the
- * same content as the `/capture` route. Options load once per page session.
+ * same content as the `/capture` route. Options load on the first open; later
+ * opens, and the app coming back to the foreground, send the held version and
+ * the server answers "unchanged" unless something moved (ETag-style), so
+ * categories added elsewhere show up without a reload or a needless refetch.
+ * Foreground checks are throttled; opens always check.
  */
 
 type Loaded = { options: TransactionFieldOptions; defaultResponsible: string };
+
+/** Minimum gap between two checks triggered by the app returning to the foreground. */
+const FOREGROUND_CHECK_INTERVAL_MS = 30_000;
 
 /**
  * The signed-in user's id, which keys the stored draft. Provided by
@@ -62,6 +76,9 @@ export const CaptureUserContext = createContext<string | null>(null);
 const FOCUSABLE = "button, input, select, textarea, a[href]";
 const CONFLICT_COPY = "Há regras conflitantes para este lugar — escolha a categoria";
 const OFFLINE_COPY = "Sem conexão — seu rascunho está salvo";
+
+/** What the sheet needs from the mounted body to ask before closing. */
+type DraftControl = { dirty: boolean; discard: () => void };
 /** Same cap as the draft action; a longer text would be refused as non-financial. */
 const MAX_TEXT_LENGTH = 500;
 const PLACEHOLDERS: Record<VoicePhase, string> = {
@@ -93,33 +110,83 @@ export function CaptureSheet({
   const [networkError, setNetworkError] = useState(false);
   // Lives here, not in the body, so no close path can unmount a running save.
   const [saving, setSaving] = useState(false);
-  const loading = useRef(false);
+  // Bumped by every load and every local category add; a response whose
+  // number is no longer current is stale and dropped.
+  const loadSeq = useRef(0);
+  /** Server hash of the options held; null until loaded or after a local add. */
+  const version = useRef<string | null>(null);
+  const lastCheck = useRef(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const draftControl = useRef<DraftControl | null>(null);
+  // "Descartar o rascunho?" — shown when closing with something filled in.
+  const [confirming, setConfirming] = useState(false);
+  const confirmId = useId();
   const titleId = useId();
   const isSheet = variant === "sheet";
 
-  /** Every user-initiated close; a save in flight finishes first. */
+  /**
+   * Every user-initiated close (×, Esc, backdrop). A save in flight finishes
+   * first; a filled-in draft asks whether to discard or keep it.
+   */
   const requestClose = () => {
-    if (!saving) onClose();
+    if (saving) return;
+    if (draftControl.current?.dirty === true) setConfirming(true);
+    else onClose();
+  };
+
+  const keepDraft = () => {
+    setConfirming(false);
+    onClose();
+  };
+
+  const discardDraft = () => {
+    draftControl.current?.discard();
+    setConfirming(false);
+    onClose();
   };
 
   useEffect(() => {
-    onCloseRef.current = requestClose;
+    // Esc while asking goes back to the form instead of closing.
+    onCloseRef.current = confirming ? () => setConfirming(false) : requestClose;
   });
 
   useEffect(() => {
-    if (!open || loaded !== null || loading.current) return;
-    loading.current = true;
-    loadCaptureOptionsAction()
-      .then(({ options, defaultResponsible }) => {
-        setLoaded({ options, defaultResponsible });
-      })
-      .catch(() => setLoadFailed(true))
-      .finally(() => {
-        loading.current = false;
-      });
-  }, [open, loaded]);
+    if (!open) setConfirming(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const load = () => {
+      const seq = ++loadSeq.current;
+      lastCheck.current = Date.now();
+      setLoadFailed(false);
+      loadCaptureOptionsAction(version.current ?? undefined)
+        .then((result) => {
+          if (seq !== loadSeq.current || result.unchanged) return;
+          version.current = result.version;
+          setLoaded({
+            options: result.options,
+            defaultResponsible: result.defaultResponsible,
+          });
+        })
+        .catch(() => {
+          // Only shown while nothing loaded yet; a failed refresh keeps the options.
+          if (seq === loadSeq.current) setLoadFailed(true);
+        });
+    };
+    load();
+    const onVisible = () => {
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastCheck.current >= FOREGROUND_CHECK_INTERVAL_MS
+      ) {
+        load();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [open]);
 
   // Read on mount, not during render, so the server render matches.
   useEffect(() => {
@@ -172,24 +239,37 @@ export function CaptureSheet({
 
   if (!open) return null;
 
-  const addCategory = (category: CategoryOption) =>
+  const addOption = (
+    add: (options: TransactionFieldOptions) => TransactionFieldOptions,
+  ) => {
+    // A refresh already in flight may predate this add; let it go. The local
+    // list no longer matches any server version, so the next check reloads it.
+    loadSeq.current += 1;
+    version.current = null;
     setLoaded((current) =>
-      current === null
-        ? current
-        : {
-            ...current,
-            options: {
-              ...current.options,
-              categories: [...current.options.categories, category],
-            },
-          },
+      current === null ? current : { ...current, options: add(current.options) },
+    );
+  };
+  const addCategory = (category: CategoryOption) =>
+    addOption((options) =>
+      options.categories.some((c) => c.id === category.id)
+        ? options
+        : { ...options, categories: [...options.categories, category] },
+    );
+  const addSubcategory = (subcategory: SubcategoryOption) =>
+    addOption((options) =>
+      options.subcategories.some((s) => s.id === subcategory.id)
+        ? options
+        : { ...options, subcategories: [...options.subcategories, subcategory] },
     );
 
   const trapFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab" || panelRef.current === null) return;
     const items = [
       ...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
-    ].filter((el) => !(el as HTMLButtonElement).disabled);
+    ].filter(
+      (el) => !(el as HTMLButtonElement).disabled && el.closest("[inert]") === null,
+    );
     const first = items[0];
     const last = items[items.length - 1];
     if (first === undefined || last === undefined) return;
@@ -253,8 +333,11 @@ export function CaptureSheet({
               responsible: loaded.defaultResponsible,
             }}
             onCategoryCreated={addCategory}
+            onSubcategoryCreated={addSubcategory}
             onClose={onClose}
             requestClose={requestClose}
+            control={draftControl}
+            inert={confirming}
             saving={saving}
             setSaving={setSaving}
             closeOnNavigate={isSheet}
@@ -262,6 +345,69 @@ export function CaptureSheet({
             setNetworkError={setNetworkError}
           />
         )}
+        {confirming ? (
+          <DiscardPrompt
+            titleId={confirmId}
+            onKeep={keepDraft}
+            onDiscard={discardDraft}
+            onBack={() => setConfirming(false)}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Asked when closing a filled-in draft. Esc or a tap outside the card goes back. */
+function DiscardPrompt({
+  titleId,
+  onKeep,
+  onDiscard,
+  onBack,
+}: {
+  titleId: string;
+  onKeep: () => void;
+  onDiscard: () => void;
+  onBack: () => void;
+}): ReactElement {
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    cardRef.current
+      ?.querySelector<HTMLButtonElement>(".ff-capture__confirm-keep")
+      ?.focus();
+  }, []);
+  return (
+    <div className="ff-capture__confirm">
+      <div
+        className="ff-capture__confirm-scrim"
+        aria-hidden="true"
+        onClick={onBack}
+      />
+      <div
+        ref={cardRef}
+        className="ff-capture__confirm-card"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <p id={titleId} className="ff-capture__confirm-title">
+          Descartar o rascunho?
+        </p>
+        <p className="ff-capture__confirm-text">
+          O que você preencheu será apagado.
+        </p>
+        <div className="ff-capture__confirm-actions">
+          <Button
+            variant="ghost"
+            className="ff-capture__confirm-keep"
+            onClick={onKeep}
+          >
+            Manter rascunho
+          </Button>
+          <Button variant="danger" onClick={onDiscard}>
+            Descartar
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -330,8 +476,11 @@ function CaptureBody({
   options,
   defaults,
   onCategoryCreated,
+  onSubcategoryCreated,
   onClose,
   requestClose,
+  control,
+  inert,
   saving,
   setSaving,
   closeOnNavigate,
@@ -342,10 +491,15 @@ function CaptureBody({
   options: TransactionFieldOptions;
   defaults: TransactionFieldValues;
   onCategoryCreated: (category: CategoryOption) => void;
+  onSubcategoryCreated: (subcategory: SubcategoryOption) => void;
   /** Closes unconditionally; only a successful save uses it. */
   onClose: () => void;
-  /** Closes unless a save is in flight. */
+  /** Closes unless a save is in flight; asks first when the draft is filled in. */
   requestClose: () => void;
+  /** Kept current with the draft's state, for the sheet's close prompt. */
+  control: RefObject<DraftControl | null>;
+  /** True while the discard prompt covers the form. */
+  inert: boolean;
   saving: boolean;
   setSaving: (saving: boolean) => void;
   closeOnNavigate: boolean;
@@ -354,17 +508,30 @@ function CaptureBody({
   setNetworkError: (failed: boolean) => void;
 }): ReactElement {
   const draft = useCaptureDraft(userId, defaults, options);
-  const { text, values, result, setField } = draft;
+  const { text, values, result, setField, reconcile } = draft;
+  useEffect(() => {
+    control.current = { dirty: draft.dirty, discard: draft.discard };
+  });
+  useEffect(
+    () => () => {
+      control.current = null;
+    },
+    [control],
+  );
+  const defaultsRef = useRef(defaults);
+  defaultsRef.current = defaults;
   const router = useRouter();
   const toast = useToast();
   const alive = useRef(true);
   const fillRunning = useRef(false);
   const categoryToggle = useRef<HTMLButtonElement>(null);
+  const subcategoryToggle = useRef<HTMLButtonElement>(null);
   const [filling, setFilling] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("idle");
   const [message, setMessage] = useState<CaptureMessage | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [creatingSubcategory, setCreatingSubcategory] = useState(false);
 
   useEffect(() => {
     alive.current = true;
@@ -372,6 +539,19 @@ function CaptureBody({
       alive.current = false;
     };
   }, []);
+
+  // A refresh can drop an account or category the open form still holds.
+  const firstOptions = useRef(options);
+  useEffect(() => {
+    if (options === firstOptions.current) return;
+    reconcile(defaultsRef.current, options);
+  }, [options, reconcile]);
+
+  // The subcategory creator belongs to one category; any change (a pick, or a
+  // Tipo switch clearing it) closes it and drops a create still in flight.
+  useEffect(() => {
+    setCreatingSubcategory(false);
+  }, [values.categoryId]);
 
   const canFill =
     text.trim() !== "" && !filling && online && voicePhase === "idle";
@@ -456,11 +636,21 @@ function CaptureBody({
     categoryToggle.current?.focus();
   }
 
-  /** Esc while creating a category cancels just that, not the whole sheet. */
+  function closeSubcategoryCreator(): void {
+    setCreatingSubcategory(false);
+    subcategoryToggle.current?.focus();
+  }
+
+  /** Esc while creating a (sub)category cancels just that, not the whole sheet. */
   function onBodyKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (event.key !== "Escape" || !creatingCategory) return;
-    event.preventDefault();
-    closeCategoryCreator();
+    if (event.key !== "Escape") return;
+    if (creatingSubcategory) {
+      event.preventDefault();
+      closeSubcategoryCreator();
+    } else if (creatingCategory) {
+      event.preventDefault();
+      closeCategoryCreator();
+    }
   }
 
   function cancel(): void {
@@ -480,7 +670,7 @@ function CaptureBody({
     .slice(0, 3);
 
   return (
-    <div className="ff-capture__body" onKeyDown={onBodyKeyDown}>
+    <div className="ff-capture__body" onKeyDown={onBodyKeyDown} inert={inert}>
       <div
         className={cx(
           "ff-capture__ai",
@@ -527,7 +717,8 @@ function CaptureBody({
           onNavigate={(event) => {
             // Leaving now would unmount a running save; the link waits for it.
             if (saving) event.preventDefault();
-            else if (closeOnNavigate) requestClose();
+            // Leaving for Obrigações keeps the draft; no discard prompt.
+            else if (closeOnNavigate) onClose();
           }}
         />
       ) : null}
@@ -568,27 +759,56 @@ function CaptureBody({
         aiFilled={draft.aiFilled}
         categoryHighlight={needsCategory ? "warn" : undefined}
         categoryAction={
-          <button
+          <AddToggle
             ref={categoryToggle}
-            type="button"
-            className="ff-capture__category-toggle"
-            aria-label={creatingCategory ? "Cancelar nova categoria" : undefined}
-            onClick={() => setCreatingCategory((current) => !current)}
-          >
-            {creatingCategory ? "Cancelar" : "+ Nova categoria"}
-          </button>
+            open={creatingCategory}
+            label="Nova categoria"
+            onClick={() => {
+              setCreatingSubcategory(false);
+              setCreatingCategory((current) => !current);
+            }}
+          />
         }
         categoryField={
           creatingCategory ? (
-            <NewCategoryInput
+            <NewNameInput
               // A new Tipo remounts it, dropping a create still in flight for the old one.
               key={values.kind}
-              kind={values.kind}
-              onCreated={(category) => {
-                onCategoryCreated(category);
-                setField("categoryId", category.id);
+              label="Nome da nova categoria"
+              action={createCategoryAction}
+              fields={{ kind: values.kind }}
+              onCreated={(id, name) => {
+                onCategoryCreated({ id, name, kind: values.kind });
+                setField("categoryId", id);
                 setField("subcategoryId", "");
                 setCreatingCategory(false);
+              }}
+              setNetworkError={setNetworkError}
+            />
+          ) : undefined
+        }
+        subcategoryAction={
+          values.categoryId !== "" && !creatingCategory ? (
+            <AddToggle
+              ref={subcategoryToggle}
+              open={creatingSubcategory}
+              label="Nova subcategoria"
+              onClick={() => setCreatingSubcategory((current) => !current)}
+            />
+          ) : undefined
+        }
+        subcategoryField={
+          creatingSubcategory && values.categoryId !== "" && !creatingCategory ? (
+            <NewNameInput
+              // Any Categoria change closes it (see the effect above), dropping a create in flight.
+              key={values.categoryId}
+              label="Nome da nova subcategoria"
+              action={createSubcategoryAction}
+              fields={{ categoryId: values.categoryId }}
+              onCreated={(id, name) => {
+                onSubcategoryCreated({ id, name, categoryId: values.categoryId });
+                setField("subcategoryId", id);
+                setCreatingSubcategory(false);
               }}
               setNetworkError={setNetworkError}
             />
@@ -621,14 +841,52 @@ function CaptureBody({
   );
 }
 
-/** The inline "+ Nova categoria" input; creates with the current kind. */
-function NewCategoryInput({
-  kind,
+/**
+ * The discreet ⊕ beside the Categoria / Subcategoria label. Open, it turns
+ * into × (CSS rotation) and reads "Cancelar <label>".
+ */
+function AddToggle({
+  ref,
+  open,
+  label,
+  onClick,
+}: {
+  ref: RefObject<HTMLButtonElement | null>;
+  open: boolean;
+  label: string;
+  onClick: () => void;
+}): ReactElement {
+  const name = open ? `Cancelar ${label.toLowerCase()}` : label;
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="ff-capture__category-toggle"
+      aria-label={name}
+      aria-expanded={open}
+      title={name}
+      onClick={onClick}
+    >
+      <IconPlusCircle size={18} />
+    </button>
+  );
+}
+
+/**
+ * The inline "Nova categoria" / "Nova subcategoria" input. Posts `name` plus
+ * `fields` to `action`; `onCreated` gets the name as the server stored it.
+ */
+function NewNameInput({
+  label,
+  action,
+  fields,
   onCreated,
   setNetworkError,
 }: {
-  kind: TransactionFieldValues["kind"];
-  onCreated: (category: CategoryOption) => void;
+  label: string;
+  action: (formData: FormData) => Promise<CategoryCreationActionResult>;
+  fields: Record<string, string>;
+  onCreated: (id: string, name: string) => void;
   setNetworkError: (failed: boolean) => void;
 }): ReactElement {
   const [name, setName] = useState("");
@@ -646,16 +904,16 @@ function NewCategoryInput({
   async function create(): Promise<void> {
     const trimmed = name.trim();
     if (trimmed === "" || busy) return;
-    const formData = new FormData();
-    formData.set("name", trimmed);
-    formData.set("kind", kind);
     setBusy(true);
     setError(null);
     try {
-      const response = await createCategoryAction(formData);
+      const formData = new FormData();
+      formData.set("name", trimmed);
+      for (const [key, value] of Object.entries(fields)) formData.set(key, value);
+      const response = await action(formData);
       if (!alive.current) return;
       setNetworkError(false);
-      if (response.ok) onCreated({ id: response.id, name: trimmed, kind });
+      if (response.ok) onCreated(response.id, response.name);
       else setError(response.message);
     } catch {
       if (alive.current) setNetworkError(true);
@@ -668,8 +926,8 @@ function NewCategoryInput({
     <div className="ff-capture__category-new">
       <div className="ff-capture__category-row">
         <Input
-          aria-label="Nome da nova categoria"
-          placeholder="Nome da nova categoria"
+          aria-label={label}
+          placeholder={label}
           autoFocus
           value={name}
           onChange={(event) => setName(event.target.value)}

@@ -178,6 +178,8 @@ export function TransactionFields({
   categoryHighlight,
   categoryAction,
   categoryField,
+  subcategoryAction,
+  subcategoryField,
 }: {
   values: TransactionFieldValues;
   /**
@@ -196,6 +198,14 @@ export function TransactionFields({
   categoryAction?: ReactNode;
   /** Replaces the Categoria select (e.g. an inline "new category" input). */
   categoryField?: ReactNode;
+  /**
+   * Rendered right of the Subcategoria label (e.g. "+ Nova subcategoria").
+   * When given, Subcategoria shows for any chosen category, even one with no
+   * subcategories yet.
+   */
+  subcategoryAction?: ReactNode;
+  /** Replaces the Subcategoria select (e.g. an inline "new subcategory" input). */
+  subcategoryField?: ReactNode;
 }): ReactElement {
   const idPrefix = useId();
   const id = (key: TransactionFieldKey) => `${idPrefix}-${key}`;
@@ -428,27 +438,32 @@ export function TransactionFields({
           )}
         </FieldBlock>
 
-        {visibleSubcategories.length > 0 ? (
+        {visibleSubcategories.length > 0 ||
+        (values.categoryId !== "" &&
+          (subcategoryAction != null || subcategoryField != null)) ? (
           <FieldBlock
             id={id("subcategoryId")}
             label="Subcategoria"
             ai={isAi("subcategoryId")}
             wide
+            action={subcategoryAction}
           >
-            <Select
-              id={id("subcategoryId")}
-              name="subcategoryId"
-              className={cx(aiClass("subcategoryId"))}
-              value={values.subcategoryId}
-              onChange={(e) => onChange("subcategoryId", e.target.value)}
-            >
-              <option value="">—</option>
-              {visibleSubcategories.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
+            {subcategoryField ?? (
+              <Select
+                id={id("subcategoryId")}
+                name="subcategoryId"
+                className={cx(aiClass("subcategoryId"))}
+                value={values.subcategoryId}
+                onChange={(e) => onChange("subcategoryId", e.target.value)}
+              >
+                <option value="">—</option>
+                {visibleSubcategories.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </FieldBlock>
         ) : null}
       </div>

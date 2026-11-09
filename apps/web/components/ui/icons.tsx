@@ -187,6 +187,23 @@ export function IconClose(props: IconProps): ReactElement {
   );
 }
 
+export function IconCheck(props: IconProps): ReactElement {
+  return (
+    <Svg {...props} strokeWidth={2.2}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Svg>
+  );
+}
+
+export function IconAlert(props: IconProps): ReactElement {
+  return (
+    <Svg {...props} strokeWidth={2.2}>
+      <path d="M12 6v7.5" />
+      <circle cx="12" cy="18" r="0.6" />
+    </Svg>
+  );
+}
+
 export function IconMic(props: IconProps): ReactElement {
   return (
     <Svg {...props} strokeWidth={1.8}>

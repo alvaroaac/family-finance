@@ -12,10 +12,16 @@ import {
 const DIACRITICS_RE = /\p{Diacritic}/gu;
 
 /**
- * The created, restored or already-active row, and the pt-BR outcome.
- * `created` is false only when an active row with that name already existed.
+ * The created, restored or already-active row, its name as stored, and the
+ * pt-BR outcome. `created` is false only when an active row with that name
+ * already existed.
  */
-export type CategoryCreation = { id: string; message: string; created: boolean };
+export type CategoryCreation = {
+  id: string;
+  name: string;
+  message: string;
+  created: boolean;
+};
 
 function normalizedName(value: string): string {
   return value
@@ -48,6 +54,7 @@ export async function createOrRestoreCategory(
     if (existing.is_active) {
       return {
         id: existing.id,
+        name: existing.name,
         message: `A categoria “${existing.name}” já existe.`,
         created: false,
       };
@@ -55,6 +62,7 @@ export async function createOrRestoreCategory(
     await restoreCategory(client, householdId, existing.id);
     return {
       id: existing.id,
+      name: existing.name,
       message: `Categoria “${existing.name}” restaurada.`,
       created: true,
     };
@@ -63,6 +71,7 @@ export async function createOrRestoreCategory(
   const created = await createCategory(client, householdId, name, kind);
   return {
     id: created.id,
+    name,
     message: `Categoria “${name}” criada.`,
     created: true,
   };
@@ -101,6 +110,7 @@ export async function createOrRestoreSubcategory(
     await restoreSubcategory(client, householdId, existing.id);
     return {
       id: existing.id,
+      name: existing.name,
       message: `Subcategoria “${existing.name}” restaurada em ${parent.name}.`,
       created: true,
     };
@@ -114,6 +124,7 @@ export async function createOrRestoreSubcategory(
   );
   return {
     id: created.id,
+    name,
     message: `Subcategoria “${name}” criada em ${parent.name}.`,
     created: true,
   };
