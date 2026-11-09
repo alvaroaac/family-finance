@@ -332,3 +332,9 @@ export {
   getCardFaturaPairs,
   planWithOpenFaturas,
 } from "./repositories.js";
+export {
+  AgentImportDatabase,
+  createAgentImportPool,
+  withAgentImportTransaction,
+  type AgentIdentity,
+} from "./agent-import.js";

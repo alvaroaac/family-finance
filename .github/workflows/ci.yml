@@ -47,6 +47,9 @@ jobs:
       - name: Verify card bill closing and payments migration
         run: pnpm test:card-bill-migration
 
+      - name: Agent import database isolation and atomic confirmation
+        run: pnpm test:agent-import-db
+
       - name: Build web
         run: pnpm --filter @family-finance/web build
 

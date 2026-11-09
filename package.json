@@ -19,7 +19,8 @@
     "e2e:down": "bash e2e/stack.sh down",
     "e2e:env": "bash e2e/stack.sh env",
     "e2e:bot": "bash e2e/stack.sh bot",
-    "e2e:web": "bash e2e/stack.sh web"
+    "e2e:web": "bash e2e/stack.sh web",
+    "test:agent-import-db": "bash scripts/verify-agent-import-db.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

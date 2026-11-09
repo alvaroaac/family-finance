@@ -187,6 +187,7 @@ const TABLE_FIXTURES = {
 };
 
 const RPC_CASES = new Set([
+  "agent_import_access_token_hook(jsonb)",
   "claim_import_suggestion_nonce(text,timestamp with time zone)",
   "confirm_import(jsonb,jsonb)",
   "confirm_import_v2(jsonb,jsonb)",
@@ -1286,6 +1287,7 @@ async function checkCompositeForeignKeys(member) {
     created_by_user_id: created.memberUserId,
   };
   const cases = {
+    "agent_import_access_token_hook(jsonb)": { event: { user_id: created.memberUserId, claims: { client_id: "foreign-proof" } } },
     category: { account_id: created.accountId, category_id: b.categories.id },
     account: { account_id: b.accounts.id },
     card: { credit_card_id: b.credit_cards.id },
@@ -1337,6 +1339,7 @@ function rpcArguments(signature) {
     paid_on: null,
   };
   const cases = {
+    "agent_import_access_token_hook(jsonb)": { event: { user_id: created.memberUserId, claims: { client_id: "foreign-proof" } } },
     "claim_import_suggestion_nonce(text,timestamp with time zone)": {
       target_nonce: `${MARKER}-nonce`,
       target_expires_at: "2030-01-01T00:00:00Z",
@@ -1471,7 +1474,8 @@ async function checkDefinerFunctions(member, functions, tables) {
     const safeResult =
       signature === "is_household_member(uuid)"
         ? result.data === false
-        : signature === "resolve_telegram_member(bigint)" ||
+        : signature === "agent_import_access_token_hook(jsonb)" ||
+            signature === "resolve_telegram_member(bigint)" ||
             signature === "redeem_telegram_link_code(text,bigint)" ||
             signature === "discard_telegram_link_code(text)"
           ? Boolean(result.error)
