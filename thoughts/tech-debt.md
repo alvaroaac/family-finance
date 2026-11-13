@@ -951,3 +951,42 @@ duplicate "Vezes, dentista Joaquim" (12x R$ 6.750, Nubank) was removed this way.
 when quick capture or the bot makes repeat entries more common.
 
 **Status:** open
+
+## 2026-11-09: Capture says "Não entendi" for a parcelado when the household has no card
+
+**Area:** `apps/bot/src/capture.ts` (`toCaptureDraft`), `apps/bot/src/conversation.ts` (card installment start), `apps/web/lib/capture-copy.ts`
+
+**Impact:** A parcelado typed into quick capture in a household with no
+active credit card ("6750 em 12 vezes, dentista Joaquim") makes the
+conversation cancel with `noActiveCardMessage()`. `toCaptureDraft` maps every
+`cancelled` state to `non_financial`, so the sheet shows "Não entendi como
+lançamento" instead of the bot's precise reply ("Compra parcelada é no cartão
+— a casa ainda não tem cartão cadastrado…"). The same mapping hides the other
+cancel reasons (unknown card, no settlement account). Found during the PR #46
+real-bot e2e run.
+
+**Current workaround:** None in the UI; the user has to guess that a card is
+missing.
+
+**Revisit trigger:** A household without cards starts using quick capture, or
+the next change to capture error codes.
+
+**Status:** open
+
+## 2026-11-09: Local e2e suite times out when run in parallel
+
+**Area:** `apps/web/playwright.config.ts` (local projects), `pnpm test:e2e:local`
+
+**Impact:** With default workers, 3 of 9 local e2e tests time out at 30s,
+and a different 3 each run (card-bill-payments, fold-layout, quick-capture).
+The first visits to each route compile cold in the Next dev server while
+other workers hit it at the same time. `--workers=1` passes 9/9 in about
+60s. A red parallel run looks like a regression when it isn't.
+
+**Current workaround:** Run `pnpm test:e2e:local --workers=1`.
+
+**Revisit trigger:** The next time someone trusts or debugs a local e2e run;
+fix by setting `workers: 1` for the local projects, or by pre-warming routes
+before the specs start.
+
+**Status:** open
