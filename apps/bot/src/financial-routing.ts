@@ -2216,16 +2216,18 @@ export function canonicalFinancialDescription(
       " ",
     )
     .replace(/\b(total|por)\b\s*(?:R\$\s*)?[\d.,]+/giu, " ")
+    // Count clauses go before the digit scrub; otherwise "em 12 vezes" loses
+    // its number first and leaves a stray "vezes" in the description.
+    .replace(
+      new RegExp(
+        String.raw`\b(?:(?:em|s[aã]o|e)\s+${INSTALLMENT_COUNT_WORD}|\d+)\s+(?:vezes|parcelas?|presta[cç][oõ]es)\b`,
+        "giu",
+      ),
+      " ",
+    )
     .replace(/(?:(?:R\$\s*)|\+\s*)?\d[\d.,]*/giu, " ")
     .replace(
       /\b(mil e duzentos|novecentos|trinta e dois)\s*(?:reais)?\b/giu,
-      " ",
-    )
-    .replace(
-      new RegExp(
-        String.raw`\b(?:em|s[aã]o|e)\s+${INSTALLMENT_COUNT_WORD}\s+(?:vezes|parcelas?|presta[cç][oõ]es)\b`,
-        "giu",
-      ),
       " ",
     )
     .replace(
