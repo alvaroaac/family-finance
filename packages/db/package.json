@@ -14,9 +14,11 @@
     "@family-finance/config": "workspace:*",
     "@family-finance/domain": "workspace:*",
     "@supabase/supabase-js": "^2.47.10",
+    "pg": "^8.23.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

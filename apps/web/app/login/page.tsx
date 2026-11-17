@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
 import { getAuthState } from "../../lib/auth";
-import { resolveSiteOrigin } from "../../lib/site-origin";
+import { resolveSiteOrigin, safeCallbackPath } from "../../lib/site-origin";
 
 export const metadata = {
   title: "Entrar — Casa",
@@ -13,7 +13,9 @@ export const metadata = {
  * returns the provider URL to redirect the browser to. If config is missing
  * (e.g. local build without secrets) we fall back to re-rendering login.
  */
-async function signInWithGoogle(): Promise<void> {
+async function signInWithGoogle(
+  form: FormData = new FormData(),
+): Promise<void> {
   "use server";
   const { createServerSupabaseClient } = await import("../../lib/supabase");
   const supabase = await createServerSupabaseClient();
@@ -23,12 +25,13 @@ async function signInWithGoogle(): Promise<void> {
     forwardedProto: requestHeaders.get("x-forwarded-proto"),
   });
 
+  const next = safeCallbackPath(String(form.get("next") ?? ""));
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
       // Supabase redirects back here with a `?code=`; the callback route
       // exchanges it for a session before forwarding to the dashboard.
-      redirectTo: `${origin}/auth/callback`,
+      redirectTo: `${origin}/auth/callback${next === "/dashboard" ? "" : `?next=${encodeURIComponent(next)}`}`,
     },
   });
 
@@ -39,6 +42,7 @@ async function signInWithGoogle(): Promise<void> {
 }
 
 type LoginSearchParams = {
+  next?: string;
   denied?: string;
   email?: string;
   error?: string;
@@ -60,7 +64,7 @@ export default async function LoginPage({
   // If the visitor already has an authorized session, don't show login.
   const state = await getAuthState();
   if (state.status === "authorized") {
-    redirect("/dashboard");
+    redirect(safeCallbackPath(params.next ?? null));
   }
 
   const denied = params.denied === "1" || state.status === "forbidden";
@@ -101,6 +105,11 @@ export default async function LoginPage({
         <div className="ff-auth-card__divider" />
 
         <form action={signInWithGoogle}>
+          <input
+            type="hidden"
+            name="next"
+            value={safeCallbackPath(params.next ?? null)}
+          />
           <button type="submit" className="ff-auth-card__google">
             <svg
               width="17"

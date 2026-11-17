@@ -18,7 +18,8 @@ export type ImportSource =
   | "minhas_financas_csv"
   | "nubank_csv"
   | "nubank_ofx"
-  | "mercado_pago_pdf";
+  | "mercado_pago_pdf"
+  | "agent_structured";
 export type ImportBatchStatus =
   | "pending"
   | "previewed"

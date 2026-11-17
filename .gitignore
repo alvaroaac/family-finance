@@ -16,3 +16,6 @@ apps/bot/eval-results/
 supabase/config.toml
 .claude/worktrees/
 .e2e-supabase/
+
+.agent-import-supabase/
+.agent-import-test.env

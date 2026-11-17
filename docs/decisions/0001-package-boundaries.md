@@ -109,3 +109,23 @@ Turborepo `typecheck` and `test` tasks `dependsOn ["^build"]`, so dependency pac
 - A feature task needs a dependency edge this document forbids (re-evaluate the boundary instead of silently crossing it).
 - Build/typecheck times grow enough to justify project references.
 - A tool stops resolving workspace package names and aliases become necessary.
+
+## 2026-10-14: shared structured import orchestration
+
+`packages/import-service` sits above `domain`, `importers`, `categorization` and
+`db`. It owns versioned intake, owner-private draft orchestration, typed edits,
+review, categorization ordering, approval snapshots and confirmation. It imports
+no `apps/*` modules. The website's parser imports retain their existing signed
+preview behavior; structured HTTP and MCP use the new service and reuse the
+same financial domain functions, categorization engine and atomic import RPC.
+
+`packages/db` owns a dedicated PostgreSQL adapter for transactional drafts. Its
+runtime login is `ff_import_app`, a non-superuser without BYPASSRLS; the adapter
+verifies this before each transaction and binds the authenticated user to
+`request.jwt.claims` transaction-locally. The service receives a repository,
+not a raw connection. Private import tables have owner and household RLS and are
+not exposed by PostgREST. No service-role access is used for ordinary imports.
+
+`apps/web` wires OAuth verification, first-party browser sessions, the existing
+bounded suggestion provider, HTTP routes and the stateless Streamable HTTP MCP
+transport. Database connections and request identity never reach browser code.
